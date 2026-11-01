@@ -610,6 +610,10 @@ fn main() {
         ),
         ("リストが選べない行を飛ばす", list_skips_disabled_rows),
         (
+            "一覧・表・ツリーはフォーカスが入っただけでは行を選ばない",
+            focus_entering_rows_does_not_select,
+        ),
+        (
             "リストの通知の中からリストを操作できる",
             list_callback_can_touch_the_list,
         ),
@@ -5582,6 +5586,82 @@ fn table_sorting_round_trips(ui: &Ui) -> Result<()> {
     // 並べ替えられない列を指すと、指定は外れる。
     table.set_sort(Some((2, SortOrder::Ascending)));
     assert_eq!(table.sort(), None);
+    Ok(())
+}
+
+/// Keyboard focus moving into a `List`, `Table` or `Tree` (the first focus the
+/// window gives on showing, or Shift+Tab) focuses a row without selecting it, so
+/// nothing is notified. `GtkListBoxRow` itself selects the row it focuses; naui's
+/// rows leave that to clicks and arrow keys, which still select.
+fn focus_entering_rows_does_not_select(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    list.set_items(&ListItem::list(["札幌", "東京", "那覇"]));
+    let table = ui.table()?;
+    table.set_columns(&[TableColumn::new("番号"), TableColumn::new("名前")]);
+    table.set_rows(&[TableRow::new(["1", "札幌"]), TableRow::new(["2", "東京"])]);
+    let tree = ui.tree()?;
+    tree.set_items(&[TreeItem::new("main.rs"), TreeItem::new("lib.rs")]);
+
+    let log = Rc::new(RefCell::new(Vec::<Vec<usize>>::new()));
+    let notify = || {
+        let log = log.clone();
+        move |selection: &[usize]| log.borrow_mut().push(selection.to_vec())
+    };
+    list.on_select(notify());
+    table.on_select(notify());
+    tree.on_select(notify());
+
+    let check =
+        |name: &str, widget: &dyn Fn(&naui_gtk::Stack), native: gtk::ListBox| -> Result<()> {
+            log.borrow_mut().clear();
+            let window = ui.window(name, 320.0, 240.0)?;
+            let stack = ui.stack(Orientation::Vertical)?;
+            widget(&stack);
+            let after = ui.button("後ろ")?;
+            stack.append(&after);
+            window.set_child(&stack);
+            window.show();
+            spin_until(std::time::Duration::from_millis(300), || false);
+            assert!(
+                native.focus_child().is_some(),
+                "{name}: 最初のフォーカスが行に入る"
+            );
+            assert!(
+                native.selected_row().is_none(),
+                "{name}: 最初のフォーカスでは選ばない"
+            );
+
+            after.native_widget().grab_focus();
+            window
+                .native_window()
+                .child_focus(gtk::DirectionType::TabBackward);
+            assert!(
+                native.focus_child().is_some(),
+                "{name}: Shift+Tab で行に入る"
+            );
+            assert!(
+                native.selected_row().is_none(),
+                "{name}: Shift+Tab でも選ばない"
+            );
+            assert!(
+                log.borrow().is_empty(),
+                "{name}: 通知しない: {:?}",
+                log.borrow()
+            );
+
+            // 矢印キー (`move-cursor`) では今までどおり選ぶ。
+            native.emit_by_name::<()>(
+                "move-cursor",
+                &[&gtk::MovementStep::DisplayLines, &-1i32, &false, &false],
+            );
+            assert!(native.selected_row().is_some(), "{name}: 矢印キーで選ぶ");
+            assert_eq!(log.borrow().len(), 1, "{name}: 矢印キーの選択は通知する");
+            window.close();
+            Ok(())
+        };
+    check("一覧", &|stack| stack.append(&list), list_box_of(&list))?;
+    check("表", &|stack| stack.append(&table), table.native_list_box())?;
+    check("ツリー", &|stack| stack.append(&tree), tree_box_of(&tree))?;
     Ok(())
 }
 
