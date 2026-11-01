@@ -250,6 +250,26 @@ fn main() {
             grid_fill_track_expands_child,
         ),
         (
+            "グリッドの Fill の列と行が重みで余りを分ける",
+            grid_fill_weights_split_the_room,
+        ),
+        (
+            "グリッドの Fill の列は中身の最小を下回らず、残りを分け直す",
+            grid_fill_keeps_the_content_minimum,
+        ),
+        (
+            "グリッドの余りは Fill の列だけが受け取り、自然な幅で偏らない",
+            grid_fill_takes_the_rest_from_auto_columns,
+        ),
+        (
+            "グリッドの折り返す文字は配られる幅で高さを測る",
+            grid_measures_wrapping_text_at_its_share,
+        ),
+        (
+            "右から左の文字ではグリッドの列が反転する",
+            grid_mirrors_columns_right_to_left,
+        ),
+        (
             "グリッドの中身に合わせる子がマスの先頭に置かれる",
             grid_places_auto_children_at_the_start,
         ),
@@ -2541,12 +2561,18 @@ fn grid_places_children(ui: &Ui) -> Result<()> {
     assert_eq!(grid.columns(), 2);
     assert_eq!(grid.rows(), 2);
 
-    let native: gtk::Grid = grid.native_widget().downcast().expect("GtkGrid");
+    let native = grid.native_widget();
     assert_eq!(children(&native).len(), 3);
 
+    // 2 列 2 行なので、すき間は横にも縦にも 1 つずつ。
+    let width = measure_width(&native);
+    let height = measure_height_for(&native, -1);
     grid.set_spacing(12.0, 8.0);
-    assert_eq!(native.column_spacing(), 12);
-    assert_eq!(native.row_spacing(), 8);
+    assert_eq!(measure_width(&native), (width.0 + 12, width.1 + 12));
+    assert_eq!(
+        measure_height_for(&native, -1),
+        (height.0 + 8, height.1 + 8)
+    );
     Ok(())
 }
 
@@ -2560,7 +2586,7 @@ fn grid_replaces_child(ui: &Ui) -> Result<()> {
     grid.replace(&second, GridCell::new(0, 0));
     assert_eq!(grid.len(), 1);
 
-    let native: gtk::Grid = grid.native_widget().downcast().expect("GtkGrid");
+    let native = grid.native_widget();
     let placed = children(&native);
     assert_eq!(placed.len(), 1);
     assert_eq!(placed[0], bin_of(&second));
@@ -2628,6 +2654,175 @@ fn grid_fill_track_expands_child(ui: &Ui) -> Result<()> {
     wide.set_sizing(Sizing::fill_width());
     grid.attach(&wide, GridCell::new(1, 1));
     assert_eq!(bin_of(&wide).halign(), gtk::Align::Fill);
+    Ok(())
+}
+
+/// Lays a grid out at the given size, as its parent would, and returns where each
+/// child's container (`SizeBin`) ended up: `(x, y, width, height)`.
+fn lay_out_grid(
+    grid: &naui_gtk::Grid,
+    width: i32,
+    height: i32,
+    children: &[&dyn Widget],
+) -> Vec<(f32, f32, f32, f32)> {
+    let native = grid.native_widget();
+    // 親と同じく、先に測ってから配る (測らずに配ると GTK4 が警告する)。
+    native.measure(gtk::Orientation::Horizontal, -1);
+    native.measure(gtk::Orientation::Vertical, width);
+    native.size_allocate(&gtk::Allocation::new(0, 0, width, height), -1);
+    children
+        .iter()
+        .map(|child| {
+            let bounds = bin_of(*child)
+                .compute_bounds(&native)
+                .expect("グリッドの中の位置");
+            (bounds.x(), bounds.y(), bounds.width(), bounds.height())
+        })
+        .collect()
+}
+
+/// `Fill` columns and rows split the room by weight, as CSS's `fr` (Web) and
+/// `Star` (Windows) do. `GtkGrid` split it evenly.
+fn grid_fill_weights_split_the_room(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_spacing(8.0, 4.0);
+    grid.set_column_track(0, Track::Fill(1.0));
+    grid.set_column_track(1, Track::Fill(3.0));
+    grid.set_row_track(0, Track::Fill(2.0));
+    grid.set_row_track(1, Track::Fill(1.0));
+    let cells: Vec<naui_gtk::Stack> = (0..4)
+        .map(|_| {
+            let cell = ui.stack(Orientation::Vertical)?;
+            cell.set_sizing(Sizing::fill());
+            Ok(cell)
+        })
+        .collect::<Result<_>>()?;
+    for (index, cell) in cells.iter().enumerate() {
+        grid.attach(cell, GridCell::new(index % 2, index / 2));
+    }
+    let widgets: Vec<&dyn Widget> = cells.iter().map(|cell| cell as &dyn Widget).collect();
+    let placed = lay_out_grid(&grid, 408, 304, &widgets);
+    // 横は 408 - 8 = 400 を 1 : 3、縦は 304 - 4 = 300 を 2 : 1。
+    assert_eq!(placed[0], (0.0, 0.0, 100.0, 200.0), "{placed:?}");
+    assert_eq!(placed[1], (108.0, 0.0, 300.0, 200.0), "{placed:?}");
+    assert_eq!(placed[2], (0.0, 204.0, 100.0, 100.0), "{placed:?}");
+    assert_eq!(placed[3], (108.0, 204.0, 300.0, 100.0), "{placed:?}");
+
+    // 重みをあとから変えても分け直す。
+    grid.set_column_track(1, Track::Fill(1.0));
+    let placed = lay_out_grid(&grid, 408, 304, &widgets);
+    assert_eq!(placed[0].2, 200.0, "{placed:?}");
+    assert_eq!(placed[1].2, 200.0, "{placed:?}");
+    Ok(())
+}
+
+/// A `Fill` column never gets less than its content needs. It keeps that, and the
+/// other `Fill` columns share what is left by their weights (as CSS's `fr`).
+fn grid_fill_keeps_the_content_minimum(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::Fill(1.0));
+    grid.set_column_track(1, Track::Fill(1.0));
+    grid.set_column_track(2, Track::Fill(2.0));
+    let wide = ui.stack(Orientation::Vertical)?;
+    wide.set_sizing(Sizing::fill().min_width(180.0));
+    let middle = ui.stack(Orientation::Vertical)?;
+    middle.set_sizing(Sizing::fill());
+    let last = ui.stack(Orientation::Vertical)?;
+    last.set_sizing(Sizing::fill());
+    grid.attach(&wide, GridCell::new(0, 0));
+    grid.attach(&middle, GridCell::new(1, 0));
+    grid.attach(&last, GridCell::new(2, 0));
+    // 1 : 1 : 2 なら 100 : 100 : 200 だが、1 列目は 180 要る。残り 220 を 1 : 2。
+    let placed = lay_out_grid(&grid, 400, 40, &[&wide, &middle, &last]);
+    let widths: Vec<f32> = placed.iter().map(|p| p.2).collect();
+    assert_eq!(widths[0], 180.0, "{placed:?}");
+    assert!((widths[1] - 73.0).abs() <= 1.0, "{placed:?}");
+    assert!((widths[2] - 147.0).abs() <= 1.0, "{placed:?}");
+    assert_eq!(
+        widths.iter().sum::<f32>(),
+        400.0,
+        "画素を余らせない: {placed:?}"
+    );
+    Ok(())
+}
+
+/// The leftover goes only to the `Fill` columns: an `Auto` column keeps its
+/// natural width even when a child in it grows, and two `Fill` columns of equal
+/// weight get the same width whatever their content's natural width. `GtkGrid`
+/// gave each its natural width plus an even share of the rest.
+fn grid_fill_takes_the_rest_from_auto_columns(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::Auto);
+    grid.set_column_track(1, Track::FILL);
+    grid.set_column_track(2, Track::FILL);
+    let name = ui.label("名前")?;
+    let growing = ui.stack(Orientation::Vertical)?;
+    growing.set_sizing(Sizing::fill().min_width(40.0));
+    let short = ui.label("短い")?;
+    let long = ui.label("こちらはずっと長い文字です")?;
+    let below = ui.stack(Orientation::Vertical)?;
+    below.set_sizing(Sizing::fill());
+    let other = ui.stack(Orientation::Vertical)?;
+    other.set_sizing(Sizing::fill());
+    grid.attach(&name, GridCell::new(0, 0));
+    grid.attach(&growing, GridCell::new(0, 1));
+    grid.attach(&short, GridCell::new(1, 0));
+    grid.attach(&long, GridCell::new(2, 0));
+    grid.attach(&below, GridCell::new(1, 1));
+    grid.attach(&other, GridCell::new(2, 1));
+
+    let auto = measure_width(&bin_of(&name)).1.max(40);
+    let placed = lay_out_grid(&grid, 600, 80, &[&growing, &below, &other]);
+    assert_eq!(
+        placed[0].2, auto as f32,
+        "Auto の列は余りを受け取らない: {placed:?}"
+    );
+    assert_eq!(placed[1].2, placed[2].2, "同じ重みの列は同じ幅: {placed:?}");
+    assert_eq!(placed[1].2 + placed[2].2, (600 - auto) as f32, "{placed:?}");
+    Ok(())
+}
+
+/// A wrapping label is measured for the width its `Fill` column actually gets, so
+/// the row is as tall as the text needs at that width.
+fn grid_measures_wrapping_text_at_its_share(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::Fill(1.0));
+    grid.set_column_track(1, Track::Fill(3.0));
+    let text = "折り返す文字。".repeat(12);
+    let narrow = ui.label(&text)?;
+    narrow.set_wrap(true);
+    let wide = ui.label(&text)?;
+    wide.set_wrap(true);
+    grid.attach(&narrow, GridCell::new(0, 0));
+    grid.attach(&wide, GridCell::new(1, 0));
+
+    let native = grid.native_widget();
+    assert_eq!(native.request_mode(), gtk::SizeRequestMode::HeightForWidth);
+    let row = measure_height_for(&native, 400).0;
+    let at_share = measure_height_for(&bin_of(&narrow), 100).0;
+    assert_eq!(row, at_share, "1 列目の幅 100 で測った高さが行の高さ");
+    assert!(
+        at_share > measure_height_for(&bin_of(&wide), 300).0,
+        "狭い列ほど行が多い"
+    );
+    Ok(())
+}
+
+/// In right-to-left text the first column is on the right, as in `GtkGrid`.
+fn grid_mirrors_columns_right_to_left(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::Fill(1.0));
+    grid.set_column_track(1, Track::Fill(3.0));
+    let first = ui.stack(Orientation::Vertical)?;
+    first.set_sizing(Sizing::fill());
+    let second = ui.stack(Orientation::Vertical)?;
+    second.set_sizing(Sizing::fill());
+    grid.attach(&first, GridCell::new(0, 0));
+    grid.attach(&second, GridCell::new(1, 0));
+    grid.native_widget().set_direction(gtk::TextDirection::Rtl);
+    let placed = lay_out_grid(&grid, 400, 40, &[&first, &second]);
+    assert_eq!((placed[0].0, placed[0].2), (300.0, 100.0), "{placed:?}");
+    assert_eq!((placed[1].0, placed[1].2), (0.0, 300.0), "{placed:?}");
     Ok(())
 }
 

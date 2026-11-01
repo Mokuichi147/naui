@@ -1,7 +1,9 @@
 //! Layout containers (`Grid` / `Scroll` / `Spacer`).
 //!
-//! The computing is done by GTK4's layout (`GtkGrid` / `GtkScrolledWindow`); naui
-//! only writes properties.
+//! The computing is done by GTK4's layout (`GtkScrolledWindow` and the children's
+//! own measuring); naui only writes properties. The exception is how a `Grid`
+//! splits its room among columns and rows, which naui decides
+//! ([`TrackGrid`](crate::grid::TrackGrid)), since `GtkGrid` has no weights.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -13,41 +15,40 @@ use naui_core::{
 };
 
 use crate::bin::{apply_padding, Placement, SizeBin};
+use crate::grid::TrackGrid;
 use crate::widgets::{impl_widget, Widget};
 
 // ------------------------------------------------------------------- Grid
 
 struct GridInner {
-    native: gtk::Grid,
+    native: TrackGrid,
     bin: SizeBin,
     /// The placed children and their positions. Kept so the column / row settings can
     /// be changed later.
     children: RefCell<Vec<(GridCell, Box<dyn Widget>)>>,
-    column_tracks: RefCell<Vec<Track>>,
-    row_tracks: RefCell<Vec<Track>>,
 }
 
-/// A container that positions children by row and column (`GtkGrid`).
+/// A container that positions children by row and column.
+///
+/// Not a `GtkGrid`: naui places the children itself (a widget named `NauiGrid`)
+/// so that the weights of [`Track::Fill`] work.
 #[derive(Clone)]
 pub struct Grid(Rc<GridInner>);
 impl_widget!(Grid);
 
 impl Grid {
     pub(crate) fn new() -> Self {
-        let native = gtk::Grid::new();
+        let native = TrackGrid::new();
         let bin = SizeBin::wrap(&native);
         Self(Rc::new(GridInner {
             native,
             bin,
             children: RefCell::new(Vec::new()),
-            column_tracks: RefCell::new(Vec::new()),
-            row_tracks: RefCell::new(Vec::new()),
         }))
     }
 
     pub fn set_spacing(&self, column: f64, row: f64) {
-        self.0.native.set_column_spacing(to_px(column) as u32);
-        self.0.native.set_row_spacing(to_px(row) as u32);
+        self.0.native.set_spacing(to_px(column), to_px(row));
     }
 
     pub fn set_padding(&self, padding: Padding) {
@@ -58,13 +59,7 @@ impl Grid {
     /// something.
     pub fn attach(&self, child: &dyn Widget, cell: GridCell) {
         let bin = child.size_bin();
-        self.0.native.attach(
-            &bin,
-            cell.column as i32,
-            cell.row as i32,
-            cell.column_span as i32,
-            cell.row_span as i32,
-        );
+        self.0.native.attach(&bin, cell);
         self.apply_tracks_to(&bin, cell);
         self.0
             .children
@@ -116,20 +111,18 @@ impl Grid {
 
     /// How a column's width is determined.
     ///
-    /// `GtkGrid` cannot give columns a width of their own, so this is applied **to the
-    /// children in that column**. A column's width follows its largest content, so
-    /// this ends up setting the column width. `GtkGrid` has no weights for
-    /// [`Track::Fill`]; leftover space is split evenly among the growing columns (the
-    /// same limitation as macOS).
+    /// A `Fixed` width is applied **to the children in that column**; a column's
+    /// width follows its largest content, so this ends up setting the column width.
+    /// `Fill` columns split the leftover space by weight.
     pub fn set_column_track(&self, index: usize, track: Track) {
-        set_track(&self.0.column_tracks, index, track);
+        self.0.native.set_column_track(index, track);
         self.reapply_tracks();
     }
 
     /// How a row's height is determined. Has the same limitations as
     /// [`Grid::set_column_track`].
     pub fn set_row_track(&self, index: usize, track: Track) {
-        set_track(&self.0.row_tracks, index, track);
+        self.0.native.set_row_track(index, track);
         self.reapply_tracks();
     }
 
@@ -145,10 +138,10 @@ impl Grid {
     /// widths (it would be unclear which column's width they decide).
     fn apply_tracks_to(&self, bin: &SizeBin, cell: GridCell) {
         let column = (cell.column_span == 1)
-            .then(|| self.0.column_tracks.borrow().get(cell.column).copied())
+            .then(|| self.0.native.column_track(cell.column))
             .flatten();
         let row = (cell.row_span == 1)
-            .then(|| self.0.row_tracks.borrow().get(cell.row).copied())
+            .then(|| self.0.native.row_track(cell.row))
             .flatten();
         bin.set_placement(Placement::Grid { column, row });
     }
@@ -182,15 +175,6 @@ impl Grid {
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-}
-
-/// Writes a column / row setting, first extending the list as far as needed.
-fn set_track(tracks: &RefCell<Vec<Track>>, index: usize, track: Track) {
-    let mut tracks = tracks.borrow_mut();
-    if tracks.len() <= index {
-        tracks.resize(index + 1, Track::Auto);
-    }
-    tracks[index] = track;
 }
 
 // ----------------------------------------------------------------- Scroll

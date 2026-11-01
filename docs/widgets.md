@@ -18,7 +18,7 @@ Legend:
 | --- | --- | --- | --- | --- |
 | `Window` | ✅ `Microsoft.UI.Xaml.Window` | ✅ `NSWindow` | ✅ `AdwApplicationWindow` | 🔴 `<div>` + `document.title` |
 | `Stack` | 🟡 `Grid` (a track per child) | ✅ `NSStackView` | ✅ `GtkBox` | 🟡 `<div>` + CSS Flexbox |
-| `Grid` | ✅ `Grid` | ✅ `NSGridView` | 🟡 `GtkGrid` | 🟡 `<div>` + CSS Grid |
+| `Grid` | ✅ `Grid` | ✅ `NSGridView` | 🔴 naui's own container, laid out like `GtkGrid` | 🟡 `<div>` + CSS Grid |
 | `Scroll` | ✅ `ScrollViewer` | ✅ `NSScrollView` | ✅ `GtkScrolledWindow` | 🟡 `<div>` + `overflow` |
 | `Spacer` | 🟡 An empty `Grid` | 🟡 An empty `NSView` | 🟡 An empty `GtkBox` | 🟡 `<div>` + `flex-grow` |
 | `Expander` | ✅ `Expander` | 🟡 `NSButton` (disclosure) + `NSStackView` | ✅ `GtkExpander` | ✅ `<details>` + `<summary>` |
@@ -286,8 +286,17 @@ collected in [Known limitations](known-limitations.md).
   `fittingSize` of their cell content as the row height, and `Fill` children get a
   weak preference to grow up to "the grid size − the width the other columns need"
   (fixed-width columns are estimated by their specified width, the rest by their
-  cell content's `fittingSize`). **Auto Layout decides the positions and sizes
-  themselves**; naui does not set frames. Rows and columns that cross a merge cannot
+  cell content's `fittingSize`). `NSGridView` has no weights either, so when two or
+  more `Fill` tracks share the room, that preference is replaced: naui decides
+  which tracks take a share and which stay at what they need (naui-core's
+  `distribute_fill`, the rule of CSS's `fr`), and each `Fill` child wishes for its
+  cell's share written as a proportion of the grid (`width = k × grid + c`). Two
+  children each wishing for "everything the others do not need" cannot both be
+  satisfied, and the solver would settle it by shrinking the grid and the window;
+  proportions hold together at any size, so resizing keeps the weights by itself.
+  They stay below a window keeping its size (priority 490), so they never resize a
+  window. **Auto Layout decides the positions and sizes themselves**; naui does not
+  set frames. Rows and columns that cross a merge cannot
   be removed because AppKit throws an exception when you try.
 - **`SplitView`**: `NSSplitView` itself. However, **naui replaces only how the
   panes are sized** (`splitView:resizeSubviewsWithOldSize:`). `NSSplitView`'s
@@ -370,6 +379,17 @@ collected in [Known limitations](known-limitations.md).
 
 ### Linux construction
 
+- **`Grid`**: Not a `GtkGrid` but naui's own container (`NauiGrid`). `GtkGrid`
+  gives each column its natural width and splits what is left **evenly** among the
+  growing columns, so `Track::Fill` weights could not work, and two `Fill` columns
+  differed by their content. The container measures the children as `GtkGrid` does
+  (lines without a shown child take no room or spacing, a spanning child spreads
+  what it lacks over the lines it crosses, heights are measured for the widths the
+  columns get, columns mirror in right-to-left text) and splits the room with
+  naui-core's `allocate_tracks`: `Fill` tracks share the leftover by weight, never
+  below what their content needs, and without a `Fill` track the leftover goes to
+  the lines whose children grow, as before. GTK4 still places each child inside its
+  cell (margins, `halign` / `valign`).
 - **`SplitView`**: A `GtkPaned`. The panes' minimum sizes are held by a container
   wrapped around each pane, so they do not conflict with the `size_request` the app
   specifies with `Sizing`.

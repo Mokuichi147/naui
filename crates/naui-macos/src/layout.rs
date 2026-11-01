@@ -11,7 +11,8 @@ use std::rc::Weak;
 
 use dispatch2::{DispatchQueue, MainThreadBound};
 use naui_core::{
-    GridCell, Padding, ScrollMetrics, ScrollNotifier, ScrollPolicy, ScrollTarget, Sizing, Track,
+    distribute_fill, GridCell, Padding, ScrollMetrics, ScrollNotifier, ScrollPolicy, ScrollTarget,
+    Sizing, Track,
 };
 use objc2::rc::{Allocated, Retained};
 use objc2::runtime::NSObjectProtocol;
@@ -74,6 +75,16 @@ const GRID_GROW_ID: &str = "naui.grid.grow";
 /// Any stronger and `Fill` rows would take too much, squashing the content of
 /// `Auto` rows (headings shrink to 30pt).
 const GRID_GROW_PRIORITY: NSLayoutPriority = HUG_CONTENT - 1.0;
+
+/// The priority of "want to be this share of the grid", which takes the place of
+/// the wish above when several `Fill` tracks split the room by weight.
+///
+/// The shares hold at any size together, but while a track turns from taking a
+/// share to staying at what it needs, they briefly ask for more than there is.
+/// So they stay **below a window keeping its size** (`NSLayoutPriorityWindowSizeStayPut`
+/// = 500) and never resize a window, while still beating the weak preference
+/// with which `NSGridView` hands out leftover space (250).
+const GRID_SHARE_PRIORITY: NSLayoutPriority = 490.0;
 
 /// The priority of the wish "want to grow up to the maximum" placed on a grid child
 /// whose `Fill` has a maximum, in place of [`GRID_GROW_PRIORITY`].
@@ -399,13 +410,64 @@ pub(crate) fn relax_hugging(view: &NSView) {
 /// height is recomputed only for Auto rows.
 type GridCells = Rc<RefCell<Vec<(Retained<NSView>, GridCell)>>>;
 
-/// The "want to grow" wishes placed on `Fill` children, where they are placed, and
-/// whether they are horizontal.
+/// The "want to grow" wishes placed on `Fill` children.
 ///
 /// How much they grow depends on the sizes the other columns (rows) need, so the
 /// constants are recomputed on every layout. For that, the constraints are kept
 /// together with their positions.
-type GridGrows = Rc<RefCell<Vec<(Retained<NSLayoutConstraint>, GridCell, bool)>>>;
+type GridGrows = Rc<RefCell<Vec<GridGrow>>>;
+
+/// The wishes of one `Fill` child in one direction.
+struct GridGrow {
+    view: Retained<NSView>,
+    /// "Want to be as large as the grid, less what the other tracks need", or for a
+    /// child whose `Fill` has a maximum ([`Self::capped`]), "want to grow up to the
+    /// maximum". Used while at most one `Fill` track takes the leftover.
+    grow: Retained<NSLayoutConstraint>,
+    /// Whether the child's `Fill` has a maximum. Its `grow` has a fixed constant.
+    capped: bool,
+    /// "Want to be this share of the grid", in place of `grow` while two or more
+    /// `Fill` tracks split the room by weight
+    /// ([`ContentSizedGridView::share_grow`]).
+    share: Option<Retained<NSLayoutConstraint>>,
+    cell: GridCell,
+    horizontal: bool,
+}
+
+/// How the `Fill` tracks in one direction split the room
+/// ([`ContentSizedGridView::fill_split`]).
+struct FillSplit {
+    /// The weight of each track that takes a share. `None` for the tracks that
+    /// stay at what they need (`Auto`, `Fixed`, and `Fill` tracks whose content
+    /// needs more than their share).
+    weights: Vec<Option<f64>>,
+    /// What each track needs.
+    needs: Vec<f64>,
+    /// The sum of the weights that take a share.
+    total_weight: f64,
+    /// What the shares do not get: the tracks that stay at what they need, the
+    /// spacing between tracks and the outer padding.
+    base: f64,
+}
+
+impl FillSplit {
+    /// The size of a cell as `k × grid + c`: its tracks' shares of what is left after
+    /// [`Self::base`], plus the tracks inside it that stay at what they need and
+    /// the spacing between them.
+    fn cell(&self, start: usize, span: usize, spacing: f64) -> (f64, f64) {
+        let end = (start + span).min(self.weights.len());
+        let start = start.min(end);
+        let mut k = 0.0;
+        let mut constant = spacing * (end - start).saturating_sub(1) as f64;
+        for index in start..end {
+            match self.weights[index] {
+                Some(weight) => k += weight / self.total_weight,
+                None => constant += self.needs[index],
+            }
+        }
+        (k, constant - k * self.base)
+    }
+}
 
 struct ContentSizedGridState {
     row_tracks: Rc<RefCell<Vec<Track>>>,
@@ -561,7 +623,7 @@ impl ContentSizedGridView {
     /// height would squash them (a row whose child stops at a maximum only wishes
     /// weakly for it).
     fn update_grow_sizes(&self) -> bool {
-        let grows = self.ivars().grows.borrow();
+        let mut grows = self.ivars().grows.borrow_mut();
         if grows.is_empty() {
             return false;
         }
@@ -571,26 +633,196 @@ impl ContentSizedGridView {
             self.track_needs(false, true),
         );
         let size = self.frame().size;
+        let splits = (
+            self.fill_split(true, &widths.0, size.width),
+            self.fill_split(false, &heights.0, size.height),
+        );
         let mut changed = false;
-        for (constraint, cell, horizontal) in grows.iter() {
-            let (needs, room) = if *horizontal {
-                (&widths, size.width)
+        for grow in grows.iter_mut() {
+            let (needs, room, split) = if grow.horizontal {
+                (&widths, size.width, &splits.0)
             } else {
-                (&heights, size.height)
+                (&heights, size.height, &splits.1)
             };
+            if let Some(split) = split {
+                changed |= self.share_grow(grow, split);
+                continue;
+            }
+            if let Some(share) = grow.share.take() {
+                share.setActive(false);
+                changed = true;
+            }
+            if !grow.grow.isActive() {
+                grow.grow.setActive(true);
+                changed = true;
+            }
+            if grow.capped {
+                continue;
+            }
             // 上限付きのトラックに残す分 (望む分から必須の分を引いたもの) は、
             // グリッドの今の大きさのうち必須の分を除いた残りまでに抑える。抑えないと、
             // 上限より狭いときにこの子が負の大きさを望み、その差を埋めようと
             // グリッド (ひいてはウィンドウ) を押し広げる。
-            let required = self.outside_cell(cell, *horizontal, &needs.0);
-            let wished = self.outside_cell(cell, *horizontal, &needs.1);
+            let required = self.outside_cell(&grow.cell, grow.horizontal, &needs.0);
+            let wished = self.outside_cell(&grow.cell, grow.horizontal, &needs.1);
             let outside = required + (wished - required).min((room - required).max(0.0));
-            if (constraint.constant() + outside).abs() > 0.5 {
-                constraint.setConstant(-outside);
+            if (grow.grow.constant() + outside).abs() > 0.5 {
+                grow.grow.setConstant(-outside);
                 changed = true;
             }
         }
         changed
+    }
+
+    /// How the `Fill` tracks split the room by weight in one direction.
+    ///
+    /// `NSGridView` has no weights, so naui splits the room with naui-core's
+    /// [`distribute_fill`] (CSS's `fr`: by weight, never below what a track needs).
+    /// What is decided here is which tracks take a share and which stay at what
+    /// they need; the shares themselves are left to Auto Layout as proportions of
+    /// the grid's size ([`Self::share_grow`]).
+    ///
+    /// `None` when fewer than two `Fill` tracks hold a shown child: one `Fill`
+    /// track takes the whole rest, which the wish to grow already gives it.
+    fn fill_split(&self, horizontal: bool, needs: &[f64], room: f64) -> Option<FillSplit> {
+        let tracks = if horizontal {
+            self.ivars().column_tracks.borrow()
+        } else {
+            self.ivars().row_tracks.borrow()
+        };
+        let count = needs.len();
+        let mut covered = vec![false; count];
+        for (view, cell) in self.ivars().cells.borrow().iter() {
+            if view.isHidden() {
+                continue;
+            }
+            let (start, span) = if horizontal {
+                (cell.column, cell.column_span.max(1))
+            } else {
+                (cell.row, cell.row_span.max(1))
+            };
+            for flag in covered.iter_mut().take(start + span).skip(start) {
+                *flag = true;
+            }
+        }
+        let fills: Vec<usize> = (0..count)
+            .filter(|index| covered[*index] && tracks.get(*index).is_some_and(|t| t.is_fill()))
+            .collect();
+        if fills.len() < 2 {
+            return None;
+        }
+        let outside = self.outside_tracks(horizontal, count);
+        // Fill 以外のトラック、トラック間のすき間、外周の余白を除いた残りを分ける。
+        let rest = room
+            - outside
+            - (0..count)
+                .filter(|index| !fills.contains(index))
+                .map(|index| needs[index])
+                .sum::<f64>();
+        let requests: Vec<(f64, f64)> = fills
+            .iter()
+            .map(|index| (tracks[*index].weight(), needs[*index]))
+            .collect();
+        let mut weights: Vec<Option<f64>> = vec![None; count];
+        for ((index, size), (weight, need)) in fills
+            .iter()
+            .zip(distribute_fill(rest, &requests))
+            .zip(requests)
+        {
+            // 必要な分で止まったトラックは、取り分ではなく必要な分を受け取る。
+            // ちょうど境目 (取り分と必要な分が同じ) ならどちらで扱っても同じ大きさ。
+            if size > need + 0.5 || need <= 0.0 {
+                weights[*index] = Some(weight);
+            }
+        }
+        let total_weight: f64 = weights.iter().flatten().sum();
+        if total_weight <= 0.0 {
+            return None;
+        }
+        let base = outside
+            + (0..count)
+                .filter(|index| weights[*index].is_none())
+                .map(|index| needs[index])
+                .sum::<f64>();
+        Some(FillSplit {
+            weights,
+            needs: needs.to_vec(),
+            total_weight,
+            base,
+        })
+    }
+
+    /// Makes a `Fill` child wish for its cell's share of the grid instead of
+    /// "everything the other tracks do not need". Returns whether anything changed.
+    ///
+    /// Two `Fill` children wishing for everything cannot both be satisfied, and the
+    /// solver resolves that by shrinking the grid (and the window). A share is
+    /// written as a proportion of the grid's size (`child = k × grid + c`), so every
+    /// share holds at any size and nothing pulls on the grid: resizing the window
+    /// keeps the weights without naui recomputing anything, and only which tracks
+    /// stay at what they need is decided on each layout. The proportion `k` cannot
+    /// be changed on an existing constraint, so a new one replaces it when `k`
+    /// changes.
+    fn share_grow(&self, grow: &mut GridGrow, split: &FillSplit) -> bool {
+        let mut changed = false;
+        if grow.grow.isActive() {
+            grow.grow.setActive(false);
+            changed = true;
+        }
+        let spacing = if grow.horizontal {
+            self.columnSpacing()
+        } else {
+            self.rowSpacing()
+        };
+        let (start, span) = if grow.horizontal {
+            (grow.cell.column, grow.cell.column_span.max(1))
+        } else {
+            (grow.cell.row, grow.cell.row_span.max(1))
+        };
+        let (k, constant) = split.cell(start, span, spacing);
+        if k <= 0.0 {
+            // 取り分を受け取るトラックにかからない子は、マスに合わせるだけ。
+            if let Some(share) = grow.share.take() {
+                share.setActive(false);
+                changed = true;
+            }
+            return changed;
+        }
+        if let Some(share) = &grow.share {
+            if (share.multiplier() - k).abs() < 1e-9 {
+                if (share.constant() - constant).abs() > 0.5 {
+                    share.setConstant(constant);
+                    changed = true;
+                }
+                return changed;
+            }
+            share.setActive(false);
+        }
+        let share = if grow.horizontal {
+            grow.view
+                .widthAnchor()
+                .constraintEqualToAnchor_multiplier_constant(&self.widthAnchor(), k, constant)
+        } else {
+            grow.view
+                .heightAnchor()
+                .constraintEqualToAnchor_multiplier_constant(&self.heightAnchor(), k, constant)
+        };
+        // 上限付きの子は、上限まで伸びたいという希望と同じ弱さで取り分を望む。
+        // 取り分が上限より小さい間は満たされるので、グリッドを押し広げない
+        // (上限へ向けて伸びたいままだと、取り分はグリッドに比例するので、
+        // 縦の Scroll の中でグリッドごと上限まで伸ばしてしまう)。
+        share.setPriority(if grow.capped {
+            GRID_CAPPED_GROW_PRIORITY
+        } else {
+            GRID_SHARE_PRIORITY
+        });
+        share.setIdentifier(Some(&NSString::from_str(&grow_identifier(
+            &grow.cell,
+            grow.horizontal,
+        ))));
+        share.setActive(true);
+        grow.share = Some(share);
+        true
     }
 
     /// The size each column (row) needs, or wishes for with `wished`.
@@ -667,17 +899,32 @@ impl ContentSizedGridView {
             .sum();
         // トラック間のすき間。セルがまたぐぶんはセルの取り分なので数えない。
         outside += spacing * tracks.saturating_sub(span) as f64;
-        // 外周の余白 (apply_padding が両端のトラックへ入れる)。
-        for index in 0..tracks {
-            outside += if horizontal {
-                let column = self.columnAtIndex(index as isize);
-                column.leadingPadding() + column.trailingPadding()
-            } else {
-                let row = self.rowAtIndex(index as isize);
-                row.topPadding() + row.bottomPadding()
-            };
-        }
-        outside
+        outside + self.padding_sum(horizontal, tracks)
+    }
+
+    /// The spacing between all `tracks` tracks plus the outer padding.
+    fn outside_tracks(&self, horizontal: bool, tracks: usize) -> f64 {
+        let spacing = if horizontal {
+            self.columnSpacing()
+        } else {
+            self.rowSpacing()
+        };
+        spacing * tracks.saturating_sub(1) as f64 + self.padding_sum(horizontal, tracks)
+    }
+
+    /// The outer padding (which `apply_padding` puts into the tracks at both ends).
+    fn padding_sum(&self, horizontal: bool, tracks: usize) -> f64 {
+        (0..tracks)
+            .map(|index| {
+                if horizontal {
+                    let column = self.columnAtIndex(index as isize);
+                    column.leadingPadding() + column.trailingPadding()
+                } else {
+                    let row = self.rowAtIndex(index as isize);
+                    row.topPadding() + row.bottomPadding()
+                }
+            })
+            .sum()
     }
 }
 
@@ -939,15 +1186,30 @@ impl Grid {
     /// leftover. Such a child is not tied to the cell's edges (see `attach`), so the
     /// row grows past it and the child sits where an `Auto` child would (at the start
     /// horizontally, in the middle vertically).
+    ///
+    /// While two or more `Fill` tracks split the room by weight, both kinds of wish
+    /// are replaced by a wish for the cell's share
+    /// ([`ContentSizedGridView::share_grow`]).
     fn set_grow_hint(&self, view: &NSView, cell: &GridCell, horizontal: bool, wanted: bool) {
         let identifier = grow_identifier(cell, horizontal);
-        // 同じセルの古い希望は、定数を引き直す対象から外す。
-        self.0
-            .grows
-            .borrow_mut()
-            .retain(|(_, old, old_horizontal)| {
-                *old_horizontal != horizontal || old.column != cell.column || old.row != cell.row
+        // 同じセルの古い希望は、定数を引き直す対象から外す。止めてある希望は
+        // 名前で探しても見つからないので、ここで外す。
+        let stale: Vec<GridGrow> = {
+            let mut grows = self.0.grows.borrow_mut();
+            let (stale, kept) = std::mem::take(&mut *grows).into_iter().partition(|old| {
+                old.horizontal == horizontal
+                    && old.cell.column == cell.column
+                    && old.cell.row == cell.row
             });
+            *grows = kept;
+            stale
+        };
+        for old in stale {
+            old.grow.setActive(false);
+            if let Some(share) = old.share {
+                share.setActive(false);
+            }
+        }
         // 同じセルに前へ張った希望があれば外す。上限への希望は子のビュー自身に、
         // グリッドと結ぶ希望はグリッドに付いている。
         let previous: Vec<Retained<NSLayoutConstraint>> =
@@ -984,11 +1246,18 @@ impl Grid {
             GRID_GROW_PRIORITY
         });
         grow.setIdentifier(Some(&NSString::from_str(&identifier)));
-        NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[grow.clone()]));
-        // 上限への希望は定数が決まっているので、引き直す対象にしない。
-        if max.is_none() {
-            self.0.grows.borrow_mut().push((grow, *cell, horizontal));
-        }
+        grow.setActive(true);
+        // 重みで分けるトラックが 2 本以上あれば、update_grow_sizes が
+        // この希望を取り分への希望に置き換える。上限への希望は定数が決まって
+        // いるので、それ以外のときは引き直さない。
+        self.0.grows.borrow_mut().push(GridGrow {
+            view: view.retain(),
+            grow,
+            capped: max.is_some(),
+            share: None,
+            cell: *cell,
+            horizontal,
+        });
     }
 
     /// Replaces what is in the cell. Whatever was in the same cell is removed.

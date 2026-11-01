@@ -211,10 +211,17 @@ internationalization and application layer tracks.
 - [ ] **More image sources** (bytes in memory, SVG, pixel buffers). For now only
       paths and URLs, so an app cannot show an icon embedded with `include_bytes!`
       without writing it to a file. The Web can use Blob URLs.
-- [ ] **Make `Track::Fill` weights work in `Grid` on macOS and Linux.** Today they
-      are distributed evenly there, so the same code lays out differently than on
-      Windows and the Web. `NSGridView` and `GtkGrid` have no weights, so naui
-      distributes the space itself.
+- [x] **Make `Track::Fill` weights work in `Grid` on macOS and Linux.** naui-core
+      now splits the room with the rule of CSS's `fr` (by weight, never below what a
+      track's content needs, the rest split again among the others), and both
+      backends use it. Linux replaces `GtkGrid` with naui's own container, since
+      `GtkGrid` gave each column its natural width plus an even share, so `Fill`
+      columns of the same weight also differed by their content. macOS keeps
+      `NSGridView` and has each `Fill` child wish for its cell's share as a
+      proportion of the grid's size; when two or more
+      `Fill` tracks hold no `Fill` child, their split is still left to
+      `NSGridView`. A `Fill` track beside one with a capped child now gets its
+      share instead of everything but the cap, as on Windows and the Web.
 - [ ] *(app)* **Message queue and the split of `update` and `render`.** Create the
       crate with the model, message, `update` and `render`, and the queue that runs
       them as described in [Application layer](#application-layer). Since `render` sets every

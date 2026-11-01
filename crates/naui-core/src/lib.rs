@@ -3,7 +3,9 @@
 //! Value types that do not depend on a backend (AppKit / WinUI 3 / GTK4 / DOM),
 //! plus backend-independent message passing (channels / tasks). The widgets
 //! themselves are implemented by each backend as the OS's native controls, so
-//! there is no drawing or layout computation here.
+//! there is no drawing here. Layout is computed only where a native control has no
+//! say of its own and backends share the answer (such as how a grid's `Fill`
+//! tracks split the room by weight).
 
 #![forbid(unsafe_code)]
 
@@ -23,6 +25,7 @@ mod datetime;
 mod dialog;
 mod file;
 mod focus;
+mod grid;
 mod key;
 mod languages;
 mod layout;
@@ -64,6 +67,7 @@ pub use file::{
     FilePickerMode,
 };
 pub use focus::{FocusHandler, FocusOwner};
+pub use grid::{allocate_tracks, distribute_fill, TrackRequest};
 pub use key::{EventResponse, Key, KeyEvent, KeyHandler, Modifiers};
 pub use languages::{language_tags_from_locale_names, PreferredLanguages};
 pub use layout::{

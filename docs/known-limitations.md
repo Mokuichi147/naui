@@ -9,7 +9,7 @@ that shape are covered in
 
 | Item | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| Weights of `Grid`'s `Track::Fill` | Works | Distributed evenly | Distributed evenly | Works |
+| Weights of `Grid`'s `Track::Fill` | Works | Works (with one exception, see [macOS](#macos)) | Works | Works |
 | Stacking in the same `Grid` cell | Possible | Only the last placed one remains | Possible | Possible |
 | Dragging `Table` column widths | Not possible | Possible | Not possible | Not possible |
 | `EditableComboBox` narrowing options by typed text | No | No (only prefix completion) | No | The browser narrows |
@@ -231,7 +231,11 @@ that shape are covered in
 
 ### Layout
 
-- `Grid`'s `Track::Fill` does not reflect differences in weight.
+- `Grid`'s `Fill` tracks split the room by weight through the `Fill` children
+  (without a maximum) in them: each wishes for its track's share, and a `Fill`
+  track without such a child takes what is left. **When two or more `Fill`
+  tracks hold no such child, how the room is split between them is left to
+  `NSGridView`**, which has no weights.
 - **Children cannot be stacked in the same `Grid` cell.** The one placed later
   removes the earlier one (because `NSGridCell` can hold only one view).
 - **Removing a merged cell (a child with a span) from a `Grid` leaves the merge
@@ -240,7 +244,7 @@ that shape are covered in
   position and size as in a normal cell. There are two differences: a `Fill` child
   extends over the merged range, and placing a child at another position within the
   range removes the previous child because it is the same cell.
-- The height of `Grid`'s `Auto` rows, the share of `Fill` children, and the widths
+- The height of `Grid`'s `Auto` rows, the share of `Fill` tracks, and the widths
   of `Table` columns without a specified width are calculated by naui (an
   **exception** to "no layout calculation on the Rust side"), because `NSGridView`
   and `NSTableView` do not decide where leftover space goes. Auto Layout makes the
@@ -299,7 +303,6 @@ that shape are covered in
 
 ### Layout
 
-- `Grid`'s `Track::Fill` does not reflect differences in weight.
 - `SplitView` panes cannot be made smaller than the minimum size their content
   reports (because `GtkPaned` does not move the divider past a child's minimum).
 
