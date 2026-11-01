@@ -11324,11 +11324,17 @@ fn grid_fill_weights_split_the_room(ui: &Ui) -> Result<()> {
     // ウィンドウに接続していないビューなので、レイアウトのコールバックを
     // 直接呼び、制約を復元する処理を確実に通す。
     root.layout();
-    assert!(
-        shares.iter().all(|share| share.isActive()),
-        "同じ取り分の制約が再び有効になること"
-    );
     let frames = frames_in(&root, NSSize::new(408.0, 304.0), &views);
+    let restored = root.constraints();
+    for share in &shares {
+        assert!(
+            restored.iter().any(|constraint| {
+                constraint.isActive() && constraint.identifier() == share.identifier()
+            }),
+            "各取り分の制約が再利用または再作成されること: {:?}、枠 {frames:?}、制約 {restored:?}",
+            share.identifier()
+        );
+    }
     for (index, frame) in frames.iter().enumerate() {
         let height = if index < 2 { 200.0 } else { 100.0 };
         assert!(
