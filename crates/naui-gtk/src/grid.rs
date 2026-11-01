@@ -10,9 +10,10 @@
 //! What it keeps from `GtkGrid`:
 //!
 //! - Columns and rows without a shown child take neither room nor spacing.
-//! - A child spanning several cells that needs more than they have spreads the
-//!   difference over the `Fill` lines it spans, by their weights (evenly over the
-//!   growing ones when there is no `Fill`, all of them when none grows).
+//! - A child spanning several cells that needs more than they have distributes
+//!   the required size over the `Fill` lines by weight, keeping their existing
+//!   minimums (adding the difference evenly over the growing ones when there is
+//!   no `Fill`, all of them when none grows).
 //! - Without a `Fill` line, the leftover goes evenly to lines whose children grow
 //!   (`hexpand`).
 //! - Heights are measured for the widths the columns actually get, so wrapping
@@ -30,7 +31,7 @@
 
 use gtk::glib;
 use gtk::prelude::*;
-use naui_core::{allocate_tracks, GridCell, Track, TrackRequest};
+use naui_core::{allocate_tracks, distribute_fill, GridCell, Track, TrackRequest};
 
 use crate::bin::SizeBin;
 
@@ -391,11 +392,12 @@ impl TrackGrid {
     }
 }
 
-/// Spreads `missing` over the lines a spanning child crosses: the `Fill` ones by
-/// their weights (as CSS spreads a spanning item over flexible tracks), else the
-/// growing ones evenly, else all of them evenly. Spreading `Fill` lines evenly
-/// would hold the lighter ones above their share: a child of 400 across `Fill`
-/// 1 : 3 would make both columns at least 200, so 600 could not split 150 : 450.
+/// Spreads `missing` over the lines a spanning child crosses. `Fill` lines share
+/// their existing sizes plus `missing` by weight, holding each at its existing
+/// size when needed. Adding only the deficit by weight would needlessly grow a
+/// line already above its share: 180 : 0 across `Fill` 1 : 3 with a spanning child
+/// of 400 must become 180 : 220, not 235 : 165. Without `Fill`, the growing lines
+/// receive equal additions, or all lines when none grows.
 /// The pixels left over by rounding go to the lines that lost the most (the first
 /// ones on a tie).
 fn spread(lines: &mut [Line], missing: i32, field: impl Fn(&mut Line) -> &mut i32) {
@@ -417,10 +419,23 @@ fn spread(lines: &mut [Line], missing: i32, field: impl Fn(&mut Line) -> &mut i3
         })
         .collect();
     let total: f64 = targets.iter().map(|(_, weight)| weight).sum();
-    let exact: Vec<f64> = targets
-        .iter()
-        .map(|(_, weight)| f64::from(missing) * weight / total)
-        .collect();
+    let exact: Vec<f64> = if fill {
+        let requests: Vec<(f64, f64)> = targets
+            .iter()
+            .map(|(index, weight)| (*weight, f64::from(*field(&mut lines[*index]))))
+            .collect();
+        let room = f64::from(missing) + requests.iter().map(|(_, size)| size).sum::<f64>();
+        distribute_fill(room, &requests)
+            .into_iter()
+            .zip(&requests)
+            .map(|(size, (_, minimum))| (size - minimum).max(0.0))
+            .collect()
+    } else {
+        targets
+            .iter()
+            .map(|(_, weight)| f64::from(missing) * weight / total)
+            .collect()
+    };
     let mut extras: Vec<i32> = exact.iter().map(|share| share.floor() as i32).collect();
     let mut left = missing - extras.iter().sum::<i32>();
     let mut order: Vec<usize> = (0..targets.len()).collect();
@@ -538,4 +553,47 @@ fn set_track(tracks: &mut Vec<Track>, index: usize, track: Track) {
         tracks.resize(index + 1, Track::Auto);
     }
     tracks[index] = track;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn spanning_fills_respect_existing_sizes() {
+        // The same distribution is used for minimum, content minimum and natural size.
+        let fields: [fn(&mut Line) -> &mut i32; 3] = [
+            |line| &mut line.minimum,
+            |line| &mut line.content_minimum,
+            |line| &mut line.natural,
+        ];
+        for field in fields {
+            for (tracks, missing, expected) in [
+                (vec![(1.0, 180), (3.0, 0)], 220, vec![180, 220]),
+                // Non-Fill lines keep their size; only Fill lines share the remainder.
+                (
+                    vec![(0.0, 60), (1.0, 180), (3.0, 0)],
+                    160,
+                    vec![60, 180, 160],
+                ),
+                // Rounding still assigns every pixel to the largest fractional loss.
+                (vec![(1.0, 10), (3.0, 0)], 391, vec![100, 301]),
+            ] {
+                let mut lines: Vec<Line> = tracks
+                    .into_iter()
+                    .map(|(weight, size)| {
+                        let mut line = Line {
+                            weight,
+                            ..Line::default()
+                        };
+                        *field(&mut line) = size;
+                        line
+                    })
+                    .collect();
+                spread(&mut lines, missing, field);
+                let sizes: Vec<i32> = lines.iter_mut().map(|line| *field(line)).collect();
+                assert_eq!(sizes, expected);
+            }
+        }
+    }
 }

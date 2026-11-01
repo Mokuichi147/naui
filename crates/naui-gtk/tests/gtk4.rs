@@ -2850,6 +2850,22 @@ fn grid_spanning_child_spreads_by_weight(ui: &Ui) -> Result<()> {
     assert_eq!(placed[0].2, 150.0, "{placed:?}");
     assert_eq!(placed[1].2, 450.0, "{placed:?}");
 
+    // 既存の最小 180 に不足分 220 の 1/4 を足すと、不要な最小 235 が
+    // 残る。180 を下限にまたぐ幅 400 を配り、180 : 220 とする。
+    left.set_sizing(Sizing::fill().min_width(180.0));
+    for (width, expected) in [
+        (400, [180.0, 220.0]),
+        (600, [180.0, 420.0]),
+        (800, [200.0, 600.0]),
+    ] {
+        let placed = lay_out_grid(&columns, width, 100, &[&left, &right]);
+        assert_eq!([placed[0].2, placed[1].2], expected, "{placed:?}");
+    }
+    columns.set_spacing(8.0, 0.0);
+    let placed = lay_out_grid(&columns, 608, 100, &[&left, &right]);
+    assert_eq!([placed[0].2, placed[1].2], [180.0, 420.0], "{placed:?}");
+    assert_eq!(placed[1].0, 188.0, "{placed:?}");
+
     let rows = ui.grid()?;
     rows.set_row_track(0, Track::Fill(1.0));
     rows.set_row_track(1, Track::Fill(3.0));
@@ -2862,6 +2878,19 @@ fn grid_spanning_child_spreads_by_weight(ui: &Ui) -> Result<()> {
     let placed = lay_out_grid(&rows, 100, 600, &[&top, &bottom]);
     assert_eq!(placed[0].3, 150.0, "{placed:?}");
     assert_eq!(placed[1].3, 450.0, "{placed:?}");
+    top.set_sizing(Sizing::fill().min_height(180.0));
+    for (height, expected) in [
+        (400, [180.0, 220.0]),
+        (600, [180.0, 420.0]),
+        (800, [200.0, 600.0]),
+    ] {
+        let placed = lay_out_grid(&rows, 100, height, &[&top, &bottom]);
+        assert_eq!([placed[0].3, placed[1].3], expected, "{placed:?}");
+    }
+    rows.set_spacing(0.0, 8.0);
+    let placed = lay_out_grid(&rows, 100, 608, &[&top, &bottom]);
+    assert_eq!([placed[0].3, placed[1].3], [180.0, 420.0], "{placed:?}");
+    assert_eq!(placed[1].1, 188.0, "{placed:?}");
     Ok(())
 }
 
