@@ -11,6 +11,7 @@
 #![cfg(target_arch = "wasm32")]
 #![forbid(unsafe_code)]
 
+mod adaptive_panes;
 mod canvas;
 mod clipboard;
 mod color_picker;
@@ -65,6 +66,7 @@ use web_sys::{Document, HtmlElement};
 pub use wasm_bindgen;
 
 #[doc(hidden)]
+pub use adaptive_panes::AdaptivePanes;
 pub use focus::registered_focus_elements;
 
 pub use canvas::Canvas;
@@ -226,6 +228,11 @@ impl Ui {
     /// With `Horizontal`, the panes are side by side and the divider is vertical.
     pub fn split_view(&self, orientation: Orientation) -> Result<SplitView> {
         SplitView::new(&self.0.document, orientation)
+    }
+
+    /// A list and its detail, side by side when wide and one at a time when narrow.
+    pub fn adaptive_panes(&self) -> Result<AdaptivePanes> {
+        AdaptivePanes::new(&self.0.document)
     }
 
     /// A widget that is just empty space. It absorbs a stack's leftover space and

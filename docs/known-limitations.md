@@ -24,19 +24,21 @@ that shape are covered in
 | `Sender::send` from `std::thread::spawn` | Possible | Possible | Possible | Not possible (no threads) |
 | What a dropped file carries (`on_file_drop`) | The absolute path | The absolute path | The absolute path (local files only) | A `blob:` URL, no path |
 | Looks of `ButtonRole` | Only `Primary` (accent) | `Primary` (accent), `Destructive` (red text, macOS 26 and later) | Both (`suggested-action` / `destructive-action`) | Neither (only `data-naui-role` is written) |
+| `AdaptivePanes` switching to one pane | `TwoPaneView` decides, below the breakpoint, with no slack | naui decides, with 8 px of slack | naui decides, with 8 px of slack (slides between the panes) | naui decides, with 8 px of slack |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
 
 ## Common
 
 ### Scope
 
-- The supported components are the 48 in the table in the
+- The supported components are the 49 in the table in the
   [README](../README.md#widgets).
 - There is no absolute positioning. Layout uses `Stack`, `Grid` and `Spacer`.
 - Supported media formats depend on each OS, browser, and the GStreamer setup on
   Linux.
 - The few strings naui shows itself (the default macOS main menu, the `Sidebar`
-  toggle on the Web and Linux, the accessible names of `Breadcrumbs` and
+  toggle on the Web and Linux, the back button of `AdaptivePanes` (and the names of
+  its panes on Linux), the accessible names of `Breadcrumbs` and
   `Pagination` on the Web, the "OK" of `DialogButtons::ok()`) come in English and
   Japanese only. Other languages get English. The language is chosen once when the
   app starts, from the OS's preferred languages (`NSLocale.preferredLanguages`,
@@ -58,6 +60,14 @@ that shape are covered in
 
 - `SplitView` has only two panes and one divider. To split into three or more,
   nest them. There is no setting to collapse a pane (hide it at width 0).
+- `AdaptivePanes` has two panes, a list and its detail, and the list's width is
+  fixed: the user cannot drag the boundary (`TwoPaneView` and
+  `AdwNavigationSplitView` have no divider to drag). For three panes, attach a
+  `Sidebar` to the window or nest another `AdaptivePanes` in the detail. There is
+  no notification when it switches between one pane and two (read
+  `is_collapsed`), and the one-pane state never stacks the panes vertically
+  (`TwoPaneView`'s `Tall` mode is not used). Only Linux has ways of going back
+  besides the back button (Escape, Alt+←, the mouse's back button, a swipe).
 - `Toolbar` is attached to a window and cannot be placed anywhere in the layout
   (because `NSToolbar` attaches to an `NSWindow`). Icons can only be chosen from
   the 20 kinds of `ToolbarIcon`; arbitrary images cannot be used.

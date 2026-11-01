@@ -18,8 +18,8 @@ use std::time::{Duration, Instant};
 use naui_core::{
     Align, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
     EventResponse, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem,
-    MenuShortcut, MenuSpec, NavItem, Orientation, Padding, PlaybackState, Point, PointerButton,
-    PointerPhase, PopupItem, Rect, Result, ScrollPolicy, SelectionMode, SidebarItem,
+    MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
+    PointerButton, PointerPhase, PopupItem, Rect, Result, ScrollPolicy, SelectionMode, SidebarItem,
     SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle, Theme, Time,
     ToolbarIcon, ToolbarItem, Track, TreeItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
@@ -581,6 +581,14 @@ fn main() {
         (
             "分割ビューのドラッグが最小の大きさに収まり通知する",
             split_view_drag_clamps_to_the_minimums_and_notifies,
+        ),
+        (
+            "一覧と詳細が幅に応じて並び、1 区画のときは戻るボタンで一覧へ戻る",
+            adaptive_panes_follow_their_width,
+        ),
+        (
+            "隠れる区画のフォーカスが戻るボタンか一覧へ移り、その通知の中で区画を差し替えられる",
+            adaptive_panes_keep_a_place_for_the_focus,
         ),
         (
             "縦に長いタブの中身がスクロールで下まで届く",
@@ -4162,6 +4170,192 @@ fn split_view_drag_clamps_to_the_minimums_and_notifies(ui: &Ui) -> Result<()> {
     assert_eq!(seen.len(), 2, "動かした 2 回だけ通知されること: {seen:?}");
     assert!((seen[0] - 80.0).abs() < 1.0, "{seen:?}");
     assert!((seen[1] - (total - 120.0)).abs() < 1.0, "{seen:?}");
+    Ok(())
+}
+
+/// `AdaptivePanes` shows the list (at its fixed width) and the detail side by side
+/// while at least the breakpoint wide, and one at a time below it, switching after
+/// the layout pass that changed its width. While only the detail is shown, the back
+/// button returns to the list, notifies, and takes the focus out of the hidden
+/// detail.
+fn adaptive_panes_follow_their_width(ui: &Ui) -> Result<()> {
+    let window = ui.window("一覧と詳細", 800.0, 300.0)?;
+    let panes = ui.adaptive_panes()?;
+    let list = ui.stack(Orientation::Vertical)?;
+    list.append(&ui.label("一覧")?);
+    let field = ui.text_input("詳細")?;
+    let detail = ui.stack(Orientation::Vertical)?;
+    detail.append(&field);
+    panes.set_list(&list);
+    panes.set_detail(&detail);
+    window.set_child(&panes);
+    let backs = Rc::new(Cell::new(0));
+    panes.on_back({
+        let backs = backs.clone();
+        move || backs.set(backs.get() + 1)
+    });
+
+    let shown = |widget: &dyn Widget| !widget.native_view().isHiddenOrHasHiddenAncestor();
+    let back = panes.native_back_button();
+    assert!(!panes.is_collapsed(), "並ぶ前は 2 区画であること");
+    assert_eq!(panes.breakpoint(), naui_core::DEFAULT_PANES_BREAKPOINT);
+    assert_eq!(panes.list_width(), naui_core::DEFAULT_LIST_PANE_WIDTH);
+    window.show();
+    pump(0.1);
+    panes.native_view().layoutSubtreeIfNeeded();
+    assert!(
+        !panes.is_collapsed(),
+        "しきい値より広ければ 2 区画のままであること"
+    );
+    assert!(shown(&list) && shown(&detail) && back.isHidden());
+    let (l, d) = (list.native_view().frame(), detail.native_view().frame());
+    let detail_x = detail
+        .native_view()
+        .convertPoint_toView(NSPoint::new(0.0, 0.0), Some(&panes.native_view()))
+        .x;
+    assert!(
+        (l.size.width - 280.0).abs() < 1.0
+            && detail_x > 280.0
+            && (detail_x + d.size.width - 800.0).abs() < 1.0,
+        "一覧が決まった幅で左に、詳細が残りに並ぶこと: {l:?} / {d:?} (x {detail_x})"
+    );
+
+    panes.show(Pane::Detail);
+    assert_eq!(panes.visible_pane(), Pane::Detail);
+    assert!(
+        shown(&list) && back.isHidden(),
+        "2 区画のときは詳細を選んでも一覧が残り、戻るボタンは出ないこと"
+    );
+
+    let resize = |width: f64, collapsed: bool, message: &str| {
+        window.set_size(width, 300.0);
+        pump_until(1.0, || panes.is_collapsed() == collapsed);
+        // 変わらないはずの所では、予約が走るまで待ってから見る。
+        pump(0.1);
+        assert_eq!(panes.is_collapsed(), collapsed, "{message} (幅 {width})");
+    };
+    resize(500.0, true, "しきい値より狭ければ 1 区画になる");
+    panes.native_view().layoutSubtreeIfNeeded();
+    assert!(
+        !shown(&list) && shown(&detail) && !back.isHidden(),
+        "広いときに選んだ詳細が戻るボタン付きで出ること"
+    );
+    let d = detail.native_view().frame();
+    assert!(
+        (d.size.width - 500.0).abs() < 1.0,
+        "詳細が幅いっぱいに広がること: {d:?}"
+    );
+    let b = back.frame();
+    assert!(
+        b.size.width > 0.0 && back.title().to_string() == naui_core::ui_strings().back,
+        "戻るボタンに naui の文字列が付くこと: {b:?} {}",
+        back.title()
+    );
+
+    let field_view: Retained<NSTextField> = field
+        .native_view()
+        .downcast()
+        .expect("TextInput is an NSTextField");
+    assert!(field.request_focus());
+    unsafe { back.performClick(None) };
+    assert_eq!(backs.get(), 1, "戻るボタンで on_back が呼ばれること");
+    assert_eq!(panes.visible_pane(), Pane::List);
+    assert!(shown(&list) && !shown(&detail) && back.isHidden());
+    assert!(
+        field_view.currentEditor().is_none(),
+        "隠れた詳細にフォーカスが残らないこと"
+    );
+
+    panes.show(Pane::Detail);
+    assert!(!shown(&list) && shown(&detail) && !back.isHidden());
+    panes.show(Pane::List);
+    assert_eq!(backs.get(), 1, "show では on_back を呼ばないこと");
+
+    resize(636.0, true, "しきい値に届くまでは 1 区画のまま");
+    resize(640.0, false, "ちょうどしきい値で 2 区画になる");
+    assert!(shown(&list) && shown(&detail) && back.isHidden());
+    resize(634.0, false, "しきい値のすぐ下では 1 区画に戻らない");
+    resize(630.0, true, "遊びを越えて狭まれば 1 区画に戻る");
+
+    panes.set_breakpoint(400.0);
+    assert!(
+        !panes.is_collapsed(),
+        "しきい値を変えるといまの幅ですぐ決め直すこと"
+    );
+    panes.set_list_width(200.0);
+    panes.native_view().layoutSubtreeIfNeeded();
+    let l = list.native_view().frame();
+    assert!(
+        (l.size.width - 200.0).abs() < 1.0,
+        "一覧の幅を変えられること: {l:?}"
+    );
+    window.close();
+    Ok(())
+}
+
+/// When the focus leaves a hidden pane, a detail with nothing focusable hands it to
+/// the back button (where buttons take focus), and the pane's widgets may be
+/// replaced from the focus notification that moving it sends.
+fn adaptive_panes_keep_a_place_for_the_focus(ui: &Ui) -> Result<()> {
+    let window = ui.window("フォーカス", 500.0, 300.0)?;
+    let panes = ui.adaptive_panes()?;
+    let field = ui.text_input("一覧")?;
+    let replacement = ui.button("差し替えた一覧")?;
+    panes.set_list(&field);
+    panes.set_detail(&ui.label("ラベルだけの詳細")?);
+    window.set_child(&panes);
+    window.show();
+    pump_until(1.0, || panes.is_collapsed());
+    assert!(
+        panes.is_collapsed(),
+        "しきい値より狭いので 1 区画であること"
+    );
+
+    let field_view: Retained<NSTextField> = field
+        .native_view()
+        .downcast()
+        .expect("TextInput is an NSTextField");
+    let back = panes.native_back_button();
+    assert!(field.request_focus());
+    panes.show(Pane::Detail);
+    assert!(
+        field_view.currentEditor().is_none(),
+        "隠れた一覧にフォーカスが残らないこと"
+    );
+    if back.acceptsFirstResponder() {
+        let responder = window.native_window().firstResponder();
+        assert!(
+            responder.is_some_and(|r| std::ptr::eq(
+                &*r as *const NSResponder as *const u8,
+                &*back as *const NSButton as *const u8
+            )),
+            "フォーカスを受けない詳細の代わりに、戻るボタンへ移ること"
+        );
+    }
+
+    // 一覧へ戻すと入力欄がフォーカスを受け、その通知の中で一覧を差し替える。
+    let replaced = Rc::new(Cell::new(false));
+    field.on_focus_change({
+        let panes = panes.downgrade();
+        let replacement = replacement.clone();
+        let replaced = replaced.clone();
+        move |focused| {
+            if let (true, Some(panes)) = (focused && !replaced.get(), panes.upgrade()) {
+                replaced.set(true);
+                panes.set_list(&replacement);
+            }
+        }
+    });
+    unsafe { back.performClick(None) };
+    assert!(
+        replaced.get(),
+        "一覧へ戻ったときに入力欄がフォーカスを受けること"
+    );
+    assert!(
+        unsafe { replacement.native_view().superview() }.is_some(),
+        "フォーカスの通知の中から一覧を差し替えられること"
+    );
+    window.close();
     Ok(())
 }
 

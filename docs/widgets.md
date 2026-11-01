@@ -23,6 +23,7 @@ Legend:
 | `Spacer` | 🟡 An empty `Grid` | 🟡 An empty `NSView` | 🟡 An empty `GtkBox` | 🟡 `<div>` + `flex-grow` |
 | `Expander` | ✅ `Expander` | 🟡 `NSButton` (disclosure) + `NSStackView` | ✅ `GtkExpander` | ✅ `<details>` + `<summary>` |
 | `SplitView` | 🔴 `Grid` + a divider `Grid` | ✅ `NSSplitView` | ✅ `GtkPaned` | 🔴 `<div>` + `<div role="separator">` |
+| `AdaptivePanes` | ✅ `TwoPaneView` + a back `Button` | 🔴 `NSView` + `NSBox` (separator) + a back `NSButton` | ✅ `AdwNavigationSplitView` + a back `GtkButton` | 🔴 `<div>` + a back `<button>` |
 | `Toolbar` | ✅ `CommandBar` + `AppBarButton` | ✅ `NSToolbar` + `NSToolbarItem` | 🟡 `AdwHeaderBar` + `GtkButton` | 🟡 `<div role="toolbar">` + `<button>` |
 | `MenuBar` | 🟡 A row of `Button` + `MenuFlyout` | ✅ `NSMenu` (`NSApplication.mainMenu`) | ✅ `GtkPopoverMenuBar` + `GMenu` | 🟡 `<div role="menubar">` + `<div role="menu">` |
 | `Sidebar` | 🟡 `NavigationView` (Auto) + a divider `Grid` | ✅ `NSSplitViewController` (sidebar item) + `NSTableView` (source list) | 🟡 `GtkPaned` + `GtkListBox` (`.navigation-sidebar`) | 🔴 `<aside>` + `<nav>` + `<div role="separator">` |
@@ -147,6 +148,16 @@ collected in [Known limitations](known-limitations.md).
   divider-specific cursor (⇔) cannot be shown because
   `UIElement.ProtectedCursor`, which changes the cursor shape, is accessible only
   from derived classes. Changes in pane size are picked up with `LayoutUpdated`.
+- **`AdaptivePanes`**: `TwoPaneView` itself, which decides by its own width:
+  `MinWideModeWidth` is the breakpoint, `Pane1Length` the list's width, and
+  `PanePriority` the pane shown alone. `TallModeConfiguration` is `SinglePane`, so
+  a narrow, tall view never stacks the panes. It draws no back button, so a
+  `Button` with the `Back` symbol sits above the detail while only the detail is
+  shown, following `ModeChanged` (and `SizeChanged`, since a view first laid out
+  narrow raises no `ModeChanged`). It has no slack at the breakpoint, unlike the
+  other platforms. When the width hides a pane, WinUI has already moved focus to
+  the next tab stop by `ModeChanged`, so naui remembers the pane that last raised
+  `GotFocus` and moves focus into the pane shown.
 - **`Label`**: The `TextBlock` is created from XAML with
   `TextTrimming="CharacterEllipsis"` (wrapping is switched with `TextWrapping`).
 - **`Toggle`**: The label is put into both `OnContent` and `OffContent`, so the
@@ -295,6 +306,15 @@ collected in [Known limitations](known-limitations.md).
   the window would widen the sidebar too. Because naui sets the panes' frames
   directly, only the pane views keep `translatesAutoresizingMaskIntoConstraints` on
   (Auto Layout arranges the content within that frame).
+- **`AdaptivePanes`**: AppKit has no container that shows one pane in place of
+  two (`NSSplitViewController` only collapses a sidebar), so naui lays out two
+  views with Auto Layout and decides from the frame
+  (`NSViewFrameDidChangeNotification`), switching on the next turn of the main
+  queue. Side by side, an `NSBox` separator (the line of a thin `NSSplitView`
+  divider) sits between them. One at a time, both panes span the whole width and
+  the other one is hidden, so the minimum width and the content of the hidden pane
+  stay as they were. The back button is an `NSButton` with the
+  `chevron.backward` symbol.
 - **`Expander`**: AppKit has no collapsible control, so it is built from a
   disclosure `NSButton` (the chevron is an SF Symbol) and an `NSStackView`.
 - **`Toolbar`**: Since items are identified by index, "Customize Toolbar"
@@ -373,6 +393,16 @@ collected in [Known limitations](known-limitations.md).
 - **`SplitView`**: A `GtkPaned`. The panes' minimum sizes are held by a container
   wrapped around each pane, so they do not conflict with the `size_request` the app
   specifies with `Sizing`.
+- **`AdaptivePanes`**: An `AdwNavigationSplitView`, whose sidebar page holds the
+  list and whose content page holds the detail. libadwaita leaves collapsing to an
+  `AdwBreakpoint`, which takes away the minimum size of the window (or
+  `AdwBreakpointBin`) holding it, so naui compares the width after each paint and
+  sets `collapsed` on the next main loop iteration. The sidebar's smallest and
+  largest widths are both the list's width, in pixels (`sidebar-width-unit` is set
+  where libadwaita 1.7 or later has it). The back button is a flat `GtkButton` with
+  `go-previous-symbolic`, since `AdwNavigationSplitView` shows one only in an
+  `AdwHeaderBar` inside the page. Going back by libadwaita's own means turns
+  `show-content` off, which naui follows.
 - **Wrapping content**: Since "the height is decided after the width", the
   containers naui wraps content in inherit `GtkSizeRequestMode` from the content.
   `GtkWidget`'s default is `GTK_SIZE_REQUEST_CONSTANT_SIZE`, and with that the
@@ -466,6 +496,12 @@ collected in [Known limitations](known-limitations.md).
   strong for a separator, while `GrayText` falls between the background and text
   colors in either scheme. It has `tabindex="0"`, so it can also be moved with the
   keyboard (10 px per arrow key press).
+- **`AdaptivePanes`**: HTML has no such element, and a CSS container query cannot
+  tell the page which pane it shows, so naui watches the width with the same
+  `ResizeObserver` as `Stack::set_breakpoint` and switches before the page is
+  painted. The pane not shown gets `hidden` and `display: none`. Side by side, a
+  1 px line in `GrayText` separates the panes (the same line as `SplitView`), and
+  the back button is a `<button>` with an arrow in front of its text.
 - **`MenuBar`**: Browsers have no OS application menu, so it is assembled from
   elements with WAI-ARIA roles (`role="menubar"` / `"menu"` / `"menuitem"`). naui
   watches `keydown` on `document` to match shortcuts, and also adds the `Ctrl+S`

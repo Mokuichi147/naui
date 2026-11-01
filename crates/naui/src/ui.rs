@@ -1,11 +1,11 @@
 use crate::sys;
 use crate::{
-    Audio, Breadcrumbs, Button, Canvas, Checkbox, Clipboard, ColorPicker, ComboBox, DatePicker,
-    Dialog, Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image, Label, Link,
-    List, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, Popover, PopupMenu,
-    ProgressBar, RadioGroup, Scroll, SearchInput, Sheet, Sidebar, Slider, Spacer, Spinner,
-    SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle, Toolbar, Tree,
-    Video, Window,
+    AdaptivePanes, Audio, Breadcrumbs, Button, Canvas, Checkbox, Clipboard, ColorPicker, ComboBox,
+    DatePicker, Dialog, Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image,
+    Label, Link, List, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, Popover,
+    PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Sheet, Sidebar, Slider, Spacer,
+    Spinner, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle,
+    Toolbar, Tree, Video, Window,
 };
 use naui_core::{DatePickerMode, Orientation, Result, Settings, Tasks, Theme};
 
@@ -63,6 +63,12 @@ impl Ui {
     #[inline]
     pub fn split_view(&self, orientation: Orientation) -> Result<SplitView> {
         self.0.split_view(orientation).map(SplitView)
+    }
+
+    /// A list and its detail, side by side when wide and one at a time when narrow.
+    #[inline]
+    pub fn adaptive_panes(&self) -> Result<AdaptivePanes> {
+        self.0.adaptive_panes().map(AdaptivePanes)
     }
 
     /// A widget that is just empty space. It absorbs a stack's leftover space and

@@ -24,7 +24,7 @@ use std::rc::Rc;
 use naui_core::{
     Align, ButtonRole, Color, DialogButtons, DialogResponse, EventResponse, GridCell, Key,
     KeyEvent, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding,
-    Point, PointerButton, PointerPhase, PopupItem, Rect, Result, ScrollMetrics, SidebarItem,
+    Pane, Point, PointerButton, PointerPhase, PopupItem, Rect, Result, ScrollMetrics, SidebarItem,
     SidebarSection, Sizing, TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon,
     ToolbarItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
@@ -1540,6 +1540,185 @@ async fn nested_stack_breakpoints_do_not_loop() {
     assert!(
         loops.is_empty(),
         "ResizeObserver のループが報告されないこと: {loops:?}"
+    );
+}
+
+/// `AdaptivePanes` shows the list (at its fixed width) and the detail side by side
+/// while at least the breakpoint wide and one at a time below it, before the page
+/// is painted at the new width. While only the detail is shown, the back button
+/// returns to the list, notifies, and takes the focus out of the hidden detail.
+#[wasm_bindgen_test]
+async fn adaptive_panes_follow_their_width() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let outer = ui.stack(Orientation::Vertical)?;
+        outer.set_sizing(Sizing::fixed(800.0, 300.0));
+        let panes = ui.adaptive_panes()?;
+        panes.set_sizing(Sizing::fill());
+        let list = ui.button("一覧")?;
+        let field = ui.text_input("詳細")?;
+        panes.set_list(&list);
+        panes.set_detail(&field);
+        outer.append(&panes);
+        assert!(!panes.is_collapsed(), "並ぶ前は 2 区画であること");
+        let mounted = Mounted::new(&outer);
+        kept = Some((mounted, outer, panes, list, field));
+        Ok(())
+    });
+    let (_mounted, outer, panes, list, field) = kept.expect("組み立て");
+    let backs = Rc::new(Cell::new(0));
+    panes.on_back({
+        let backs = backs.clone();
+        move || backs.set(backs.get() + 1)
+    });
+    next_frames().await;
+    let shown = |widget: &dyn Widget| {
+        let rect = widget.native_element().get_bounding_client_rect();
+        rect.width() > 0.0 && rect.height() > 0.0
+    };
+    let back = panes.native_back_button();
+    assert!(!panes.is_collapsed());
+    assert!(shown(&list) && shown(&field) && back.hidden());
+    let (l, d) = (
+        list.native_element().get_bounding_client_rect(),
+        field.native_element().get_bounding_client_rect(),
+    );
+    assert!(
+        (l.width() - naui_core::DEFAULT_LIST_PANE_WIDTH).abs() < 0.5 && d.left() >= l.right(),
+        "一覧が決まった幅で左に、詳細がその右に並ぶこと: {} / {}",
+        l.width(),
+        d.left()
+    );
+
+    panes.show(Pane::Detail);
+    assert!(
+        shown(&list) && back.hidden(),
+        "2 区画のときは戻るボタンを出さない"
+    );
+
+    let resize = |width: f64| outer.set_sizing(Sizing::fixed(width, 300.0));
+    resize(500.0);
+    frames_until(|| panes.is_collapsed()).await;
+    assert!(
+        panes.is_collapsed(),
+        "しきい値より狭ければ 1 区画になること"
+    );
+    assert!(
+        !shown(&list) && shown(&field) && !back.hidden(),
+        "広いときに選んだ詳細が戻るボタン付きで出ること"
+    );
+    assert!(
+        back.text_content()
+            .is_some_and(|text| text.contains(naui_core::ui_strings().back)),
+        "戻るボタンに naui の文字列が付くこと"
+    );
+
+    let input: HtmlElement = field.native_element().unchecked_into();
+    input.focus().expect("フォーカス");
+    back.click();
+    assert_eq!(backs.get(), 1, "戻るボタンで on_back が呼ばれること");
+    assert_eq!(panes.visible_pane(), Pane::List);
+    assert!(shown(&list) && !shown(&field) && back.hidden());
+    let document = web_sys::window()
+        .and_then(|window| window.document())
+        .expect("document");
+    assert!(
+        document
+            .active_element()
+            .is_some_and(|active| active == list.native_element()),
+        "隠れた詳細からフォーカスが一覧へ移ること"
+    );
+    panes.show(Pane::Detail);
+    panes.show(Pane::List);
+    assert_eq!(backs.get(), 1, "show では on_back を呼ばないこと");
+
+    for (width, collapsed, message) in [
+        (636.0, true, "しきい値に届くまでは 1 区画のまま"),
+        (640.0, false, "ちょうどしきい値で 2 区画になる"),
+        (634.0, false, "しきい値のすぐ下では 1 区画に戻らない"),
+        (630.0, true, "遊びを越えて狭まれば 1 区画に戻る"),
+    ] {
+        resize(width);
+        frames_until(|| panes.is_collapsed() == collapsed).await;
+        next_frames().await;
+        assert_eq!(panes.is_collapsed(), collapsed, "{message} (幅 {width})");
+    }
+
+    panes.set_breakpoint(400.0);
+    assert!(
+        !panes.is_collapsed(),
+        "しきい値を変えるといまの幅ですぐ決め直すこと"
+    );
+    panes.set_list_width(200.0);
+    let l = list.native_element().get_bounding_client_rect();
+    assert!(
+        (l.width() - 200.0).abs() < 0.5,
+        "一覧の幅を変えられること: {}",
+        l.width()
+    );
+}
+
+/// When the focus leaves a hidden pane, a detail with nothing focusable hands it to
+/// the back button, and the pane's widgets may be replaced from the focus
+/// notification that moving it sends.
+#[wasm_bindgen_test]
+async fn adaptive_panes_keep_a_place_for_the_focus() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let outer = ui.stack(Orientation::Vertical)?;
+        outer.set_sizing(Sizing::fixed(500.0, 300.0));
+        let panes = ui.adaptive_panes()?;
+        panes.set_sizing(Sizing::fill());
+        let field = ui.text_input("一覧")?;
+        let replacement = ui.button("差し替えた一覧")?;
+        panes.set_list(&field);
+        panes.set_detail(&ui.label("ラベルだけの詳細")?);
+        outer.append(&panes);
+        let mounted = Mounted::new(&outer);
+        kept = Some((mounted, outer, panes, field, replacement));
+        Ok(())
+    });
+    let (_mounted, _outer, panes, field, replacement) = kept.expect("組み立て");
+    frames_until(|| panes.is_collapsed()).await;
+    assert!(
+        panes.is_collapsed(),
+        "しきい値より狭いので 1 区画であること"
+    );
+    let document = web_sys::window()
+        .and_then(|window| window.document())
+        .expect("document");
+    let back = panes.native_back_button();
+
+    assert!(field.request_focus());
+    panes.show(Pane::Detail);
+    assert!(
+        document
+            .active_element()
+            .is_some_and(|active| active == *back.as_ref()),
+        "フォーカスを受けない詳細の代わりに、戻るボタンへ移ること"
+    );
+
+    // 一覧へ戻すと入力欄がフォーカスを受け、その通知の中で一覧を差し替える。
+    let replaced = Rc::new(Cell::new(false));
+    field.on_focus_change({
+        let panes = panes.downgrade();
+        let replacement = replacement.clone();
+        let replaced = replaced.clone();
+        move |focused| {
+            if let (true, Some(panes)) = (focused && !replaced.get(), panes.upgrade()) {
+                replaced.set(true);
+                panes.set_list(&replacement);
+            }
+        }
+    });
+    back.click();
+    assert!(
+        replaced.get(),
+        "一覧へ戻ったときに入力欄がフォーカスを受けること"
+    );
+    assert!(
+        replacement.native_element().is_connected(),
+        "フォーカスの通知の中から一覧を差し替えられること"
     );
 }
 

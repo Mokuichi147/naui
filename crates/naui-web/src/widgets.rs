@@ -1073,6 +1073,12 @@ struct StackInner {
     watched: Cell<bool>,
 }
 
+impl WidthWatcher for StackInner {
+    fn check_width(self: Rc<Self>) -> bool {
+        Stack(self).check_width()
+    }
+}
+
 impl Drop for StackInner {
     fn drop(&mut self) {
         if self.watched.get() {
@@ -1084,20 +1090,28 @@ impl Drop for StackInner {
 /// The handler passed to `ResizeObserver`.
 type ObserverCallback = Closure<dyn FnMut(js_sys::Array)>;
 
-/// One `ResizeObserver` for every stack with a breakpoint.
+/// A widget that rearranges itself by its width, watched by [`WidthWatch`].
+pub(crate) trait WidthWatcher {
+    /// Called after layout and before paint, with the widget's new size. Returns
+    /// whether the widget rearranged itself.
+    fn check_width(self: Rc<Self>) -> bool;
+}
+
+/// One `ResizeObserver` for every widget that rearranges itself by its width
+/// (stacks with a breakpoint, `AdaptivePanes`).
 ///
 /// A stack that switches inside the observer's callback resizes more than itself:
 /// its height changes, a parent with an `Auto` height follows, and in a row the
 /// siblings sharing the leftover width get another width. The browser reports an
 /// observed element that changed at the depth just delivered or above it as a loop
 /// ("ResizeObserver loop completed with undelivered notifications"), so after a
-/// switch every stack stops being watched until the next frame. Watching again
-/// reports each stack once, which catches up with any change in between before
+/// switch every widget stops being watched until the next frame. Watching again
+/// reports each widget once, which catches up with any change in between before
 /// that frame is painted.
-struct WidthWatch {
+pub(crate) struct WidthWatch {
     observer: web_sys::ResizeObserver,
     _callback: ObserverCallback,
-    stacks: Vec<(web_sys::Element, Weak<StackInner>)>,
+    watched: Vec<(web_sys::Element, Weak<dyn WidthWatcher>)>,
     /// Watching stopped after a switch, until the next frame.
     paused: bool,
 }
@@ -1107,7 +1121,8 @@ thread_local! {
 }
 
 impl WidthWatch {
-    fn watch(stack: &Rc<StackInner>) {
+    /// Starts watching `element`, telling `watcher` its new widths.
+    pub(crate) fn watch(element: &web_sys::Element, watcher: Weak<dyn WidthWatcher>) {
         WIDTH_WATCH.with(|cell| {
             let mut watch = cell.borrow_mut();
             if watch.is_none() {
@@ -1119,23 +1134,21 @@ impl WidthWatch {
                 *watch = Some(Self {
                     observer,
                     _callback: callback,
-                    stacks: Vec::new(),
+                    watched: Vec::new(),
                     paused: false,
                 });
             }
             let Some(watch) = watch.as_mut() else {
                 return;
             };
-            let element: web_sys::Element = stack.element.clone().into();
             if !watch.paused {
-                observe_border_box(&watch.observer, &element);
+                observe_border_box(&watch.observer, element);
             }
-            watch.stacks.push((element, Rc::downgrade(stack)));
-            stack.watched.set(true);
+            watch.watched.push((element.clone(), watcher));
         });
     }
 
-    fn forget(element: &HtmlElement) {
+    pub(crate) fn forget(element: &web_sys::Element) {
         let _ = WIDTH_WATCH.try_with(|cell| {
             // 借りられている間は外せない。消えた分は付け直すときに除く。
             let Ok(mut watch) = cell.try_borrow_mut() else {
@@ -1144,9 +1157,7 @@ impl WidthWatch {
             let Some(watch) = watch.as_mut() else {
                 return;
             };
-            watch
-                .stacks
-                .retain(|(watched, _)| watched != element.as_ref());
+            watch.watched.retain(|(watched, _)| watched != element);
             if !watch.paused {
                 watch.observer.unobserve(element);
             }
@@ -1155,7 +1166,7 @@ impl WidthWatch {
 
     /// Called after layout and before paint.
     fn resized(entries: js_sys::Array) {
-        let stacks: Vec<Rc<StackInner>> = WIDTH_WATCH.with(|cell| {
+        let watchers: Vec<Rc<dyn WidthWatcher>> = WIDTH_WATCH.with(|cell| {
             let watch = cell.borrow();
             let Some(watch) = watch.as_ref() else {
                 return Vec::new();
@@ -1166,24 +1177,24 @@ impl WidthWatch {
                     let target = entry
                         .unchecked_into::<web_sys::ResizeObserverEntry>()
                         .target();
-                    let (_, stack) = watch
-                        .stacks
+                    let (_, watcher) = watch
+                        .watched
                         .iter()
                         .find(|(element, _)| *element == target)?;
-                    stack.upgrade()
+                    watcher.upgrade()
                 })
                 .collect()
         });
         let mut switched = false;
-        for stack in stacks {
-            switched |= Stack(stack).check_width();
+        for watcher in watchers {
+            switched |= watcher.check_width();
         }
         if switched {
             Self::pause();
         }
     }
 
-    /// Stops watching every stack until the next frame.
+    /// Stops watching every widget until the next frame.
     fn pause() {
         let paused = WIDTH_WATCH.with(|cell| {
             let mut watch = cell.borrow_mut();
@@ -1217,8 +1228,10 @@ impl WidthWatch {
                 return;
             }
             watch.paused = false;
-            watch.stacks.retain(|(_, stack)| stack.strong_count() > 0);
-            for (element, _) in &watch.stacks {
+            watch
+                .watched
+                .retain(|(_, watcher)| watcher.strong_count() > 0);
+            for (element, _) in &watch.watched {
                 observe_border_box(&watch.observer, element);
             }
         });
@@ -1292,8 +1305,9 @@ impl Stack {
         arrangement.resized(self.outer_width());
         arrangement.set_breakpoint(breakpoint);
         self.0.arrangement.set(arrangement);
-        if breakpoint.is_some() && !self.0.watched.get() {
-            WidthWatch::watch(&self.0);
+        if breakpoint.is_some() && !self.0.watched.replace(true) {
+            let weak: Weak<StackInner> = Rc::downgrade(&self.0);
+            WidthWatch::watch(&self.0.element, weak);
         }
         self.arrange(arrangement.orientation());
     }

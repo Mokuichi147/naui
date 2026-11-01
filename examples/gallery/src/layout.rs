@@ -2,13 +2,13 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use naui::{
-    Align, Breakpoint, GridCell, Length, Orientation, Padding, Result, ScrollMetrics, ScrollPolicy,
-    Sizing, Track, Ui,
+    Align, Breakpoint, GridCell, Length, ListItem, Orientation, Padding, Pane, Result,
+    ScrollMetrics, ScrollPolicy, Sizing, Track, Ui,
 };
 
 use crate::parts::{self, Notice};
 
-/// Stack、Grid、Spacer、Expander、SplitView、Scroll の配置特性と、
+/// Stack、Grid、Spacer、Expander、SplitView、AdaptivePanes、Scroll の配置特性と、
 /// 表示・非表示、フォーカス、ツールチップ。
 ///
 /// 並べ方の違いが目で見えるよう、マスや端にはボタンを置く。ボタンの文字が
@@ -184,8 +184,80 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     );
     pane.append(&split);
 
+    build_adaptive_panes(ui, &pane, notice)?;
     build_scroll(ui, &pane)?;
     Ok(pane)
+}
+
+/// 一覧と詳細。窓を狭めると 1 区画になり、一覧で選ぶと詳細へ移り、戻るボタンで
+/// 一覧へ戻る。
+fn build_adaptive_panes(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
+    const MESSAGES: [(&str, &str); 3] = [
+        ("Weekly sync", "The weekly sync moves to Tuesday at 10:00."),
+        ("Release notes", "The release notes are ready for review."),
+        ("Lunch", "Shall we try the new place on Friday?"),
+    ];
+    parts::section(ui, pane, "AdaptivePanes")?;
+    pane.append(&ui.label(
+        "Side by side from 560 wide, one at a time below that. Choose a message to open it.",
+    )?);
+    let messages = ui.list()?;
+    let items: Vec<ListItem> = MESSAGES
+        .iter()
+        .map(|(subject, _)| ListItem::new(*subject))
+        .collect();
+    messages.set_items(&items);
+    messages.set_sizing(Sizing::fill());
+
+    let detail = ui.stack(Orientation::Vertical)?;
+    detail.set_spacing(6.0);
+    detail.set_padding(Padding::all(10.0));
+    detail.set_align(Align::Start);
+    let subject = ui.label("No message selected")?;
+    subject.set_style(naui::TextStyle::Heading);
+    let body = ui.label("")?;
+    body.set_wrap(true);
+    body.set_sizing(Sizing::fill_width());
+    detail.append(&subject);
+    detail.append(&body);
+
+    let panes = ui.adaptive_panes()?;
+    panes.set_list(&messages);
+    panes.set_detail(&detail);
+    panes.set_list_width(180.0);
+    panes.set_breakpoint(560.0);
+    messages.on_select({
+        let panes = panes.downgrade();
+        move |selected: &[usize]| {
+            let (Some(&index), Some(panes)) = (selected.first(), panes.upgrade()) else {
+                return;
+            };
+            let (title, text) = MESSAGES[index];
+            subject.set_text(title);
+            body.set_text(text);
+            // 並んでいるときは何も変わらず、1 区画のときは詳細へ移る。
+            panes.show(Pane::Detail);
+        }
+    });
+    panes.on_back({
+        let messages = messages.downgrade();
+        let notice = notice.clone();
+        move || {
+            // 選んだままだと、同じ項目を選び直しても通知が来ない。
+            if let Some(messages) = messages.upgrade() {
+                messages.clear_selection();
+            }
+            notice.show("AdaptivePanes: back to the list");
+        }
+    });
+    // SplitView と同じく中身の高さでは決まらないので、大きさを指定する。
+    panes.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(180.0)),
+    );
+    pane.append(&panes);
+    Ok(())
 }
 
 /// 高さを固定し、はみ出した内容だけをスクロールする。

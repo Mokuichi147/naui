@@ -1,8 +1,9 @@
 //! The strings naui itself shows, in the user's language.
 //!
 //! A few strings are chosen by naui rather than by the app: the default macOS
-//! main menu, the `Sidebar` toggle, the accessible names of `Breadcrumbs` and
-//! `Pagination`, and the "OK" of [`DialogButtons::ok`](crate::DialogButtons::ok).
+//! main menu, the `Sidebar` toggle, the back button of `AdaptivePanes`, the
+//! accessible names of `Breadcrumbs` and `Pagination`, and the "OK" of
+//! [`DialogButtons::ok`](crate::DialogButtons::ok).
 //! They follow the OS's preferred languages, falling back to English when none of
 //! them is in the table.
 //!
@@ -46,6 +47,12 @@ pub struct UiStrings {
     pub breadcrumbs: &'static str,
     /// The accessible name of `Pagination` (Web).
     pub pagination: &'static str,
+    /// The button of `AdaptivePanes` that goes back from the detail to the list.
+    pub back: &'static str,
+    /// The accessible name of `AdaptivePanes`' list pane (Linux).
+    pub list_pane: &'static str,
+    /// The accessible name of `AdaptivePanes`' detail pane (Linux).
+    pub detail_pane: &'static str,
     /// The app menu's quit item, with `{app}` standing for the app name.
     quit_template: &'static str,
 }
@@ -130,6 +137,9 @@ const ENGLISH: UiStrings = UiStrings {
     sidebar: "Sidebar",
     breadcrumbs: "Breadcrumbs",
     pagination: "Pagination",
+    back: "Back",
+    list_pane: "List",
+    detail_pane: "Details",
     quit_template: "Quit {app}",
 };
 
@@ -146,6 +156,9 @@ const JAPANESE: UiStrings = UiStrings {
     sidebar: "サイドバー",
     breadcrumbs: "パンくず",
     pagination: "ページ送り",
+    back: "戻る",
+    list_pane: "一覧",
+    detail_pane: "詳細",
     quit_template: "{app} を終了",
 };
 
@@ -223,6 +236,9 @@ mod tests {
                 sidebar,
                 breadcrumbs,
                 pagination,
+                back,
+                list_pane,
+                detail_pane,
                 quit_template,
             } = table;
             for text in [
@@ -238,6 +254,9 @@ mod tests {
                 sidebar,
                 breadcrumbs,
                 pagination,
+                back,
+                list_pane,
+                detail_pane,
             ] {
                 assert!(!text.is_empty(), "{language}");
             }

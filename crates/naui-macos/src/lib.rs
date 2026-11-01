@@ -9,6 +9,7 @@
 // Objective-C 呼び出しのため unsafe が必要。
 #![allow(unsafe_code)]
 
+mod adaptive_panes;
 mod canvas;
 mod clipboard;
 mod color_picker;
@@ -61,6 +62,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::NSNotification;
 
+pub use adaptive_panes::AdaptivePanes;
 pub use canvas::Canvas;
 pub use clipboard::Clipboard;
 pub use color_picker::ColorPicker;
@@ -198,6 +200,11 @@ impl Ui {
     /// With `Horizontal`, the panes are side by side and the divider is vertical.
     pub fn split_view(&self, orientation: Orientation) -> Result<SplitView> {
         Ok(SplitView::new(self.0.mtm, orientation))
+    }
+
+    /// A list and its detail, side by side when wide and one at a time when narrow.
+    pub fn adaptive_panes(&self) -> Result<AdaptivePanes> {
+        Ok(AdaptivePanes::new(self.0.mtm))
     }
 
     /// A widget that is just empty space. It absorbs a stack's leftover space and

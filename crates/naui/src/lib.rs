@@ -6,14 +6,14 @@ pub use naui_core::{
     with_default_extension, Align, Breakpoint, ButtonRole, CloseResponse, Color, DatePickerMode,
     DateTime, DialogButtons, DialogResponse, DrawCommand, Error, EventResponse, FileEntry,
     FileFilter, FilePickerMode, Fit, GridCell, Key, KeyEvent, Length, ListItem, MenuItem,
-    MenuShortcut, MenuSpec, Modifiers, NavItem, NumberSpec, Orientation, Padding, Painter, Path,
-    PathSegment, PlaybackState, Point, PointerButton, PointerEvent, PointerPhase, PopoverPosition,
-    PopupItem, Rect, Result, ScrollMetrics, ScrollPolicy, SelectionMode, Sender, Settings,
-    SidebarItem, SidebarSection, Sizing, Sleep, SortOrder, TableColumn, TableRow, Task, Tasks,
-    TextColor, TextStyle, Theme, Time, Timer, ToastSpec, ToolbarIcon, ToolbarItem, Track, TreeItem,
-    WeakWidget, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION,
-    ROW_WINDOW_THRESHOLD, SHEET_MIN_WIDTH, SIDEBAR_COLLAPSE_CONTENT_WIDTH, SIDEBAR_MIN_WIDTH,
-    WHEEL_STEP,
+    MenuShortcut, MenuSpec, Modifiers, NavItem, NumberSpec, Orientation, Padding, Painter, Pane,
+    Path, PathSegment, PlaybackState, Point, PointerButton, PointerEvent, PointerPhase,
+    PopoverPosition, PopupItem, Rect, Result, ScrollMetrics, ScrollPolicy, SelectionMode, Sender,
+    Settings, SidebarItem, SidebarSection, Sizing, Sleep, SortOrder, TableColumn, TableRow, Task,
+    Tasks, TextColor, TextStyle, Theme, Time, Timer, ToastSpec, ToolbarIcon, ToolbarItem, Track,
+    TreeItem, WeakWidget, WindowPlacement, WindowState, DEFAULT_LIST_PANE_WIDTH,
+    DEFAULT_PANES_BREAKPOINT, DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD,
+    SHEET_MIN_WIDTH, SIDEBAR_COLLAPSE_CONTENT_WIDTH, SIDEBAR_MIN_WIDTH, WHEEL_STEP,
 };
 
 // ビルド対象のバックエンド。naui の型はこれの型を包む。
@@ -51,6 +51,7 @@ pub use naui_windows as windows;
 #[macro_use]
 mod widget;
 
+mod adaptive_panes;
 mod canvas;
 mod clipboard;
 mod color_picker;
@@ -83,6 +84,7 @@ mod ui;
 mod widgets;
 mod window;
 
+pub use adaptive_panes::AdaptivePanes;
 pub use canvas::Canvas;
 pub use clipboard::Clipboard;
 pub use color_picker::ColorPicker;

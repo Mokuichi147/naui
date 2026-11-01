@@ -337,6 +337,10 @@ const CASES: &[Case] = &[
         stack_breakpoint_follows_its_width,
     ),
     (
+        "一覧と詳細が TwoPaneView に載り、1 区画のときは戻るボタンで一覧へ戻る",
+        adaptive_panes_follow_their_width,
+    ),
+    (
         "自動で畳んだサイドバーを set_collapsed で畳み直すと、広げても開かない",
         sidebar_set_collapsed_overrides_auto_expand,
     ),
@@ -4020,6 +4024,157 @@ fn sidebar_takes_the_content_row(ui: &Ui) -> Result<Deferred> {
     );
     window.clear_sidebar(); // 付いていなければ何もしない
     Ok(Box::new(|| Ok(())))
+}
+
+/// `AdaptivePanes` is a `TwoPaneView` set up from naui's values: the breakpoint as
+/// `MinWideModeWidth`, the list's width as `Pane1Length`, never stacking the panes,
+/// and `PanePriority` following `show`. It shows one pane below the breakpoint, even
+/// when first laid out that narrow, and the back button, which has an accessible
+/// name, returns to the list and notifies. Focus leaves the pane that is hidden.
+fn adaptive_panes_follow_their_width(ui: &Ui) -> Result<()> {
+    use naui_core::Pane;
+    use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+    use naui_winui3::Microsoft::UI::Xaml::Controls::{
+        Control, TwoPaneViewMode, TwoPaneViewPriority, TwoPaneViewTallModeConfiguration,
+    };
+    use naui_winui3::Microsoft::UI::Xaml::{DependencyObject, FocusState, Visibility};
+
+    let window = ui.window("一覧と詳細", 900.0, 400.0)?;
+    let outer = ui.stack(Orientation::Vertical)?;
+    outer.set_sizing(Sizing::fixed(800.0, 300.0));
+    let panes = ui.adaptive_panes()?;
+    panes.set_sizing(Sizing::fill());
+    let list = ui.button("一覧")?;
+    let detail = ui.label("詳細")?;
+    panes.set_list(&list);
+    panes.set_detail(&detail);
+    outer.append(&panes);
+    window.set_child(&outer);
+    let backs = Rc::new(Cell::new(0));
+    panes.on_back({
+        let backs = backs.clone();
+        move || backs.set(backs.get() + 1)
+    });
+
+    let native = panes.native_two_pane_view();
+    let back = panes.native_back_button();
+    assert_eq!(
+        native.MinWideModeWidth().expect("MinWideModeWidth"),
+        naui_core::DEFAULT_PANES_BREAKPOINT
+    );
+    assert_eq!(
+        native.Pane1Length().expect("Pane1Length").Value,
+        naui_core::DEFAULT_LIST_PANE_WIDTH
+    );
+    assert_eq!(
+        native
+            .TallModeConfiguration()
+            .expect("TallModeConfiguration"),
+        TwoPaneViewTallModeConfiguration::SinglePane,
+        "縦に積む並びは使わないこと"
+    );
+    assert!(!panes.is_collapsed(), "並ぶ前は 2 区画であること");
+    assert_eq!(
+        back.Visibility().expect("Visibility"),
+        Visibility::Collapsed
+    );
+
+    panes.show(Pane::Detail);
+    assert_eq!(
+        native.PanePriority().expect("PanePriority"),
+        TwoPaneViewPriority::Pane2,
+        "show で PanePriority が変わること"
+    );
+    panes.set_breakpoint(700.0);
+    assert_eq!(native.MinWideModeWidth().expect("MinWideModeWidth"), 700.0);
+    panes.set_list_width(200.0);
+    assert_eq!(native.Pane1Length().expect("Pane1Length").Value, 200.0);
+    assert_eq!(panes.list_width(), 200.0);
+
+    panes.go_back();
+    assert_eq!(backs.get(), 1, "go_back で on_back が呼ばれること");
+    assert_eq!(
+        native.PanePriority().expect("PanePriority"),
+        TwoPaneViewPriority::Pane1
+    );
+
+    assert_eq!(
+        AutomationProperties::GetName(&back.cast::<DependencyObject>().expect("DependencyObject"))
+            .expect("Name")
+            .to_string(),
+        naui_core::ui_strings().back,
+        "戻るボタンは読み上げられる名前を持つこと"
+    );
+
+    // 最初の配置から狭い。TwoPaneView の Mode は SinglePane から変わらないので
+    // ModeChanged は来ない。
+    outer.set_sizing(Sizing::fixed(500.0, 300.0));
+    window.show();
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || panes.is_collapsed());
+    assert_eq!(native.Mode().expect("Mode"), TwoPaneViewMode::SinglePane);
+    assert!(panes.is_collapsed(), "最初から狭くても 1 区画と分かること");
+    assert_eq!(
+        back.Visibility().expect("Visibility"),
+        Visibility::Collapsed
+    );
+
+    // 一覧にフォーカスがあるまま詳細へ移ると、フォーカスは戻るボタンへ移る
+    // (詳細はラベルだけで、フォーカスを受けない)。
+    // 窓が前面に無くても (GotFocus が届かなくても) 移ること。
+    let list_control = list.native_element().cast::<Control>().expect("Control");
+    pump_until(FOCUS_TIMEOUT, || list.request_focus());
+    assert_ne!(
+        list_control.FocusState().expect("FocusState"),
+        FocusState::Unfocused
+    );
+
+    panes.show(Pane::Detail);
+    assert_eq!(
+        back.Visibility().expect("Visibility"),
+        Visibility::Visible,
+        "詳細だけのときは戻るボタンが出ること"
+    );
+    assert_ne!(
+        back.FocusState().expect("FocusState"),
+        FocusState::Unfocused,
+        "隠れた一覧からフォーカスが戻るボタンへ移ること"
+    );
+
+    automation::invoke(&back.cast::<UIElement>().expect("UIElement"));
+    pump_until(Duration::from_millis(200), || backs.get() == 2);
+    assert_eq!(backs.get(), 2, "戻るボタンで on_back が呼ばれること");
+    assert_eq!(panes.visible_pane(), Pane::List);
+    assert_eq!(
+        back.Visibility().expect("Visibility"),
+        Visibility::Collapsed
+    );
+    assert_ne!(
+        list_control.FocusState().expect("FocusState"),
+        FocusState::Unfocused,
+        "戻ると、隠れた戻るボタンからフォーカスが一覧へ移ること"
+    );
+
+    // 戻るボタンにフォーカスがあるまま広げると、ボタンだけが隠れる。フォーカスは
+    // 詳細が受けないので一覧へ。
+    panes.show(Pane::Detail);
+    assert_ne!(
+        back.FocusState().expect("FocusState"),
+        FocusState::Unfocused
+    );
+    outer.set_sizing(Sizing::fixed(800.0, 300.0));
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || !panes.is_collapsed());
+    assert!(!panes.is_collapsed(), "広げれば 2 区画に戻ること");
+    assert_eq!(
+        back.Visibility().expect("Visibility"),
+        Visibility::Collapsed
+    );
+    assert_ne!(
+        list_control.FocusState().expect("FocusState"),
+        FocusState::Unfocused,
+        "隠れた戻るボタンからフォーカスが一覧へ移ること"
+    );
+    window.close();
+    Ok(())
 }
 
 /// A Stack with a breakpoint lays its children out side by side once it is at least
