@@ -16,19 +16,32 @@
 //! glyph of Fluent's back buttons) sits above the detail while only the detail is
 //! shown, following `ModeChanged`. It draws no line between the panes either, and
 //! naui adds none.
+//!
+//! `ModeChanged` is raised only when `Mode` changes, and `Mode` starts as
+//! `SinglePane`. A view first laid out narrower than the breakpoint therefore raises
+//! none, so `Mode` is also read on `SizeChanged`.
+//!
+//! When a pane is hidden while it holds keyboard focus, focus moves to the pane
+//! shown. `show` reads its controls' `FocusState` before `TwoPaneView` hides the
+//! pane. When the width hides it, WinUI has already moved focus on (to the next tab
+//! stop) by `ModeChanged`, so the pane that last raised `GotFocus` is used instead.
+//! `GotFocus` is raised asynchronously, and not while the window is inactive, so
+//! `show` does not rely on it.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{ui_strings, Pane, PanesArrangement, Result, DEFAULT_LIST_PANE_WIDTH};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Button as XamlButton, Grid as XamlGrid, RowDefinition, TextBlock, TwoPaneView, TwoPaneViewMode,
-    TwoPaneViewPriority, TwoPaneViewTallModeConfiguration, TwoPaneViewWideModeConfiguration,
+    Button as XamlButton, Control, Grid as XamlGrid, RowDefinition, TextBlock, TwoPaneView,
+    TwoPaneViewMode, TwoPaneViewPriority, TwoPaneViewTallModeConfiguration,
+    TwoPaneViewWideModeConfiguration,
 };
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
 use naui_winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, RoutedEventHandler, UIElement,
-    VerticalAlignment, Visibility,
+    DependencyObject, FocusState, FrameworkElement, GridLength, GridUnitType, HorizontalAlignment,
+    RoutedEventHandler, SizeChangedEventHandler, UIElement, VerticalAlignment, Visibility,
 };
 use windows::Foundation::TypedEventHandler;
 use windows_core::{IInspectable, Interface, HSTRING};
@@ -41,6 +54,7 @@ use crate::widgets::{impl_widget, Widget};
 /// The back button, with `{label}` standing for its text.
 const BACK_XAML: &str = r##"<Button
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    AutomationProperties.Name="{label}"
     Margin="8"
     Visibility="Collapsed">
     <StackPanel Orientation="Horizontal" Spacing="8">
@@ -53,6 +67,8 @@ struct AdaptivePanesInner {
     native: TwoPaneView,
     list_pane: XamlGrid,
     detail_pane: XamlGrid,
+    /// `Pane2`: the back button above `detail_pane`.
+    detail_side: XamlGrid,
     back: XamlButton,
     /// Holds the panes' handles, keeping them alive along with their callbacks.
     list: RefCell<Option<Box<dyn Widget>>>,
@@ -61,9 +77,12 @@ struct AdaptivePanesInner {
     /// The breakpoint and the pane shown while only one is. The width is
     /// `TwoPaneView`'s to decide, so only those two are used.
     arrangement: Cell<PanesArrangement>,
-    /// Whether `TwoPaneView` shows one pane, as of its last `ModeChanged`. Both are
-    /// shown until its template is applied.
+    /// Whether `TwoPaneView` shows one pane, as of its last `ModeChanged` or
+    /// `SizeChanged`. Both are shown until its template is applied.
     collapsed: Cell<bool>,
+    /// The pane that last gained keyboard focus and has not lost it, as of the
+    /// `GotFocus` and `LostFocus` received so far.
+    focused: Cell<Option<Pane>>,
     on_back: ActivationHandler,
 }
 
@@ -136,25 +155,22 @@ impl AdaptivePanes {
             native,
             list_pane,
             detail_pane,
+            detail_side,
             back,
             list: RefCell::new(None),
             detail: RefCell::new(None),
             list_width: Cell::new(DEFAULT_LIST_PANE_WIDTH),
             arrangement: Cell::new(arrangement),
             collapsed: Cell::new(false),
+            focused: Cell::new(None),
             on_back: ActivationHandler::new(),
         }));
 
+        // ボタンごと隠れるので、フォーカスは show が一覧へ移す。
         let target = UiThreadCell::new(Rc::downgrade(&this.0));
         let clicked = RoutedEventHandler::new(move |_, _| {
             if let Some(inner) = target.try_with_mut(|weak| weak.upgrade()).flatten() {
-                let panes = AdaptivePanes(inner);
-                panes.go_back();
-                // ボタンごと隠れるので、フォーカスを一覧へ移す。
-                let list = panes.0.list.borrow().as_ref().map(|l| l.native_element());
-                if let Some(list) = list {
-                    crate::interaction::request_focus(&list);
-                }
+                AdaptivePanes(inner).go_back();
             }
             Ok(())
         });
@@ -174,6 +190,45 @@ impl AdaptivePanes {
             .native
             .ModeChanged(&changed)
             .map_err(|e| to_error("subscribe to TwoPaneView mode changes", e))?;
+
+        // 最初から狭いと Mode は SinglePane のまま変わらず ModeChanged が来ないので、
+        // 大きさが決まるたびにも読む。
+        let target = UiThreadCell::new(Rc::downgrade(&this.0));
+        let resized = SizeChangedEventHandler::new(move |_, _| {
+            if let Some(inner) = target.try_with_mut(|weak| weak.upgrade()).flatten() {
+                inner.mode_changed();
+            }
+            Ok(())
+        });
+        this.0
+            .native
+            .SizeChanged(&resized)
+            .map_err(|e| to_error("subscribe to TwoPaneView size changes", e))?;
+
+        // GotFocus と LostFocus は中の要素から区画まで上ってくる。
+        for pane in [Pane::List, Pane::Detail] {
+            let target = UiThreadCell::new(Rc::downgrade(&this.0));
+            let gained = RoutedEventHandler::new(move |_, _| {
+                if let Some(inner) = target.try_with_mut(|weak| weak.upgrade()).flatten() {
+                    inner.focused.set(Some(pane));
+                }
+                Ok(())
+            });
+            let target = UiThreadCell::new(Rc::downgrade(&this.0));
+            let lost = RoutedEventHandler::new(move |_, _| {
+                if let Some(inner) = target.try_with_mut(|weak| weak.upgrade()).flatten() {
+                    // もう一方の区画が先に GotFocus を受けていれば、そちらを残す。
+                    if inner.focused.get() == Some(pane) {
+                        inner.focused.set(None);
+                    }
+                }
+                Ok(())
+            });
+            let side = this.0.side(pane);
+            side.GotFocus(&gained)
+                .and_then(|_| side.LostFocus(&lost))
+                .map_err(|e| to_error("subscribe to TwoPaneView focus changes", e))?;
+        }
         Ok(this)
     }
 
@@ -227,12 +282,14 @@ impl AdaptivePanes {
         if !arrangement.show(pane) {
             return;
         }
+        // TwoPaneView が隠す前に、隠れる区画がフォーカスを持つかを読む。
+        let refocus = self.0.collapsed.get() && holds_focus(self.0.side(other(pane)));
         self.0.arrangement.set(arrangement);
         let _ = self.0.native.SetPanePriority(match pane {
             Pane::List => TwoPaneViewPriority::Pane1,
             Pane::Detail => TwoPaneViewPriority::Pane2,
         });
-        self.0.update_back();
+        self.0.apply(refocus);
     }
 
     /// Goes back to the list as if the user had pressed the back button. Calls
@@ -259,25 +316,101 @@ impl AdaptivePanes {
 }
 
 impl AdaptivePanesInner {
-    /// `TwoPaneView` switched between one pane and two.
+    /// `TwoPaneView` may have switched between one pane and two.
     fn mode_changed(&self) {
         let collapsed = self
             .native
             .Mode()
             .is_ok_and(|mode| mode == TwoPaneViewMode::SinglePane);
-        self.collapsed.set(collapsed);
-        self.update_back();
+        if collapsed != self.collapsed.get() {
+            self.collapsed.set(collapsed);
+            // 隠した区画にあったフォーカスを移す。WinUI はもう次のタブ位置へ移して
+            // いるので、最後に GotFocus を受けた区画で判断する。
+            let hidden = other(self.arrangement.get().visible());
+            let refocus =
+                collapsed && (self.focused.get() == Some(hidden) || holds_focus(self.side(hidden)));
+            self.apply(refocus);
+        }
     }
 
-    /// Shows the back button while only the detail is shown.
-    fn update_back(&self) {
-        let shown = self.collapsed.get() && self.arrangement.get().visible() == Pane::Detail;
+    /// The element `TwoPaneView` shows for `pane`.
+    fn side(&self, pane: Pane) -> &XamlGrid {
+        match pane {
+            Pane::List => &self.list_pane,
+            Pane::Detail => &self.detail_side,
+        }
+    }
+
+    /// Shows the back button while only the detail is shown. With `refocus`, moves
+    /// focus into the pane shown.
+    fn apply(&self, refocus: bool) {
+        let collapsed = self.collapsed.get();
+        let visible = self.arrangement.get().visible();
+        let shown = collapsed && visible == Pane::Detail;
+        // 広げて戻るボタンだけが隠れるときも、そのフォーカスを詳細へ移す。
+        let back_focused = !shown
+            && self
+                .back
+                .FocusState()
+                .is_ok_and(|state| state != FocusState::Unfocused);
         let _ = self.back.SetVisibility(if shown {
             Visibility::Visible
         } else {
             Visibility::Collapsed
         });
+        if !refocus && !back_focused {
+            return;
+        }
+
+        // 戻るボタンで戻ったときも、ボタンごと隠れるので一覧へ移る。詳細に
+        // フォーカスを受けるものが無ければ、戻るボタンが出ていればそこへ、
+        // 無ければ一覧へ。
+        let to = if collapsed { visible } else { Pane::Detail };
+        if to == Pane::Detail && self.focus_child(&self.detail) {
+            return;
+        }
+        if shown {
+            if let Ok(back) = self.back.cast::<UIElement>() {
+                crate::interaction::request_focus(&back);
+            }
+        } else {
+            self.focus_child(&self.list);
+        }
     }
+
+    /// Moves focus into a pane's content. `true` if it moved.
+    fn focus_child(&self, slot: &RefCell<Option<Box<dyn Widget>>>) -> bool {
+        let element = slot.borrow().as_ref().map(|child| child.native_element());
+        element.is_some_and(|element| crate::interaction::request_focus(&element))
+    }
+}
+
+/// The pane hidden while `pane` is shown alone.
+fn other(pane: Pane) -> Pane {
+    match pane {
+        Pane::List => Pane::Detail,
+        Pane::Detail => Pane::List,
+    }
+}
+
+/// Whether a control in `pane` has keyboard focus.
+fn holds_focus(pane: &XamlGrid) -> bool {
+    pane.cast::<DependencyObject>()
+        .is_ok_and(|object| focused_within(&object))
+}
+
+fn focused_within(object: &DependencyObject) -> bool {
+    let focused = object
+        .cast::<Control>()
+        .and_then(|control| control.FocusState())
+        .is_ok_and(|state| state != FocusState::Unfocused);
+    if focused {
+        return true;
+    }
+    let count = VisualTreeHelper::GetChildrenCount(object).unwrap_or(0);
+    (0..count)
+        .filter_map(|index| VisualTreeHelper::GetChild(object, index).ok())
+        .any(|child| focused_within(&child))
 }
 
 /// Puts `child` into a pane, replacing what was there.

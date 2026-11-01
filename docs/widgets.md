@@ -153,8 +153,11 @@ collected in [Known limitations](known-limitations.md).
   `PanePriority` the pane shown alone. `TallModeConfiguration` is `SinglePane`, so
   a narrow, tall view never stacks the panes. It draws no back button, so a
   `Button` with the `Back` symbol sits above the detail while only the detail is
-  shown, following `ModeChanged`. It has no slack at the breakpoint, unlike the
-  other platforms.
+  shown, following `ModeChanged` (and `SizeChanged`, since a view first laid out
+  narrow raises no `ModeChanged`). It has no slack at the breakpoint, unlike the
+  other platforms. When the width hides a pane, WinUI has already moved focus to
+  the next tab stop by `ModeChanged`, so naui remembers the pane that last raised
+  `GotFocus` and moves focus into the pane shown.
 - **`Label`**: The `TextBlock` is created from XAML with
   `TextTrimming="CharacterEllipsis"` (wrapping is switched with `TextWrapping`).
 - **`Toggle`**: The label is put into both `OnContent` and `OffContent`, so the
