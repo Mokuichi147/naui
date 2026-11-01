@@ -11539,18 +11539,29 @@ fn grid_spanning_child_respects_existing_minimums(ui: &Ui) -> Result<()> {
                 let native = window.native_window();
                 let content = native.contentView().expect("コンテンツビューがあること");
                 let mut seen = Vec::new();
-                for room in [400.0, 600.0, 800.0, 400.0] {
+                for room in [400.0, 600.0, 800.0, 400.0].into_iter().cycle().take(12) {
                     let room = room * scale;
                     native.setContentSize(size(room));
                     content.layoutSubtreeIfNeeded();
                     pump(0.05);
-                    content.layoutSubtreeIfNeeded();
                     let expected_first = ((room - spacing) / 4.0).max(minimum);
-                    if !close_to(extent(&first.native_view()), expected_first)
-                        || !close_to(
-                            extent(&second.native_view()),
-                            room - spacing - expected_first,
-                        )
+                    // 制約の更新に続く再レイアウトが終わるまで待つ。固定の待ち時間
+                    // だけでは、CI で片方の行がまだ潰れている途中の枠を読むことがある。
+                    pump_until(1.0, || {
+                        content.layoutSubtreeIfNeeded();
+                        close_to(extent(&content), room)
+                            && close_to(extent(&first.native_view()), expected_first)
+                            && close_to(
+                                extent(&second.native_view()),
+                                room - spacing - expected_first,
+                            )
+                    });
+                    let actual = extent(&content);
+                    let first_size = extent(&first.native_view());
+                    let second_size = extent(&second.native_view());
+                    if !close_to(actual, room)
+                        || !close_to(first_size, expected_first)
+                        || !close_to(second_size, room - spacing - expected_first)
                     {
                         let root = grid.native_view();
                         let direction = if vertical {
@@ -11571,12 +11582,7 @@ fn grid_spanning_child_respects_existing_minimums(ui: &Ui) -> Result<()> {
                             root.constraints(),
                         );
                     }
-                    seen.push((
-                        room,
-                        extent(&content),
-                        extent(&first.native_view()),
-                        extent(&second.native_view()),
-                    ));
+                    seen.push((room, actual, first_size, second_size));
                 }
                 window.close();
                 for (room, actual, first, second) in seen {
