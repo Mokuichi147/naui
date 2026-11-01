@@ -394,6 +394,10 @@ fn main() {
             grid_fill_track_without_a_fill_child_gets_its_share,
         ),
         (
+            "重みで分ける向きでも、Fixed の行と Fill の行で止まった Fill の子はマスいっぱいに広がる",
+            grid_fill_children_outside_the_shares_fill_their_cells,
+        ),
+        (
             "ウィンドウの大きさを変えても Fill の列は重みを保ち、ウィンドウを押し広げない",
             grid_fill_weights_follow_the_window,
         ),
@@ -11345,6 +11349,63 @@ fn grid_fill_track_without_a_fill_child_gets_its_share(ui: &Ui) -> Result<()> {
         "2 列目は右半分: {frames:?}"
     );
     assert!(frames[0].2 < 100.0, "ラベル自体は伸びない: {frames:?}");
+    Ok(())
+}
+
+/// While two or more `Fill` rows split the room by weight, the `Fill` children
+/// that take no share still fill their cells: those in a `Fixed` row (with or
+/// without a maximum), and those in a `Fill` row that stays at what its content
+/// needs.
+fn grid_fill_children_outside_the_shares_fill_their_cells(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_spacing(0.0, 0.0);
+    grid.set_column_track(0, Track::Fill(1.0));
+    grid.set_column_track(1, Track::Fill(1.0));
+    grid.set_row_track(0, Track::Fixed(100.0));
+    grid.set_row_track(1, Track::Fill(1.0));
+    grid.set_row_track(2, Track::Fill(1.0));
+    let capped = ui.stack(Orientation::Vertical)?;
+    capped.set_sizing(Sizing::fill().max_height(100.0));
+    let plain = ui.stack(Orientation::Vertical)?;
+    plain.set_sizing(Sizing::fill());
+    // 2 行目は 3 行目と 1 : 1 なら 100 だが、中身が 150 要るので 150 で止まる。
+    // 並ぶ子は、止まった行の高さまで広がる。
+    let tall = ui.stack(Orientation::Vertical)?;
+    tall.set_sizing(Sizing::fill().min_height(150.0));
+    let beside = ui.stack(Orientation::Vertical)?;
+    beside.set_sizing(Sizing::fill());
+    let last = ui.stack(Orientation::Vertical)?;
+    last.set_sizing(Sizing::fill());
+    grid.attach(&capped, GridCell::new(0, 0));
+    grid.attach(&plain, GridCell::new(1, 0));
+    grid.attach(&tall, GridCell::new(0, 1));
+    grid.attach(&beside, GridCell::new(1, 1));
+    grid.attach(&last, GridCell::new(0, 2));
+    let views = [
+        capped.native_view(),
+        plain.native_view(),
+        tall.native_view(),
+        beside.native_view(),
+        last.native_view(),
+    ];
+    let frames = frames_in(&grid.native_view(), NSSize::new(400.0, 300.0), &views);
+    assert!(
+        close_to(frames[0].3, 100.0),
+        "上限付きは Fixed の行いっぱい: {frames:?}"
+    );
+    assert!(
+        close_to(frames[1].3, 100.0),
+        "上限なしも Fixed の行いっぱい: {frames:?}"
+    );
+    assert!(close_to(frames[2].3, 150.0), "{frames:?}");
+    assert!(
+        close_to(frames[3].3, 150.0),
+        "止まった行に並ぶ子もいっぱい: {frames:?}"
+    );
+    assert!(
+        close_to(frames[4].3, 50.0),
+        "残りの 50 を受け取る: {frames:?}"
+    );
     Ok(())
 }
 

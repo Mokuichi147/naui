@@ -434,6 +434,26 @@ struct GridGrow {
     horizontal: bool,
 }
 
+impl GridGrow {
+    /// The first track of the cell in this direction.
+    fn start(&self) -> usize {
+        if self.horizontal {
+            self.cell.column
+        } else {
+            self.cell.row
+        }
+    }
+
+    /// How many tracks the cell spans in this direction.
+    fn span(&self) -> usize {
+        if self.horizontal {
+            self.cell.column_span.max(1)
+        } else {
+            self.cell.row_span.max(1)
+        }
+    }
+}
+
 /// How the `Fill` tracks in one direction split the room
 /// ([`ContentSizedGridView::fill_split`]).
 struct FillSplit {
@@ -755,6 +775,15 @@ impl ContentSizedGridView {
     /// Makes a `Fill` child wish for its cell's share of the grid instead of
     /// "everything the other tracks do not need". Returns whether anything changed.
     ///
+    /// A cell whose tracks take no share (`Auto`, `Fixed`, and `Fill` tracks that
+    /// stay at what they need) has `k = 0`: its child wishes for what its tracks
+    /// need, the size they get (still written against the grid, with a proportion
+    /// of 0, so that `k` alone tells the constraints apart). The wish to grow
+    /// cannot stay for it: "the grid less
+    /// what the other tracks need" is more than its tracks get once the shares are
+    /// larger than what their tracks need, and the solver would shrink the grid to
+    /// get closer.
+    ///
     /// Two `Fill` children wishing for everything cannot both be satisfied, and the
     /// solver resolves that by shrinking the grid (and the window). A share is
     /// written as a proportion of the grid's size (`child = k × grid + c`), so every
@@ -774,20 +803,7 @@ impl ContentSizedGridView {
         } else {
             self.rowSpacing()
         };
-        let (start, span) = if grow.horizontal {
-            (grow.cell.column, grow.cell.column_span.max(1))
-        } else {
-            (grow.cell.row, grow.cell.row_span.max(1))
-        };
-        let (k, constant) = split.cell(start, span, spacing);
-        if k <= 0.0 {
-            // 取り分を受け取るトラックにかからない子は、マスに合わせるだけ。
-            if let Some(share) = grow.share.take() {
-                share.setActive(false);
-                changed = true;
-            }
-            return changed;
-        }
+        let (k, constant) = split.cell(grow.start(), grow.span(), spacing);
         if let Some(share) = &grow.share {
             if (share.multiplier() - k).abs() < 1e-9 {
                 if (share.constant() - constant).abs() > 0.5 {
