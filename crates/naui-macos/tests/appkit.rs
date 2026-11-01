@@ -11545,6 +11545,32 @@ fn grid_spanning_child_respects_existing_minimums(ui: &Ui) -> Result<()> {
                     content.layoutSubtreeIfNeeded();
                     pump(0.05);
                     content.layoutSubtreeIfNeeded();
+                    let expected_first = ((room - spacing) / 4.0).max(minimum);
+                    if !close_to(extent(&first.native_view()), expected_first)
+                        || !close_to(
+                            extent(&second.native_view()),
+                            room - spacing - expected_first,
+                        )
+                    {
+                        let root = grid.native_view();
+                        let direction = if vertical {
+                            NSLayoutConstraintOrientation::Vertical
+                        } else {
+                            NSLayoutConstraintOrientation::Horizontal
+                        };
+                        eprintln!(
+                            "配分の診断: 縦 {vertical}、またぐ子が先 {spanning_first}、すき間 {spacing}、要求 {room}、\
+                             グリッド {:?}、子の fittingSize {:?} / {:?} / {:?}、\
+                             先頭の制約 {:?}、末尾の制約 {:?}、グリッドの制約 {:?}",
+                            root.frame(),
+                            first.native_view().fittingSize(),
+                            second.native_view().fittingSize(),
+                            spanning.native_view().fittingSize(),
+                            first.native_view().constraintsAffectingLayoutForOrientation(direction),
+                            second.native_view().constraintsAffectingLayoutForOrientation(direction),
+                            root.constraints(),
+                        );
+                    }
                     seen.push((
                         room,
                         extent(&content),
