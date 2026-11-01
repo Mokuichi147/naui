@@ -756,9 +756,9 @@ impl ContentSizedGridView {
             }
         }
         let total_weight: f64 = weights.iter().flatten().sum();
-        if total_weight <= 0.0 {
-            return None;
-        }
+        // 全トラックが最小で止まっていても、弱い固定値の希望を使い続ける。
+        // 強い成長用の希望へ戻すと、次の拡大時にも互いの必要分を奪い合い、
+        // ウィンドウを最小の大きさへ引き戻してしまう。
         let base = outside
             + (0..count)
                 .filter(|index| weights[*index].is_none())
@@ -841,13 +841,10 @@ impl ContentSizedGridView {
         true
     }
 
-    /// The size each column (row) needs, or wishes for with `wished`.
+    /// 各列 (行) が必要とする大きさ。`wished` なら希望する大きさを返す。
     ///
-    /// Tracks with a decided size ([`Self::decided_track_size`]) take that size
-    /// regardless of their content. Others are decided from what their content needs
-    /// ([`needed_size`]), and cells spanning several tracks spread it evenly over
-    /// their span, except that the part going to `Fill` tracks is split among them
-    /// by their weights.
+    /// 決定済みのトラックはその大きさを使い、ほかは子から求める。短いスパンから
+    /// 処理し、またぐ子の必要分は既存の最小とすき間を考慮して Fill へ配分する。
     fn track_needs(&self, horizontal: bool, wished: bool) -> Vec<f64> {
         let tracks = if horizontal {
             self.numberOfColumns()
@@ -864,20 +861,34 @@ impl ContentSizedGridView {
         } else {
             self.ivars().row_tracks.borrow()
         };
-        for (view, cell) in self.ivars().cells.borrow().iter() {
-            if view.isHidden() {
-                continue;
+        let cells = self.ivars().cells.borrow();
+        let span = |cell: &GridCell| {
+            if horizontal {
+                cell.column_span.max(1)
+            } else {
+                cell.row_span.max(1)
             }
+        };
+        let mut visible: Vec<_> = cells.iter().filter(|(view, _)| !view.isHidden()).collect();
+        // 単独の子の最小を先に確保する。追加順に処理すると、またぐ子が先のときに
+        // 仮の取り分へ後から最小を重ね、必要な合計を過大評価してしまう。
+        visible.sort_by_key(|(_, cell)| span(cell));
+        let spacing = if horizontal {
+            self.columnSpacing()
+        } else {
+            self.rowSpacing()
+        };
+        for (view, cell) in visible {
             let (start, span) = if horizontal {
                 (cell.column, cell.column_span.max(1))
             } else {
                 (cell.row, cell.row_span.max(1))
             };
-            let each = (needed_size(view, horizontal, wished) / span as f64).max(0.0);
             let range = start..(start + span).min(tracks);
-            // `Fill` のトラックが受け取る合計は等分のときと同じにして、その中を
-            // 重みで分ける。等分すると軽いトラックの必要な分が取り分を超え、
-            // 重みが崩れる (1 : 3 を 400 の子がまたぐと 600 を 150 : 450 に分けられない)。
+            let required = (needed_size(view, horizontal, wished)
+                - spacing * range.len().saturating_sub(1) as f64)
+                .max(0.0);
+            let each = required / span as f64;
             let fills: Vec<(usize, f64)> = range
                 .clone()
                 .filter(|index| decided[*index].is_none())
@@ -886,17 +897,27 @@ impl ContentSizedGridView {
                     Some((index, track.weight()))
                 })
                 .collect();
-            let fill_total = each * fills.len() as f64;
-            let fill_weights: f64 = fills.iter().map(|(_, weight)| weight).sum();
+            let mut outside = 0.0;
             for index in range {
-                if decided[index].is_some() {
+                if fills.iter().any(|(fill, _)| *fill == index) {
                     continue;
                 }
-                let need = match fills.iter().find(|(fill, _)| *fill == index) {
-                    Some((_, weight)) => fill_total * weight / fill_weights,
-                    None => each,
-                };
-                needs[index] = f64::max(needs[index], need);
+                if decided[index].is_none() {
+                    needs[index] = needs[index].max(each);
+                }
+                outside += needs[index];
+            }
+            // 400 を 1 : 3 でまたいでも、先頭が既に 180 必要なら 180 / 220 に
+            // 分ける。重みだけで 100 / 300 としてから max を取ると 480 になる。
+            let requests: Vec<_> = fills
+                .iter()
+                .map(|(index, weight)| (*weight, needs[*index]))
+                .collect();
+            for ((index, _), size) in fills
+                .iter()
+                .zip(distribute_fill(required - outside, &requests))
+            {
+                needs[*index] = size;
             }
         }
         needs

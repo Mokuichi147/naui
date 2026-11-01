@@ -402,6 +402,10 @@ fn main() {
             grid_spanning_child_spreads_by_weight,
         ),
         (
+            "またぐ子の必要幅は既存の最小幅と合わせて配り、ウィンドウを押し広げない",
+            grid_spanning_child_respects_existing_minimums,
+        ),
+        (
             "ウィンドウの大きさを変えても Fill の列は重みを保ち、ウィンドウを押し広げない",
             grid_fill_weights_follow_the_window,
         ),
@@ -11460,6 +11464,103 @@ fn grid_spanning_child_spreads_by_weight(ui: &Ui) -> Result<()> {
     );
     assert!(close_to(frames[0].3, 150.0), "{frames:?}");
     assert!(close_to(frames[1].3, 450.0), "{frames:?}");
+    Ok(())
+}
+
+/// またぐ子の 400 を 100 / 300 としてから最小幅 180 を合成すると、必要幅が
+/// 480 に膨らむ。追加順や向きによらず、既存の最小とすき間を含めて配分する。
+fn grid_spanning_child_respects_existing_minimums(ui: &Ui) -> Result<()> {
+    for vertical in [false, true] {
+        for spanning_first in [false, true] {
+            for spacing in [0.0, 10.0] {
+                let grid = ui.grid()?;
+                grid.set_sizing(Sizing::fill());
+                grid.set_spacing(spacing, spacing);
+                let spanning = ui.stack(Orientation::Vertical)?;
+                let first = ui.stack(Orientation::Vertical)?;
+                let second = ui.stack(Orientation::Vertical)?;
+                second.set_sizing(Sizing::fill());
+                let (span_cell, first_cell, second_cell) = if vertical {
+                    grid.set_column_track(0, Track::Fixed(20.0));
+                    grid.set_column_track(1, Track::FILL);
+                    grid.set_row_track(0, Track::Fill(1.0));
+                    grid.set_row_track(1, Track::Fill(3.0));
+                    spanning.set_sizing(Sizing::fixed(20.0, 400.0));
+                    first.set_sizing(Sizing::fill().min_height(180.0));
+                    (
+                        GridCell::new(0, 0).span(1, 2),
+                        GridCell::new(1, 0),
+                        GridCell::new(1, 1),
+                    )
+                } else {
+                    grid.set_row_track(0, Track::Fixed(20.0));
+                    grid.set_row_track(1, Track::FILL);
+                    grid.set_column_track(0, Track::Fill(1.0));
+                    grid.set_column_track(1, Track::Fill(3.0));
+                    spanning.set_sizing(Sizing::fixed(400.0, 20.0));
+                    first.set_sizing(Sizing::fill().min_width(180.0));
+                    (
+                        GridCell::new(0, 0).span(2, 1),
+                        GridCell::new(0, 1),
+                        GridCell::new(1, 1),
+                    )
+                };
+                if spanning_first {
+                    grid.attach(&spanning, span_cell);
+                }
+                grid.attach(&first, first_cell);
+                grid.attach(&second, second_cell);
+                if !spanning_first {
+                    grid.attach(&spanning, span_cell);
+                }
+                let size = |room| {
+                    if vertical {
+                        NSSize::new(200.0, room)
+                    } else {
+                        NSSize::new(room, 200.0)
+                    }
+                };
+                let extent = |view: &NSView| {
+                    if vertical {
+                        view.frame().size.height
+                    } else {
+                        view.frame().size.width
+                    }
+                };
+                let initial = size(400.0);
+                let window = ui.window("またぐ子と最小幅", initial.width, initial.height)?;
+                window.set_child(&grid);
+                window.show();
+                let native = window.native_window();
+                let content = native.contentView().expect("コンテンツビューがあること");
+                let mut seen = Vec::new();
+                for room in [400.0, 600.0, 800.0, 400.0] {
+                    native.setContentSize(size(room));
+                    content.layoutSubtreeIfNeeded();
+                    pump(0.05);
+                    content.layoutSubtreeIfNeeded();
+                    seen.push((
+                        room,
+                        extent(&content),
+                        extent(&first.native_view()),
+                        extent(&second.native_view()),
+                    ));
+                }
+                window.close();
+                for (room, actual, first, second) in seen {
+                    let available = room - spacing;
+                    let expected_first = (available / 4.0).max(180.0);
+                    assert!(
+                        close_to(actual, room)
+                            && close_to(first, expected_first)
+                            && close_to(second, available - expected_first),
+                        "縦 {vertical}、またぐ子が先 {spanning_first}、すき間 {spacing}: \
+                         必要な大きさ {room}、実際 {actual}、取り分 {first} / {second}"
+                    );
+                }
+            }
+        }
+    }
     Ok(())
 }
 
