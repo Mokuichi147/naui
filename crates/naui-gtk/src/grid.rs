@@ -18,6 +18,12 @@
 //! - Heights are measured for the widths the columns actually get, so wrapping
 //!   labels are measured at their real width.
 //! - Columns are mirrored in right-to-left text.
+//! - While there is room, a `Fill` line is not made narrower than its content can
+//!   shrink to, so the content is not cut off (`GtkGrid` gave each line its natural
+//!   size first). Content with `Fill` reports a minimum of 0 so that it never pushes
+//!   the parent wider; this size is kept apart from that minimum
+//!   ([`TrackRequest::content_minimum`]), and the grid's own minimum does not
+//!   include it.
 //!
 //! Inside its cell a child is placed by GTK4 itself (`gtk_widget_size_allocate`
 //! applies its margins and `halign` / `valign`), as in `GtkGrid`.
@@ -25,6 +31,8 @@
 use gtk::glib;
 use gtk::prelude::*;
 use naui_core::{allocate_tracks, GridCell, Track, TrackRequest};
+
+use crate::bin::SizeBin;
 
 // glib のサブクラス化マクロが `unsafe impl` を作るため、この中だけ許可する。
 #[allow(unsafe_code)]
@@ -115,6 +123,8 @@ glib::wrapper! {
 struct Line {
     minimum: i32,
     natural: i32,
+    /// The size below which its content is cut off ([`TrackRequest::content_minimum`]).
+    content_minimum: i32,
     /// No shown child covers it. It takes neither room nor spacing.
     empty: bool,
     /// A child in it grows (`hexpand` / `vexpand`).
@@ -317,7 +327,11 @@ impl TrackGrid {
                     .max(child.measure(opposite, -1).0)
             });
             let (minimum, natural, _, _) = child.measure(orientation, for_size);
-            (minimum, natural.max(minimum))
+            let content_minimum = child
+                .downcast_ref::<SizeBin>()
+                .map_or(minimum, |bin| bin.content_minimum(orientation, for_size))
+                .max(minimum);
+            (minimum, natural.max(minimum), content_minimum)
         };
 
         // 1 マスの子が先。またぐ子は、それで足りない分だけを足す。
@@ -329,9 +343,10 @@ impl TrackGrid {
             if span != 1 {
                 continue;
             }
-            let (minimum, natural) = measure(child, cell);
+            let (minimum, natural, content_minimum) = measure(child, cell);
             let line = &mut lines[start];
             line.minimum = line.minimum.max(minimum);
+            line.content_minimum = line.content_minimum.max(content_minimum);
             line.natural = line.natural.max(natural);
             line.expand |= child.compute_expand(orientation);
         }
@@ -347,7 +362,7 @@ impl TrackGrid {
                     line.expand = true;
                 }
             }
-            let (minimum, natural) = measure(child, cell);
+            let (minimum, natural, content_minimum) = measure(child, cell);
             let gaps = spacing * (span as i32 - 1);
             let have: i32 = lines[range.clone()].iter().map(|l| l.minimum).sum::<i32>() + gaps;
             spread(&mut lines[range.clone()], minimum - have, |line| {
@@ -355,12 +370,22 @@ impl TrackGrid {
             });
             for line in &mut lines[range.clone()] {
                 line.natural = line.natural.max(line.minimum);
+                line.content_minimum = line.content_minimum.max(line.minimum);
             }
+            let have: i32 = lines[range.clone()]
+                .iter()
+                .map(|l| l.content_minimum)
+                .sum::<i32>()
+                + gaps;
+            spread(&mut lines[range.clone()], content_minimum - have, |line| {
+                &mut line.content_minimum
+            });
             let have: i32 = lines[range.clone()].iter().map(|l| l.natural).sum::<i32>() + gaps;
             spread(&mut lines[range], natural - have, |line| &mut line.natural);
         }
         for line in &mut lines {
             line.natural = line.natural.max(line.minimum);
+            line.content_minimum = line.content_minimum.max(line.minimum);
         }
         lines
     }
@@ -409,6 +434,7 @@ fn split(lines: &[Line], size: i32, spacing: i32) -> Vec<Span> {
             TrackRequest {
                 minimum: f64::from(line.minimum),
                 natural: f64::from(line.natural),
+                content_minimum: f64::from(line.content_minimum),
                 weight: line.weight,
                 expand: line.expand,
             }

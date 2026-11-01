@@ -262,6 +262,10 @@ fn main() {
             grid_fill_takes_the_rest_from_auto_columns,
         ),
         (
+            "グリッドの Fill の列は場所が足りる限り中身を切らない",
+            grid_fill_does_not_cut_off_content_while_there_is_room,
+        ),
+        (
             "グリッドの折り返す文字は配られる幅で高さを測る",
             grid_measures_wrapping_text_at_its_share,
         ),
@@ -2779,6 +2783,41 @@ fn grid_fill_takes_the_rest_from_auto_columns(ui: &Ui) -> Result<()> {
     );
     assert_eq!(placed[1].2, placed[2].2, "同じ重みの列は同じ幅: {placed:?}");
     assert_eq!(placed[1].2 + placed[2].2, (600 - auto) as f32, "{placed:?}");
+    Ok(())
+}
+
+/// A `Fill` child reports a minimum of 0, but while there is room its column is
+/// not made narrower than the content can shrink to: the column keeps that and the
+/// others share the rest by weight. The grid's own minimum still leaves it out, so
+/// the content does not push the window wider.
+fn grid_fill_does_not_cut_off_content_while_there_is_room(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::FILL);
+    grid.set_column_track(1, Track::FILL);
+    let short = ui.button("短い")?;
+    short.set_sizing(Sizing::fill());
+    let long = ui.button("こちらはずっと長い文字のボタンです")?;
+    long.set_sizing(Sizing::fill());
+    grid.attach(&short, GridCell::new(0, 0));
+    grid.attach(&long, GridCell::new(1, 0));
+
+    let short_minimum = measure_width(&short.native_widget()).0;
+    let long_minimum = measure_width(&long.native_widget()).0;
+    let width = long_minimum + short_minimum + 20;
+    assert!(width < long_minimum * 2, "等分では切れる幅で確かめる");
+    let placed = lay_out_grid(&grid, width, 40, &[&short, &long]);
+    assert_eq!(placed[1].2, long_minimum as f32, "{placed:?}");
+    assert_eq!(placed[0].2, (short_minimum + 20) as f32, "{placed:?}");
+
+    // 広ければ重みどおり。
+    let width = long_minimum * 3;
+    let placed = lay_out_grid(&grid, width, 40, &[&short, &long]);
+    assert!((placed[0].2 - placed[1].2).abs() <= 1.0, "{placed:?}");
+
+    assert!(
+        measure_width(&grid.native_widget()).0 < long_minimum,
+        "グリッドの最小は中身で広がらない"
+    );
     Ok(())
 }
 

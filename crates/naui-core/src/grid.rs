@@ -13,6 +13,13 @@
 pub struct TrackRequest {
     /// The smallest size its content allows.
     pub minimum: f64,
+    /// The size below which its content is cut off, when that is more than
+    /// [`minimum`](Self::minimum). A `Fill` track keeps it while the room allows,
+    /// but unlike the minimum it is not required: content with `Fill` reports a
+    /// minimum of 0 so that it never pushes the parent wider (the Web writes
+    /// `min-width: 0` for the same reason), and this keeps it from being cut off
+    /// as long as there is room. 0 when the content has no such size.
+    pub content_minimum: f64,
     /// The size its content would like.
     pub natural: f64,
     /// The weight of a `Fill` track ([`Track::weight`](crate::Track::weight)). 0 for
@@ -97,11 +104,13 @@ pub fn distribute_fill(room: f64, tracks: &[(f64, f64)]) -> Vec<f64> {
 ///    share the rest by weight ([`distribute_fill`]).
 /// 2. Without a `Fill` track, the rest goes evenly to the tracks with
 ///    [`TrackRequest::expand`] (and stays unused when there are none).
-/// 3. When `room` is smaller than that, `Fill` tracks keep their minimum and the
-///    others give up what they would like, the closest to their minimum first
-///    (the way GTK shrinks a box), down to their minimum.
+/// 3. When `room` is smaller than that, every track gives up what it would like
+///    (its natural size, or for a `Fill` track its
+///    [`content_minimum`](TrackRequest::content_minimum)), the closest to its
+///    minimum first (the way GTK shrinks a box), down to its minimum.
 ///
-/// No track gets less than its minimum, so the sum can exceed `room`.
+/// In step 1 a `Fill` track never gets less than its `content_minimum` either. No
+/// track gets less than its minimum, so the sum can exceed `room`.
 ///
 /// ```
 /// # use naui_core::{allocate_tracks, TrackRequest};
@@ -114,10 +123,18 @@ pub fn allocate_tracks(room: f64, tracks: &[TrackRequest]) -> Vec<f64> {
     let room = if room.is_finite() { room.max(0.0) } else { 0.0 };
     let natural = |t: &TrackRequest| t.natural.max(t.minimum).max(0.0);
     let minimum = |t: &TrackRequest| t.minimum.max(0.0);
+    // 場所が足りる限り確保したい大きさ。Fill は中身が切れない大きさ、ほかは自然な大きさ。
+    let wanted = |t: &TrackRequest| {
+        if t.is_fill() {
+            t.content_minimum.max(minimum(t))
+        } else {
+            natural(t)
+        }
+    };
     let others: f64 = tracks.iter().filter(|t| !t.is_fill()).map(natural).sum();
-    let fills_minimum: f64 = tracks.iter().filter(|t| t.is_fill()).map(minimum).sum();
+    let fills_wanted: f64 = tracks.iter().filter(|t| t.is_fill()).map(wanted).sum();
 
-    if room >= others + fills_minimum {
+    if room >= others + fills_wanted {
         let rest = room - others;
         let mut sizes: Vec<f64> = tracks
             .iter()
@@ -135,7 +152,7 @@ pub fn allocate_tracks(room: f64, tracks: &[TrackRequest]) -> Vec<f64> {
         } else {
             let requests: Vec<(f64, f64)> = fills
                 .iter()
-                .map(|i| (tracks[*i].weight, minimum(&tracks[*i])))
+                .map(|i| (tracks[*i].weight, wanted(&tracks[*i])))
                 .collect();
             for (index, size) in fills.iter().zip(distribute_fill(rest, &requests)) {
                 sizes[*index] = size;
@@ -144,21 +161,17 @@ pub fn allocate_tracks(room: f64, tracks: &[TrackRequest]) -> Vec<f64> {
         return sizes;
     }
 
-    // 足りないとき。Fill は最小のまま、ほかは最小から自然な大きさへ向けて、
-    // 差の小さいものから順に満たす (水を注ぐように、同じ量ずつ、差で頭打ち)。
+    // 足りないとき。どれも最小から確保したい大きさへ向けて、差の小さいものから
+    // 順に満たす (水を注ぐように、同じ量ずつ、差で頭打ち)。
     let mut sizes: Vec<f64> = tracks.iter().map(minimum).collect();
     let used: f64 = sizes.iter().sum();
     let mut spare = (room - used).max(0.0);
-    let mut order: Vec<usize> = (0..tracks.len())
-        .filter(|i| !tracks[*i].is_fill() && natural(&tracks[*i]) > minimum(&tracks[*i]))
-        .collect();
-    order.sort_by(|a, b| {
-        let gap = |i: usize| natural(&tracks[i]) - minimum(&tracks[i]);
-        gap(*a).total_cmp(&gap(*b))
-    });
+    let gap = |i: usize| wanted(&tracks[i]) - minimum(&tracks[i]);
+    let mut order: Vec<usize> = (0..tracks.len()).filter(|i| gap(*i) > 0.0).collect();
+    order.sort_by(|a, b| gap(*a).total_cmp(&gap(*b)));
     let mut left = order.len();
     for index in order {
-        let gap = natural(&tracks[index]) - minimum(&tracks[index]);
+        let gap = gap(index);
         let given = gap.min(spare / left as f64);
         sizes[index] += given;
         spare -= given;
@@ -176,7 +189,7 @@ mod tests {
             minimum,
             natural: minimum,
             weight,
-            expand: false,
+            ..TrackRequest::default()
         }
     }
 
@@ -184,8 +197,7 @@ mod tests {
         TrackRequest {
             minimum,
             natural,
-            weight: 0.0,
-            expand: false,
+            ..TrackRequest::default()
         }
     }
 
@@ -254,10 +266,10 @@ mod tests {
         // 自然な大きさの違う Fill 列でも、重みが同じなら同じ幅になる
         // (GtkGrid の「自然な大きさ + 余りの等分」とは違い、CSS の fr と同じ)。
         let wide = TrackRequest {
-            minimum: 0.0,
             natural: 200.0,
             weight: 1.0,
             expand: true,
+            ..TrackRequest::default()
         };
         assert_eq!(
             allocate_tracks(300.0, &[wide, fill(1.0, 0.0)]),
@@ -307,5 +319,34 @@ mod tests {
         // 最小にも届かないときは最小。
         let sizes = allocate_tracks(10.0, &[content(20.0, 30.0), fill(1.0, 10.0)]);
         assert_eq!(sizes, [20.0, 10.0]);
+    }
+
+    #[test]
+    fn fills_keep_their_content_minimum_while_there_is_room() {
+        // 中身が切れない大きさ 216 の Fill は、等分の 141.5 ではなくそれを保ち、
+        // 残りをもう一方へ回す (CSS の fr が min-content を守るのと同じ)。
+        let long = TrackRequest {
+            natural: 216.0,
+            content_minimum: 216.0,
+            weight: 1.0,
+            ..TrackRequest::default()
+        };
+        let short = TrackRequest {
+            natural: 40.0,
+            content_minimum: 40.0,
+            weight: 1.0,
+            ..TrackRequest::default()
+        };
+        assert_eq!(
+            allocate_tracks(372.0, &[content(89.0, 89.0), short, long]),
+            [89.0, 67.0, 216.0]
+        );
+        // 広ければ重みどおり。
+        assert_eq!(allocate_tracks(600.0, &[short, long]), [300.0, 300.0]);
+        // 足りなければ、ほかのトラックと同じく差の小さいものから満たす。
+        assert_eq!(
+            allocate_tracks(200.0, &[content(60.0, 100.0), short, long]),
+            [100.0, 40.0, 60.0]
+        );
     }
 }

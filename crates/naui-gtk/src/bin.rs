@@ -79,6 +79,39 @@ mod imp {
             (cap >= 0).then_some(cap)
         }
 
+        /// Measures the content for `for_size` on the other axis, held to the cap there
+        /// and never below the content's minimum. `None` without content.
+        pub(super) fn measure_content(
+            &self,
+            orientation: gtk::Orientation,
+            for_size: i32,
+        ) -> Option<(i32, i32, i32, i32)> {
+            let child = self.obj().first_child()?;
+            // もう一方の軸に上限があるなら、中身にはそこまでしか配られない。
+            // 折り返す中身は渡された大きさで高さを決めるので、上限を超えた
+            // 大きさで測らせると高さが足りなくなる。
+            let for_size = match (for_size, self.cross_cap(orientation)) {
+                (for_size, Some(cap)) if for_size >= 0 => for_size.min(cap),
+                (for_size, _) => for_size,
+            };
+            let horizontal = orientation == gtk::Orientation::Horizontal;
+            // `Fill` の最小を 0 にしているので、もう一方の軸には中身の最小より
+            // 小さい大きさが来ることがある。中身はそれより縮まず、そのまま渡すと
+            // GTK4 が警告する ("needs at least")。size_allocate と同じく、中身は
+            // 最小の大きさで測る。
+            let for_size = if for_size >= 0 {
+                let opposite = if horizontal {
+                    gtk::Orientation::Vertical
+                } else {
+                    gtk::Orientation::Horizontal
+                };
+                for_size.max(child.measure(opposite, -1).0)
+            } else {
+                for_size
+            };
+            Some(child.measure(orientation, for_size))
+        }
+
         /// Places the popovers attached to it. They come after the content, which is
         /// set once in [`wrap`](super::SizeBin::wrap), so the content stays the first
         /// child.
@@ -121,33 +154,12 @@ mod imp {
         /// exception: its minimum is passed through as is. GTK4 does not shrink content
         /// when given less than its minimum; it overflows and draws anyway.
         fn measure(&self, orientation: gtk::Orientation, for_size: i32) -> (i32, i32, i32, i32) {
-            let Some(child) = self.obj().first_child() else {
+            let Some((child_minimum, child_natural, min_baseline, nat_baseline)) =
+                self.measure_content(orientation, for_size)
+            else {
                 return (0, 0, -1, -1);
             };
-            // もう一方の軸に上限があるなら、中身にはそこまでしか配られない。
-            // 折り返す中身は渡された大きさで高さを決めるので、上限を超えた
-            // 大きさで測らせると高さが足りなくなる。
-            let for_size = match (for_size, self.cross_cap(orientation)) {
-                (for_size, Some(cap)) if for_size >= 0 => for_size.min(cap),
-                (for_size, _) => for_size,
-            };
             let horizontal = orientation == gtk::Orientation::Horizontal;
-            // `Fill` の最小を 0 にしているので、もう一方の軸には中身の最小より
-            // 小さい大きさが来ることがある。中身はそれより縮まず、そのまま渡すと
-            // GTK4 が警告する ("needs at least")。size_allocate と同じく、中身は
-            // 最小の大きさで測る。
-            let for_size = if for_size >= 0 {
-                let opposite = if horizontal {
-                    gtk::Orientation::Vertical
-                } else {
-                    gtk::Orientation::Horizontal
-                };
-                for_size.max(child.measure(opposite, -1).0)
-            } else {
-                for_size
-            };
-            let (child_minimum, child_natural, min_baseline, nat_baseline) =
-                child.measure(orientation, for_size);
             let (mut minimum, mut natural) = (child_minimum, child_natural);
             let sizing = self.sizing.get();
             let (cap, length, rigid) = if horizontal {
@@ -352,6 +364,26 @@ impl SizeBin {
     /// The size the app specified.
     pub(crate) fn sizing(&self) -> Sizing {
         self.imp().sizing.get()
+    }
+
+    /// The size below which the content is cut off: the content's own minimum, held
+    /// to the maximum. Unlike the minimum `measure` reports, it is not lowered to 0
+    /// on `Fill` axes, so a grid can keep it while there is room without the content
+    /// pushing the grid's parent wider.
+    pub(crate) fn content_minimum(&self, orientation: gtk::Orientation, for_size: i32) -> i32 {
+        let Some((minimum, ..)) = self.imp().measure_content(orientation, for_size) else {
+            return 0;
+        };
+        let cap = if orientation == gtk::Orientation::Horizontal {
+            self.imp().max_width.get()
+        } else {
+            self.imp().max_height.get()
+        };
+        if cap >= 0 {
+            minimum.min(cap)
+        } else {
+            minimum
+        }
     }
 
     /// Applies the size specification. Each call discards the previous one.

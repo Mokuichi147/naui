@@ -388,7 +388,12 @@ collected in [Known limitations](known-limitations.md).
   columns get, columns mirror in right-to-left text) and splits the room with
   naui-core's `allocate_tracks`: `Fill` tracks share the leftover by weight, never
   below what their content needs, and without a `Fill` track the leftover goes to
-  the lines whose children grow, as before. GTK4 still places each child inside its
+  the lines whose children grow, as before. A `Fill` child reports a minimum of 0
+  so that it never pushes the window wider, so the grid asks `SizeBin` separately
+  for the size below which the content is cut off (`content_minimum`). While the
+  room allows, a `Fill` track is held at that size and the others share the rest;
+  when it does not, every track shrinks towards its minimum the way a GTK box
+  does. The grid's own minimum leaves that size out. GTK4 still places each child inside its
   cell (margins, `halign` / `valign`).
 - **`SplitView`**: A `GtkPaned`. The panes' minimum sizes are held by a container
   wrapped around each pane, so they do not conflict with the `size_request` the app

@@ -160,6 +160,12 @@ that shape are covered in
   same size (`Grid`'s `Star` tracks share out the whole leftover area). Linux and
   the Web instead give each its content size plus an equal share of what is left,
   and macOS does not define how the space is split.
+- A `Grid`'s `Fill` track gets its weighted share even when that is narrower than
+  its content, which is then cut off (a `Fill` child does not claim its content's
+  minimum, so it never pushes the window wider). The Web does the same
+  (`min-width: 0` under `fr`). macOS and Linux keep a `Fill` track at what its
+  content needs while there is room and share the rest by weight. Give the child
+  a `min_width` to get that everywhere.
 
 ### Widgets
 
