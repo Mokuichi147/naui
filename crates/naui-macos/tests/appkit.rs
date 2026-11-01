@@ -398,6 +398,10 @@ fn main() {
             grid_fill_children_outside_the_shares_fill_their_cells,
         ),
         (
+            "グリッドをまたぐ子が必要な分は Fill の重みで配る",
+            grid_spanning_child_spreads_by_weight,
+        ),
+        (
             "ウィンドウの大きさを変えても Fill の列は重みを保ち、ウィンドウを押し広げない",
             grid_fill_weights_follow_the_window,
         ),
@@ -11406,6 +11410,56 @@ fn grid_fill_children_outside_the_shares_fill_their_cells(ui: &Ui) -> Result<()>
         close_to(frames[4].3, 50.0),
         "残りの 50 を受け取る: {frames:?}"
     );
+    Ok(())
+}
+
+/// What a spanning child needs is split over the `Fill` tracks it crosses by their
+/// weights, not evenly: across `Fill` 1 : 3, a child of 400 lets 600 split 150 :
+/// 450. Split evenly, both tracks would need 200 and the split would be 200 : 400.
+fn grid_spanning_child_spreads_by_weight(ui: &Ui) -> Result<()> {
+    let fills = || -> Result<(naui_macos::Stack, naui_macos::Stack)> {
+        let first = ui.stack(Orientation::Vertical)?;
+        first.set_sizing(Sizing::fill());
+        let second = ui.stack(Orientation::Vertical)?;
+        second.set_sizing(Sizing::fill());
+        Ok((first, second))
+    };
+
+    let columns = ui.grid()?;
+    columns.set_spacing(0.0, 0.0);
+    columns.set_column_track(0, Track::Fill(1.0));
+    columns.set_column_track(1, Track::Fill(3.0));
+    let wide = ui.stack(Orientation::Vertical)?;
+    wide.set_sizing(Sizing::fixed(400.0, 20.0));
+    let (left, right) = fills()?;
+    columns.attach(&wide, GridCell::new(0, 0).span(2, 1));
+    columns.attach(&left, GridCell::new(0, 1));
+    columns.attach(&right, GridCell::new(1, 1));
+    let frames = frames_in(
+        &columns.native_view(),
+        NSSize::new(600.0, 100.0),
+        &[left.native_view(), right.native_view()],
+    );
+    assert!(close_to(frames[0].2, 150.0), "{frames:?}");
+    assert!(close_to(frames[1].2, 450.0), "{frames:?}");
+
+    let rows = ui.grid()?;
+    rows.set_spacing(0.0, 0.0);
+    rows.set_row_track(0, Track::Fill(1.0));
+    rows.set_row_track(1, Track::Fill(3.0));
+    let tall = ui.stack(Orientation::Vertical)?;
+    tall.set_sizing(Sizing::fixed(20.0, 400.0));
+    let (top, bottom) = fills()?;
+    rows.attach(&tall, GridCell::new(0, 0).span(1, 2));
+    rows.attach(&top, GridCell::new(1, 0));
+    rows.attach(&bottom, GridCell::new(1, 1));
+    let frames = frames_in(
+        &rows.native_view(),
+        NSSize::new(100.0, 600.0),
+        &[top.native_view(), bottom.native_view()],
+    );
+    assert!(close_to(frames[0].3, 150.0), "{frames:?}");
+    assert!(close_to(frames[1].3, 450.0), "{frames:?}");
     Ok(())
 }
 

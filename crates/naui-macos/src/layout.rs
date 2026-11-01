@@ -846,7 +846,8 @@ impl ContentSizedGridView {
     /// Tracks with a decided size ([`Self::decided_track_size`]) take that size
     /// regardless of their content. Others are decided from what their content needs
     /// ([`needed_size`]), and cells spanning several tracks spread it evenly over
-    /// their span.
+    /// their span, except that the part going to `Fill` tracks is split among them
+    /// by their weights.
     fn track_needs(&self, horizontal: bool, wished: bool) -> Vec<f64> {
         let tracks = if horizontal {
             self.numberOfColumns()
@@ -858,6 +859,11 @@ impl ContentSizedGridView {
             .map(|index| self.decided_track_size(index, horizontal))
             .collect();
         let mut needs: Vec<f64> = decided.iter().map(|size| size.unwrap_or(0.0)).collect();
+        let specs = if horizontal {
+            self.ivars().column_tracks.borrow()
+        } else {
+            self.ivars().row_tracks.borrow()
+        };
         for (view, cell) in self.ivars().cells.borrow().iter() {
             if view.isHidden() {
                 continue;
@@ -868,11 +874,29 @@ impl ContentSizedGridView {
                 (cell.row, cell.row_span.max(1))
             };
             let each = (needed_size(view, horizontal, wished) / span as f64).max(0.0);
-            for index in start..(start + span).min(tracks) {
+            let range = start..(start + span).min(tracks);
+            // `Fill` のトラックが受け取る合計は等分のときと同じにして、その中を
+            // 重みで分ける。等分すると軽いトラックの必要な分が取り分を超え、
+            // 重みが崩れる (1 : 3 を 400 の子がまたぐと 600 を 150 : 450 に分けられない)。
+            let fills: Vec<(usize, f64)> = range
+                .clone()
+                .filter(|index| decided[*index].is_none())
+                .filter_map(|index| {
+                    let track = specs.get(index).copied().filter(|t| t.is_fill())?;
+                    Some((index, track.weight()))
+                })
+                .collect();
+            let fill_total = each * fills.len() as f64;
+            let fill_weights: f64 = fills.iter().map(|(_, weight)| weight).sum();
+            for index in range {
                 if decided[index].is_some() {
                     continue;
                 }
-                needs[index] = f64::max(needs[index], each);
+                let need = match fills.iter().find(|(fill, _)| *fill == index) {
+                    Some((_, weight)) => fill_total * weight / fill_weights,
+                    None => each,
+                };
+                needs[index] = f64::max(needs[index], need);
             }
         }
         needs
