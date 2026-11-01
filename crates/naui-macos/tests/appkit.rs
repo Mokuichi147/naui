@@ -378,8 +378,36 @@ fn main() {
             grid_fill_row_takes_the_rest_around_a_capped_child,
         ),
         (
-            "上限付きと上限なしの Fill の行・列が並んでも、上限付きは上限まで広がる",
+            "上限付きと上限なしの Fill の行・列は重みで分け、上限付きは取り分の中で上限まで広がる",
             grid_capped_and_plain_fill_tracks_share_the_room,
+        ),
+        (
+            "グリッドの Fill の列と行が重みで余りを分ける",
+            grid_fill_weights_split_the_room,
+        ),
+        (
+            "グリッドの Fill の列は中身の最小を下回らず、残りを分け直す",
+            grid_fill_keeps_the_content_minimum,
+        ),
+        (
+            "Fill の子が無い Fill の列も重みどおりの取り分を受け取る",
+            grid_fill_track_without_a_fill_child_gets_its_share,
+        ),
+        (
+            "重みで分ける向きでも、Fixed の行と Fill の行で止まった Fill の子はマスいっぱいに広がる",
+            grid_fill_children_outside_the_shares_fill_their_cells,
+        ),
+        (
+            "グリッドをまたぐ子が必要な分は Fill の重みで配る",
+            grid_spanning_child_spreads_by_weight,
+        ),
+        (
+            "またぐ子の必要幅は既存の最小幅と合わせて配り、ウィンドウを押し広げない",
+            grid_spanning_child_respects_existing_minimums,
+        ),
+        (
+            "ウィンドウの大きさを変えても Fill の列は重みを保ち、ウィンドウを押し広げない",
+            grid_fill_weights_follow_the_window,
         ),
         (
             "上限付きと上限なしの Fill の行・列は、狭いときウィンドウを押し広げない",
@@ -11348,16 +11376,18 @@ fn grid_fill_row_keeps_the_rest(ui: &Ui) -> Result<()> {
 }
 
 /// `Fill` rows (and columns) with a capped child and with a plain `Fill` child side
-/// by side: when there is room, the capped one still grows up to its maximum and
-/// the plain one takes the rest.
+/// by side: the two tracks split the room by weight (as CSS's `fr` and WinUI's
+/// `Star` do), and the capped child grows up to its maximum inside its share.
 ///
 /// The plain child's "want to grow to fill the grid" wish is far stronger than the
 /// capped child's "want to grow up to the maximum". Asking for the whole grid, it
-/// squashed the capped track. So, as across columns, it asks only for what the
-/// other tracks do not need.
+/// squashed the capped track. It is now held at its share. Before weights worked,
+/// the capped track got only its maximum and the plain one the rest.
 fn grid_capped_and_plain_fill_tracks_share_the_room(ui: &Ui) -> Result<()> {
     for vertical in [true, false] {
         let grid = ui.grid()?;
+        // NSGridView の既定のすき間 (6) を外し、取り分を読みやすくする。
+        grid.set_spacing(0.0, 0.0);
         grid.set_sizing(Sizing::fill());
         let plain = ui.stack(Orientation::Vertical)?;
         plain.set_sizing(Sizing::fill());
@@ -11395,9 +11425,457 @@ fn grid_capped_and_plain_fill_tracks_share_the_room(ui: &Ui) -> Result<()> {
             capped_size, 100.0,
             "上限付きは上限まで広がる (縦 {vertical}): {capped_frame:?} / {plain_frame:?}"
         );
+        // 2 本の Fill を 1 : 1 で分ける。
         assert!(
-            plain_size > room - 150.0,
-            "上限なしは残りを受け取る (縦 {vertical}): {capped_frame:?} / {plain_frame:?}"
+            (plain_size - room / 2.0).abs() <= 1.0,
+            "上限なしは自分の取り分を受け取る (縦 {vertical}): {capped_frame:?} / {plain_frame:?}"
+        );
+    }
+    Ok(())
+}
+
+/// Lays `root` out at the given size and returns each view's frame in `root`'s
+/// coordinates: `(x, y, width, height)`.
+fn frames_in(root: &NSView, size: NSSize, views: &[Retained<NSView>]) -> Vec<(f64, f64, f64, f64)> {
+    root.setFrameSize(size);
+    root.layoutSubtreeIfNeeded();
+    views
+        .iter()
+        .map(|view| {
+            let frame = view.convertRect_toView(view.bounds(), Some(root));
+            (
+                frame.origin.x,
+                frame.origin.y,
+                frame.size.width,
+                frame.size.height,
+            )
+        })
+        .collect()
+}
+
+fn close_to(actual: f64, expected: f64) -> bool {
+    (actual - expected).abs() <= 1.0
+}
+
+/// `Fill` columns and rows split the room by weight, as CSS's `fr` (Web) and
+/// `Star` (Windows) do. `NSGridView` has no weights, and they used to be split
+/// evenly.
+fn grid_fill_weights_split_the_room(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_spacing(8.0, 4.0);
+    grid.set_column_track(0, Track::Fill(1.0));
+    grid.set_column_track(1, Track::Fill(3.0));
+    grid.set_row_track(0, Track::Fill(2.0));
+    grid.set_row_track(1, Track::Fill(1.0));
+    let mut views = Vec::new();
+    for index in 0..4 {
+        let cell = ui.stack(Orientation::Vertical)?;
+        cell.set_sizing(Sizing::fill());
+        grid.attach(&cell, GridCell::new(index % 2, index / 2));
+        views.push(cell.native_view());
+    }
+    let root = grid.native_view();
+    // 横は 408 - 8 = 400 を 1 : 3、縦は 304 - 4 = 300 を 2 : 1。
+    let frames = frames_in(&root, NSSize::new(408.0, 304.0), &views);
+    for (index, (width, height)) in [
+        (100.0, 200.0),
+        (300.0, 200.0),
+        (100.0, 100.0),
+        (300.0, 100.0),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        assert!(
+            close_to(frames[index].2, width) && close_to(frames[index].3, height),
+            "{index} 番目が {width} x {height}: {frames:?}"
+        );
+    }
+
+    // 重みをあとから変えても分け直す。
+    grid.set_column_track(1, Track::Fill(1.0));
+    let frames = frames_in(&root, NSSize::new(408.0, 304.0), &views);
+    assert!(
+        close_to(frames[0].2, 200.0) && close_to(frames[1].2, 200.0),
+        "1 : 1 に変えると同じ幅: {frames:?}"
+    );
+
+    // NSGridView による制約の作り直しで取り分の制約が外れた場合も、
+    // 係数・定数が変わらない次のレイアウトで復元する。
+    let shares: Vec<_> = root
+        .constraints()
+        .iter()
+        .filter(|constraint| {
+            constraint
+                .identifier()
+                .is_some_and(|id| id.to_string().starts_with("naui.grid.grow."))
+        })
+        .collect();
+    assert_eq!(shares.len(), 8, "各セルの横・縦の取り分があること");
+    for share in &shares {
+        share.setActive(false);
+    }
+    // ウィンドウに接続していないビューなので、レイアウトのコールバックを
+    // 直接呼び、制約を復元する処理を確実に通す。
+    root.layout();
+    let frames = frames_in(&root, NSSize::new(408.0, 304.0), &views);
+    let restored = root.constraints();
+    for share in &shares {
+        assert!(
+            restored.iter().any(|constraint| {
+                constraint.isActive() && constraint.identifier() == share.identifier()
+            }),
+            "各取り分の制約が再利用または再作成されること: {:?}、枠 {frames:?}、制約 {restored:?}",
+            share.identifier()
+        );
+    }
+    for (index, frame) in frames.iter().enumerate() {
+        let height = if index < 2 { 200.0 } else { 100.0 };
+        assert!(
+            close_to(frame.2, 200.0) && close_to(frame.3, height),
+            "制約を復元して取り分を保つ: {frames:?}"
+        );
+    }
+    Ok(())
+}
+
+/// A `Fill` column never gets less than its content needs. It keeps that, and the
+/// other `Fill` columns share what is left by their weights (as CSS's `fr`).
+fn grid_fill_keeps_the_content_minimum(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_spacing(0.0, 0.0);
+    grid.set_column_track(0, Track::Fill(1.0));
+    grid.set_column_track(1, Track::Fill(1.0));
+    grid.set_column_track(2, Track::Fill(2.0));
+    let wide = ui.stack(Orientation::Vertical)?;
+    wide.set_sizing(Sizing::fill().min_width(180.0));
+    let middle = ui.stack(Orientation::Vertical)?;
+    middle.set_sizing(Sizing::fill());
+    let last = ui.stack(Orientation::Vertical)?;
+    last.set_sizing(Sizing::fill());
+    grid.attach(&wide, GridCell::new(0, 0));
+    grid.attach(&middle, GridCell::new(1, 0));
+    grid.attach(&last, GridCell::new(2, 0));
+    let views = [wide.native_view(), middle.native_view(), last.native_view()];
+    // 1 : 1 : 2 なら 100 : 100 : 200 だが、1 列目は 180 要る。残り 220 を 1 : 2。
+    let frames = frames_in(&grid.native_view(), NSSize::new(400.0, 40.0), &views);
+    assert!(close_to(frames[0].2, 180.0), "{frames:?}");
+    assert!(close_to(frames[1].2, 220.0 / 3.0), "{frames:?}");
+    assert!(close_to(frames[2].2, 440.0 / 3.0), "{frames:?}");
+    Ok(())
+}
+
+/// A `Fill` column holding only a child that fits its content still gets its share
+/// (the column, not the child, grows). The `Fill` child beside it stops at its own
+/// share instead of taking everything.
+fn grid_fill_track_without_a_fill_child_gets_its_share(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_spacing(0.0, 0.0);
+    grid.set_column_track(0, Track::Fill(1.0));
+    grid.set_column_track(1, Track::Fill(1.0));
+    let label = ui.label("名前")?;
+    let field = ui.stack(Orientation::Vertical)?;
+    field.set_sizing(Sizing::fill());
+    grid.attach(&label, GridCell::new(0, 0));
+    grid.attach(&field, GridCell::new(1, 0));
+    let frames = frames_in(
+        &grid.native_view(),
+        NSSize::new(400.0, 40.0),
+        &[label.native_view(), field.native_view()],
+    );
+    assert!(
+        close_to(frames[1].0, 200.0) && close_to(frames[1].2, 200.0),
+        "2 列目は右半分: {frames:?}"
+    );
+    assert!(frames[0].2 < 100.0, "ラベル自体は伸びない: {frames:?}");
+    Ok(())
+}
+
+/// While two or more `Fill` rows split the room by weight, the `Fill` children
+/// that take no share still fill their cells: those in a `Fixed` row (with or
+/// without a maximum), and those in a `Fill` row that stays at what its content
+/// needs.
+fn grid_fill_children_outside_the_shares_fill_their_cells(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_spacing(0.0, 0.0);
+    grid.set_column_track(0, Track::Fill(1.0));
+    grid.set_column_track(1, Track::Fill(1.0));
+    grid.set_row_track(0, Track::Fixed(100.0));
+    grid.set_row_track(1, Track::Fill(1.0));
+    grid.set_row_track(2, Track::Fill(1.0));
+    let capped = ui.stack(Orientation::Vertical)?;
+    capped.set_sizing(Sizing::fill().max_height(100.0));
+    let plain = ui.stack(Orientation::Vertical)?;
+    plain.set_sizing(Sizing::fill());
+    // 2 行目は 3 行目と 1 : 1 なら 100 だが、中身が 150 要るので 150 で止まる。
+    // 並ぶ子は、止まった行の高さまで広がる。
+    let tall = ui.stack(Orientation::Vertical)?;
+    tall.set_sizing(Sizing::fill().min_height(150.0));
+    let beside = ui.stack(Orientation::Vertical)?;
+    beside.set_sizing(Sizing::fill());
+    let last = ui.stack(Orientation::Vertical)?;
+    last.set_sizing(Sizing::fill());
+    grid.attach(&capped, GridCell::new(0, 0));
+    grid.attach(&plain, GridCell::new(1, 0));
+    grid.attach(&tall, GridCell::new(0, 1));
+    grid.attach(&beside, GridCell::new(1, 1));
+    grid.attach(&last, GridCell::new(0, 2));
+    let views = [
+        capped.native_view(),
+        plain.native_view(),
+        tall.native_view(),
+        beside.native_view(),
+        last.native_view(),
+    ];
+    let frames = frames_in(&grid.native_view(), NSSize::new(400.0, 300.0), &views);
+    assert!(
+        close_to(frames[0].3, 100.0),
+        "上限付きは Fixed の行いっぱい: {frames:?}"
+    );
+    assert!(
+        close_to(frames[1].3, 100.0),
+        "上限なしも Fixed の行いっぱい: {frames:?}"
+    );
+    assert!(close_to(frames[2].3, 150.0), "{frames:?}");
+    assert!(
+        close_to(frames[3].3, 150.0),
+        "止まった行に並ぶ子もいっぱい: {frames:?}"
+    );
+    assert!(
+        close_to(frames[4].3, 50.0),
+        "残りの 50 を受け取る: {frames:?}"
+    );
+    Ok(())
+}
+
+/// What a spanning child needs is split over the `Fill` tracks it crosses by their
+/// weights, not evenly: across `Fill` 1 : 3, a child of 400 lets 600 split 150 :
+/// 450. Split evenly, both tracks would need 200 and the split would be 200 : 400.
+fn grid_spanning_child_spreads_by_weight(ui: &Ui) -> Result<()> {
+    let fills = || -> Result<(naui_macos::Stack, naui_macos::Stack)> {
+        let first = ui.stack(Orientation::Vertical)?;
+        first.set_sizing(Sizing::fill());
+        let second = ui.stack(Orientation::Vertical)?;
+        second.set_sizing(Sizing::fill());
+        Ok((first, second))
+    };
+
+    let columns = ui.grid()?;
+    columns.set_spacing(0.0, 0.0);
+    columns.set_column_track(0, Track::Fill(1.0));
+    columns.set_column_track(1, Track::Fill(3.0));
+    let wide = ui.stack(Orientation::Vertical)?;
+    wide.set_sizing(Sizing::fixed(400.0, 20.0));
+    let (left, right) = fills()?;
+    columns.attach(&wide, GridCell::new(0, 0).span(2, 1));
+    columns.attach(&left, GridCell::new(0, 1));
+    columns.attach(&right, GridCell::new(1, 1));
+    let frames = frames_in(
+        &columns.native_view(),
+        NSSize::new(600.0, 100.0),
+        &[left.native_view(), right.native_view()],
+    );
+    assert!(close_to(frames[0].2, 150.0), "{frames:?}");
+    assert!(close_to(frames[1].2, 450.0), "{frames:?}");
+
+    let rows = ui.grid()?;
+    rows.set_spacing(0.0, 0.0);
+    rows.set_row_track(0, Track::Fill(1.0));
+    rows.set_row_track(1, Track::Fill(3.0));
+    let tall = ui.stack(Orientation::Vertical)?;
+    tall.set_sizing(Sizing::fixed(20.0, 400.0));
+    let (top, bottom) = fills()?;
+    rows.attach(&tall, GridCell::new(0, 0).span(1, 2));
+    rows.attach(&top, GridCell::new(1, 0));
+    rows.attach(&bottom, GridCell::new(1, 1));
+    let frames = frames_in(
+        &rows.native_view(),
+        NSSize::new(100.0, 600.0),
+        &[top.native_view(), bottom.native_view()],
+    );
+    assert!(close_to(frames[0].3, 150.0), "{frames:?}");
+    assert!(close_to(frames[1].3, 450.0), "{frames:?}");
+    Ok(())
+}
+
+/// またぐ子の 400 を 100 / 300 としてから最小幅 180 を合成すると、必要幅が
+/// 480 に膨らむ。追加順や向きによらず、既存の最小とすき間を含めて配分する。
+fn grid_spanning_child_respects_existing_minimums(ui: &Ui) -> Result<()> {
+    for vertical in [false, true] {
+        // CI の小さい画面では高さ 800 のウィンドウが画面内へ縮められる。
+        // 縦方向は寸法を半分にし、最小で止まる場合と重みで分ける場合を同じ比率で確認する。
+        let scale = if vertical { 0.5 } else { 1.0 };
+        let spanning_size = 400.0 * scale;
+        let minimum = 180.0 * scale;
+        for spanning_first in [false, true] {
+            for spacing in [0.0, 10.0] {
+                let grid = ui.grid()?;
+                grid.set_sizing(Sizing::fill());
+                grid.set_spacing(spacing, spacing);
+                let spanning = ui.stack(Orientation::Vertical)?;
+                let first = ui.stack(Orientation::Vertical)?;
+                let second = ui.stack(Orientation::Vertical)?;
+                second.set_sizing(Sizing::fill());
+                let (span_cell, first_cell, second_cell) = if vertical {
+                    grid.set_column_track(0, Track::Fixed(20.0));
+                    grid.set_column_track(1, Track::FILL);
+                    grid.set_row_track(0, Track::Fill(1.0));
+                    grid.set_row_track(1, Track::Fill(3.0));
+                    spanning.set_sizing(Sizing::fixed(20.0, spanning_size));
+                    first.set_sizing(Sizing::fill().min_height(minimum));
+                    (
+                        GridCell::new(0, 0).span(1, 2),
+                        GridCell::new(1, 0),
+                        GridCell::new(1, 1),
+                    )
+                } else {
+                    grid.set_row_track(0, Track::Fixed(20.0));
+                    grid.set_row_track(1, Track::FILL);
+                    grid.set_column_track(0, Track::Fill(1.0));
+                    grid.set_column_track(1, Track::Fill(3.0));
+                    spanning.set_sizing(Sizing::fixed(spanning_size, 20.0));
+                    first.set_sizing(Sizing::fill().min_width(minimum));
+                    (
+                        GridCell::new(0, 0).span(2, 1),
+                        GridCell::new(0, 1),
+                        GridCell::new(1, 1),
+                    )
+                };
+                if spanning_first {
+                    grid.attach(&spanning, span_cell);
+                }
+                grid.attach(&first, first_cell);
+                grid.attach(&second, second_cell);
+                if !spanning_first {
+                    grid.attach(&spanning, span_cell);
+                }
+                let size = |room| {
+                    if vertical {
+                        NSSize::new(200.0, room)
+                    } else {
+                        NSSize::new(room, 200.0)
+                    }
+                };
+                let extent = |view: &NSView| {
+                    if vertical {
+                        view.frame().size.height
+                    } else {
+                        view.frame().size.width
+                    }
+                };
+                let initial = size(spanning_size);
+                let window = ui.window("またぐ子と最小幅", initial.width, initial.height)?;
+                window.set_child(&grid);
+                window.show();
+                let native = window.native_window();
+                let content = native.contentView().expect("コンテンツビューがあること");
+                let mut seen = Vec::new();
+                for room in [400.0, 600.0, 800.0, 400.0].into_iter().cycle().take(12) {
+                    let room = room * scale;
+                    native.setContentSize(size(room));
+                    content.layoutSubtreeIfNeeded();
+                    pump(0.05);
+                    let expected_first = ((room - spacing) / 4.0).max(minimum);
+                    // 制約の更新に続く再レイアウトが終わるまで待つ。固定の待ち時間
+                    // だけでは、CI で片方の行がまだ潰れている途中の枠を読むことがある。
+                    pump_until(1.0, || {
+                        content.layoutSubtreeIfNeeded();
+                        close_to(extent(&content), room)
+                            && close_to(extent(&first.native_view()), expected_first)
+                            && close_to(
+                                extent(&second.native_view()),
+                                room - spacing - expected_first,
+                            )
+                    });
+                    let actual = extent(&content);
+                    let first_size = extent(&first.native_view());
+                    let second_size = extent(&second.native_view());
+                    if !close_to(actual, room)
+                        || !close_to(first_size, expected_first)
+                        || !close_to(second_size, room - spacing - expected_first)
+                    {
+                        let root = grid.native_view();
+                        let direction = if vertical {
+                            NSLayoutConstraintOrientation::Vertical
+                        } else {
+                            NSLayoutConstraintOrientation::Horizontal
+                        };
+                        eprintln!(
+                            "配分の診断: 縦 {vertical}、またぐ子が先 {spanning_first}、すき間 {spacing}、要求 {room}、\
+                             グリッド {:?}、子の fittingSize {:?} / {:?} / {:?}、\
+                             先頭の制約 {:?}、末尾の制約 {:?}、グリッドの制約 {:?}",
+                            root.frame(),
+                            first.native_view().fittingSize(),
+                            second.native_view().fittingSize(),
+                            spanning.native_view().fittingSize(),
+                            first.native_view().constraintsAffectingLayoutForOrientation(direction),
+                            second.native_view().constraintsAffectingLayoutForOrientation(direction),
+                            root.constraints(),
+                        );
+                    }
+                    seen.push((room, actual, first_size, second_size));
+                }
+                window.close();
+                for (room, actual, first, second) in seen {
+                    let available = room - spacing;
+                    let expected_first = (available / 4.0).max(minimum);
+                    assert!(
+                        close_to(actual, room)
+                            && close_to(first, expected_first)
+                            && close_to(second, available - expected_first),
+                        "縦 {vertical}、またぐ子が先 {spanning_first}、すき間 {spacing}: \
+                         必要な大きさ {room}、実際 {actual}、取り分 {first} / {second}"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The shares follow the window as it is resized, and capping a `Fill` child at its
+/// share never pushes the window wider.
+fn grid_fill_weights_follow_the_window(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_spacing(0.0, 0.0);
+    grid.set_sizing(Sizing::fill());
+    grid.set_column_track(0, Track::Fill(1.0));
+    grid.set_column_track(1, Track::Fill(3.0));
+    let first = ui.stack(Orientation::Vertical)?;
+    first.set_sizing(Sizing::fill());
+    let second = ui.stack(Orientation::Vertical)?;
+    second.set_sizing(Sizing::fill());
+    grid.attach(&first, GridCell::new(0, 0));
+    grid.attach(&second, GridCell::new(1, 0));
+    let window = ui.window("重み", 400.0, 200.0)?;
+    window.set_child(&grid);
+    window.show();
+    let native_window = window.native_window();
+    let content = native_window
+        .contentView()
+        .expect("コンテンツビューがあること");
+    let mut seen = Vec::new();
+    for width in [400.0, 800.0, 240.0] {
+        native_window.setContentSize(NSSize::new(width, 200.0));
+        content.layoutSubtreeIfNeeded();
+        pump(0.05);
+        content.layoutSubtreeIfNeeded();
+        seen.push((
+            width,
+            content.frame().size.width,
+            first.native_view().frame().size.width,
+            second.native_view().frame().size.width,
+        ));
+    }
+    window.close();
+    for (width, window_width, first, second) in seen {
+        assert!(
+            (window_width - width).abs() < 0.5,
+            "ウィンドウは広がらない: {width} -> {window_width}"
+        );
+        assert!(
+            close_to(first, width / 4.0) && close_to(second, width * 3.0 / 4.0),
+            "幅 {width} を 1 : 3: {first} / {second}"
         );
     }
     Ok(())

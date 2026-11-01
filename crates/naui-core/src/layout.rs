@@ -173,11 +173,12 @@ impl Sizing {
 /// | --- | --- | --- | --- |
 /// | [`Track::Auto`] | `auto` | `Auto` of `GridLength` | NSGridView's default (fit the content) |
 /// | [`Track::Fixed`] | `<n>px` | `Pixel` of `GridLength` | `NSGridColumn::setWidth` |
-/// | [`Track::Fill`] | `<w>fr` | `Star` of `GridLength` | Approximated (`Fill` placement + hugging priority) |
+/// | [`Track::Fill`] | `<w>fr` | `Star` of `GridLength` | Split by naui ([`distribute_fill`](crate::distribute_fill)) and held by the `Fill` children |
 ///
-/// The weight of `Fill` expresses "in what ratio to split the leftover space".
-/// macOS's NSGridView has no notion of weights, so differing weights have no
-/// effect there.
+/// The weight of `Fill` expresses "in what ratio to split the leftover space". A
+/// track never gets less than its content needs; the others split what remains (as
+/// CSS's `fr` does). `NSGridView` and `GtkGrid` have no weights, so on macOS and
+/// Linux naui splits the room itself with the same rule.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Track {
     /// Fit the content (default).

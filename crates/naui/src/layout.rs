@@ -48,11 +48,9 @@ impl Grid {
 
     /// How a column's width is determined.
     ///
-    /// `GtkGrid` cannot give columns a width of their own, so this is applied **to the
-    /// children in that column**. A column's width follows its largest content, so
-    /// this ends up setting the column width. `GtkGrid` has no weights for
-    /// [`Track::Fill`]; leftover space is split evenly among the growing columns (the
-    /// same limitation as macOS).
+    /// `Fill` columns split the leftover space by weight, never going below what
+    /// their content needs (as CSS's `fr` does). On Linux a `Fixed` width is applied
+    /// **to the children in that column**, which ends up setting the column width.
     #[inline]
     pub fn set_column_track(&self, index: usize, track: Track) {
         self.0.set_column_track(index, track)
