@@ -266,6 +266,10 @@ fn main() {
             grid_fill_does_not_cut_off_content_while_there_is_room,
         ),
         (
+            "グリッドをまたぐ子が足りない分は Fill の重みで配る",
+            grid_spanning_child_spreads_by_weight,
+        ),
+        (
             "グリッドの折り返す文字は配られる幅で高さを測る",
             grid_measures_wrapping_text_at_its_share,
         ),
@@ -2818,6 +2822,46 @@ fn grid_fill_does_not_cut_off_content_while_there_is_room(ui: &Ui) -> Result<()>
         measure_width(&grid.native_widget()).0 < long_minimum,
         "グリッドの最小は中身で広がらない"
     );
+    Ok(())
+}
+
+/// What a spanning child lacks is spread over the `Fill` lines it crosses by their
+/// weights, not evenly: across `Fill` 1 : 3, a child of 400 lets 600 split 150 :
+/// 450. Spread evenly, both lines would need 200 and the split would be 200 : 400.
+fn grid_spanning_child_spreads_by_weight(ui: &Ui) -> Result<()> {
+    let fills = || -> Result<(naui_gtk::Stack, naui_gtk::Stack)> {
+        let first = ui.stack(Orientation::Vertical)?;
+        first.set_sizing(Sizing::fill());
+        let second = ui.stack(Orientation::Vertical)?;
+        second.set_sizing(Sizing::fill());
+        Ok((first, second))
+    };
+
+    let columns = ui.grid()?;
+    columns.set_column_track(0, Track::Fill(1.0));
+    columns.set_column_track(1, Track::Fill(3.0));
+    let wide = ui.stack(Orientation::Vertical)?;
+    wide.set_sizing(Sizing::fixed(400.0, 20.0));
+    let (left, right) = fills()?;
+    columns.attach(&wide, GridCell::new(0, 0).span(2, 1));
+    columns.attach(&left, GridCell::new(0, 1));
+    columns.attach(&right, GridCell::new(1, 1));
+    let placed = lay_out_grid(&columns, 600, 100, &[&left, &right]);
+    assert_eq!(placed[0].2, 150.0, "{placed:?}");
+    assert_eq!(placed[1].2, 450.0, "{placed:?}");
+
+    let rows = ui.grid()?;
+    rows.set_row_track(0, Track::Fill(1.0));
+    rows.set_row_track(1, Track::Fill(3.0));
+    let tall = ui.stack(Orientation::Vertical)?;
+    tall.set_sizing(Sizing::fixed(20.0, 400.0));
+    let (top, bottom) = fills()?;
+    rows.attach(&tall, GridCell::new(0, 0).span(1, 2));
+    rows.attach(&top, GridCell::new(1, 0));
+    rows.attach(&bottom, GridCell::new(1, 1));
+    let placed = lay_out_grid(&rows, 100, 600, &[&top, &bottom]);
+    assert_eq!(placed[0].3, 150.0, "{placed:?}");
+    assert_eq!(placed[1].3, 450.0, "{placed:?}");
     Ok(())
 }
 

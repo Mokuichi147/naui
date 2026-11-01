@@ -11,8 +11,8 @@
 //!
 //! - Columns and rows without a shown child take neither room nor spacing.
 //! - A child spanning several cells that needs more than they have spreads the
-//!   difference over the `Fill` lines it spans (the growing ones when there is no
-//!   `Fill`, all of them when none grows).
+//!   difference over the `Fill` lines it spans, by their weights (evenly over the
+//!   growing ones when there is no `Fill`, all of them when none grows).
 //! - Without a `Fill` line, the leftover goes evenly to lines whose children grow
 //!   (`hexpand`).
 //! - Heights are measured for the widths the columns actually get, so wrapping
@@ -391,30 +391,52 @@ impl TrackGrid {
     }
 }
 
-/// Spreads `missing` over the lines a spanning child crosses: the `Fill` ones, else
-/// the growing ones, else all of them. Any pixels left over by the division go to
-/// the first ones.
+/// Spreads `missing` over the lines a spanning child crosses: the `Fill` ones by
+/// their weights (as CSS spreads a spanning item over flexible tracks), else the
+/// growing ones evenly, else all of them evenly. Spreading `Fill` lines evenly
+/// would hold the lighter ones above their share: a child of 400 across `Fill`
+/// 1 : 3 would make both columns at least 200, so 600 could not split 150 : 450.
+/// The pixels left over by rounding go to the lines that lost the most (the first
+/// ones on a tie).
 fn spread(lines: &mut [Line], missing: i32, field: impl Fn(&mut Line) -> &mut i32) {
     if missing <= 0 || lines.is_empty() {
         return;
     }
     let fill = lines.iter().any(|line| line.weight > 0.0);
     let grow = lines.iter().any(|line| line.expand);
-    let targets: Vec<usize> = (0..lines.len())
-        .filter(|index| {
-            let line = &lines[*index];
+    let targets: Vec<(usize, f64)> = (0..lines.len())
+        .filter_map(|index| {
+            let line = &lines[index];
             if fill {
-                line.weight > 0.0
+                (line.weight > 0.0).then_some((index, line.weight))
             } else if grow {
-                line.expand
+                line.expand.then_some((index, 1.0))
             } else {
-                true
+                Some((index, 1.0))
             }
         })
         .collect();
-    let count = targets.len() as i32;
-    for (order, index) in targets.into_iter().enumerate() {
-        let extra = missing / count + i32::from((order as i32) < missing % count);
+    let total: f64 = targets.iter().map(|(_, weight)| weight).sum();
+    let exact: Vec<f64> = targets
+        .iter()
+        .map(|(_, weight)| f64::from(missing) * weight / total)
+        .collect();
+    let mut extras: Vec<i32> = exact.iter().map(|share| share.floor() as i32).collect();
+    let mut left = missing - extras.iter().sum::<i32>();
+    let mut order: Vec<usize> = (0..targets.len()).collect();
+    // 安定な並べ替えなので、同じ端数なら先の線が先に受け取る。
+    order.sort_by(|a, b| {
+        let lost = |i: usize| exact[i] - f64::from(extras[i]);
+        lost(*b).total_cmp(&lost(*a))
+    });
+    for target in order {
+        if left <= 0 {
+            break;
+        }
+        extras[target] += 1;
+        left -= 1;
+    }
+    for ((index, _), extra) in targets.into_iter().zip(extras) {
         *field(&mut lines[index]) += extra;
     }
 }

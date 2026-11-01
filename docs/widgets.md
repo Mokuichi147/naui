@@ -384,8 +384,9 @@ collected in [Known limitations](known-limitations.md).
   growing columns, so `Track::Fill` weights could not work, and two `Fill` columns
   differed by their content. The container measures the children as `GtkGrid` does
   (lines without a shown child take no room or spacing, a spanning child spreads
-  what it lacks over the lines it crosses, heights are measured for the widths the
-  columns get, columns mirror in right-to-left text) and splits the room with
+  what it lacks over the lines it crosses, over `Fill` lines by their weights,
+  heights are measured for the widths the columns get, columns mirror in
+  right-to-left text) and splits the room with
   naui-core's `allocate_tracks`: `Fill` tracks share the leftover by weight, never
   below what their content needs, and without a `Fill` track the leftover goes to
   the lines whose children grow, as before. A `Fill` child reports a minimum of 0
