@@ -11471,6 +11471,11 @@ fn grid_spanning_child_spreads_by_weight(ui: &Ui) -> Result<()> {
 /// 480 に膨らむ。追加順や向きによらず、既存の最小とすき間を含めて配分する。
 fn grid_spanning_child_respects_existing_minimums(ui: &Ui) -> Result<()> {
     for vertical in [false, true] {
+        // CI の小さい画面では高さ 800 のウィンドウが画面内へ縮められる。
+        // 縦方向は寸法を半分にし、最小で止まる場合と重みで分ける場合を同じ比率で確認する。
+        let scale = if vertical { 0.5 } else { 1.0 };
+        let spanning_size = 400.0 * scale;
+        let minimum = 180.0 * scale;
         for spanning_first in [false, true] {
             for spacing in [0.0, 10.0] {
                 let grid = ui.grid()?;
@@ -11485,8 +11490,8 @@ fn grid_spanning_child_respects_existing_minimums(ui: &Ui) -> Result<()> {
                     grid.set_column_track(1, Track::FILL);
                     grid.set_row_track(0, Track::Fill(1.0));
                     grid.set_row_track(1, Track::Fill(3.0));
-                    spanning.set_sizing(Sizing::fixed(20.0, 400.0));
-                    first.set_sizing(Sizing::fill().min_height(180.0));
+                    spanning.set_sizing(Sizing::fixed(20.0, spanning_size));
+                    first.set_sizing(Sizing::fill().min_height(minimum));
                     (
                         GridCell::new(0, 0).span(1, 2),
                         GridCell::new(1, 0),
@@ -11497,8 +11502,8 @@ fn grid_spanning_child_respects_existing_minimums(ui: &Ui) -> Result<()> {
                     grid.set_row_track(1, Track::FILL);
                     grid.set_column_track(0, Track::Fill(1.0));
                     grid.set_column_track(1, Track::Fill(3.0));
-                    spanning.set_sizing(Sizing::fixed(400.0, 20.0));
-                    first.set_sizing(Sizing::fill().min_width(180.0));
+                    spanning.set_sizing(Sizing::fixed(spanning_size, 20.0));
+                    first.set_sizing(Sizing::fill().min_width(minimum));
                     (
                         GridCell::new(0, 0).span(2, 1),
                         GridCell::new(0, 1),
@@ -11527,7 +11532,7 @@ fn grid_spanning_child_respects_existing_minimums(ui: &Ui) -> Result<()> {
                         view.frame().size.width
                     }
                 };
-                let initial = size(400.0);
+                let initial = size(spanning_size);
                 let window = ui.window("またぐ子と最小幅", initial.width, initial.height)?;
                 window.set_child(&grid);
                 window.show();
@@ -11535,6 +11540,7 @@ fn grid_spanning_child_respects_existing_minimums(ui: &Ui) -> Result<()> {
                 let content = native.contentView().expect("コンテンツビューがあること");
                 let mut seen = Vec::new();
                 for room in [400.0, 600.0, 800.0, 400.0] {
+                    let room = room * scale;
                     native.setContentSize(size(room));
                     content.layoutSubtreeIfNeeded();
                     pump(0.05);
@@ -11549,7 +11555,7 @@ fn grid_spanning_child_respects_existing_minimums(ui: &Ui) -> Result<()> {
                 window.close();
                 for (room, actual, first, second) in seen {
                     let available = room - spacing;
-                    let expected_first = (available / 4.0).max(180.0);
+                    let expected_first = (available / 4.0).max(minimum);
                     assert!(
                         close_to(actual, room)
                             && close_to(first, expected_first)
