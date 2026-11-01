@@ -308,7 +308,7 @@ impl Tree {
         content.set_sensitive(selectable);
         line.append(&content);
 
-        let row = gtk::ListBoxRow::new();
+        let row = crate::row::new();
         row.set_child(Some(&line));
         row.set_selectable(selectable);
         row.set_activatable(selectable);

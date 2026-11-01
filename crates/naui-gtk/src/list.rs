@@ -456,7 +456,7 @@ fn build_row(item: &ListRow, list: Weak<ListInner>) -> gtk::ListBoxRow {
     content.set_margin_start(10);
     content.set_margin_end(10);
 
-    let row = gtk::ListBoxRow::new();
+    let row = crate::row::new();
     row.set_child(Some(&content));
     row.set_selectable(item.selectable);
     row.set_activatable(item.selectable || item.activation.is_some());

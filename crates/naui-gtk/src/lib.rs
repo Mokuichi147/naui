@@ -80,6 +80,12 @@
 //!   click" is turned off** (`gtk_list_box_set_activate_on_single_click`). While it
 //!   is on, `GtkListBox` ignores Ctrl / Shift on clicks and always falls back to
 //!   "select only that row", so rows could be neither added nor removed.
+//! - **Keyboard focus moving into a `List`, `Table` or `Tree` does not select a
+//!   row.** `GtkListBoxRow` selects the row it is focused into (by Tab, or by the
+//!   first focus a window gives on showing), so a list whose selection opens a
+//!   detail would open its first row as soon as the window is shown. naui's rows
+//!   only take focus, as on the other backends; clicks and arrow keys still select
+//!   (see the `row` module).
 //! - **`Tabs` lets the tab strip scroll** (`gtk_notebook_set_scrollable`). By
 //!   default `GtkNotebook` reports "the width to lay out every tab side by side" as
 //!   its minimum width, so as tabs are added the window can no longer be shrunk
@@ -126,7 +132,7 @@
     unix,
     not(any(target_os = "macos", target_os = "ios", target_os = "android"))
 ))]
-// glib のサブクラス化マクロだけが `unsafe impl` を必要とする (crate::bin)。
+// glib のサブクラス化マクロだけが `unsafe impl` を必要とする (crate::bin, crate::row)。
 #![deny(unsafe_code)]
 
 mod bin;
@@ -156,6 +162,7 @@ mod number_input;
 mod popover;
 mod popup;
 mod radio_group;
+mod row;
 mod sheet;
 mod sidebar;
 mod split_view;

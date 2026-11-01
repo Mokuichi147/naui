@@ -1097,7 +1097,7 @@ fn build_row(
         }
     }
 
-    let native = gtk::ListBoxRow::new();
+    let native = crate::row::new();
     native.set_child(Some(&content));
     let selectable = cells.is_selectable();
     native.set_selectable(selectable);
