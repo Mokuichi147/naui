@@ -810,6 +810,12 @@ impl ContentSizedGridView {
                     share.setConstant(constant);
                     changed = true;
                 }
+                // NSGridView が制約を作り直すと、保持している取り分の制約も
+                // 外れることがある。同じ係数・定数でも、有効とは限らない。
+                if !share.isActive() {
+                    share.setActive(true);
+                    changed = true;
+                }
                 return changed;
             }
             share.setActive(false);

@@ -11305,6 +11305,35 @@ fn grid_fill_weights_split_the_room(ui: &Ui) -> Result<()> {
         close_to(frames[0].2, 200.0) && close_to(frames[1].2, 200.0),
         "1 : 1 に変えると同じ幅: {frames:?}"
     );
+
+    // NSGridView による制約の作り直しで取り分の制約が外れた場合も、
+    // 係数・定数が変わらない次のレイアウトで復元する。
+    let shares: Vec<_> = root
+        .constraints()
+        .iter()
+        .filter(|constraint| {
+            constraint
+                .identifier()
+                .is_some_and(|id| id.to_string().starts_with("naui.grid.grow."))
+        })
+        .collect();
+    assert_eq!(shares.len(), 8, "各セルの横・縦の取り分があること");
+    for share in &shares {
+        share.setActive(false);
+    }
+    root.setNeedsLayout(true);
+    let frames = frames_in(&root, NSSize::new(408.0, 304.0), &views);
+    assert!(
+        shares.iter().all(|share| share.isActive()),
+        "同じ取り分の制約が再び有効になること"
+    );
+    for (index, frame) in frames.iter().enumerate() {
+        let height = if index < 2 { 200.0 } else { 100.0 };
+        assert!(
+            close_to(frame.2, 200.0) && close_to(frame.3, height),
+            "制約を復元して取り分を保つ: {frames:?}"
+        );
+    }
     Ok(())
 }
 
