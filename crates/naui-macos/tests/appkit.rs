@@ -587,6 +587,10 @@ fn main() {
             adaptive_panes_follow_their_width,
         ),
         (
+            "隠れる区画のフォーカスが戻るボタンか一覧へ移り、その通知の中で区画を差し替えられる",
+            adaptive_panes_keep_a_place_for_the_focus,
+        ),
+        (
             "縦に長いタブの中身がスクロールで下まで届く",
             tall_tab_content_scrolls,
         ),
@@ -4284,6 +4288,72 @@ fn adaptive_panes_follow_their_width(ui: &Ui) -> Result<()> {
     assert!(
         (l.size.width - 200.0).abs() < 1.0,
         "一覧の幅を変えられること: {l:?}"
+    );
+    window.close();
+    Ok(())
+}
+
+/// When the focus leaves a hidden pane, a detail with nothing focusable hands it to
+/// the back button (where buttons take focus), and the pane's widgets may be
+/// replaced from the focus notification that moving it sends.
+fn adaptive_panes_keep_a_place_for_the_focus(ui: &Ui) -> Result<()> {
+    let window = ui.window("フォーカス", 500.0, 300.0)?;
+    let panes = ui.adaptive_panes()?;
+    let field = ui.text_input("一覧")?;
+    let replacement = ui.button("差し替えた一覧")?;
+    panes.set_list(&field);
+    panes.set_detail(&ui.label("ラベルだけの詳細")?);
+    window.set_child(&panes);
+    window.show();
+    pump_until(1.0, || panes.is_collapsed());
+    assert!(
+        panes.is_collapsed(),
+        "しきい値より狭いので 1 区画であること"
+    );
+
+    let field_view: Retained<NSTextField> = field
+        .native_view()
+        .downcast()
+        .expect("TextInput is an NSTextField");
+    let back = panes.native_back_button();
+    assert!(field.request_focus());
+    panes.show(Pane::Detail);
+    assert!(
+        field_view.currentEditor().is_none(),
+        "隠れた一覧にフォーカスが残らないこと"
+    );
+    if back.acceptsFirstResponder() {
+        let responder = window.native_window().firstResponder();
+        assert!(
+            responder.is_some_and(|r| std::ptr::eq(
+                &*r as *const NSResponder as *const u8,
+                &*back as *const NSButton as *const u8
+            )),
+            "フォーカスを受けない詳細の代わりに、戻るボタンへ移ること"
+        );
+    }
+
+    // 一覧へ戻すと入力欄がフォーカスを受け、その通知の中で一覧を差し替える。
+    let replaced = Rc::new(Cell::new(false));
+    field.on_focus_change({
+        let panes = panes.downgrade();
+        let replacement = replacement.clone();
+        let replaced = replaced.clone();
+        move |focused| {
+            if let (true, Some(panes)) = (focused && !replaced.get(), panes.upgrade()) {
+                replaced.set(true);
+                panes.set_list(&replacement);
+            }
+        }
+    });
+    unsafe { back.performClick(None) };
+    assert!(
+        replaced.get(),
+        "一覧へ戻ったときに入力欄がフォーカスを受けること"
+    );
+    assert!(
+        unsafe { replacement.native_view().superview() }.is_some(),
+        "フォーカスの通知の中から一覧を差し替えられること"
     );
     window.close();
     Ok(())

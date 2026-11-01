@@ -447,15 +447,17 @@ impl AdaptivePanesInner {
         let shows_list = arrangement.shows(Pane::List);
         let shows_detail = arrangement.shows(Pane::Detail);
         // 隠す区画にフォーカスがあれば、出す区画へ移す (戻るボタンで戻ったときも、
-        // ボタンごと隠れるので一覧へ移る)。
-        let leaving = if !shows_list && !self.list.view.isHidden() {
-            Some((&*self.list.view, &self.detail))
-        } else if !shows_detail && !self.detail_side.isHidden() {
-            Some((&*self.detail_side, &self.list))
+        // ボタンごと隠れるので一覧へ移る)。広げて戻るボタンだけが隠れるときも、
+        // そのフォーカスを詳細へ移す。
+        let refocus = if !shows_list && !self.list.view.isHidden() && holds_focus(&self.list.view) {
+            Some(Pane::Detail)
+        } else if !shows_detail && !self.detail_side.isHidden() && holds_focus(&self.detail_side) {
+            Some(Pane::List)
+        } else if !back && !self.back.isHidden() && holds_focus(&self.back) {
+            Some(Pane::Detail)
         } else {
             None
         };
-        let refocus = leaving.and_then(|(view, to)| holds_focus(view).then_some(to));
 
         self.list.view.setHidden(!shows_list);
         self.detail_side.setHidden(!shows_detail);
@@ -463,18 +465,40 @@ impl AdaptivePanesInner {
         self.back.setHidden(!back);
 
         if let Some(to) = refocus {
-            let moved = to
-                .child_view()
-                .is_some_and(|view| crate::interaction::request_focus(&view));
-            if !moved {
-                if let Some(window) = self.native.window() {
-                    window.makeFirstResponder(None);
-                }
-            }
+            self.move_focus(to, back);
         }
         // 1 区画と 2 区画で最小の幅が変わるので、親の連なりへ伝える。
         crate::layout::invalidate_ancestors(&self.native);
     }
+}
+
+impl AdaptivePanesInner {
+    /// Moves the focus into the pane `to`, out of a part being hidden.
+    ///
+    /// A detail with nothing that takes focus (only labels) hands it to the back
+    /// button while that is shown, and otherwise to the list, so a keyboard user
+    /// keeps a place to continue from. Only when nothing takes it is it cleared.
+    fn move_focus(&self, to: Pane, back_shown: bool) {
+        if to == Pane::Detail && focus_child(&self.detail) {
+            return;
+        }
+        if to == Pane::Detail && back_shown && crate::interaction::request_focus(&self.back) {
+            return;
+        }
+        if focus_child(&self.list) {
+            return;
+        }
+        if let Some(window) = self.native.window() {
+            window.makeFirstResponder(None);
+        }
+    }
+}
+
+/// Moves the focus into a pane's widget. `true` if it moved.
+fn focus_child(slot: &PaneSlot) -> bool {
+    // 借用はここで終える (フォーカスの通知の中で区画を差し替えられるように)。
+    let view = slot.child_view();
+    view.is_some_and(|view| crate::interaction::request_focus(&view))
 }
 
 /// Whether the window's first responder is `view` or inside it.

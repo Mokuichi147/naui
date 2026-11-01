@@ -1658,6 +1658,70 @@ async fn adaptive_panes_follow_their_width() {
     );
 }
 
+/// When the focus leaves a hidden pane, a detail with nothing focusable hands it to
+/// the back button, and the pane's widgets may be replaced from the focus
+/// notification that moving it sends.
+#[wasm_bindgen_test]
+async fn adaptive_panes_keep_a_place_for_the_focus() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let outer = ui.stack(Orientation::Vertical)?;
+        outer.set_sizing(Sizing::fixed(500.0, 300.0));
+        let panes = ui.adaptive_panes()?;
+        panes.set_sizing(Sizing::fill());
+        let field = ui.text_input("一覧")?;
+        let replacement = ui.button("差し替えた一覧")?;
+        panes.set_list(&field);
+        panes.set_detail(&ui.label("ラベルだけの詳細")?);
+        outer.append(&panes);
+        let mounted = Mounted::new(&outer);
+        kept = Some((mounted, outer, panes, field, replacement));
+        Ok(())
+    });
+    let (_mounted, _outer, panes, field, replacement) = kept.expect("組み立て");
+    frames_until(|| panes.is_collapsed()).await;
+    assert!(
+        panes.is_collapsed(),
+        "しきい値より狭いので 1 区画であること"
+    );
+    let document = web_sys::window()
+        .and_then(|window| window.document())
+        .expect("document");
+    let back = panes.native_back_button();
+
+    assert!(field.request_focus());
+    panes.show(Pane::Detail);
+    assert!(
+        document
+            .active_element()
+            .is_some_and(|active| active == *back.as_ref()),
+        "フォーカスを受けない詳細の代わりに、戻るボタンへ移ること"
+    );
+
+    // 一覧へ戻すと入力欄がフォーカスを受け、その通知の中で一覧を差し替える。
+    let replaced = Rc::new(Cell::new(false));
+    field.on_focus_change({
+        let panes = panes.downgrade();
+        let replacement = replacement.clone();
+        let replaced = replaced.clone();
+        move |focused| {
+            if let (true, Some(panes)) = (focused && !replaced.get(), panes.upgrade()) {
+                replaced.set(true);
+                panes.set_list(&replacement);
+            }
+        }
+    });
+    back.click();
+    assert!(
+        replaced.get(),
+        "一覧へ戻ったときに入力欄がフォーカスを受けること"
+    );
+    assert!(
+        replacement.native_element().is_connected(),
+        "フォーカスの通知の中から一覧を差し替えられること"
+    );
+}
+
 /// The breakpoint is measured on the stack's border box, so growing only its
 /// padding (the content keeps its width) still crosses it.
 #[wasm_bindgen_test]

@@ -232,12 +232,16 @@ impl AdaptivePanesInner {
         let shows_list = arrangement.shows(Pane::List);
         let shows_detail = arrangement.shows(Pane::Detail);
 
+        let shows_back = arrangement.shows_back();
         // 隠す区画にフォーカスがあれば、出す区画へ移す (戻るボタンで戻ったときも、
-        // ボタンごと隠れるので一覧へ移る)。
+        // ボタンごと隠れるので一覧へ移る)。広げて戻るボタンだけが隠れるときも、
+        // そのフォーカスを詳細へ移す。
         let refocus = if !shows_list && holds_focus(&self.list_pane) {
-            Some(&self.detail)
+            Some(Pane::Detail)
         } else if !shows_detail && holds_focus(&self.detail_side) {
-            Some(&self.list)
+            Some(Pane::List)
+        } else if !shows_back && holds_focus(&self.back) {
+            Some(Pane::Detail)
         } else {
             None
         };
@@ -257,14 +261,36 @@ impl AdaptivePanesInner {
         set_shown(&self.list_pane, shows_list, "flex");
         set_shown(&self.detail_side, shows_detail, "flex");
         set_shown(&self.separator, !collapsed, "block");
-        set_shown(&self.back, arrangement.shows_back(), "inline-block");
+        set_shown(&self.back, shows_back, "inline-block");
 
         if let Some(to) = refocus {
-            if let Some(element) = to.borrow().as_ref().map(|child| child.native_element()) {
-                crate::interaction::request_focus(&element);
-            }
+            self.move_focus(to, shows_back);
         }
     }
+
+    /// Moves the focus into the pane `to`, out of a part being hidden.
+    ///
+    /// A detail with nothing that takes focus (only labels) hands it to the back
+    /// button while that is shown, and otherwise to the list, so a keyboard user
+    /// keeps a place to continue from.
+    fn move_focus(&self, to: Pane, back_shown: bool) {
+        if to == Pane::Detail && focus_child(&self.detail) {
+            return;
+        }
+        if to == Pane::Detail && back_shown && crate::interaction::request_focus(&self.back) {
+            return;
+        }
+        focus_child(&self.list);
+    }
+}
+
+/// Moves the focus into a pane's widget. `true` if it moved.
+///
+/// The borrow ends before `focus()`: the browser reports the focus change on the
+/// spot, and the app's `on_focus_change` may replace the pane from in there.
+fn focus_child(slot: &RefCell<Option<Box<dyn Widget>>>) -> bool {
+    let element = slot.borrow().as_ref().map(|child| child.native_element());
+    element.is_some_and(|element| crate::interaction::request_focus(&element))
 }
 
 /// Shows or hides one of naui's own parts. `display` is the value while shown.
