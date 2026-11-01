@@ -270,6 +270,10 @@ fn main() {
             grid_spanning_child_spreads_by_weight,
         ),
         (
+            "重なるスパンの拡張要求が追加順によらず Auto の行と列へ届く",
+            grid_overlapping_spans_expand_independently_of_attach_order,
+        ),
+        (
             "グリッドの折り返す文字は配られる幅で高さを測る",
             grid_measures_wrapping_text_at_its_share,
         ),
@@ -2891,6 +2895,75 @@ fn grid_spanning_child_spreads_by_weight(ui: &Ui) -> Result<()> {
     let placed = lay_out_grid(&rows, 100, 608, &[&top, &bottom]);
     assert_eq!([placed[0].3, placed[1].3], [180.0, 420.0], "{placed:?}");
     assert_eq!(placed[1].1, 188.0, "{placed:?}");
+    Ok(())
+}
+
+/// Spanning children request expansion independently; expansion supplied by a
+/// single-cell child takes precedence within each span, as in `GtkGrid`.
+fn grid_overlapping_spans_expand_independently_of_attach_order(ui: &Ui) -> Result<()> {
+    for vertical in [false, true] {
+        for reverse in [false, true] {
+            for single in [None, Some(0), Some(1), Some(2)] {
+                let grid = ui.grid()?;
+                let first = ui.stack(Orientation::Vertical)?;
+                let second = ui.stack(Orientation::Vertical)?;
+                first.set_sizing(Sizing::fill());
+                second.set_sizing(Sizing::fill());
+                let (first_cell, second_cell) = if vertical {
+                    (
+                        GridCell::new(0, 0).span(1, 2),
+                        GridCell::new(1, 1).span(1, 2),
+                    )
+                } else {
+                    (
+                        GridCell::new(0, 0).span(2, 1),
+                        GridCell::new(1, 1).span(2, 1),
+                    )
+                };
+                if reverse {
+                    grid.attach(&second, second_cell);
+                    grid.attach(&first, first_cell);
+                } else {
+                    grid.attach(&first, first_cell);
+                    grid.attach(&second, second_cell);
+                }
+                if let Some(index) = single {
+                    let child = ui.stack(Orientation::Vertical)?;
+                    child.set_sizing(Sizing::fill());
+                    grid.attach(
+                        &child,
+                        if vertical {
+                            GridCell::new(2, index)
+                        } else {
+                            GridCell::new(index, 2)
+                        },
+                    );
+                }
+                let placed = lay_out_grid(&grid, 300, 300, &[&first, &second]);
+                let extents: Vec<_> = placed
+                    .iter()
+                    .map(|frame| {
+                        if vertical {
+                            (frame.1, frame.3)
+                        } else {
+                            (frame.0, frame.2)
+                        }
+                    })
+                    .collect();
+                let expected = if single == Some(1) {
+                    // 両スパンとも単独の子がある中央のトラックだけで拡張できる。
+                    [(0.0, 300.0), (0.0, 300.0)]
+                } else {
+                    // 3 トラックへ 100 ずつ配るので、両スパンとも 200 になる。
+                    [(0.0, 200.0), (100.0, 200.0)]
+                };
+                assert_eq!(
+                    extents, expected,
+                    "縦 {vertical}、逆順 {reverse}、単独の拡張要求 {single:?}: {placed:?}"
+                );
+            }
+        }
+    }
     Ok(())
 }
 

@@ -351,6 +351,22 @@ impl TrackGrid {
             line.natural = line.natural.max(natural);
             line.expand |= child.compute_expand(orientation);
         }
+        // またぐ子の拡張要求は、単独の子の要求だけを基準に集める。
+        // その場で反映すると、後続のスパンは先行スパンと重なるだけで
+        // 要求を満たしたと判断され、追加順によって広がる線が変わる。
+        let mut span_expand = vec![false; count];
+        for (child, cell) in shown.iter().copied() {
+            let (start, span) = place(cell);
+            if span > 1
+                && child.compute_expand(orientation)
+                && !lines[start..start + span].iter().any(|line| line.expand)
+            {
+                span_expand[start..start + span].fill(true);
+            }
+        }
+        for (line, expand) in lines.iter_mut().zip(span_expand) {
+            line.expand |= expand;
+        }
         let spacing = self.spacing(orientation);
         for (child, cell) in shown.iter().copied() {
             let (start, span) = place(cell);
@@ -358,11 +374,6 @@ impl TrackGrid {
                 continue;
             }
             let range = start..start + span;
-            if child.compute_expand(orientation) && !lines[range.clone()].iter().any(|l| l.expand) {
-                for line in &mut lines[range.clone()] {
-                    line.expand = true;
-                }
-            }
             let (minimum, natural, content_minimum) = measure(child, cell);
             let gaps = spacing * (span as i32 - 1);
             let have: i32 = lines[range.clone()].iter().map(|l| l.minimum).sum::<i32>() + gaps;
