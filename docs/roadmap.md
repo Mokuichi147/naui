@@ -191,13 +191,16 @@ Gaps that ordinary apps run into right away and that all four platforms have nat
 counterparts for, plus the next steps of the adaptive layout,
 internationalization and application layer tracks.
 
-- [ ] *(adaptive)* **`AdaptivePanes`.** Showing list and detail side by side when
-      wide, and one at a time when narrow. In the one-pane state a way back to the
-      list is needed. `TwoPaneView`, `AdwNavigationSplitView`, `NSSplitView`, CSS
-      container queries. The native ones are mostly two-pane, so how far three
-      panes can go is checked when work starts. Where the native mechanism does
-      not fit, as with size-based arrangements, naui decides with the thresholds
-      and hysteresis of naui-core's `StackArrangement`.
+- [x] *(adaptive)* **`AdaptivePanes`.** A list and its detail, side by side when
+      wide and one at a time when narrow, with a back button above the detail in
+      the one-pane state. Windows uses `TwoPaneView`, which decides by itself, and
+      Linux `AdwNavigationSplitView` (which also goes back by Escape, Alt+← and a
+      swipe). Its `AdwBreakpoint` would take away the window's minimum size, so on
+      Linux, as on macOS and the Web, which have no such control, naui decides
+      with naui-core's `PanesArrangement`, sharing the slack of
+      `StackArrangement`. Both native controls are two-pane, so three panes are
+      a `Sidebar` beside the panes or another `AdaptivePanes` in the detail,
+      each deciding by its own width.
 - [ ] *(i18n)* **Telling the native side the app's language.** The language
       affects which glyphs are chosen for CJK text and how screen readers
       pronounce it (`lang` on the Web, `FrameworkElement.Language` on WinUI).

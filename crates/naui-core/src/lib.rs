@@ -31,6 +31,7 @@ mod main_thread;
 pub mod media;
 mod menu;
 mod number;
+mod panes;
 mod popover;
 mod popup;
 mod row_window;
@@ -75,6 +76,7 @@ pub use main_thread::{MainThread, Tasks, Work};
 pub use media::{Fit, PlaybackState};
 pub use menu::{MenuHandler, MenuItem, MenuShortcut, MenuSpec};
 pub use number::NumberSpec;
+pub use panes::{Pane, PanesArrangement, DEFAULT_LIST_PANE_WIDTH, DEFAULT_PANES_BREAKPOINT};
 pub use popover::PopoverPosition;
 pub use popup::PopupItem;
 pub use row_window::{

@@ -246,7 +246,7 @@ controls carry themselves (file dialogs, date pickers, text field context menus)
 
 ## Layout and size
 
-Layout uses these six:
+Layout uses these seven:
 
 | API | Purpose |
 | --- | --- |
@@ -256,6 +256,7 @@ Layout uses these six:
 | [`Spacer`] | Takes the parent's leftover space |
 | [`Expander`] | Shows its content only when the heading is clicked |
 | [`SplitView`] | Divides two panes with a movable divider |
+| [`AdaptivePanes`] | A list and its detail, side by side when wide and one at a time when narrow |
 
 Every widget's size can be specified with [`Sizing`]. [`Length`] has three kinds:
 `Auto`, which fits the content; `Fixed`, a fixed value; and `Fill`, which grows
@@ -952,6 +953,71 @@ the specified position.
 As with `Scroll`, **the height is not determined by the content's size**, so
 specify the size with [`set_sizing`](SplitView::set_sizing). There are two panes;
 to split into three or more, nest `SplitView`s.
+
+## List and detail
+
+For a list whose chosen item opens on the side (mail, notes, settings), use
+[`AdaptivePanes`]. While it is at least [`breakpoint`](AdaptivePanes::breakpoint)
+wide ([`DEFAULT_PANES_BREAKPOINT`], 640 px), the list sits at the start with a
+fixed width ([`DEFAULT_LIST_PANE_WIDTH`], 280 px) and the detail takes the rest.
+Narrower than that only one pane is shown, the one chosen with
+[`show`](AdaptivePanes::show), and while it is the detail, a back button above it
+returns to the list.
+
+```no_run
+# use naui::{ListItem, Pane, Result, Sizing, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let panes = ui.adaptive_panes()?;
+let folders = ui.list()?;
+folders.set_items(&[ListItem::new("Inbox"), ListItem::new("Sent")]);
+folders.set_sizing(Sizing::fill());
+let message = ui.label("")?;
+panes.set_list(&folders);
+panes.set_detail(&message);
+panes.set_sizing(Sizing::fill()); // follow the width the parent offers
+folders.on_select({
+    let panes = panes.downgrade();
+    move |selected: &[usize]| {
+        if let (Some(_), Some(panes)) = (selected.first(), panes.upgrade()) {
+            // Side by side nothing moves; one at a time the detail replaces the list.
+            panes.show(Pane::Detail);
+        }
+    }
+});
+panes.on_back({
+    let folders = folders.downgrade();
+    move || {
+        // Choosing the same item again should open it again.
+        if let Some(folders) = folders.upgrade() {
+            folders.clear_selection();
+        }
+    }
+});
+# Ok(())
+# }
+```
+
+| naui | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| `AdaptivePanes` | `TwoPaneView` | `NSView` + `NSBox` | `AdwNavigationSplitView` | `<div>` |
+
+The pane chosen with `show` is kept while both are shown, so a detail opened in a
+wide window is still the one on screen after the window narrows, and
+[`on_back`](AdaptivePanes::on_back) is called only when the user goes back (the
+back button, and on Linux Escape, Alt+←, the mouse's back button or a swipe), not
+by `show`. [`go_back`](AdaptivePanes::go_back) does what the back button does.
+When the pane holding the focus is hidden, the focus moves to the pane shown.
+
+As with [`Stack::set_breakpoint`], the width that counts is the one the panes get,
+and going back to one pane takes a few pixels less than the breakpoint (Windows'
+`TwoPaneView`, which decides by itself, has no such slack). There is no
+notification when it switches; read [`is_collapsed`](AdaptivePanes::is_collapsed)
+when needed. The boundary cannot be dragged, as with `TwoPaneView` and
+`AdwNavigationSplitView`; use [`set_list_width`](AdaptivePanes::set_list_width).
+
+The native controls are two-pane. For a third pane, attach a [`Sidebar`] to the
+window, which collapses by itself when the window narrows, or put another
+`AdaptivePanes` in the detail; each one decides by its own width.
 
 ## Label wrapping
 

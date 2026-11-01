@@ -365,6 +365,19 @@ fn clamp_offset(value: f64, max: f64) -> f64 {
 /// boundary does not flip the arrangement back and forth.
 const BREAKPOINT_HYSTERESIS: f64 = 8.0;
 
+/// Whether `width` counts as reaching `min_width`, given whether the last width did.
+///
+/// Once reached, it stays reached until the width drops
+/// [`BREAKPOINT_HYSTERESIS`] below `min_width`. Shared by [`StackArrangement`] and
+/// [`PanesArrangement`](crate::PanesArrangement).
+pub(crate) fn reaches_breakpoint(reached: bool, width: f64, min_width: f64) -> bool {
+    if reached {
+        width >= min_width - BREAKPOINT_HYSTERESIS
+    } else {
+        width >= min_width
+    }
+}
+
 /// The width from which a `Stack` lays its children out in another orientation.
 ///
 /// Declared in advance with `Stack::set_breakpoint`: while the stack is at least
@@ -473,11 +486,7 @@ impl StackArrangement {
             return false;
         };
         let before = self.orientation();
-        self.wide = if self.wide {
-            width >= breakpoint.min_width - BREAKPOINT_HYSTERESIS
-        } else {
-            width >= breakpoint.min_width
-        };
+        self.wide = reaches_breakpoint(self.wide, width, breakpoint.min_width);
         self.orientation() != before
     }
 

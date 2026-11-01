@@ -34,6 +34,7 @@
 
 #![cfg(target_os = "windows")]
 
+mod adaptive_panes;
 mod app;
 mod canvas;
 mod clipboard;
@@ -80,6 +81,7 @@ use std::rc::Rc;
 
 use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Tasks, Theme};
 
+pub use adaptive_panes::AdaptivePanes;
 pub use canvas::Canvas;
 pub use clipboard::Clipboard;
 pub use color_picker::ColorPicker;
@@ -238,6 +240,11 @@ impl Ui {
     /// With `Horizontal`, the panes are side by side and the divider is vertical.
     pub fn split_view(&self, orientation: Orientation) -> Result<SplitView> {
         SplitView::new(orientation)
+    }
+
+    /// A list and its detail, side by side when wide and one at a time when narrow.
+    pub fn adaptive_panes(&self) -> Result<AdaptivePanes> {
+        AdaptivePanes::new()
     }
 
     /// A widget that is just empty space. Use it together with a `Grid`'s

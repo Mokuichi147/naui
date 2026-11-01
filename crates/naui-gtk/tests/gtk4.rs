@@ -24,10 +24,10 @@ use gtk::pango;
 use naui_core::{
     Align, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
     EventResponse, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem,
-    MenuShortcut, MenuSpec, NavItem, Orientation, Padding, PlaybackState, Point, PointerPhase,
-    PopupItem, Rect, Result, ScrollPolicy, SelectionMode, SidebarItem, SidebarSection, Sizing,
-    SortOrder, TableColumn, TableRow, TextColor, TextStyle, Theme, Time, ToolbarIcon, ToolbarItem,
-    Track, TreeItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
+    MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
+    PointerPhase, PopupItem, Rect, Result, ScrollPolicy, SelectionMode, SidebarItem,
+    SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle, Theme, Time,
+    ToolbarIcon, ToolbarItem, Track, TreeItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_gtk::{run_for_test, ListRow, TableCells, Ui, Widget};
 
@@ -272,6 +272,10 @@ fn main() {
         (
             "しきい値を持つスタックが自分の幅で向きを切り替え、境目では遊びを持つ",
             stack_breakpoint_follows_its_width,
+        ),
+        (
+            "一覧と詳細が幅に応じて並び、1 区画のときは戻るボタンで一覧へ戻る",
+            adaptive_panes_follow_their_width,
         ),
         (
             "置いたあとの set_sizing や列の変更でもグリッドの列の設定が残る",
@@ -2812,6 +2816,101 @@ fn stack_breakpoint_follows_its_width(ui: &Ui) -> Result<()> {
         Orientation::Horizontal,
         "狭まれば新しい自分の向きになる",
     );
+    window.close();
+    Ok(())
+}
+
+/// `AdaptivePanes` keeps the `AdwNavigationSplitView` side by side (the list at its
+/// fixed width) while at least the breakpoint wide and collapses it below, switching
+/// after the paint that changed its width. While only the detail is shown, naui's
+/// back button and libadwaita's own going back (`show-content` turning off) both
+/// return to the list and notify.
+fn adaptive_panes_follow_their_width(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+
+    let window = ui.window("一覧と詳細", 800.0, 300.0)?;
+    let panes = ui.adaptive_panes()?;
+    let list = ui.stack(Orientation::Vertical)?;
+    list.append(&ui.label("一覧")?);
+    let detail = ui.stack(Orientation::Vertical)?;
+    detail.append(&ui.text_input("詳細")?);
+    panes.set_list(&list);
+    panes.set_detail(&detail);
+    window.set_child(&panes);
+    let backs = Rc::new(Cell::new(0));
+    panes.on_back({
+        let backs = backs.clone();
+        move || backs.set(backs.get() + 1)
+    });
+
+    let native = panes.native_split_view();
+    let back = panes.native_back_button();
+    assert!(!panes.is_collapsed(), "並ぶ前は 2 区画");
+    assert_eq!(panes.breakpoint(), naui_core::DEFAULT_PANES_BREAKPOINT);
+    window.show();
+    spin_until(Duration::from_millis(300), || false);
+    assert!(!native.is_collapsed() && !panes.is_collapsed());
+    assert!(!back.is_visible());
+    let list_width = list.native_widget().width();
+    assert!(
+        (f64::from(list_width) - naui_core::DEFAULT_LIST_PANE_WIDTH).abs() <= 1.0,
+        "一覧が決まった幅で並ぶ: {list_width}"
+    );
+    assert!(detail.native_widget().is_mapped(), "詳細も出ている");
+
+    panes.show(Pane::Detail);
+    assert!(native.shows_content());
+    assert!(!back.is_visible(), "2 区画のときは戻るボタンを出さない");
+
+    let resize = |width: f64, collapsed: bool, message: &str| {
+        window.set_size(width, 300.0);
+        spin_until(Duration::from_secs(2), || panes.is_collapsed() == collapsed);
+        // 変わらないはずの所では、描き直しと予約が済むまで待ってから見る。
+        spin_until(Duration::from_millis(300), || false);
+        assert_eq!(
+            panes.is_collapsed(),
+            collapsed,
+            "{message} (窓 {width}、分割 {})",
+            native.width()
+        );
+        assert_eq!(native.is_collapsed(), collapsed, "{message}");
+    };
+    resize(500.0, true, "しきい値より狭ければ畳む");
+    assert!(
+        native.shows_content() && back.is_visible(),
+        "広いときに選んだ詳細が戻るボタン付きで出る"
+    );
+    spin_until(Duration::from_secs(1), || !list.native_widget().is_mapped());
+    assert!(!list.native_widget().is_mapped(), "一覧は隠れる");
+
+    back.emit_clicked();
+    assert_eq!(backs.get(), 1, "戻るボタンで on_back が呼ばれる");
+    assert_eq!(panes.visible_pane(), Pane::List);
+    assert!(!native.shows_content() && !back.is_visible());
+
+    panes.show(Pane::Detail);
+    assert!(native.shows_content() && back.is_visible());
+    assert_eq!(backs.get(), 1, "show では on_back を呼ばない");
+    // libadwaita 自身の「戻る」(Escape やスワイプ) は show-content を下ろす。
+    native.set_show_content(false);
+    assert_eq!(backs.get(), 2, "ネイティブの戻るでも on_back が呼ばれる");
+    assert_eq!(panes.visible_pane(), Pane::List);
+    assert!(!back.is_visible());
+
+    resize(636.0, true, "しきい値に届くまでは畳んだまま");
+    resize(640.0, false, "ちょうどしきい値で並ぶ");
+    resize(634.0, false, "しきい値のすぐ下では畳まない");
+    resize(630.0, true, "遊びを越えて狭まれば畳む");
+
+    panes.set_breakpoint(400.0);
+    assert!(
+        !panes.is_collapsed() && !native.is_collapsed(),
+        "しきい値を変えるといまの幅ですぐ決め直す"
+    );
+    panes.set_list_width(200.0);
+    assert_eq!(panes.list_width(), 200.0);
+    assert_eq!(native.min_sidebar_width(), 200.0);
+    assert_eq!(native.max_sidebar_width(), 200.0);
     window.close();
     Ok(())
 }
