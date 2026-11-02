@@ -243,13 +243,15 @@ jobs:
       # 日本語フォントも入れる。`checkbox_indicator_is_aligned_to_text` は
       # 日本語の行の ascent が大きく取られることを前提に印の位置を測るので、
       # 日本語を持つフォントが無いと欧文へ代替されて成り立たない。
+      # SVG の画像は librsvg の gdk-pixbuf ローダーが読む (推奨パッケージなので
+      # --no-install-recommends では入らないことがある)。
       - name: GTK4 / libadwaita と日本語フォントを導入
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             libgtk-4-dev libadwaita-1-dev build-essential pkg-config \
             xvfb dbus \
-            fonts-noto-cjk
+            fonts-noto-cjk librsvg2-common
       # Xvfb には設定デーモンが無いので、GTK は組み込みの既定 "Sans 10" を
       # 使う。デスクトップの既定 (Ubuntu 24.04 は 11pt) より 1pt 小さく、
       # チェックボックスの印を字面へ下げる余地が行の高さに残らないため、

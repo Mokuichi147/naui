@@ -56,8 +56,8 @@ use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Border, Canvas, Grid, Image as XamlImage, MediaPlayerElement, UIElementCollection,
 };
-use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::BitmapImage;
-use naui_winui3::Microsoft::UI::Xaml::Media::Stretch;
+use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::{BitmapImage, BitmapSource, SvgImageSource};
+use naui_winui3::Microsoft::UI::Xaml::Media::{ImageSource, Stretch};
 use naui_winui3::Microsoft::UI::Xaml::{
     FrameworkElement, RoutedEventHandler, SizeChangedEventHandler, UIElement,
 };
@@ -68,6 +68,7 @@ use windows::Media::Playback::{
     MediaPlayerFailedEventArgs,
 };
 use windows::Storage::StorageFile;
+use windows::Storage::Streams::{DataWriter, InMemoryRandomAccessStream};
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::to_error;
@@ -256,6 +257,9 @@ struct ImageInner {
     /// empty.
     image: XamlImage,
     source: RefCell<String>,
+    /// The size an SVG shown now gives itself (see [`naui_core::media::svg_size`]).
+    /// `SvgImageSource` has no pixel size to read, unlike `BitmapImage`.
+    svg_size: Cell<Option<(u32, u32)>>,
     fit: Cell<Fit>,
     alt: RefCell<String>,
 }
@@ -282,6 +286,7 @@ impl Image {
             opened: Cell::new(false),
             image,
             source: RefCell::new(String::new()),
+            svg_size: Cell::new(None),
             fit: Cell::new(Fit::default()),
             alt: RefCell::new(String::new()),
         }));
@@ -342,20 +347,22 @@ impl Image {
     /// for (not the previous image's either).
     fn take_natural_size(&self) {
         let pixels = |value: windows_core::Result<i32>| value.unwrap_or(0).max(0) as u32;
-        let size = self
-            .0
-            .image
-            .Source()
-            .ok()
-            .and_then(|source| source.cast::<BitmapImage>().ok())
-            .filter(|_| self.0.opened.get())
-            .map(|bitmap| (pixels(bitmap.PixelWidth()), pixels(bitmap.PixelHeight())));
+        let size = self.0.svg_size.get().or_else(|| {
+            self.0
+                .image
+                .Source()
+                .ok()
+                .and_then(|source| source.cast::<BitmapImage>().ok())
+                .filter(|_| self.0.opened.get())
+                .map(|bitmap| (pixels(bitmap.PixelWidth()), pixels(bitmap.PixelHeight())))
+        });
         self.0.frame.ask_for(&self.0.native, size);
     }
 
     /// Forgets the natural size of the image that was shown.
     fn forget_natural_size(&self) {
         self.0.opened.set(false);
+        self.0.svg_size.set(None);
         self.take_natural_size();
     }
 
@@ -370,6 +377,30 @@ impl Image {
     pub fn set_source(&self, source: &str) {
         *self.0.source.borrow_mut() = source.to_string();
         self.apply_source();
+    }
+
+    /// Shows an image from the contents of an image file held in memory.
+    /// [`source`](Self::source) becomes empty.
+    ///
+    /// The bytes are written into an `InMemoryRandomAccessStream` and handed to a
+    /// `BitmapImage` (`SetSource`), or, for SVG, which `BitmapImage` cannot read, to
+    /// an `SvgImageSource` (`SetSourceAsync`). Either way WinUI decodes them.
+    pub fn set_bytes(&self, bytes: &[u8]) {
+        self.0.source.borrow_mut().clear();
+        self.show_bytes(bytes);
+    }
+
+    /// Shows pixels the app made itself: `width` × `height` pixels, rows from top to
+    /// bottom, each pixel 4 bytes of red, green, blue and alpha (straight alpha).
+    /// [`source`](Self::source) becomes empty.
+    ///
+    /// The pixels are packed into an uncompressed PNG and shown like
+    /// [`set_bytes`](Self::set_bytes). Returns `Err` without changing the image when
+    /// `rgba` is not exactly `width * height * 4` bytes.
+    pub fn set_pixels(&self, width: u32, height: u32, rgba: &[u8]) -> Result<()> {
+        let png = naui_core::media::encode_png(width, height, rgba)?;
+        self.set_bytes(&png);
+        Ok(())
     }
 
     /// Whether loading could be requested (whether the element could be built).
@@ -424,6 +455,23 @@ impl Image {
             return;
         }
 
+        let svg = naui_core::media::is_svg_source(&source);
+        if svg && !is_url(&source) {
+            // 手元の SVG は読み込んでバイト列と同じ経路で出す。SvgImageSource は
+            // 自分の大きさを教えないので、文書から読む必要がある。
+            match std::fs::read(&*source) {
+                Ok(bytes) => {
+                    drop(source);
+                    self.show_bytes(&bytes);
+                }
+                Err(error) => {
+                    eprintln!("naui-windows: could not read the SVG ({source}): {error}");
+                    self.take_down(&children);
+                }
+            }
+            return;
+        }
+
         // WinUI はファイルパスではなく URI を要求する。
         let uri = match Uri::CreateUri(&HSTRING::from(source_uri(&source))) {
             Ok(uri) => uri,
@@ -433,17 +481,61 @@ impl Image {
                 return;
             }
         };
-        let bitmap = match BitmapImage::CreateInstanceWithUriSource(&uri) {
-            Ok(bitmap) => bitmap,
+        drop(source);
+        // ネットワーク上の SVG は文書を読めないので、自分の大きさを持たない。
+        let image_source = if svg {
+            SvgImageSource::CreateInstanceWithUriSource(&uri).and_then(|svg| svg.cast())
+        } else {
+            BitmapImage::CreateInstanceWithUriSource(&uri).and_then(|bitmap| bitmap.cast())
+        };
+        match image_source {
+            Ok(image_source) => self.put(&children, &image_source),
             Err(error) => {
                 eprintln!("naui-windows: failed to start loading the Image: {error}");
                 self.take_down(&children);
-                return;
             }
+        }
+    }
+
+    /// Decodes an image file's contents through a stream and shows it.
+    fn show_bytes(&self, bytes: &[u8]) {
+        let Ok(children) = self.0.frame.stage.Children() else {
+            return;
         };
-        if let Err(error) = self.0.image.SetSource(&bitmap) {
+        self.forget_natural_size();
+        let svg = naui_core::media::svg_size(bytes);
+        let image_source = stream_from(bytes).and_then(|stream| {
+            if naui_core::media::is_svg(bytes) {
+                let source = SvgImageSource::new()?;
+                // 読み込みは非同期。結果は Image の ImageOpened / ImageFailed で届く。
+                let _ = source.SetSourceAsync(&stream)?;
+                source.cast::<ImageSource>()
+            } else {
+                let bitmap = BitmapImage::new()?;
+                bitmap.cast::<BitmapSource>()?.SetSource(&stream)?;
+                bitmap.cast::<ImageSource>()
+            }
+        });
+        match image_source {
+            Ok(image_source) => {
+                self.0
+                    .svg_size
+                    .set(svg.map(|(width, height)| (width.ceil() as u32, height.ceil() as u32)));
+                self.put(&children, &image_source);
+                self.take_natural_size();
+            }
+            Err(error) => {
+                eprintln!("naui-windows: could not read the image: {error}");
+                self.take_down(&children);
+            }
+        }
+    }
+
+    /// Hands the image source to the `Image` and puts it on the `Canvas`.
+    fn put(&self, children: &UIElementCollection, image_source: &ImageSource) {
+        if let Err(error) = self.0.image.SetSource(image_source) {
             eprintln!("naui-windows: failed to replace the Image: {error}");
-            self.take_down(&children);
+            self.take_down(children);
             return;
         }
         if children.Size().is_ok_and(|size| size > 0) {
@@ -461,6 +553,20 @@ impl Image {
         // ここで合わせる。
         self.fit_to_host();
     }
+}
+
+/// Writes bytes into an in-memory stream positioned at its start.
+///
+/// The write completes without leaving the process, so waiting for it on the UI
+/// thread does not stall.
+fn stream_from(bytes: &[u8]) -> windows_core::Result<InMemoryRandomAccessStream> {
+    let stream = InMemoryRandomAccessStream::new()?;
+    let writer = DataWriter::CreateDataWriter(&stream)?;
+    writer.WriteBytes(bytes)?;
+    writer.StoreAsync()?.join()?;
+    writer.DetachStream()?;
+    stream.Seek(0)?;
+    Ok(stream)
 }
 
 // --------------------------------------------------------------- 再生の中身

@@ -44,7 +44,9 @@ fn sample_image() -> String {
 const MEDIA_FORMS: [(&str, &[&str]); 3] = [
     (
         "Image",
-        &["png", "jpg", "jpeg", "gif", "bmp", "webp", "heic", "tiff"],
+        &[
+            "png", "jpg", "jpeg", "gif", "bmp", "webp", "heic", "tiff", "svg",
+        ],
     ),
     ("Video", &["mp4", "m4v", "mov", "webm", "mkv", "avi"]),
     ("Audio", &["m4a", "mp3", "aac", "wav", "flac", "ogg"]),
@@ -214,7 +216,43 @@ fn build_image_pane(ui: &Ui) -> Result<(naui::Grid, naui::Image)> {
         }
     });
     pane.attach(&selector_row, GridCell::new(0, 1));
+
+    // ファイルのほかに、埋め込んだ SVG のバイト列と、その場で作った画素も出せる。
+    let sources = ["File", "Embedded SVG", "Pixels"];
+    let (source_row, source) = parts::choice(ui, "Source", &sources)?;
+    source.on_select({
+        let image = image.clone();
+        move |index| match index {
+            0 => image.set_source(&sample_image()),
+            1 => image.set_bytes(include_bytes!("../assets/badge.svg")),
+            _ => {
+                let (width, height) = (96, 64);
+                if let Err(error) = image.set_pixels(width, height, &gradient(width, height)) {
+                    eprintln!("gallery: {error}");
+                }
+            }
+        }
+    });
+    pane.attach(&source_row, GridCell::new(0, 2));
     Ok((pane, image))
+}
+
+/// A gradient from red to blue across, fading out downwards (RGBA, straight alpha).
+fn gradient(width: u32, height: u32) -> Vec<u8> {
+    let mut pixels = Vec::with_capacity((width * height * 4) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let across = x * 255 / (width - 1).max(1);
+            let down = y * 255 / (height - 1).max(1);
+            pixels.extend_from_slice(&[
+                (255 - across) as u8,
+                64,
+                across as u8,
+                (255 - down / 2) as u8,
+            ]);
+        }
+    }
+    pixels
 }
 
 fn build_video_pane(ui: &Ui, notice: &Notice) -> Result<(naui::Stack, naui::Video)> {

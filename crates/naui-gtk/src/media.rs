@@ -12,7 +12,9 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use gtk::gdk;
 use gtk::gio;
+use gtk::glib;
 use gtk::prelude::*;
 use naui_core::media::source_url;
 use naui_core::{Fit, PlaybackState};
@@ -79,6 +81,48 @@ impl Image {
         } else {
             self.0.native.set_file(Some(&to_file(source)));
         }
+    }
+
+    /// Shows an image from the contents of an image file (PNG, JPEG, SVG and the
+    /// other formats GTK4 and gdk-pixbuf can read), such as one embedded with
+    /// `include_bytes!`. [`source`](Self::source) becomes empty.
+    ///
+    /// It is decoded right away (`gdk_texture_new_from_bytes`); if it cannot be,
+    /// nothing is shown and [`is_loaded`](Self::is_loaded) is `false`.
+    pub fn set_bytes(&self, bytes: &[u8]) {
+        self.0.source.borrow_mut().clear();
+        let bytes = glib::Bytes::from(bytes);
+        match gdk::Texture::from_bytes(&bytes) {
+            Ok(texture) => self.0.native.set_paintable(Some(&texture)),
+            Err(error) => {
+                eprintln!("naui-gtk: could not read the image: {error}");
+                self.0.native.set_paintable(None::<&gdk::Paintable>);
+            }
+        }
+    }
+
+    /// Shows pixels the app made itself: `width` × `height` pixels, rows from top to
+    /// bottom, each pixel 4 bytes of red, green, blue and alpha (straight alpha).
+    /// [`source`](Self::source) becomes empty.
+    ///
+    /// Returns `Err` without changing the image when `rgba` is not exactly
+    /// `width * height * 4` bytes. The pixels are copied into a `GdkMemoryTexture`.
+    pub fn set_pixels(&self, width: u32, height: u32, rgba: &[u8]) -> naui_core::Result<()> {
+        naui_core::media::check_pixels(width, height, rgba)?;
+        let too_large = || naui_core::Error::new("show the pixels", "the image is too large");
+        let w = i32::try_from(width).map_err(|_| too_large())?;
+        let h = i32::try_from(height).map_err(|_| too_large())?;
+        let stride = (width as usize).checked_mul(4).ok_or_else(too_large)?;
+        let texture = gdk::MemoryTexture::new(
+            w,
+            h,
+            gdk::MemoryFormat::R8g8b8a8,
+            &glib::Bytes::from(rgba),
+            stride,
+        );
+        self.0.source.borrow_mut().clear();
+        self.0.native.set_paintable(Some(&texture));
+        Ok(())
     }
 
     /// Whether it has loaded. `false` if loading failed.

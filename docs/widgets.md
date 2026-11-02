@@ -105,6 +105,12 @@ collected in [Known limitations](known-limitations.md).
 
 ### Windows construction
 
+- **`Image` from bytes and pixels**: The bytes are written into an
+  `InMemoryRandomAccessStream` and read by a `BitmapImage` (`SetSource`), or by an
+  `SvgImageSource` (`SetSourceAsync`) for SVG, which `BitmapImage` cannot read.
+  `SvgImageSource` reports no natural size, so naui reads the document's `width`,
+  `height` and `viewBox` for bytes and local files. Pixels are packed into an
+  uncompressed PNG first.
 - **`Stack`**: A `Grid` with one row (column) per child, not a `StackPanel`.
   `StackPanel` never hands out leftover space, so `Fill` and `Spacer` along the
   main axis would do nothing. A child with `Fill` on the main axis gets a `Star`

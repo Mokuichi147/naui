@@ -211,9 +211,11 @@ internationalization and application layer tracks.
       `Popover` and `Sheet`, need a way to divide and group controls. `NSBox`,
       `GtkSeparator` / `GtkFrame`, `<hr>` / `<fieldset>`. WinUI has no standalone
       separator, so what to substitute is investigated first.
-- [ ] **More image sources** (bytes in memory, SVG, pixel buffers). For now only
-      paths and URLs, so an app cannot show an icon embedded with `include_bytes!`
-      without writing it to a file. The Web can use Blob URLs.
+- [x] **More image sources** (`Image::set_bytes`, `Image::set_pixels`, SVG). Each
+      platform decodes the bytes itself (`gdk_texture_new_from_bytes`,
+      `NSImage`, `BitmapImage` and `SvgImageSource` from a stream, a `blob:`
+      URL). Pixels go to a `GdkMemoryTexture` on Linux and as an uncompressed PNG
+      elsewhere.
 - [ ] **Make `Track::Fill` weights work in `Grid` on macOS and Linux.** Today they
       are distributed evenly there, so the same code lays out differently than on
       Windows and the Web. `NSGridView` and `GtkGrid` have no weights, so naui
@@ -287,7 +289,8 @@ Heavy, or supported on a limited set of platforms.
       layout. Which platforms need naui to lay it out itself is investigated first.
 - [ ] **Broaden `Canvas`'s vocabulary** (images, clipping, rotation and scaling,
       gradients). Text width measurement on Windows can use the DirectWrite that
-      `Canvas` now draws with. Image drawing builds on more image sources (P0).
+      `Canvas` now draws with. Image drawing can build on the image sources
+      `Image::set_bytes` and `set_pixels` read.
 - [ ] **Multiple selection in `Tree`, and placing widgets in items.**
 - [ ] **Make dragging `Table` column widths work on Windows and Linux too.** Linux
       has the native feature in `GtkColumnView`, while Windows uses a custom table,

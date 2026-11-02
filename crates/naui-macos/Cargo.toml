@@ -24,6 +24,7 @@ dispatch2 = { version = "0.3", default-features = false, features = ["std", "obj
 objc2-foundation = { version = "0.3", features = [
     "NSArray",
     "NSCalendar",
+    "NSData",
     "NSDate",
     "NSDictionary",
     "NSIndexSet",

@@ -128,10 +128,44 @@ impl Image {
         self.0.source()
     }
 
-    /// Replaces the image. `source` is a file path or a URL.
+    /// Replaces the image. `source` is a file path or a URL. SVG files can be shown
+    /// too.
     #[inline]
     pub fn set_source(&self, source: &str) {
         self.0.set_source(source)
+    }
+
+    /// Shows an image from the contents of an image file held in memory, such as one
+    /// embedded with `include_bytes!`. [`source`](Self::source) becomes empty.
+    ///
+    /// The platform decodes it, so the formats are those it reads: PNG, JPEG and GIF
+    /// everywhere, and SVG too (see
+    /// [More image sources](crate::guide#images-from-memory-and-svg)).
+    ///
+    /// ```no_run
+    /// # fn build(ui: &naui::Ui) -> naui::Result<()> {
+    /// // Usually `include_bytes!("icon.svg")`.
+    /// const ICON: &[u8] = br#"<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16">
+    ///   <circle cx="8" cy="8" r="7" fill="teal"/></svg>"#;
+    /// let icon = ui.image("")?;
+    /// icon.set_bytes(ICON);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn set_bytes(&self, bytes: &[u8]) {
+        self.0.set_bytes(bytes)
+    }
+
+    /// Shows pixels the app made itself: `width` × `height` pixels, rows from top to
+    /// bottom, each pixel 4 bytes of red, green, blue and alpha (straight, not
+    /// premultiplied, alpha). [`source`](Self::source) becomes empty.
+    ///
+    /// Returns `Err` without changing the image when `rgba` is not exactly
+    /// `width * height * 4` bytes, or either side is 0.
+    #[inline]
+    pub fn set_pixels(&self, width: u32, height: u32, rgba: &[u8]) -> naui_core::Result<()> {
+        self.0.set_pixels(width, height, rgba)
     }
 
     /// Whether it has loaded. `false` if loading failed.

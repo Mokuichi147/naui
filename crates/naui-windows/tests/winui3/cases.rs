@@ -21,7 +21,7 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Grid, Image as XamlImage, MenuFlyoutItem, ProgressRing, ScrollViewer, Slider as XamlSlider,
     StackPanel, TextBlock, TextBox, ToggleSwitch,
 };
-use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::BitmapImage;
+use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::{BitmapImage, SvgImageSource};
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
 use naui_winui3::Microsoft::UI::Xaml::{
     Application, FrameworkElement, GridUnitType, HorizontalAlignment, RoutedEventHandler, Style,
@@ -355,6 +355,10 @@ const CASES: &[Case] = &[
     (
         "画像の自然な大きさは画素の大きさで、Scroll の中でも幅に合わせて大きくならない",
         image_natural_size_is_its_pixels,
+    ),
+    (
+        "画像がメモリ上のバイト列・画素・SVG を WinUI に読ませる",
+        image_takes_bytes_pixels_and_svg,
     ),
     (
         "Fill の動画は Scroll の中でも表示領域の余りに収まり、縮めると付いていく",
@@ -4425,6 +4429,78 @@ fn image_loads_from_japanese_path(ui: &Ui) -> Result<()> {
         Ok(result) => result,
         Err(panic) => std::panic::resume_unwind(panic),
     }
+}
+
+const RED_SVG: &str = r##"<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16" viewBox="0 0 24 16">
+  <rect width="24" height="16" fill="#ff0000"/>
+</svg>"##;
+
+/// The empty `Border` in an image's host whose size is the natural size asked for.
+fn natural_size(image: &naui_windows::Image) -> (f64, f64) {
+    let children = native::<Grid>(image).Children().expect("ホストの子");
+    let natural = (0..children.Size().expect("ホストの子の数"))
+        .filter_map(|index| children.GetAt(index).ok())
+        .find_map(|element| {
+            element
+                .cast::<naui_winui3::Microsoft::UI::Xaml::Controls::Border>()
+                .ok()
+        })
+        .expect("大きさを求める Border");
+    (
+        natural.Width().unwrap_or(f64::NAN),
+        natural.Height().unwrap_or(f64::NAN),
+    )
+}
+
+/// Bytes become a `BitmapImage` read from a stream, SVG an `SvgImageSource` whose
+/// natural size comes from the document, and pixels are checked against their size.
+fn image_takes_bytes_pixels_and_svg(ui: &Ui) -> Result<()> {
+    let image = ui.image("")?;
+    image.set_bytes(&bmp_solid(4, 2));
+    assert!(image.is_loaded(), "バイト列の画像が置かれる");
+    assert_eq!(image.source(), "");
+    assert!(
+        xaml_image(&image)
+            .Source()
+            .and_then(|source| source.cast::<BitmapImage>())
+            .is_ok(),
+        "ラスター画像は BitmapImage で読む"
+    );
+
+    image.set_bytes(RED_SVG.as_bytes());
+    assert!(
+        xaml_image(&image)
+            .Source()
+            .and_then(|source| source.cast::<SvgImageSource>())
+            .is_ok(),
+        "SVG は SvgImageSource で読む"
+    );
+    assert_eq!(natural_size(&image), (24.0, 16.0), "SVG の大きさを求める");
+
+    image.set_pixels(3, 2, &[0, 0, 255, 255].repeat(6))?;
+    assert!(
+        xaml_image(&image)
+            .Source()
+            .and_then(|source| source.cast::<BitmapImage>())
+            .is_ok(),
+        "画素は PNG にして BitmapImage で読む"
+    );
+    assert!(image.set_pixels(3, 3, &[0; 4]).is_err());
+
+    let path = std::env::temp_dir().join(format!("naui-svg-{}.svg", std::process::id()));
+    std::fs::write(&path, RED_SVG).expect("SVG を書き出せない");
+    image.set_source(path.to_str().expect("UTF-8 のパス"));
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        xaml_image(&image)
+            .Source()
+            .and_then(|source| source.cast::<SvgImageSource>())
+            .is_ok(),
+        "SVG ファイルも SvgImageSource で読む"
+    );
+    assert_eq!(natural_size(&image), (24.0, 16.0));
+    Ok(())
 }
 
 /// The WinUI `Image` inside naui's `Image`. It sits on a `Canvas` in the host `Grid`.
