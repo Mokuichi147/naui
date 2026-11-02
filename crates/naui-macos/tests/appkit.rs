@@ -3510,7 +3510,10 @@ fn separator_spans_the_stack(ui: &Ui) -> Result<()> {
 /// inside the box, the padding away from the edges.
 fn group_frames_its_child(ui: &Ui) -> Result<()> {
     let group = ui.group("表示")?;
-    let body = ui.label("中身")?;
+    // ラベルはフレームが整列矩形より左右 2pt 広いので、余白を測るには
+    // 整列矩形とフレームの一致する NSStackView を中身にする。
+    let body = ui.stack(Orientation::Vertical)?;
+    body.append(&ui.label("中身")?);
     group.set_child(&body);
 
     let view = group.native_view();
