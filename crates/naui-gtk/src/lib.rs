@@ -14,7 +14,7 @@
 //! | `run` | `AdwApplication` + `connect_activate` (the UI is built in the callback) |
 //! | `Window` | `AdwApplicationWindow` + `AdwToolbarView` + `AdwHeaderBar` |
 //! | `Stack` | `GtkBox` |
-//! | `Grid` | `GtkGrid` |
+//! | `Grid` | [`GridBox`] (naui's own container: `GtkGrid` has no column weights) |
 //! | `Scroll` | `GtkScrolledWindow` |
 //! | `Expander` | `GtkExpander` |
 //! | `SplitView` | `GtkPaned` |
@@ -60,10 +60,11 @@
 //! - GTK4 has no equivalent of [`Fit::None`](naui_core::Fit::None) (actual size),
 //!   so it maps to `GTK_CONTENT_FIT_SCALE_DOWN`, which **does not scale up but does
 //!   scale down**.
-//! - **Weights of [`Track::Fill`](naui_core::Track::Fill) in a `Grid` have no
-//!   effect.** `GtkGrid` cannot give columns or rows a width of their own, and
-//!   leftover space is split evenly among the growing columns (the same limitation
-//!   as macOS).
+//! - **`Grid` is not a `GtkGrid`** but naui's [`GridBox`]. `GtkGrid` cannot give
+//!   columns or rows a width of their own and splits leftover space evenly, so
+//!   weights of [`Track::Fill`](naui_core::Track::Fill) could not work. `GridBox`
+//!   shares the space with [`naui_core::GridAxis`], as the Web (`fr`) and Windows
+//!   (`Star`) do.
 //! - `AdwStyleManager` holds the color theme for the whole app, so
 //!   [`Window::set_theme`] also applies to the whole app.
 //! - Unlike `GtkApplicationWindow`, `AdwApplicationWindow` **has no default title
@@ -150,6 +151,7 @@ mod file_drop;
 mod file_picker;
 mod file_saver;
 mod focus;
+mod grid_box;
 mod indicator;
 mod interaction;
 mod keys;
@@ -196,6 +198,7 @@ pub use editable_combo_box::EditableComboBox;
 pub use expander::Expander;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
+pub use grid_box::GridBox;
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::{List, ListRow};
 pub use media::{Audio, Image, Video};

@@ -23,6 +23,7 @@ mod datetime;
 mod dialog;
 mod file;
 mod focus;
+mod grid;
 mod key;
 mod languages;
 mod layout;
@@ -65,6 +66,7 @@ pub use file::{
     FilePickerMode,
 };
 pub use focus::{FocusHandler, FocusOwner};
+pub use grid::{GridAxis, GridItem};
 pub use key::{EventResponse, Key, KeyEvent, KeyHandler, Modifiers};
 pub use languages::{language_tags_from_locale_names, PreferredLanguages};
 pub use layout::{

@@ -169,15 +169,17 @@ impl Sizing {
 
 /// How the width of one grid column (or row) is determined.
 ///
-/// | Value | Web | Windows | macOS |
-/// | --- | --- | --- | --- |
-/// | [`Track::Auto`] | `auto` | `Auto` of `GridLength` | NSGridView's default (fit the content) |
-/// | [`Track::Fixed`] | `<n>px` | `Pixel` of `GridLength` | `NSGridColumn::setWidth` |
-/// | [`Track::Fill`] | `<w>fr` | `Star` of `GridLength` | Approximated (`Fill` placement + hugging priority) |
+/// | Value | Web | Windows | macOS | Linux |
+/// | --- | --- | --- | --- | --- |
+/// | [`Track::Auto`] | `auto` | `Auto` of `GridLength` | NSGridView's default (fit the content) | The content's natural size |
+/// | [`Track::Fixed`] | `<n>px` | `Pixel` of `GridLength` | `NSGridColumn::setWidth` | The fixed size |
+/// | [`Track::Fill`] | `<w>fr` | `Star` of `GridLength` | A weak wish for the share [`GridAxis`] gives | The share [`GridAxis`] gives |
 ///
 /// The weight of `Fill` expresses "in what ratio to split the leftover space".
-/// macOS's NSGridView has no notion of weights, so differing weights have no
-/// effect there.
+/// `NSGridView` and `GtkGrid` have no notion of weights, so naui works out the
+/// shares itself with [`GridAxis`], the way CSS sizes `fr` tracks.
+///
+/// [`GridAxis`]: crate::GridAxis
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub enum Track {
     /// Fit the content (default).

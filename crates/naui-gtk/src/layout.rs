@@ -13,12 +13,13 @@ use naui_core::{
 };
 
 use crate::bin::{apply_padding, Placement, SizeBin};
+use crate::grid_box::GridBox;
 use crate::widgets::{impl_widget, Widget};
 
 // ------------------------------------------------------------------- Grid
 
 struct GridInner {
-    native: gtk::Grid,
+    native: GridBox,
     bin: SizeBin,
     /// The placed children and their positions. Kept so the column / row settings can
     /// be changed later.
@@ -27,14 +28,18 @@ struct GridInner {
     row_tracks: RefCell<Vec<Track>>,
 }
 
-/// A container that positions children by row and column (`GtkGrid`).
+/// A container that positions children by row and column (naui's [`GridBox`]).
+///
+/// `GtkGrid` cannot give a column a width of its own, so [`Track::Fill`] weights
+/// could not work with it; [`GridBox`] shares the space among the columns and rows
+/// the way the other platforms do.
 #[derive(Clone)]
 pub struct Grid(Rc<GridInner>);
 impl_widget!(Grid);
 
 impl Grid {
     pub(crate) fn new() -> Self {
-        let native = gtk::Grid::new();
+        let native = GridBox::new();
         let bin = SizeBin::wrap(&native);
         Self(Rc::new(GridInner {
             native,
@@ -46,8 +51,7 @@ impl Grid {
     }
 
     pub fn set_spacing(&self, column: f64, row: f64) {
-        self.0.native.set_column_spacing(to_px(column) as u32);
-        self.0.native.set_row_spacing(to_px(row) as u32);
+        self.0.native.set_spacing(to_px(column), to_px(row));
     }
 
     pub fn set_padding(&self, padding: Padding) {
@@ -58,13 +62,7 @@ impl Grid {
     /// something.
     pub fn attach(&self, child: &dyn Widget, cell: GridCell) {
         let bin = child.size_bin();
-        self.0.native.attach(
-            &bin,
-            cell.column as i32,
-            cell.row as i32,
-            cell.column_span as i32,
-            cell.row_span as i32,
-        );
+        self.0.native.attach(&bin, cell);
         self.apply_tracks_to(&bin, cell);
         self.0
             .children
@@ -116,17 +114,14 @@ impl Grid {
 
     /// How a column's width is determined.
     ///
-    /// `GtkGrid` cannot give columns a width of their own, so this is applied **to the
-    /// children in that column**. A column's width follows its largest content, so
-    /// this ends up setting the column width. `GtkGrid` has no weights for
-    /// [`Track::Fill`]; leftover space is split evenly among the growing columns (the
-    /// same limitation as macOS).
+    /// [`Track::Fill`] columns share the leftover width in proportion to their
+    /// weights, never going below their content's minimum (like CSS's `fr`).
     pub fn set_column_track(&self, index: usize, track: Track) {
         set_track(&self.0.column_tracks, index, track);
         self.reapply_tracks();
     }
 
-    /// How a row's height is determined. Has the same limitations as
+    /// How a row's height is determined, the same way as
     /// [`Grid::set_column_track`].
     pub fn set_row_track(&self, index: usize, track: Track) {
         set_track(&self.0.row_tracks, index, track);
@@ -134,6 +129,9 @@ impl Grid {
     }
 
     fn reapply_tracks(&self) {
+        self.0
+            .native
+            .set_tracks(&self.0.column_tracks.borrow(), &self.0.row_tracks.borrow());
         for (cell, child) in self.0.children.borrow().iter() {
             self.apply_tracks_to(&child.size_bin(), *cell);
         }

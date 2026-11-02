@@ -488,9 +488,9 @@ impl SizeBin {
 
     /// Receives how a grid column / row is sized.
     ///
-    /// `GtkGrid` cannot give columns or rows a width of their own. Instead the setting
-    /// is applied **to the children in that column**. A column's width follows its
-    /// largest child, so this decides the column width.
+    /// [`GridBox`](crate::GridBox) sizes the columns and rows itself; the child is
+    /// told only what it must do within them: fill a `Fixed` column, and pass a
+    /// `Fill` column's wish to grow on to the grid's parents.
     ///
     /// Axes with their own size specified are left alone (the child's setting wins).
     fn apply_track(&self, horizontal: bool, track: Track) {
@@ -519,8 +519,8 @@ impl SizeBin {
                 }
             }
             Track::Fill(_) => {
-                // 重みは `GtkGrid` に無い。余りは広がる列で等分される。
-                // 広がるのは列だけで、中身に合わせる子そのものは伸ばさない
+                // 余りを重みで分けるのは `GridBox`。ここでは親へ「広がる」を
+                // 伝えるだけで、中身に合わせる子そのものは伸ばさない
                 // (`place_in_grid` と同じ寄せ方のまま)。伸ばしたい子は自分で
                 // `Fill` を指定する。
                 if horizontal {

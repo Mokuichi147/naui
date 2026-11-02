@@ -233,6 +233,14 @@ fn main() {
             "タブが増えても最小幅が増えない",
             tabs_do_not_widen_with_the_number_of_tabs,
         ),
+        (
+            "グリッドの Fill の列と行が重みで余りを分ける",
+            grid_fill_weights_share_the_space,
+        ),
+        (
+            "グリッドの固定幅の列は空でも幅を持つ",
+            grid_fixed_track_holds_an_empty_column,
+        ),
         ("大きさを指定し直すと以前の指定が消える", sizing_is_replaced),
         ("スペーサーが両方向に広がる", spacer_expands),
         (
@@ -2549,12 +2557,57 @@ fn grid_places_children(ui: &Ui) -> Result<()> {
     assert_eq!(grid.columns(), 2);
     assert_eq!(grid.rows(), 2);
 
-    let native: gtk::Grid = grid.native_widget().downcast().expect("GtkGrid");
+    let native: naui_gtk::GridBox = grid.native_widget().downcast().expect("GridBox");
     assert_eq!(children(&native).len(), 3);
 
     grid.set_spacing(12.0, 8.0);
     assert_eq!(native.column_spacing(), 12);
     assert_eq!(native.row_spacing(), 8);
+    Ok(())
+}
+
+/// `Fill` columns share the leftover width by weight, as `fr` does on the Web and
+/// `Star` on Windows, and rows do the same with height.
+fn grid_fill_weights_share_the_space(ui: &Ui) -> Result<()> {
+    let window = ui.window("重み", 400.0, 300.0)?;
+    let grid = ui.grid()?;
+    grid.set_spacing(10.0, 0.0);
+    grid.set_column_track(0, Track::Fixed(60.0));
+    grid.set_column_track(1, Track::Fill(1.0));
+    grid.set_column_track(2, Track::Fill(3.0));
+    grid.set_row_track(0, Track::Fill(1.0));
+    grid.set_row_track(1, Track::Fill(2.0));
+    grid.set_sizing(Sizing::fill());
+    let cells: Vec<naui_gtk::Spacer> = (0..3).map(|_| ui.spacer()).collect::<Result<_>>()?;
+    grid.attach(&cells[0], GridCell::new(1, 0));
+    grid.attach(&cells[1], GridCell::new(2, 0));
+    grid.attach(&cells[2], GridCell::new(0, 1));
+    window.set_child(&grid);
+    window.show();
+
+    // 400 - 固定の 60 - 間隔 20 = 320 を 1 : 3 で分ける。
+    let bin = bin_of(&grid);
+    bin.size_allocate(&gtk::Allocation::new(0, 0, 400, 300), -1);
+    let width = |widget: &dyn Widget| bin_of(widget).width();
+    let height = |widget: &dyn Widget| bin_of(widget).height();
+    assert_eq!(width(&cells[0]), 80, "重み 1 の列");
+    assert_eq!(width(&cells[1]), 240, "重み 3 の列");
+    assert_eq!(width(&cells[2]), 60, "固定の列");
+    assert_eq!(height(&cells[0]), 100, "重み 1 の行");
+    assert_eq!(height(&cells[2]), 200, "重み 2 の行");
+    window.close();
+    Ok(())
+}
+
+/// A `Fixed` column keeps its width even with nothing in it, as on the Web and
+/// Windows.
+fn grid_fixed_track_holds_an_empty_column(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_column_track(0, Track::Fixed(48.0));
+    grid.attach(&ui.label("右")?, GridCell::new(1, 0));
+    let label_width = measure_width(&ui.label("右")?.native_widget()).1;
+    let native = grid.native_widget();
+    assert_eq!(measure_width(&native).1, 48 + label_width);
     Ok(())
 }
 
@@ -2568,7 +2621,7 @@ fn grid_replaces_child(ui: &Ui) -> Result<()> {
     grid.replace(&second, GridCell::new(0, 0));
     assert_eq!(grid.len(), 1);
 
-    let native: gtk::Grid = grid.native_widget().downcast().expect("GtkGrid");
+    let native: naui_gtk::GridBox = grid.native_widget().downcast().expect("GridBox");
     let placed = children(&native);
     assert_eq!(placed.len(), 1);
     assert_eq!(placed[0], bin_of(&second));

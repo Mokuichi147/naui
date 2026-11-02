@@ -2,7 +2,8 @@ use crate::sys;
 use crate::Widget;
 use naui_core::{GridCell, Padding, ScrollMetrics, ScrollPolicy, Track};
 
-/// A container that positions children by row and column (`GtkGrid`).
+/// A container that positions children by row and column (naui's `GridBox`, since
+/// `GtkGrid` has no column weights).
 #[derive(Clone)]
 pub struct Grid(pub(crate) sys::Grid);
 
@@ -48,17 +49,16 @@ impl Grid {
 
     /// How a column's width is determined.
     ///
-    /// `GtkGrid` cannot give columns a width of their own, so this is applied **to the
-    /// children in that column**. A column's width follows its largest content, so
-    /// this ends up setting the column width. `GtkGrid` has no weights for
-    /// [`Track::Fill`]; leftover space is split evenly among the growing columns (the
-    /// same limitation as macOS).
+    /// [`Track::Fill`] columns share the leftover width in proportion to their
+    /// weights, never going below their content's minimum (like CSS's `fr`).
+    /// `GtkGrid` has no weights, so naui's own container (`GridBox`) shares out the
+    /// space.
     #[inline]
     pub fn set_column_track(&self, index: usize, track: Track) {
         self.0.set_column_track(index, track)
     }
 
-    /// How a row's height is determined. Has the same limitations as
+    /// How a row's height is determined, the same way as
     /// [`Grid::set_column_track`].
     #[inline]
     pub fn set_row_track(&self, index: usize, track: Track) {

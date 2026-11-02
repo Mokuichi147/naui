@@ -18,7 +18,7 @@ Legend:
 | --- | --- | --- | --- | --- |
 | `Window` | ✅ `Microsoft.UI.Xaml.Window` | ✅ `NSWindow` | ✅ `AdwApplicationWindow` | 🔴 `<div>` + `document.title` |
 | `Stack` | 🟡 `Grid` (a track per child) | ✅ `NSStackView` | ✅ `GtkBox` | 🟡 `<div>` + CSS Flexbox |
-| `Grid` | ✅ `Grid` | ✅ `NSGridView` | 🟡 `GtkGrid` | 🟡 `<div>` + CSS Grid |
+| `Grid` | ✅ `Grid` | ✅ `NSGridView` | 🔴 naui's `GridBox` (a `GtkWidget` subclass) | 🟡 `<div>` + CSS Grid |
 | `Scroll` | ✅ `ScrollViewer` | ✅ `NSScrollView` | ✅ `GtkScrolledWindow` | 🟡 `<div>` + `overflow` |
 | `Spacer` | 🟡 An empty `Grid` | 🟡 An empty `NSView` | 🟡 An empty `GtkBox` | 🟡 `<div>` + `flex-grow` |
 | `Expander` | ✅ `Expander` | 🟡 `NSButton` (disclosure) + `NSStackView` | ✅ `GtkExpander` | ✅ `<details>` + `<summary>` |
@@ -295,9 +295,10 @@ collected in [Known limitations](known-limitations.md).
   but **where leftover space goes is not defined**, and with hugging priorities
   alone the space ends up on the `Auto` side. So `Auto` rows are given the
   `fittingSize` of their cell content as the row height, and `Fill` children get a
-  weak preference to grow up to "the grid size − the width the other columns need"
-  (fixed-width columns are estimated by their specified width, the rest by their
-  cell content's `fittingSize`). **Auto Layout decides the positions and sizes
+  weak preference to grow to their track's share. The shares come from naui-core's
+  `GridAxis`, as on Linux: the other tracks keep what they need (fixed-width
+  columns their specified width, the rest their cell content's `fittingSize`), and
+  `Fill` tracks split the rest by weight, never below what their content needs. **Auto Layout decides the positions and sizes
   themselves**; naui does not set frames. Rows and columns that cross a merge cannot
   be removed because AppKit throws an exception when you try.
 - **`SplitView`**: `NSSplitView` itself. However, **naui replaces only how the
@@ -389,6 +390,14 @@ collected in [Known limitations](known-limitations.md).
   `set_placement` checks the saved position against `NSScreen`'s `visibleFrame`.
 
 ### Linux construction
+
+- **`Grid`**: Not a `GtkGrid` but naui's `GridBox`, a `GtkWidget` subclass that
+  only measures and allocates (its CSS name is still `grid`). `GtkGrid` cannot give
+  a column a width of its own and splits leftover space evenly among expanding
+  columns, so `Track::Fill` weights could not work. `GridBox` shares the space with
+  naui-core's `GridAxis`, the way CSS sizes `fr` tracks, measuring each child's
+  height for the width of its cell. A `Fixed` column keeps its width even when
+  empty, as on the Web and Windows.
 
 - **`SplitView`**: A `GtkPaned`. The panes' minimum sizes are held by a container
   wrapped around each pane, so they do not conflict with the `size_request` the app

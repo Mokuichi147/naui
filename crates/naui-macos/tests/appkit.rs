@@ -406,6 +406,10 @@ fn main() {
             grid_auto_row_follows_wrapped_label,
         ),
         (
+            "グリッドの Fill の列と行が重みで余りを分ける",
+            grid_fill_weights_share_the_space,
+        ),
+        (
             "グリッドの Fill の子がセルの取り分だけ広がる",
             grid_fill_column_takes_only_its_share,
         ),
@@ -11073,6 +11077,46 @@ fn grid_fill_column_takes_only_its_share(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// `Fill` columns and rows share the leftover in proportion to their weights, as
+/// `fr` does on the Web and `Star` on Windows.
+fn grid_fill_weights_share_the_space(ui: &Ui) -> Result<()> {
+    let grid = ui.grid()?;
+    grid.set_spacing(10.0, 0.0);
+    grid.set_column_track(0, Track::Fixed(60.0));
+    grid.set_column_track(1, Track::Fill(1.0));
+    grid.set_column_track(2, Track::Fill(3.0));
+    grid.set_row_track(0, Track::Fill(1.0));
+    grid.set_row_track(1, Track::Fill(2.0));
+    let cells: Vec<naui_macos::Stack> = (0..3)
+        .map(|_| {
+            let stack = ui.stack(Orientation::Vertical)?;
+            stack.set_sizing(Sizing::fill());
+            Ok(stack)
+        })
+        .collect::<Result<_>>()?;
+    grid.attach(&cells[0], GridCell::new(1, 0));
+    grid.attach(&cells[1], GridCell::new(2, 0));
+    grid.attach(&cells[2], GridCell::new(1, 1));
+
+    let root = grid.native_view();
+    root.setFrameSize(NSSize::new(400.0, 300.0));
+    root.layoutSubtreeIfNeeded();
+    root.layoutSubtreeIfNeeded();
+    let frame = |stack: &naui_macos::Stack| stack.native_view().frame().size;
+    // 400 - 固定の 60 - 間隔 20 = 320 を 1 : 3 で分ける。
+    let (one, three) = (frame(&cells[0]), frame(&cells[1]));
+    assert!(
+        (one.width - 80.0).abs() < 1.0 && (three.width - 240.0).abs() < 1.0,
+        "列は 1 : 3: {one:?} / {three:?}"
+    );
+    let lower = frame(&cells[2]);
+    assert!(
+        (one.height - 100.0).abs() < 1.0 && (lower.height - 200.0).abs() < 1.0,
+        "行は 1 : 2: {one:?} / {lower:?}"
+    );
+    Ok(())
+}
+
 /// Columns with a fixed width are not eaten by `Fill` children, even when their
 /// content is short.
 ///
@@ -11348,8 +11392,8 @@ fn grid_fill_row_keeps_the_rest(ui: &Ui) -> Result<()> {
 }
 
 /// `Fill` rows (and columns) with a capped child and with a plain `Fill` child side
-/// by side: when there is room, the capped one still grows up to its maximum and
-/// the plain one takes the rest.
+/// by side: when there is room, the capped one still grows up to its maximum, and
+/// the plain one takes its track's share, which the weights decide.
 ///
 /// The plain child's "want to grow to fill the grid" wish is far stronger than the
 /// capped child's "want to grow up to the maximum". Asking for the whole grid, it
@@ -11395,9 +11439,11 @@ fn grid_capped_and_plain_fill_tracks_share_the_room(ui: &Ui) -> Result<()> {
             capped_size, 100.0,
             "上限付きは上限まで広がる (縦 {vertical}): {capped_frame:?} / {plain_frame:?}"
         );
+        // どちらも重み 1 の Fill なので、トラックは半分ずつ (Web の 1fr、Windows の
+        // 1* と同じ)。上限付きの子は自分のトラックの中で上限に留まる。
         assert!(
-            plain_size > room - 150.0,
-            "上限なしは残りを受け取る (縦 {vertical}): {capped_frame:?} / {plain_frame:?}"
+            (plain_size - room / 2.0).abs() < 1.0,
+            "上限なしは自分のトラックの分を受け取る (縦 {vertical}): {capped_frame:?} / {plain_frame:?}"
         );
     }
     Ok(())
