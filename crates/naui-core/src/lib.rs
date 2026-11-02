@@ -97,7 +97,7 @@ pub use timer::{Sleep, Timer};
 pub use toast::ToastSpec;
 pub use toolbar::{ToolbarIcon, ToolbarItem};
 pub use tree::TreeItem;
-pub use ui_text::{set_ui_languages, ui_strings, UiStrings};
+pub use ui_text::{app_language, set_app_language, set_ui_languages, ui_strings, UiStrings};
 pub use weak::WeakWidget;
 pub use window::{
     is_on_screen, CloseHandler, CloseResponse, StateHandler, WindowPlacement, WindowState,
@@ -286,6 +286,9 @@ pub struct Settings {
     pub app_id: String,
     /// The color theme applied at startup (default [`Theme::System`]).
     pub theme: Theme,
+    /// The language the app shows its content in, as a BCP 47 tag (`"ja-JP"`).
+    /// `None` (the default) follows the OS. See [`Settings::language`].
+    pub language: Option<String>,
 }
 
 impl Settings {
@@ -301,6 +304,7 @@ impl Settings {
             name,
             app_id,
             theme: Theme::System,
+            language: None,
         }
     }
 
@@ -312,6 +316,31 @@ impl Settings {
     /// Sets the color theme at startup.
     pub fn theme(mut self, theme: Theme) -> Self {
         self.theme = theme;
+        self
+    }
+
+    /// Tells the native side which language the app shows its content in, as a BCP
+    /// 47 tag (`"ja-JP"`, `"zh-Hant"`).
+    ///
+    /// It decides which glyphs are chosen for text written in several languages'
+    /// scripts (an app showing Japanese on an OS set to another language otherwise
+    /// gets Chinese forms of the kanji) and how screen readers pronounce it. naui's
+    /// own strings follow it too.
+    ///
+    /// | Windows | macOS | Linux | Web |
+    /// | --- | --- | --- | --- |
+    /// | `FrameworkElement.Language` on each window's content | `AppleLanguages` in the arguments domain (the per-app language of System Settings) | `PANGO_LANGUAGE` before GTK starts | `lang` on `<html>` |
+    ///
+    /// It is read once at startup: macOS and Linux cannot change it in a running
+    /// app. On macOS it also makes the strings the native controls carry
+    /// themselves (file dialogs, context menus) use that language, and
+    /// [`Ui::preferred_languages`] lists it first, as for an app whose language is
+    /// set in System Settings.
+    ///
+    /// [`Ui::preferred_languages`]: https://docs.rs/naui/latest/naui/struct.Ui.html#method.preferred_languages
+    pub fn language(mut self, tag: impl Into<String>) -> Self {
+        let tag = tag.into();
+        self.language = (!tag.trim().is_empty()).then(|| tag.trim().to_owned());
         self
     }
 }
@@ -328,6 +357,16 @@ mod tests {
             Settings::new("x").app_id("com.example.x").app_id,
             "com.example.x"
         );
+    }
+
+    #[test]
+    fn language_defaults_to_the_os() {
+        assert_eq!(Settings::new("app").language, None);
+        assert_eq!(
+            Settings::new("app").language(" ja-JP ").language.as_deref(),
+            Some("ja-JP")
+        );
+        assert_eq!(Settings::new("app").language("").language, None);
     }
 
     #[test]

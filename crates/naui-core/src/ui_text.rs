@@ -90,7 +90,25 @@ impl UiStrings {
 /// The table currently in use. English until a backend sets the languages.
 static CURRENT: RwLock<&'static UiStrings> = RwLock::new(&ENGLISH);
 
+/// The language the app said it shows ([`Settings::language`](crate::Settings::language)).
+static APP_LANGUAGE: RwLock<Option<String>> = RwLock::new(None);
+
+/// Records the app's language. Called by each backend when the app starts, before
+/// [`set_ui_languages`]; naui's own strings then prefer it to the OS's languages.
+pub fn set_app_language(tag: Option<&str>) {
+    *APP_LANGUAGE.write().unwrap_or_else(|e| e.into_inner()) = tag.map(str::to_owned);
+}
+
+/// The app's language, if it named one.
+pub fn app_language() -> Option<String> {
+    APP_LANGUAGE
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone()
+}
+
 /// Chooses the strings from the OS's preferred languages, most preferred first.
+/// The app's language ([`set_app_language`]), if any, comes before them.
 ///
 /// Called by each backend when the app starts.
 pub fn set_ui_languages<I, S>(preferred: I)
@@ -98,6 +116,10 @@ where
     I: IntoIterator<Item = S>,
     S: AsRef<str>,
 {
+    let preferred: Vec<String> = app_language()
+        .into_iter()
+        .chain(preferred.into_iter().map(|tag| tag.as_ref().to_owned()))
+        .collect();
     let strings = UiStrings::for_languages(preferred);
     // 書き手が途中で落ちても、表は差し替えるだけなので壊れた状態は残らない。
     *CURRENT.write().unwrap_or_else(|e| e.into_inner()) = strings;
@@ -212,6 +234,16 @@ mod tests {
         assert_eq!(ui_strings(), &JAPANESE);
         set_ui_languages(["de-DE"]);
         assert_eq!(ui_strings(), &ENGLISH, "表に無い言語では英語へ戻る");
+
+        // アプリの言語は OS の言語より先に見る (同じテストで続けて確かめるのは、
+        // どちらも同じ大域の状態を書き換えるため)。
+        set_app_language(Some("ja"));
+        assert_eq!(app_language().as_deref(), Some("ja"));
+        set_ui_languages(["en-US"]);
+        assert_eq!(ui_strings(), &JAPANESE);
+        set_app_language(None);
+        set_ui_languages(["en-US"]);
+        assert_eq!(ui_strings(), &ENGLISH);
     }
 
     #[test]

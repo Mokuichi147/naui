@@ -11,10 +11,12 @@ use std::rc::{Rc, Weak};
 
 use dispatch2::DispatchQueue;
 use objc2::rc::Retained;
+use objc2::runtime::AnyObject;
 use objc2::runtime::{NSObject, NSObjectProtocol};
 use objc2::{define_class, msg_send, sel, AnyThread};
 use objc2_foundation::{
-    NSCurrentLocaleDidChangeNotification, NSLocale, NSNotification, NSNotificationCenter,
+    NSArgumentDomain, NSArray, NSCurrentLocaleDidChangeNotification, NSLocale, NSMutableDictionary,
+    NSNotification, NSNotificationCenter, NSString, NSUserDefaults,
 };
 
 use crate::UiInner;
@@ -118,4 +120,37 @@ pub(crate) fn preferred_languages() -> Vec<String> {
 #[doc(hidden)]
 pub fn override_preferred_languages_for_test(languages: Option<Vec<String>>) {
     OVERRIDE.with(|o| *o.borrow_mut() = languages);
+}
+
+/// The defaults key holding the app's preferred languages.
+const APPLE_LANGUAGES: &str = "AppleLanguages";
+
+/// Makes `tag` the app's first language, the way launching it with
+/// `-AppleLanguages (tag)` would, or takes that back with `None`.
+///
+/// The languages go into the arguments domain (`NSArgumentDomain`), a volatile
+/// domain that is searched before the app's and the user's own and is never
+/// written to disk. This is what the per-app language of System Settings amounts
+/// to: AppKit and Core Text then choose glyphs, and the system frameworks their
+/// strings, for that language. Call it before `NSApplication` and the locale are
+/// first used. Public for tests.
+#[doc(hidden)]
+pub fn apply_app_language(tag: Option<&str>) {
+    let defaults = NSUserDefaults::standardUserDefaults();
+    let domain_name = unsafe { NSArgumentDomain };
+    let current = defaults.volatileDomainForName(domain_name);
+    let domain: Retained<NSMutableDictionary<NSString, AnyObject>> =
+        NSMutableDictionary::dictionaryWithDictionary(&current);
+    let key = NSString::from_str(APPLE_LANGUAGES);
+    match tag {
+        Some(tag) => {
+            let languages = NSArray::from_retained_slice(&[NSString::from_str(tag)]);
+            let languages: &AnyObject = languages.as_ref();
+            domain.insert(&*key, languages);
+        }
+        None => domain.removeObjectForKey(&key),
+    }
+    // 同じ名前の揮発ドメインがあると差し替えられないので、一度外してから置く。
+    defaults.removeVolatileDomainForName(domain_name);
+    unsafe { defaults.setVolatileDomain_forName(&domain, domain_name) };
 }

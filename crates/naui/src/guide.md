@@ -244,6 +244,29 @@ The few strings naui shows itself (the default macOS main menu, the `Sidebar`
 toggle and so on) keep the language chosen at startup, like the strings the native
 controls carry themselves (file dialogs, date pickers, text field context menus).
 
+### Telling the native side the app's language
+
+When the app shows its content in a language other than the OS's, tell the native
+side with [`Settings::language`]. The language decides which glyphs are chosen for
+scripts shared by several languages (a Japanese app on an OS set to English
+otherwise gets Chinese forms of some kanji) and how screen readers pronounce the
+text. naui's own strings follow it too.
+
+```no_run
+# use naui::Settings;
+let settings = Settings::new("notes").language("ja-JP");
+```
+
+| Windows | macOS | Linux | Web |
+| --- | --- | --- | --- |
+| `FrameworkElement.Language` on each window's content (inherited by everything inside) | `AppleLanguages` in the arguments domain, the per-app language of System Settings | `PANGO_LANGUAGE` before GTK starts | `lang` on `<html>` |
+
+Only the Web and Windows can take a language per element; macOS and Linux have it
+only per run of text, or for the whole app. So naui takes one language for the
+whole app, once at startup. On macOS the native controls' own strings (file
+dialogs, context menus) then follow it as well, and [`Ui::preferred_languages`]
+lists it first; elsewhere they stay in the OS language.
+
 ## Layout and size
 
 Layout uses these seven:

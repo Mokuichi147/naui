@@ -629,6 +629,7 @@ where
     use naui_winui3::{init_apartment, ApartmentType};
 
     enable_per_monitor_dpi_awareness();
+    naui_core::set_app_language(settings.language.as_deref());
     let _runtime = sdk::initialize()?;
     init_apartment(ApartmentType::SingleThreaded)
         .map_err(|e| to_error("initialize the COM apartment", e))?;

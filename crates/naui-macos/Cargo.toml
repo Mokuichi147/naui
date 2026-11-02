@@ -36,6 +36,7 @@ objc2-foundation = { version = "0.3", features = [
     "NSSortDescriptor",
     "NSTimer",
     "NSURL",
+    "NSUserDefaults",
 ] }
 objc2-app-kit = { version = "0.3", features = [
     "NSAccessibilityProtocols",
@@ -207,6 +208,10 @@ objc2-core-graphics = { version = "0.3", default-features = false, features = [
 ] }
 objc2-foundation = { version = "0.3", features = [
     "NSDate",
+    "NSDictionary",
+    "NSString",
+    "NSUserDefaults",
+    "NSArray",
     "NSGeometry",
     "NSLocale",
     "NSObjCRuntime",

@@ -944,6 +944,29 @@ fn stack_padding_insets_its_children() {
     });
 }
 
+/// The app's language becomes `lang` on `<html>`, which decides the glyphs and the
+/// screen reader's voice for the whole page.
+#[wasm_bindgen_test]
+fn app_language_becomes_the_page_lang() {
+    let root = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.document_element())
+        .expect("html");
+    let before = root.get_attribute("lang");
+    naui_web::apply_language(Some("ja-JP"));
+    assert_eq!(root.get_attribute("lang").as_deref(), Some("ja-JP"));
+    naui_web::apply_language(None);
+    assert_eq!(
+        root.get_attribute("lang").as_deref(),
+        Some("ja-JP"),
+        "None はページの lang に触れない"
+    );
+    match before {
+        Some(lang) => root.set_attribute("lang", &lang).expect("lang"),
+        None => root.remove_attribute("lang").expect("lang"),
+    }
+}
+
 #[wasm_bindgen_test]
 fn stack_align_moves_children_to_the_end() {
     with_ui(|ui| {

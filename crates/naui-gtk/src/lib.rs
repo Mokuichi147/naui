@@ -246,6 +246,26 @@ fn preferred_languages() -> Vec<String> {
     languages_for_locale(&locale, glib::language_names().iter().map(|n| n.as_str()))
 }
 
+/// The value of `PANGO_LANGUAGE` with the app's language first: the tag, then the
+/// languages already listed (`PANGO_LANGUAGE`, or else `LANGUAGE`), without
+/// repeating the tag.
+fn pango_languages(tag: &str, existing: Option<&str>) -> String {
+    let mut languages = vec![tag.to_owned()];
+    for language in existing
+        .unwrap_or_default()
+        .split([':', ';', ',', ' '])
+        .filter(|language| !language.is_empty())
+    {
+        if !languages
+            .iter()
+            .any(|known| known.eq_ignore_ascii_case(language))
+        {
+            languages.push(language.to_owned());
+        }
+    }
+    languages.join(":")
+}
+
 /// `language_names` (glib's "ja_JP.UTF-8", "ja_JP", "ja", "C" and so on) unless
 /// the message locale `locale` is C, in which case only "C".
 fn languages_for_locale<'a>(
@@ -767,6 +787,17 @@ where
         ));
     }
 
+    naui_core::set_app_language(settings.language.as_deref());
+    if let Some(tag) = settings.language.as_deref() {
+        // Pango は、文字の言語が書体から決まらないとき (漢字など) に、優先言語の
+        // 字形を選ぶ。優先言語は PANGO_LANGUAGE (無ければ LANGUAGE) を最初に
+        // 使うときに一度だけ読むので、GTK を始める前に入れておく。
+        let existing = std::env::var("PANGO_LANGUAGE")
+            .or_else(|_| std::env::var("LANGUAGE"))
+            .ok();
+        std::env::set_var("PANGO_LANGUAGE", pango_languages(tag, existing.as_deref()));
+    }
+
     let app = adw::Application::builder()
         .application_id(&settings.app_id)
         .build();
@@ -819,6 +850,15 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pango_languages_put_the_app_language_first() {
+        assert_eq!(pango_languages("ja", None), "ja");
+        assert_eq!(pango_languages("ja", Some("en_US:de")), "ja:en_US:de");
+        // 既にあれば重ねない。
+        assert_eq!(pango_languages("ja", Some("en:JA")), "ja:en");
+        assert_eq!(pango_languages("zh-Hant", Some("")), "zh-Hant");
+    }
 
     #[test]
     fn c_locale_ignores_language() {

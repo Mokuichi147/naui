@@ -684,6 +684,7 @@ impl Window {
         let (Ok(root), Some(hwnd)) = (root, self.hwnd()) else {
             return;
         };
+        crate::languages::apply_app_language(&root);
         if self.0.native.SetContent(&root).is_ok() {
             let _ = crate::file_drop::install(
                 &root,
@@ -1147,6 +1148,7 @@ impl Window {
                     (element.clone(), None, None, None, None, None, None)
                 }
             };
+        crate::languages::apply_app_language(&theme_root);
         if self.0.native.SetContent(&theme_root).is_ok() {
             if let Some(previous) = previous {
                 if previous != child_element {

@@ -41,8 +41,9 @@ use objc2_app_kit::{
     NSWindow, NSWindowStyleMask, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
-    NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSDefaultRunLoopMode,
-    NSNotFound, NSNotification, NSPoint, NSRange, NSRect, NSRunLoop, NSSize, NSString,
+    NSArgumentDomain, NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents,
+    NSDefaultRunLoopMode, NSNotFound, NSNotification, NSPoint, NSRange, NSRect, NSRunLoop, NSSize,
+    NSString, NSUserDefaults,
 };
 
 /// One test case.
@@ -330,6 +331,10 @@ fn main() {
         (
             "積んだあとで間隔を変えても子どうしの間に効く",
             stack_spacing_after_append,
+        ),
+        (
+            "アプリの言語が引数ドメインの AppleLanguages になる",
+            app_language_goes_into_the_arguments_domain,
         ),
         (
             "Stack へ差し込んでも外しても向きを変えても入力欄のフォーカスと変換中の文字が残る",
@@ -2922,6 +2927,33 @@ fn stack_spacing_after_append(ui: &Ui) -> Result<()> {
             "{name} の間が指定した間隔になること: {value}"
         );
     }
+    Ok(())
+}
+
+/// The app's language goes into the arguments domain as `AppleLanguages`, the way
+/// launching with `-AppleLanguages (ja-JP)` would, and taking it back leaves the
+/// arguments the app was launched with alone.
+fn app_language_goes_into_the_arguments_domain(_ui: &Ui) -> Result<()> {
+    let defaults = NSUserDefaults::standardUserDefaults();
+    let domain = unsafe { NSArgumentDomain };
+    let before = defaults.volatileDomainForName(domain).len();
+    naui_macos::apply_app_language(Some("ja-JP"));
+    let first = defaults
+        .arrayForKey(&NSString::from_str("AppleLanguages"))
+        .and_then(|languages| languages.firstObject())
+        .and_then(|first| first.downcast::<NSString>().ok())
+        .map(|first| first.to_string());
+    naui_macos::apply_app_language(None);
+    let after = defaults.volatileDomainForName(domain);
+    assert_eq!(
+        first.as_deref(),
+        Some("ja-JP"),
+        "アプリの言語が先頭に来ること"
+    );
+    assert_eq!(after.len(), before, "外すと起動時の引数だけが残ること");
+    assert!(after
+        .objectForKey(&NSString::from_str("AppleLanguages"))
+        .is_none());
     Ok(())
 }
 
