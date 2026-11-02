@@ -1,0 +1,14 @@
+[package]
+name = "naui-app"
+description = "Model–View–Update structure for naui apps: typed messages, a queue that never re-enters update, and render through naui's setters"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["gui", "mvu", "elm", "naui"]
+categories = ["gui"]
+readme = "README.md"
+
+[dependencies]
+naui.workspace = true

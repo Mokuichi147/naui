@@ -251,6 +251,11 @@ impl Label {
     }
 
     pub fn set_text(&self, text: &str) {
+        // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
+        // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
+        if self.text() == text {
+            return;
+        }
         let _ = self.0.native.SetText(&HSTRING::from(text));
     }
 
@@ -561,6 +566,11 @@ impl TextInput {
     }
 
     pub fn set_text(&self, text: &str) {
+        // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
+        // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
+        if self.text() == text {
+            return;
+        }
         let _ = self.0.native.SetText(&HSTRING::from(text));
     }
 
@@ -673,6 +683,11 @@ impl PasswordInput {
     /// WinUI fires the native `PasswordChanged`, so **on Windows only, `on_change` is
     /// called too** (the same as [`TextInput::set_text`]).
     pub fn set_text(&self, text: &str) {
+        // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
+        // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
+        if self.text() == text {
+            return;
+        }
         let _ = self.0.native.SetPassword(&HSTRING::from(text));
     }
 
@@ -759,6 +774,11 @@ impl TextArea {
     }
 
     pub fn set_text(&self, text: &str) {
+        // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
+        // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
+        if self.text() == text {
+            return;
+        }
         let _ = self.0.native.SetText(&HSTRING::from(text));
     }
 

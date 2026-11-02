@@ -332,6 +332,10 @@ fn main() {
             stack_spacing_after_append,
         ),
         (
+            "表示中と同じ文字列の set_text はカーソルも変換中の文字も動かさない",
+            set_text_with_the_same_text_keeps_the_composition,
+        ),
+        (
             "Stack へ差し込んでも外しても向きを変えても入力欄のフォーカスと変換中の文字が残る",
             stack_insert_keeps_focus,
         ),
@@ -2922,6 +2926,72 @@ fn stack_spacing_after_append(ui: &Ui) -> Result<()> {
             "{name} の間が指定した間隔になること: {value}"
         );
     }
+    Ok(())
+}
+
+/// Setting the text a field already shows does nothing: the caret stays and the IME
+/// composition is not committed. An app that sets every value on every update (as
+/// naui-app's `render` does) relies on this.
+fn set_text_with_the_same_text_keeps_the_composition(ui: &Ui) -> Result<()> {
+    let window = ui.window("同じ文字列", 320.0, 200.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let field = ui.text_input("あいう")?;
+    field.set_sizing(Sizing::fill_width());
+    let area = ui.text_area("えお")?;
+    area.set_sizing(Sizing::fixed(200.0, 60.0));
+    root.append(&field);
+    root.append(&area);
+    window.set_child(&root);
+    window.show();
+
+    let field_view: Retained<NSTextField> = field
+        .native_view()
+        .downcast()
+        .expect("NSTextField であること");
+    assert!(field.request_focus());
+    let editor = field_view
+        .currentEditor()
+        .and_then(|editor| editor.downcast::<NSTextView>().ok())
+        .expect("入力欄が編集中になること");
+    editor.setSelectedRange(NSRange::new(1, 0));
+    unsafe {
+        editor.setMarkedText_selectedRange_replacementRange(
+            &NSString::from_str("か"),
+            NSRange::new(1, 0),
+            NSRange::new(NSNotFound as usize, 0),
+        )
+    };
+    let shown = field.text();
+    let selection = editor.selectedRange();
+    field.set_text(&shown);
+    assert!(
+        unsafe { editor.hasMarkedText() },
+        "同じ文字列では変換中の文字が残ること"
+    );
+    assert_eq!(editor.selectedRange(), selection, "カーソルが動かないこと");
+
+    assert!(area.request_focus());
+    let text_view = window
+        .native_window()
+        .firstResponder()
+        .and_then(|r| r.downcast::<NSTextView>().ok())
+        .expect("NSTextView");
+    text_view.setSelectedRange(NSRange::new(1, 0));
+    unsafe {
+        text_view.setMarkedText_selectedRange_replacementRange(
+            &NSString::from_str("き"),
+            NSRange::new(1, 0),
+            NSRange::new(NSNotFound as usize, 0),
+        )
+    };
+    let selection = text_view.selectedRange();
+    area.set_text(&area.text());
+    assert!(
+        unsafe { text_view.hasMarkedText() },
+        "複数行でも同じ文字列では変換中の文字が残ること"
+    );
+    assert_eq!(text_view.selectedRange(), selection);
+    window.close();
     Ok(())
 }
 

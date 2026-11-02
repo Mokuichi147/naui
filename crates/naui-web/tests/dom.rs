@@ -944,6 +944,32 @@ fn stack_padding_insets_its_children() {
     });
 }
 
+/// Setting the text a field already shows does nothing: the caret and selection
+/// stay where the user left them.
+#[wasm_bindgen_test]
+fn set_text_with_the_same_text_keeps_the_caret() {
+    with_ui(|ui| {
+        let field = ui.text_input("あいう")?;
+        let area = ui.text_area("えお")?;
+        let _first = Mounted::new(&field);
+        let _second = Mounted::new(&area);
+
+        let input: HtmlInputElement = field.native_element().unchecked_into();
+        input.focus().expect("focus");
+        input.set_selection_range(1, 2).expect("選択");
+        field.set_text(&field.text());
+        assert_eq!(input.selection_start().ok().flatten(), Some(1));
+        assert_eq!(input.selection_end().ok().flatten(), Some(2));
+
+        let element: web_sys::HtmlTextAreaElement = area.native_element().unchecked_into();
+        element.focus().expect("focus");
+        element.set_selection_range(1, 1).expect("カーソル");
+        area.set_text(&area.text());
+        assert_eq!(element.selection_start().ok().flatten(), Some(1));
+        Ok(())
+    });
+}
+
 #[wasm_bindgen_test]
 fn stack_align_moves_children_to_the_end() {
     with_ui(|ui| {

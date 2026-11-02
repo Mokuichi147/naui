@@ -33,9 +33,11 @@ crates/
   naui-winui3    WinRT projection of WinUI 3 (used only by naui-windows)
   naui-gtk       GTK4 / libadwaita backend
   naui           Facade that picks the backend for the target
+  naui-app       Model–View–Update structure on top of naui (optional)
 examples/
   counter        Minimal sample
   i18n           Translating an app with Fluent
+  todo           An app structured with naui-app
   gallery        Demo of every widget, by kind
 tools/
   winui3-bindgen Tool that regenerates naui-winui3's projection from .winmd files

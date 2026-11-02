@@ -147,6 +147,7 @@ The guides below are currently written in Japanese.
 - [Bundling the runtime](docs/windows-self-contained.md): shipping the Windows App SDK with your exe
 - [Translating apps](docs/translating.md): combining Fluent with naui, following the OS language and its changes ([`examples/i18n`](examples/i18n))
 - [Development](docs/development.md): verification, crate layout, tests, CI, releases
+- [naui-app](crates/naui-app): an optional Model–View–Update structure for larger apps ([`examples/todo`](examples/todo))
 - [Roadmap](docs/roadmap.md): missing features and priorities
 - [API reference (docs.rs)](https://docs.rs/naui)
 

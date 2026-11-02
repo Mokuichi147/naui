@@ -234,6 +234,10 @@ fn main() {
             tabs_do_not_widen_with_the_number_of_tabs,
         ),
         ("大きさを指定し直すと以前の指定が消える", sizing_is_replaced),
+        (
+            "表示中と同じ文字列の set_text はカーソルを動かさない",
+            set_text_with_the_same_text_keeps_the_caret,
+        ),
         ("スペーサーが両方向に広がる", spacer_expands),
         (
             "スタックの余白が中身を狭める",
@@ -2506,6 +2510,33 @@ fn sizing_is_replaced(ui: &Ui) -> Result<()> {
 
     button.set_sizing(Sizing::fixed(120.0, 40.0));
     assert_eq!(measure_width(&bin), (120, 120));
+    Ok(())
+}
+
+/// Setting the text a field already shows does nothing: the caret stays. An app
+/// that sets every value on every update (as naui-app's `render` does) relies on
+/// this. `GtkText` already skips an equal string; `GtkTextBuffer` would replace it
+/// all and put the caret at the end.
+fn set_text_with_the_same_text_keeps_the_caret(ui: &Ui) -> Result<()> {
+    let field = ui.text_input("あいう")?;
+    let native: gtk::Entry = field.native_widget().downcast().expect("GtkEntry");
+    native.set_position(1);
+    field.set_text(&field.text());
+    assert_eq!(native.position(), 1, "1 行入力のカーソルが動かないこと");
+
+    let area = ui.text_area("えお\nかき")?;
+    let view: gtk::TextView = area.native_widget().downcast().expect("GtkTextView");
+    let buffer = view.buffer();
+    buffer.place_cursor(&buffer.iter_at_offset(2));
+    area.set_text(&area.text());
+    let cursor = buffer.iter_at_mark(&buffer.get_insert());
+    assert_eq!(cursor.offset(), 2, "複数行のカーソルが動かないこと");
+
+    let number = ui.number_input(3.0)?;
+    let (log, sink) = recorder::<f64>();
+    number.on_change(sink);
+    number.set_value(3.0);
+    assert!(log.borrow().is_empty());
     Ok(())
 }
 

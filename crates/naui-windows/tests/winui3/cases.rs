@@ -1282,6 +1282,16 @@ fn text_round_trip(ui: &Ui) -> Result<()> {
         "差し替え",
         "ネイティブの TextBox にも届くこと"
     );
+
+    // 表示中と同じ文字列は書き直さないので、カーソルの位置も変わらない。
+    let text_box = native::<TextBox>(&input);
+    text_box.SetSelectionStart(2).expect("カーソルの位置");
+    input.set_text("差し替え");
+    assert_eq!(
+        text_box.SelectionStart().expect("カーソルの位置"),
+        2,
+        "同じ文字列の set_text はカーソルを動かさないこと"
+    );
     Ok(())
 }
 
