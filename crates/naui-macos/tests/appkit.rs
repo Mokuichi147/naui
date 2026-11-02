@@ -3479,7 +3479,8 @@ fn separator_spans_the_stack(ui: &Ui) -> Result<()> {
     let view = line.native_view();
     let native = view.downcast_ref::<NSBox>().expect("NSBox であること");
     assert_eq!(native.boxType(), NSBoxType::Separator);
-    let frame = view.frame();
+    // NSBox の区切りはフレームが線より少し大きく、制約は整列矩形に効く。
+    let frame = view.alignmentRectForFrame(view.frame());
     assert!(
         (frame.size.width - 240.0).abs() < 0.5,
         "横線はスタックの幅いっぱいに伸びること: {frame:?}"
@@ -3497,7 +3498,8 @@ fn separator_spans_the_stack(ui: &Ui) -> Result<()> {
     let root = row.native_view();
     root.setFrameSize(NSSize::new(240.0, 60.0));
     root.layoutSubtreeIfNeeded();
-    let frame = upright.native_view().frame();
+    let view = upright.native_view();
+    let frame = view.alignmentRectForFrame(view.frame());
     assert!(
         (frame.size.height - 60.0).abs() < 0.5,
         "縦線は行の高さいっぱいに伸びること: {frame:?}"

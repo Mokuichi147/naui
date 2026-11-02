@@ -5,10 +5,10 @@
 //! Interface Builder use to group controls.
 //!
 //! A separator box decides its direction from its frame (wider than tall is
-//! horizontal), so its thickness is held at 1 pt by a constraint. On its own the box
-//! asks for 5 pt (the line plus room around it), at the default compression
-//! resistance (750), so the constraint is above that, but below required, so a size
-//! the app specifies along that axis still wins.
+//! horizontal), so its thickness is held at 1 pt by a constraint, below required so
+//! that a size the app specifies along that axis still wins. Constraints act on the
+//! alignment rect, which for a separator box is the line itself; the frame is a
+//! little larger.
 //!
 //! A group's content is placed in the box's `contentView` with constraints. The
 //! box's own margins are 0 and the padding is the constants of those constraints,
@@ -28,9 +28,8 @@ use naui_core::{Orientation, Padding, Sizing};
 
 use crate::widgets::{impl_widget, Widget};
 
-/// How strongly a separator keeps its 1 pt thickness. Above the box's own wish for
-/// 5 pt (compression resistance 750), below required, so that a size the app
-/// specifies wins.
+/// How strongly a separator keeps its 1 pt thickness. Above the default compression
+/// resistance (750), below required, so that a size the app specifies wins.
 const THICKNESS_PRIORITY: NSLayoutPriority = 999.0;
 
 // -------------------------------------------------------------- Separator
