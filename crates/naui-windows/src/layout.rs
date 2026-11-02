@@ -92,7 +92,7 @@ struct LayoutState {
     restore_vertical: Option<VerticalAlignment>,
 }
 
-fn element_key(element: &UIElement) -> usize {
+pub(crate) fn element_key(element: &UIElement) -> usize {
     let unknown = element
         .cast::<windows_core::IUnknown>()
         .expect("a UIElement converts to IUnknown");
@@ -447,6 +447,15 @@ pub(crate) fn set_scroll_parent(
         horizontal_scroll_enabled,
         vertical_scroll_enabled,
     );
+}
+
+/// Records that the child fills a frame (a `Group`'s card) and stretches its
+/// unconstrained Auto axes.
+///
+/// A frame places its one child the way a `Scroll` that scrolls in neither direction
+/// does, so it is recorded as one.
+pub(crate) fn set_frame_parent(element: &UIElement) {
+    set_scroll_parent(element, false, false);
 }
 
 /// Records a window's content placement and stretches unconstrained Auto axes.

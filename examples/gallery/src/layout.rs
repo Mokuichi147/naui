@@ -8,7 +8,7 @@ use naui::{
 
 use crate::parts::{self, Notice};
 
-/// Stack、Grid、Spacer、Expander、SplitView、AdaptivePanes、Scroll の配置特性と、
+/// Stack、Grid、Spacer、Separator、Group、Expander、SplitView、AdaptivePanes、Scroll の配置特性と、
 /// 表示・非表示、フォーカス、ツールチップ。
 ///
 /// 並べ方の違いが目で見えるよう、マスや端にはボタンを置く。ボタンの文字が
@@ -119,6 +119,27 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     spacer_example.append(&ui.spacer()?);
     spacer_example.append(&ui.button("End")?);
     pane.append(&spacer_example);
+
+    // 区切り線は引いた向きいっぱいに伸びる。グループは見出し付きの枠で
+    // 中身を囲む (Windows は見出しの下にカードを置く)。
+    parts::section(ui, &pane, "Separator and Group")?;
+    let divided = ui.stack(Orientation::Horizontal)?;
+    divided.set_spacing(12.0);
+    divided.append(&ui.button("Cut")?);
+    divided.append(&ui.button("Copy")?);
+    divided.append(&ui.separator(Orientation::Vertical)?);
+    divided.append(&ui.button("Undo")?);
+    pane.append(&divided);
+    pane.append(&ui.separator(Orientation::Horizontal)?);
+    let display_body = ui.stack(Orientation::Vertical)?;
+    display_body.set_spacing(8.0);
+    display_body.set_align(Align::Start);
+    display_body.append(&ui.checkbox("Show the status bar")?);
+    display_body.append(&ui.checkbox("Wrap long lines")?);
+    let display = ui.group("Display")?;
+    display.set_child(&display_body);
+    display.set_sizing(Sizing::fill_width());
+    pane.append(&display);
 
     // 見出しを押すと中身を出し入れする。閉じている間は場所も空けない。
     parts::section(ui, &pane, "Expander")?;

@@ -19,6 +19,8 @@
 //! | `Expander` | `GtkExpander` |
 //! | `SplitView` | `GtkPaned` |
 //! | `Spacer` | An empty `GtkBox` (`hexpand` / `vexpand`) |
+//! | `Separator` | `GtkSeparator` |
+//! | `Group` | `GtkFrame` (the content in an `AdwBin` holding the padding) |
 //! | Size specification | `size_request` / `hexpand` / `halign` + the maximum of [`SizeBin`] |
 //! | `Label` | `GtkLabel` |
 //! | `Button` | `GtkButton` |
@@ -150,6 +152,7 @@ mod file_drop;
 mod file_picker;
 mod file_saver;
 mod focus;
+mod group;
 mod indicator;
 mod interaction;
 mod keys;
@@ -196,6 +199,7 @@ pub use editable_combo_box::EditableComboBox;
 pub use expander::Expander;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
+pub use group::{Group, Separator};
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::{List, ListRow};
 pub use media::{Audio, Image, Video};
@@ -375,6 +379,18 @@ impl Ui {
     /// pushes the others away.
     pub fn spacer(&self) -> Result<Spacer> {
         Ok(Spacer::new())
+    }
+
+    /// A thin line that divides controls. `Horizontal` is a horizontal line (for
+    /// dividing a vertical stack), `Vertical` a vertical one.
+    pub fn separator(&self, orientation: Orientation) -> Result<Separator> {
+        Ok(Separator::new(orientation))
+    }
+
+    /// A frame with a heading around related controls. `text` is the heading; an empty
+    /// string leaves only the frame.
+    pub fn group(&self, text: &str) -> Result<Group> {
+        Ok(Group::new(text))
     }
 
     pub fn label(&self, text: &str) -> Result<Label> {
