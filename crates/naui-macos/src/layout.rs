@@ -561,8 +561,10 @@ impl ContentSizedGridView {
     /// (weakly) to be "the grid's size − what lies outside its share", recomputed on
     /// every layout since the needs change.
     ///
-    /// A track whose child stops at a maximum still gets its share, as on the Web
-    /// and Windows; the child sits in it at its maximum.
+    /// A `Fill` track whose child stops at a maximum still gets its share, as on the
+    /// Web and Windows; the child sits in it at its maximum. In an `Auto` track, such
+    /// a child's maximum is what the track would like, kept as far as the grid has
+    /// room (`GridAxis` shrinks `Auto` lines toward what they need when it has not).
     fn update_grow_sizes(&self) -> bool {
         let grows = self.ivars().grows.borrow();
         if grows.is_empty() {
@@ -591,20 +593,22 @@ impl ContentSizedGridView {
     /// Where each column (row) starts and how long it is when the grid is `room`
     /// long, padding left out.
     fn shares(&self, horizontal: bool, room: f64) -> Vec<(f64, f64)> {
-        let required = self.track_needs(horizontal);
+        let required = self.track_needs(horizontal, false);
+        let wished = self.track_needs(horizontal, true);
         let count = required.len();
         let settings = if horizontal {
             self.ivars().column_tracks.borrow()
         } else {
             self.ivars().row_tracks.borrow()
         };
-        // 大きさの決まったトラック (Fixed と、中身から幅を決めた Auto) は固定として
-        // 扱い、Fill だけが重みで分ける。
+        // Fill だけが重みで分ける。Fixed は指定どおり、Auto は望む大きさ (上限付きの
+        // 子の上限を含む) を余裕のあるかぎり受け取る。
         let tracks: Vec<Track> = (0..count)
             .map(
                 |index| match settings.get(index).copied().unwrap_or_default() {
                     Track::Fill(weight) => Track::Fill(weight),
-                    _ => Track::Fixed(required[index]),
+                    Track::Fixed(_) => Track::Fixed(required[index]),
+                    Track::Auto => Track::Auto,
                 },
             )
             .collect();
@@ -613,12 +617,13 @@ impl ContentSizedGridView {
         // ものとして数える。
         let items: Vec<GridItem> = required
             .iter()
+            .zip(&wished)
             .enumerate()
-            .map(|(start, &need)| GridItem {
+            .map(|(start, (&need, &wish))| GridItem {
                 start,
                 span: 1,
                 minimum: need,
-                natural: need,
+                natural: wish,
             })
             .collect();
         let spacing = if horizontal {
@@ -641,13 +646,13 @@ impl ContentSizedGridView {
         axis.positions(&axis.allocate((room - padding).max(0.0)))
     }
 
-    /// The size each column (row) needs.
+    /// The size each column (row) needs, or wishes for with `wished`.
     ///
     /// Tracks with a decided size ([`Self::decided_track_size`]) take that size
     /// regardless of their content. Others are decided from what their content needs
     /// ([`needed_size`]), and cells spanning several tracks spread it evenly over
     /// their span.
-    fn track_needs(&self, horizontal: bool) -> Vec<f64> {
+    fn track_needs(&self, horizontal: bool, wished: bool) -> Vec<f64> {
         let tracks = if horizontal {
             self.numberOfColumns()
         } else {
@@ -667,7 +672,7 @@ impl ContentSizedGridView {
             } else {
                 (cell.row, cell.row_span.max(1))
             };
-            let each = (needed_size(view, horizontal) / span as f64).max(0.0);
+            let each = (needed_size(view, horizontal, wished) / span as f64).max(0.0);
             for index in start..(start + span).min(tracks) {
                 if decided[index].is_some() {
                     continue;
@@ -698,13 +703,23 @@ impl ContentSizedGridView {
     }
 }
 
-/// The size a grid child needs in that direction (its `fittingSize`).
-fn needed_size(view: &NSView, horizontal: bool) -> f64 {
+/// The size a grid child needs in that direction, or wishes for with `wished`.
+///
+/// What it needs is its `fittingSize`. A `Fill` child with a maximum also wishes for
+/// its maximum, only weakly ([`GRID_CAPPED_GROW_PRIORITY`]), which `fittingSize`
+/// compresses away. So with `wished` its maximum counts too: the other tracks then
+/// leave it that much while the grid has room for it
+/// ([`ContentSizedGridView::update_grow_sizes`]).
+fn needed_size(view: &NSView, horizontal: bool, wished: bool) -> f64 {
     let fitting = view.fittingSize();
-    if horizontal {
+    let fitting = if horizontal {
         fitting.width
     } else {
         fitting.height
+    };
+    match max_size(view, horizontal) {
+        Some(max) if wished && wants_fill(view, horizontal) => fitting.max(max),
+        _ => fitting,
     }
 }
 

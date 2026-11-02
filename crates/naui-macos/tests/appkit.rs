@@ -11402,6 +11402,8 @@ fn grid_fill_row_keeps_the_rest(ui: &Ui) -> Result<()> {
 fn grid_capped_and_plain_fill_tracks_share_the_room(ui: &Ui) -> Result<()> {
     for vertical in [true, false] {
         let grid = ui.grid()?;
+        // NSGridView の既定の間隔 (6pt) を外し、トラックがちょうど半分ずつになるようにする。
+        grid.set_spacing(0.0, 0.0);
         grid.set_sizing(Sizing::fill());
         let plain = ui.stack(Orientation::Vertical)?;
         plain.set_sizing(Sizing::fill());
