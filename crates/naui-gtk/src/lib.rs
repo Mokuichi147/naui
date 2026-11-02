@@ -14,7 +14,7 @@
 //! | `run` | `AdwApplication` + `connect_activate` (the UI is built in the callback) |
 //! | `Window` | `AdwApplicationWindow` + `AdwToolbarView` + `AdwHeaderBar` |
 //! | `Stack` | `GtkBox` |
-//! | `Grid` | `GtkGrid` |
+//! | `Grid` | naui's own container (`NauiGrid`), laid out like `GtkGrid` but with weights |
 //! | `Scroll` | `GtkScrolledWindow` |
 //! | `Expander` | `GtkExpander` |
 //! | `SplitView` | `GtkPaned` |
@@ -60,10 +60,11 @@
 //! - GTK4 has no equivalent of [`Fit::None`](naui_core::Fit::None) (actual size),
 //!   so it maps to `GTK_CONTENT_FIT_SCALE_DOWN`, which **does not scale up but does
 //!   scale down**.
-//! - **Weights of [`Track::Fill`](naui_core::Track::Fill) in a `Grid` have no
-//!   effect.** `GtkGrid` cannot give columns or rows a width of their own, and
-//!   leftover space is split evenly among the growing columns (the same limitation
-//!   as macOS).
+//! - **`Grid` is not a `GtkGrid`.** `GtkGrid` has no weights for
+//!   [`Track::Fill`](naui_core::Track::Fill) (it splits leftover space evenly among
+//!   the growing columns), so naui measures the children and places them itself
+//!   (`crate::grid`). The native widget is a `gtk::Widget` named `NauiGrid` with
+//!   the CSS name `grid`.
 //! - `AdwStyleManager` holds the color theme for the whole app, so
 //!   [`Window::set_theme`] also applies to the whole app.
 //! - Unlike `GtkApplicationWindow`, `AdwApplicationWindow` **has no default title
@@ -150,6 +151,7 @@ mod file_drop;
 mod file_picker;
 mod file_saver;
 mod focus;
+mod grid;
 mod indicator;
 mod interaction;
 mod keys;
