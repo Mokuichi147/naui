@@ -178,18 +178,56 @@ fn svg_root(bytes: &[u8]) -> Option<&[u8]> {
             return is_tag.then(|| &bytes[head.len() - rest.len()..]);
         }
         // 宣言・コメント・DOCTYPE は読み飛ばす。それ以外の要素が先に来たら SVG ではない。
-        let end: &[u8] = if rest.starts_with(b"<?") {
-            b"?>"
+        let len = if rest.starts_with(b"<?") {
+            skip_past(rest, b"?>")?
         } else if rest.starts_with(b"<!--") {
-            b"-->"
+            skip_past(rest, b"-->")?
         } else if rest.starts_with(b"<!") {
-            b">"
+            doctype_len(rest)?
         } else {
             return None;
         };
-        let at = rest.windows(end.len()).position(|window| window == end)?;
-        rest = &rest[at + end.len()..];
+        rest = &rest[len..];
     }
+}
+
+/// How far `bytes` runs up to and including the first `end`.
+fn skip_past(bytes: &[u8], end: &[u8]) -> Option<usize> {
+    let at = bytes.windows(end.len()).position(|window| window == end)?;
+    Some(at + end.len())
+}
+
+/// The length of the `<!DOCTYPE ...>` (or other `<!...>` declaration) `bytes` begins
+/// with.
+///
+/// The internal subset (`[...]`) holds declarations of its own, so a `>` counts as the
+/// end only outside it and outside quotes. Comments and processing instructions in
+/// the subset are skipped whole, since they may hold quotes and brackets.
+fn doctype_len(bytes: &[u8]) -> Option<usize> {
+    let mut quote = None;
+    let mut in_subset = false;
+    let mut i = 2;
+    while let Some(&byte) = bytes.get(i) {
+        match (quote, byte) {
+            (Some(open), _) if byte == open => quote = None,
+            (Some(_), _) => {}
+            (None, b'"' | b'\'') => quote = Some(byte),
+            (None, b'<') if in_subset && bytes[i..].starts_with(b"<!--") => {
+                i += skip_past(&bytes[i..], b"-->")?;
+                continue;
+            }
+            (None, b'<') if in_subset && bytes[i..].starts_with(b"<?") => {
+                i += skip_past(&bytes[i..], b"?>")?;
+                continue;
+            }
+            (None, b'[') => in_subset = true,
+            (None, b']') => in_subset = false,
+            (None, b'>') if !in_subset => return Some(i + 1),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
 }
 
 /// The size an SVG document gives itself, in CSS pixels: its root element's `width`
@@ -455,6 +493,15 @@ mod tests {
         assert!(is_svg(
             b"<?xml version='1.0'?><!DOCTYPE svg PUBLIC '-//W3C//DTD SVG 1.1//EN' 'x'><svg>"
         ));
+        // 内部サブセットの中の > や引用符・コメントで DOCTYPE を終えない。
+        assert!(is_svg(
+            br#"<!DOCTYPE svg [<!ENTITY unused "x">]><svg width="24" height="16"/>"#
+        ));
+        assert!(is_svg(
+            b"<!DOCTYPE svg PUBLIC \"-//W3C//DTD SVG 1.1//EN\" \"a>b\" [\n\
+              <!ENTITY a 'x]>y'>\n<!-- ] > ' -->\n<?pi ] > ?>\n]>\n<svg>"
+        ));
+        assert!(!is_svg(br#"<!DOCTYPE svg [<!ENTITY a "x">"#));
         assert!(!is_svg(b"<svgx>"));
         assert!(!is_svg(b"<html><svg/></html>"));
         assert!(!is_svg(b"\xFF\xD8\xFF\xE0"));
@@ -492,6 +539,10 @@ mod tests {
             Some((24.0, 16.0))
         );
         assert_eq!(svg_size(br#"<svg width="24" height="16""#), None);
+        assert_eq!(
+            svg_size(br#"<!DOCTYPE svg [<!ENTITY unused "x">]><svg width="24" height="16"/>"#),
+            Some((24.0, 16.0))
+        );
         // 物理単位は 1in = 96px で換算する。
         assert_eq!(
             svg_size(br#"<svg width="1in" height="1in" viewBox="0 0 10 10">"#),
