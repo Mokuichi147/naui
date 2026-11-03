@@ -41,6 +41,153 @@ fn to_file(source: &str) -> gio::File {
     gio::File::for_uri(&source_url(source))
 }
 
+/// Whether a content type is SVG (plain or gzip-compressed).
+fn is_svg_type(content_type: &str) -> bool {
+    gio::content_type_is_a(content_type, "image/svg+xml")
+        || gio::content_type_is_a(content_type, "image/svg+xml-compressed")
+}
+
+// ------------------------------------------------------------ SvgPaintable
+
+// glib のサブクラス化マクロが `unsafe impl` を作るため、この中だけ許可する。
+#[allow(unsafe_code)]
+mod imp {
+    use std::cell::{Cell, OnceCell, RefCell};
+
+    use gtk::gdk;
+    use gtk::gdk::subclass::prelude::*;
+    use gtk::glib;
+    use gtk::prelude::*;
+
+    #[derive(Default)]
+    pub struct SvgPaintable {
+        /// The SVG file's contents.
+        pub bytes: OnceCell<glib::Bytes>,
+        /// The SVG's own size (logical pixels).
+        pub size: Cell<(i32, i32)>,
+        /// Device pixels per logical pixel of the widget it is shown on.
+        pub scale: Cell<i32>,
+        /// The last rasterization and its size in device pixels.
+        pub cache: RefCell<Option<((i32, i32), gdk::Texture)>>,
+    }
+
+    #[glib::object_subclass]
+    impl ObjectSubclass for SvgPaintable {
+        const NAME: &'static str = "NauiSvgPaintable";
+        type Type = super::SvgPaintable;
+        type Interfaces = (gdk::Paintable,);
+    }
+
+    impl ObjectImpl for SvgPaintable {}
+
+    impl PaintableImpl for SvgPaintable {
+        fn flags(&self) -> gdk::PaintableFlags {
+            gdk::PaintableFlags::SIZE
+        }
+
+        fn intrinsic_width(&self) -> i32 {
+            self.size.get().0
+        }
+
+        fn intrinsic_height(&self) -> i32 {
+            self.size.get().1
+        }
+
+        fn snapshot(&self, snapshot: &gdk::Snapshot, width: f64, height: f64) {
+            // 描く大きさの実画素で描き直す。同じ大きさなら前のものを使い回す。
+            let scale = f64::from(self.scale.get().max(1));
+            let pixels = |logical: f64| {
+                ((logical * scale).ceil() as i32).clamp(1, super::SvgPaintable::MAX_PIXELS)
+            };
+            let size = (pixels(width), pixels(height));
+            let cached = self
+                .cache
+                .borrow()
+                .as_ref()
+                .filter(|(cached, _)| *cached == size)
+                .map(|(_, texture)| texture.clone());
+            let texture = match cached {
+                Some(texture) => Some(texture),
+                None => {
+                    let texture = self.obj().rasterize(size.0, size.1);
+                    if let Some(texture) = &texture {
+                        *self.cache.borrow_mut() = Some((size, texture.clone()));
+                    }
+                    texture
+                }
+            };
+            if let Some(texture) = texture {
+                texture.snapshot(snapshot, width, height);
+            }
+        }
+    }
+}
+
+glib::wrapper! {
+    /// An SVG drawn again at the size it is shown at, so it stays sharp when enlarged.
+    ///
+    /// `gdk_texture_new_from_bytes` turns an SVG into pixels once at its own size,
+    /// and `GtkPicture` then stretches those pixels.
+    pub struct SvgPaintable(ObjectSubclass<imp::SvgPaintable>)
+        @implements gdk::Paintable;
+}
+
+impl SvgPaintable {
+    /// The largest side, in device pixels, it is rasterized at.
+    const MAX_PIXELS: i32 = 8192;
+
+    /// Reads an SVG. `Err` if it cannot be read.
+    fn new(bytes: &glib::Bytes) -> Result<Self, glib::Error> {
+        let pixbuf = gtk::gdk_pixbuf::Pixbuf::from_stream(
+            &gio::MemoryInputStream::from_bytes(bytes),
+            None::<&gio::Cancellable>,
+        )?;
+        let paintable: Self = glib::Object::new();
+        let imp = gtk::subclass::prelude::ObjectSubclassIsExt::imp(&paintable);
+        let _ = imp.bytes.set(bytes.clone());
+        imp.size.set((pixbuf.width(), pixbuf.height()));
+        imp.scale.set(1);
+        Ok(paintable)
+    }
+
+    /// Sets how many device pixels a logical pixel is on the widget it is shown on.
+    fn set_scale(&self, scale: i32) {
+        let imp = gtk::subclass::prelude::ObjectSubclassIsExt::imp(self);
+        if imp.scale.replace(scale) != scale {
+            self.invalidate_contents();
+        }
+    }
+
+    /// Turns the SVG into `width` × `height` pixels.
+    fn rasterize(&self, width: i32, height: i32) -> Option<gdk::Texture> {
+        let imp = gtk::subclass::prelude::ObjectSubclassIsExt::imp(self);
+        let bytes = imp.bytes.get()?;
+        // 縦横比は GtkPicture が合わせ方に沿って決めた大きさに任せる (Fill は引き伸ばす)。
+        let pixbuf = gtk::gdk_pixbuf::Pixbuf::from_stream_at_scale(
+            &gio::MemoryInputStream::from_bytes(bytes),
+            width,
+            height,
+            false,
+            None::<&gio::Cancellable>,
+        )
+        .map_err(|error| eprintln!("naui-gtk: could not draw the SVG: {error}"))
+        .ok()?;
+        let format = if pixbuf.has_alpha() {
+            gdk::MemoryFormat::R8g8b8a8
+        } else {
+            gdk::MemoryFormat::R8g8b8
+        };
+        let texture = gdk::MemoryTexture::new(
+            pixbuf.width(),
+            pixbuf.height(),
+            format,
+            &pixbuf.read_pixel_bytes(),
+            pixbuf.rowstride() as usize,
+        );
+        Some(texture.upcast())
+    }
+}
+
 // ------------------------------------------------------------------ Image
 
 struct ImageInner {
@@ -58,6 +205,12 @@ impl Image {
     pub(crate) fn new(source: &str) -> Self {
         let native = gtk::Picture::new();
         native.set_content_fit(gtk::ContentFit::Contain);
+        // SVG は画面の倍率に合わせた実画素で描く。
+        native.connect_scale_factor_notify(|native| {
+            if let Some(svg) = native.paintable().and_downcast::<SvgPaintable>() {
+                svg.set_scale(native.scale_factor());
+            }
+        });
         let bin = SizeBin::wrap(&native);
         bin.mark_fill_ignores_natural();
         let image = Self(Rc::new(ImageInner {
@@ -74,13 +227,37 @@ impl Image {
     }
 
     /// Replaces the image. `source` is a file path or a URL.
+    ///
+    /// An SVG is read here and drawn at the size it is shown at; other formats are
+    /// left to `GtkPicture`.
     pub fn set_source(&self, source: &str) {
         *self.0.source.borrow_mut() = source.to_string();
         if source.is_empty() {
             self.0.native.set_paintable(None::<&gtk::gdk::Paintable>);
-        } else {
-            self.0.native.set_file(Some(&to_file(source)));
+            return;
         }
+        let file = to_file(source);
+        let (content_type, _) = gio::content_type_guess(file.basename(), &[]);
+        if !is_svg_type(&content_type) {
+            self.0.native.set_file(Some(&file));
+            return;
+        }
+        let svg = file
+            .load_bytes(None::<&gio::Cancellable>)
+            .and_then(|(bytes, _)| SvgPaintable::new(&bytes));
+        match svg {
+            Ok(svg) => self.show_svg(&svg),
+            Err(error) => {
+                eprintln!("naui-gtk: could not read the image: {error}");
+                self.0.native.set_paintable(None::<&gdk::Paintable>);
+            }
+        }
+    }
+
+    /// Shows an SVG at the widget's current scale.
+    fn show_svg(&self, svg: &SvgPaintable) {
+        svg.set_scale(self.0.native.scale_factor());
+        self.0.native.set_paintable(Some(svg));
     }
 
     /// Shows an image from the contents of an image file (PNG, JPEG, SVG and the
@@ -88,10 +265,18 @@ impl Image {
     /// `include_bytes!`. [`source`](Self::source) becomes empty.
     ///
     /// It is decoded right away (`gdk_texture_new_from_bytes`); if it cannot be,
-    /// nothing is shown and [`is_loaded`](Self::is_loaded) is `false`.
+    /// nothing is shown and [`is_loaded`](Self::is_loaded) is `false`. An SVG is
+    /// drawn again at the size it is shown at, so it stays sharp when enlarged.
     pub fn set_bytes(&self, bytes: &[u8]) {
         self.0.source.borrow_mut().clear();
+        let (content_type, _) = gio::content_type_guess(None::<&str>, bytes);
         let bytes = glib::Bytes::from(bytes);
+        if is_svg_type(&content_type) {
+            if let Ok(svg) = SvgPaintable::new(&bytes) {
+                self.show_svg(&svg);
+                return;
+            }
+        }
         match gdk::Texture::from_bytes(&bytes) {
             Ok(texture) => self.0.native.set_paintable(Some(&texture)),
             Err(error) => {
