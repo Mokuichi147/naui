@@ -573,7 +573,7 @@ impl Image {
             // 手元の SVG は (file: の URL で渡されても) 読み込んでバイト列と同じ経路で
             // 出す。SvgImageSource は自分の大きさを教えないので、文書から読む必要が
             // ある。.svgz もここで展開する (SvgImageSource は gzip を解かない)。
-            match std::fs::read(&path) {
+            match read_file_within(&path, SVG_MAX) {
                 Ok(bytes) => {
                     drop(source);
                     self.show_bytes(&bytes);
@@ -683,10 +683,29 @@ fn svg_pixels((width, height): (f64, f64)) -> (u32, u32) {
     (width.ceil() as u32, height.ceil() as u32)
 }
 
-/// The most bytes an SVG may take in memory, both as fetched from the network and
-/// as unpacked from gzip (see [`gunzip_svg`]). Larger documents are refused rather
-/// than held in memory whole.
+/// The most bytes an SVG may take in memory: as read from a local file, as fetched
+/// from the network, and as unpacked from gzip (see [`gunzip_svg`]). Larger
+/// documents are refused rather than held in memory whole.
 const SVG_MAX: usize = 64 * 1024 * 1024;
+
+/// Reads a file whole, or fails with `InvalidData` if it is larger than `limit`
+/// bytes. Only `limit + 1` bytes are ever read, so a file that grows meanwhile is
+/// caught too.
+fn read_file_within(path: &str, limit: usize) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(limit as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > limit {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("the file is larger than {limit} bytes"),
+        ));
+    }
+    Ok(bytes)
+}
 
 /// Reads a stream to its end, up to [`SVG_MAX`] bytes. Blocks, so it is called off
 /// the UI thread.
@@ -1500,6 +1519,18 @@ mod tests {
         // 展開した大きさが上限ちょうどなら通し、1 バイトでも超えたら拒む。
         assert_eq!(gunzip_svg_within(&svgz, svg.len()), Ok(Some(svg.to_vec())));
         assert!(gunzip_svg_within(&svgz, svg.len() - 1).is_err());
+    }
+
+    #[test]
+    fn read_file_within_refuses_large_files() {
+        let path = std::env::temp_dir().join(format!("naui-limit-{}.svg", std::process::id()));
+        std::fs::write(&path, b"<svg/>").unwrap();
+        let path_str = path.to_str().unwrap();
+        // ちょうど上限までは読み、1 バイトでも超えたら拒む。
+        assert_eq!(read_file_within(path_str, 6).unwrap(), b"<svg/>");
+        let error = read_file_within(path_str, 5).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        let _ = std::fs::remove_file(&path);
     }
 
     /// A small SVGZ that unpacks past the limit (a gzip bomb) is refused without
