@@ -945,6 +945,142 @@ fn stack_padding_insets_its_children() {
 }
 
 #[wasm_bindgen_test]
+fn separator_is_a_one_pixel_line_across_the_stack() {
+    with_ui(|ui| {
+        let stack = ui.stack(Orientation::Vertical)?;
+        stack.set_sizing(Sizing::fixed(300.0, 200.0));
+        let above = ui.label("上")?;
+        let line = ui.separator(Orientation::Horizontal)?;
+        let below = ui.label("下")?;
+        stack.append(&above);
+        stack.append(&line);
+        stack.append(&below);
+        let _mounted = Mounted::new(&stack);
+
+        let element = line.native_element();
+        assert_eq!(element.tag_name(), "HR");
+        let rect = element.get_bounding_client_rect();
+        assert!(
+            (rect.width() - 300.0).abs() < 0.5,
+            "横線はスタックの幅いっぱいに伸びること: {}",
+            rect.width()
+        );
+        assert!(
+            (rect.height() - 1.0).abs() < 0.5,
+            "太さは 1px であること: {}",
+            rect.height()
+        );
+        // `<hr>` の既定の上下の余白は消してある。
+        let above_bottom = above.native_element().get_bounding_client_rect().bottom();
+        assert!((rect.top() - above_bottom).abs() < 0.5);
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn vertical_separator_fills_the_row_height() {
+    with_ui(|ui| {
+        let row = ui.stack(Orientation::Horizontal)?;
+        row.set_sizing(Sizing::fixed(300.0, 80.0));
+        let line = ui.separator(Orientation::Vertical)?;
+        row.append(&ui.label("左")?);
+        row.append(&line);
+        row.append(&ui.label("右")?);
+        let _mounted = Mounted::new(&row);
+
+        let element = line.native_element();
+        assert_eq!(
+            element.get_attribute("aria-orientation").as_deref(),
+            Some("vertical")
+        );
+        let rect = element.get_bounding_client_rect();
+        assert!(
+            (rect.height() - 80.0).abs() < 0.5,
+            "縦線は行の高さいっぱいに伸びること: {}",
+            rect.height()
+        );
+        assert!(
+            (rect.width() - 1.0).abs() < 0.5,
+            "幅は 1px: {}",
+            rect.width()
+        );
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn group_is_a_fieldset_named_by_its_legend() {
+    with_ui(|ui| {
+        let group = ui.group("表示")?;
+        let content = ui.button("中身")?;
+        group.set_child(&content);
+        let _mounted = Mounted::new(&group);
+
+        let element = group.native_element();
+        assert_eq!(element.tag_name(), "FIELDSET");
+        let legend = element.first_element_child().expect("legend");
+        assert_eq!(legend.tag_name(), "LEGEND");
+        assert_eq!(legend.text_content().as_deref(), Some("表示"));
+        assert_eq!(group.text(), "表示");
+        assert!(
+            content.native_element().parent_element().as_ref() == Some(&element),
+            "中身が fieldset の中に入ること"
+        );
+
+        // 中身は枠の内側いっぱいに広がり、既定の余白だけ内側に入る。
+        let outer = element.get_bounding_client_rect();
+        let inner = content.native_element().get_bounding_client_rect();
+        let padding = naui_core::DEFAULT_GROUP_PADDING;
+        let border = 1.0;
+        assert!(
+            (inner.left() - outer.left() - padding.left - border).abs() < 0.5,
+            "左の余白: {} / {}",
+            outer.left(),
+            inner.left()
+        );
+        assert!(
+            (outer.right() - inner.right() - padding.right - border).abs() < 0.5,
+            "中身は右の余白まで伸びること: {} / {}",
+            outer.right(),
+            inner.right()
+        );
+
+        // 空の見出しは legend ごと外し、枠に切れ目を残さない。
+        group.set_text("");
+        assert_eq!(group.text(), "");
+        assert!(legend.parent_node().is_none());
+        group.set_text("再び");
+        assert_eq!(
+            element.first_element_child().as_ref(),
+            Some(&legend),
+            "legend は先頭に戻ること"
+        );
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn group_padding_and_child_replacement() {
+    with_ui(|ui| {
+        let group = ui.group("")?;
+        let first = ui.label("一つめ")?;
+        let second = ui.label("二つめ")?;
+        group.set_child(&first);
+        group.set_child(&second);
+        group.set_padding(Padding::all(0.0));
+        let _mounted = Mounted::new(&group);
+
+        let element = group.native_element();
+        assert!(first.native_element().parent_element().is_none());
+        assert_eq!(element.child_element_count(), 1, "legend も前の中身も無い");
+        let outer = element.get_bounding_client_rect();
+        let inner = second.native_element().get_bounding_client_rect();
+        assert!((inner.left() - outer.left() - 1.0).abs() < 0.5);
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
 fn stack_align_moves_children_to_the_end() {
     with_ui(|ui| {
         let stack = ui.stack(Orientation::Vertical)?;

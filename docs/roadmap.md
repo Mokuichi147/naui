@@ -207,10 +207,11 @@ internationalization and application layer tracks.
       Without it, an app showing Japanese on an OS set to another language can
       get Chinese glyph forms. Which platforms can take it per window or per widget is
       investigated first.
-- [ ] **Separators and framed groups.** Settings screens, and now the content of
-      `Popover` and `Sheet`, need a way to divide and group controls. `NSBox`,
-      `GtkSeparator` / `GtkFrame`, `<hr>` / `<fieldset>`. WinUI has no standalone
-      separator, so what to substitute is investigated first.
+- [x] **Separators and framed groups** (`Separator`, `Group`). `NSBox`,
+      `GtkSeparator` / `GtkFrame`, `<hr>` / `<fieldset>`. WinUI has neither a
+      standalone separator nor a group box, so Windows draws a 1 px `Border` edge
+      in `DividerStrokeColorDefaultBrush`, and puts a heading above a Fluent card,
+      the way the Settings app groups its controls.
 - [x] **More image sources** (`Image::set_bytes`, `Image::set_pixels`, SVG). Each
       platform decodes the bytes itself (`gdk_texture_new_from_bytes`,
       `NSImage`, `BitmapImage` and `SvgImageSource` from a stream, a `blob:`
