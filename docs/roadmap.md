@@ -99,7 +99,8 @@ the UI. In return, apps get:
   exhaustive).
 - **Fewer panics at run time.** Events cannot re-enter `update`, so the model is
   free of the double borrows of `Rc<RefCell<_>>` that compile but panic.
-- **Testable logic.** `update` is plain Rust, so it can be tested without a window.
+- **Testable logic.** `update` is plain Rust, so it can be tested without a window,
+  children included, and the effects it returns are values that tests can check.
 - **Division of work.** Screens and features become components that can be written
   and tested on their own.
 
@@ -121,14 +122,34 @@ the UI. In return, apps get:
 - **Panics are contained and reported, not prevented.** Indexing out of bounds or
   an explicit `panic!` can still happen. Today naui stops a panic at the callback
   boundary (no backend can unwind across the C / WinRT boundary), and only the
-  panic hook's message on stderr shows it happened. naui-app catches panics per
-  message, and hands them, together with the message that caused them, to one
-  error handler that also receives the errors `update` and effects return, so they
-  can be logged or shown to the user.
+  panic hook's message on stderr shows it happened. naui-app puts a panic hook of
+  its own in front of the previous one, so every panic on the UI thread reaches one
+  error handler set by the app, together with the message being handled when it
+  happens inside the queue. Where unwinding is available (the desktop platforms
+  with the default `panic = "unwind"`), naui-app also catches the panic per message
+  and per `render`, and the queue goes on; the model may be left half changed. On
+  the Web, wasm aborts on a panic, so the handler is told and the app stops there.
+  The same handler receives the failures `update` and effects report, so they can
+  be logged or shown to the user.
 - **Components hold widgets rather than being widgets.** `naui::Widget` is sealed,
-  so a component owns its model, its message type and its widget handles, and gives
-  its parent a root widget to place in a container. Parent and child talk only
-  through typed messages.
+  so a component is not a widget: it has its own model, message type and widget
+  handles, and gives its parent a root widget to place in a container. Its model
+  lives in the parent's model and its widgets in the parent's view. That keeps the
+  parent's `update`, children included, plain Rust that runs without a window, and
+  lets the parent read a child's state instead of keeping a copy of it. The
+  child's messages are wrapped into the parent's and go through the same queue; the
+  parent's `update` hands them on, acting on some of them itself first, which is
+  how a child tells its parent something.
+- **Effects belong to the model that requested them.** `update` returns an
+  `Effect`: nothing, a task, work on another thread, a timer, or a failure to
+  report. It does nothing until the app runs it after `render`. A parent hands a
+  child's effect on with `.map(Message::Editor)`, as it wraps the child's
+  messages. The effects a child's `update` requests belong to that child's model:
+  the parent keeps each child model in a wrapper that records them, and dropping
+  the wrapper (the parent's `update` removing the child) cancels them. Tying them
+  to the model rather than to `unmount` means a task never outlives the state its
+  result is for, and needs nothing from the view: the widgets follow in the next
+  `render`, which unmounts them.
 - **Asynchronous work builds on `Tasks`.** An effect runs a future on the UI thread
   with `Tasks::spawn`, or hands blocking work to another thread and brings the
   result back through `Tasks::channel`; either way the result arrives as a
@@ -201,22 +222,47 @@ Model–View–Update structure is complete in v0.16.0 (the guide stays in P2).
       `NSAttributedString`, Pango markup, `TextBlock.Inlines`, `<span>`. As with
       `set_text` since v0.15.0, setting the content already shown must do nothing,
       so that naui-app's `render` can set it every time.
-- [ ] *(app)* **Components.** A component has its own model, messages, `update`
-      and widgets, and goes through `mount` (building its widgets), `update`,
-      `render` and `unmount` (cleaning up). A child's messages are turned into the
-      parent's. How `unmount` pairs with removing the root widget from its
-      container is decided when work starts.
-- [ ] *(app)* **Effects and lifecycles.** `Effect<Message>` gathers asynchronous
-      work: tasks (`Tasks::spawn`), work on other threads (`Tasks::channel`) and
-      timers (`Tasks::after`). A component's tasks and timers are cancelled on
-      `unmount` (dropping a `Task` or `Timer` does not stop it), results of effects
-      superseded by newer ones are discarded (a search overtaken by further
-      typing), and failures are reported.
-- [ ] *(app)* **Unified error handling.** One handler, set by the app, receives the
-      panics caught per message and the errors from `update` and effects, with the
-      message involved. Whether naui itself should also report panics in ordinary
-      callbacks to a handler, rather than only through the panic hook, is decided
-      then.
+- [x] *(app)* **Components** (`Component`, `Mounted`, `Children`,
+      `Dispatch::wrap`, `examples/checklist`). A component has its own model,
+      messages, `update` and widgets, and goes through `mount` (building its
+      widgets), `update`, `render` and `unmount` (cleaning up). Its model lives in
+      the parent's model and its widgets in the parent's view; its messages are
+      wrapped into the parent's and go through the same queue, so the parent's
+      `update` sees them first and hands them on. The parent places the root
+      widget and removes it, since a component does not know its container and
+      naui's containers remove by position or cell. `Mounted::unmount` takes the
+      removal as an argument and `Children::sync` (children under keys, from a
+      collection in the model) asks for it as a `Change`, so they always come in
+      one order: the child's dispatch is disconnected, its `unmount` runs while
+      its widgets are still in place, the root is removed, and the widgets are
+      dropped.
+- [ ] *(app)* **Effects and lifecycles.** `Program::update` returns an
+      `Effect<Message>` (a breaking change, made while naui-app has no users),
+      which gathers asynchronous work: tasks (`Tasks::spawn`), work on other
+      threads (`Tasks::channel`) and timers (`Tasks::after`, `Tasks::every`), and
+      a failure to report (`Effect::fail`, so an error inside `update` and a
+      failed effect take the same path). A parent hands a child's effects on with
+      `.map`. Each child model is kept in a wrapper that owns the tasks and timers
+      its `update` started, and dropping the wrapper cancels them (dropping a
+      `Task` or `Timer` does not stop it; the result of work on another thread,
+      which cannot be stopped, is discarded). Effects under the same key in one
+      model replace each other: the earlier one is cancelled, or its result
+      discarded (a search overtaken by further typing). Until the next step, a
+      failure goes to standard error.
+- [ ] *(app)* **Unified error handling.** One handler, set by the app, receives
+      panics on the UI thread, the failures from `update` and effects, and the
+      mount failures of `Children::sync` (which stops returning them: `render` has
+      no caller to hand them to). Reports from inside the queue carry the message
+      being handled, so the handler needs the message type to be `Debug`; the
+      text is recorded before `update`, cut to a bounded length, and only while a
+      handler is set, so large messages cost little. Panics reach it through a
+      panic hook naui-app installs in front of the previous one. On the desktop
+      platforms with `panic = "unwind"` they are also caught per message and per
+      `render`, and the queue goes on; on the Web (wasm aborts on a panic) and
+      with `panic = "abort"`, the handler is told and the app stops, which is
+      written in [Known limitations](known-limitations.md). naui itself gets no
+      handler: panics in ordinary naui callbacks reach naui-app's hook as well and
+      are reported without a message.
 
 ## P1: Do next
 

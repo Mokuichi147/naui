@@ -62,7 +62,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
-        run: cargo build -p naui-core -p naui-macos -p naui -p naui-app -p counter -p i18n -p todo -p gallery
+        run: cargo build -p naui-core -p naui-macos -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p gallery
       # AppKit の統合テストは harness = false の自前ランナーで、
       # ネイティブのコントロールを実際に作って操作する。
       #
@@ -73,9 +73,10 @@ jobs:
         timeout-minutes: 10
         run: cargo test -p naui-core -p naui-macos -p naui -p naui-app
 
-      # 翻訳の例の、言語の選び方と張り直しの単体テスト (UI を作らない)。
-      - name: テスト (examples/i18n)
-        run: cargo test -p i18n
+      # 例の単体テスト (UI を作らない)。翻訳の例は言語の選び方と張り直し、
+      # checklist はコンポーネントに分けた update。
+      - name: テスト (examples)
+        run: cargo test -p i18n -p checklist
 
   windows:
     name: Windows (WinUI 3)
@@ -96,11 +97,11 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
-        run: cargo build -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app -p counter -p i18n -p todo -p gallery
+        run: cargo build -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p gallery
       # 他の環境と同じく、バックエンドのクレートまで lint をかける。
       # naui-windows は WinRT の生ポインタを触るので、警告を残さない。
       - name: clippy
-        run: cargo clippy -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app -p todo --all-targets -- -D warnings
+        run: cargo clippy -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app -p todo -p checklist --all-targets -- -D warnings
       # ランタイムを同梱する経路 (build.rs と naui-winui3::self_contained) は
       # フィーチャーを付けたときだけ組み込まれる。
       - name: clippy (ランタイム同梱)
@@ -265,7 +266,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
-        run: cargo build -p naui-core -p naui-gtk -p naui -p naui-app -p counter -p i18n -p todo -p gallery
+        run: cargo build -p naui-core -p naui-gtk -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p gallery
       # GTK4 はディスプレイを要求する。libadwaita は D-Bus のセッションバスから
       # 配色設定を読むため、dbus-run-session も通す。
       - name: テスト

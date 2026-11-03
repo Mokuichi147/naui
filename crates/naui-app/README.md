@@ -18,7 +18,14 @@ The widgets are built once with naui's API and `render` updates them with
 setters. There is no virtual widget tree and no diffing; naui's setters do
 nothing when given the value already shown.
 
+Screens, panels and rows can be split into components, each with its own model,
+messages, `update` and widgets. A child's messages are wrapped into its parent's
+and go through the same queue; `Mounted` keeps one child's widgets, and `Children`
+mounts and unmounts children as a collection in the model changes.
+
 See [`examples/todo`](https://github.com/mokuichi147/naui/tree/main/examples/todo)
-for a complete app.
+for a complete app, and
+[`examples/checklist`](https://github.com/mokuichi147/naui/tree/main/examples/checklist)
+for one split into components.
 
 It is `#![forbid(unsafe_code)]`.

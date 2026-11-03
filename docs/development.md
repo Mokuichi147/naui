@@ -38,6 +38,7 @@ examples/
   counter        Minimal sample
   i18n           Translating an app with Fluent
   todo           An app structured with naui-app
+  checklist      An app split into naui-app components
   gallery        Demo of every widget, by kind
 tools/
   winui3-bindgen Tool that regenerates naui-winui3's projection from .winmd files

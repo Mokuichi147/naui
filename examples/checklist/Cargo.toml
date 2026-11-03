@@ -1,0 +1,12 @@
+[package]
+name = "checklist"
+description = "Example of a naui app split into components with naui-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+naui.workspace = true
+naui-app.workspace = true

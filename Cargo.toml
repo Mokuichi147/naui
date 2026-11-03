@@ -12,6 +12,7 @@ members = [
     "examples/counter",
     "examples/i18n",
     "examples/todo",
+    "examples/checklist",
     "examples/gallery",
 ]
 exclude = ["tools/winui3-bindgen"]
