@@ -1,6 +1,6 @@
 # Roadmap
 
-This lists features commonly expected of a GUI toolkit that naui (as of v0.14.0)
+This lists features commonly expected of a GUI toolkit that naui (as of v0.15.0)
 does not have yet, with priorities.
 
 The native counterparts written for each item are estimates. When work starts,
@@ -52,16 +52,16 @@ one or two panes.
 
 ### Order
 
-Each step builds on the ones before it. Steps 1 to 3 (main-axis `Fill` and
-`Spacer` in Windows's `Stack`, the contract for changes after adding to a
-container, and `Stack::set_orientation`) were released in v0.12.0, step 4
-(automatic collapsing of `Sidebar`) in v0.13.0, and step 5 (size-based
-arrangements, `Stack::set_breakpoint`) in v0.14.0.
+All six steps have been released, each building on the ones before it. Steps 1
+to 3 (main-axis `Fill` and `Spacer` in Windows's `Stack`, the contract for changes
+after adding to a container, and `Stack::set_orientation`) were released in
+v0.12.0, step 4 (automatic collapsing of `Sidebar`) in v0.13.0, step 5
+(size-based arrangements, `Stack::set_breakpoint`) in v0.14.0, and step 6
+(`AdaptivePanes`) in v0.15.0.
 
-6. **`AdaptivePanes`** (P0).
-
-`Flow` (P2) does not depend on these and can start at any time. The items in P3 are
-decided after investigating.
+What remains is `Flow` (P2), which does not depend on these steps, and the items
+in P3, which are decided after investigating whether `Stack::set_breakpoint`,
+`AdaptivePanes` and `Sidebar` leave real cases uncovered.
 
 ## Internationalization
 
@@ -86,7 +86,7 @@ direction.
 
 ## Application layer
 
-An optional crate on top of naui's widget API (tentatively `naui-app`) that gives
+An optional crate on top of naui's widget API (`naui-app`) that gives
 large apps a structure for their state, events and lifecycles: Model–View–Update,
 split into components, with asynchronous work managed as effects. Apps that do not
 use it are unaffected, and naui's own API stays as it is.
@@ -139,12 +139,13 @@ the UI. In return, apps get:
 
 Each step builds on the ones before it, and comes with tests of its own: the queue's
 order and its guarantee against re-entry, a component's lifecycle, the
-cancellation of effects.
+cancellation of effects. Step 1 (the message queue and the split of `update` and
+`render`: `Program`, `App`, `Dispatch` and `examples/todo`) was released in
+v0.15.0.
 
-1. **Message queue and the split of `update` and `render`** (P0).
-2. **Components** (P1).
-3. **Effects and lifecycles** (P1).
-4. **Unified error handling** (P1).
+2. **Components** (P0).
+3. **Effects and lifecycles** (P0).
+4. **Unified error handling** (P0).
 5. **A guide for structuring large apps** (P2).
 
 ## Drawing in separate crates
@@ -188,77 +189,18 @@ drawing is done by separate crates.
 ## P0: Do now
 
 Gaps that ordinary apps run into right away and that all four platforms have native
-counterparts for, plus the next steps of the adaptive layout,
-internationalization and application layer tracks.
-
-- [x] *(adaptive)* **`AdaptivePanes`.** A list and its detail, side by side when
-      wide and one at a time when narrow, with a back button above the detail in
-      the one-pane state. Windows uses `TwoPaneView`, which decides by itself, and
-      Linux `AdwNavigationSplitView` (which also goes back by Escape, Alt+← and a
-      swipe). Its `AdwBreakpoint` would take away the window's minimum size, so on
-      Linux, as on macOS and the Web, which have no such control, naui decides
-      with naui-core's `PanesArrangement`, sharing the slack of
-      `StackArrangement`. Both native controls are two-pane, so three panes are
-      a `Sidebar` beside the panes or another `AdaptivePanes` in the detail,
-      each deciding by its own width.
-- [x] *(i18n)* **Telling the native side the app's language**
-      (`Settings::language`). Only the Web (`lang`) and Windows
-      (`FrameworkElement.Language`) can take a language per element; AppKit and
-      Pango have it only per run of text or for the whole app. So naui takes one
-      language for the whole app at startup: `lang` on `<html>`, `Language` on
-      each window's content, `AppleLanguages` in the arguments domain (the per-app
-      language of System Settings), and `PANGO_LANGUAGE` before GTK starts (only
-      while no other thread runs).
-- [x] **Separators and framed groups** (`Separator`, `Group`). `NSBox`,
-      `GtkSeparator` / `GtkFrame`, `<hr>` / `<fieldset>`. WinUI has neither a
-      standalone separator nor a group box, so Windows draws a 1 px `Border` edge
-      in `DividerStrokeColorDefaultBrush`, and puts a heading above a Fluent card,
-      the way the Settings app groups its controls.
-- [x] **More image sources** (`Image::set_bytes`, `Image::set_pixels`, SVG). Each
-      platform decodes the bytes itself (`gdk_texture_new_from_bytes`,
-      `NSImage`, `BitmapImage` and `SvgImageSource` from a stream, a `blob:`
-      URL). Pixels go to a `GdkMemoryTexture` on Linux and as an uncompressed PNG
-      elsewhere.
-- [x] **Make `Track::Fill` weights work in `Grid` on macOS and Linux.** naui-core
-      now splits the room with the rule of CSS's `fr` (by weight, never below what a
-      track's content needs, the rest split again among the others), and both
-      backends use it. Linux replaces `GtkGrid` with naui's own container, since
-      `GtkGrid` gave each column its natural width plus an even share, so `Fill`
-      columns of the same weight also differed by their content. macOS keeps
-      `NSGridView` and has each `Fill` child wish for its cell's share as a
-      proportion of the grid's size; when two or more
-      `Fill` tracks hold no `Fill` child, their split is still left to
-      `NSGridView`. A `Fill` track beside one with a capped child now gets its
-      share instead of everything but the cap, as on Windows and the Web.
-- [x] *(app)* **Message queue and the split of `update` and `render`** (the
-      `naui-app` crate, `Program`, `App`, `Dispatch`, and `examples/todo`).
-      `GtkTextBuffer` replaced the whole text (moving the caret) and AppKit's
-      `setStringValue:` replaced the field editor's text (committing the IME
-      composition), so the setters of text fields, text areas, editable combo
-      boxes, number inputs and labels now skip a value equal to the one shown, on
-      all four platforms.
-
-## P1: Do next
-
-Medium weight and frequently requested, or a smaller gap between platforms.
+counterparts for, plus steps 2 to 4 of the application layer track, so that its
+Model–View–Update structure is complete in v0.16.0 (the guide stays in P2).
 
 - [ ] **Row windowing for large `List`s.** Extend `Table`'s mechanism
-      (`row_window` in naui-core) to `List`.
-- [x] **Make Windows's `Canvas` keep up with large drawings.** Windows now draws
-      the commands with Direct2D (text with DirectWrite) onto a Composition drawing
-      surface, the way the other three platforms rasterize, instead of turning them
-      into one XAML string of `Path` and `TextBlock` elements for `XamlReader`.
-      Measured with 5000 short lines, a redraw went from about 590 ms to under one
-      frame. Of those 590 ms, about 200 went to parsing, 80 to replacing the tree,
-      and most of the rest to rendering the 5000 elements. Because the per-element
-      cost remained, the two cheaper candidates were not taken. Reusing the
-      previous elements helps only when few commands change. Merging commands of
-      the same style into one `Path` changes the result where translucent shapes
-      overlap or windings cancel, and does nothing for drawings whose colors vary.
-      DirectWrite text measurement is now available to broaden `Canvas`'s
-      vocabulary.
+      (`row_window` in naui-core) to `List`. naui-core already decides which rows
+      to build, so each backend needs only what `Table`'s does: padding for the
+      rows outside the window, uniform row heights, and selection held by naui
+      rather than by the native list, which knows only the rows built.
 - [ ] **Rich text** (mixing bold, colors and links within a line).
-      `NSAttributedString`, Pango markup, `TextBlock.Inlines`, `<span>`.
+      `NSAttributedString`, Pango markup, `TextBlock.Inlines`, `<span>`. As with
+      `set_text` since v0.15.0, setting the content already shown must do nothing,
+      so that naui-app's `render` can set it every time.
 - [ ] *(app)* **Components.** A component has its own model, messages, `update`
       and widgets, and goes through `mount` (building its widgets), `update`,
       `render` and `unmount` (cleaning up). A child's messages are turned into the
@@ -275,6 +217,22 @@ Medium weight and frequently requested, or a smaller gap between platforms.
       message involved. Whether naui itself should also report panics in ordinary
       callbacks to a handler, rather than only through the panic hook, is decided
       then.
+
+## P1: Do next
+
+Medium weight and frequently requested, or a smaller gap between platforms.
+
+- [ ] *(i18n)* **Writing direction** (`LayoutDirection` with `Auto`, `Ltr` and
+      `Rtl`). `userInterfaceLayoutDirection`, `gtk_widget_set_default_direction`,
+      `FlowDirection`, the `dir` attribute. First check how much each native
+      toolkit mirrors automatically, and which widgets must not be mirrored
+      (`Canvas`, number inputs, media controls). Whether `Auto` follows the
+      language given by `Settings::language` is decided then.
+- [ ] **Broaden `Canvas`'s vocabulary** (images, clipping, rotation and scaling,
+      gradients). What it waited on was released in v0.15.0: text width
+      measurement on Windows can use the DirectWrite that `Canvas` now draws with,
+      and image drawing can build on the image sources `Image::set_bytes` and
+      `set_pixels` read.
 
 ## P2: Do if there is time
 
@@ -297,10 +255,6 @@ Heavy, or supported on a limited set of platforms.
       `VariableSizedWrapGrid` with fixed-size cells (`WrapPanel` is in the
       Community Toolkit), and AppKit has nothing besides `NSCollectionView`'s flow
       layout. Which platforms need naui to lay it out itself is investigated first.
-- [ ] **Broaden `Canvas`'s vocabulary** (images, clipping, rotation and scaling,
-      gradients). Text width measurement on Windows can use the DirectWrite that
-      `Canvas` now draws with. Image drawing can build on the image sources
-      `Image::set_bytes` and `set_pixels` read.
 - [ ] **Multiple selection in `Tree`, and placing widgets in items.**
 - [ ] **Make dragging `Table` column widths work on Windows and Linux too.** Linux
       has the native feature in `GtkColumnView`, while Windows uses a custom table,
@@ -323,12 +277,6 @@ Heavy, or supported on a limited set of platforms.
       change to a crate's public API still rebuilds the crates that depend on it,
       so where to draw the boundaries is part of the guide.
 
-- [ ] *(i18n)* **Writing direction** (`LayoutDirection` with `Auto`, `Ltr` and
-      `Rtl`). `userInterfaceLayoutDirection`, `gtk_widget_set_default_direction`,
-      `FlowDirection`, the `dir` attribute. First check how much each native
-      toolkit mirrors automatically, and which widgets must not be mirrored
-      (`Canvas`, number inputs, media controls).
-
 ## P3: Decide after investigating
 
 Not yet clear whether they fit the approach, or whether they are needed.
@@ -346,7 +294,7 @@ Not yet clear whether they fit the approach, or whether they are needed.
       WebView2, `<iframe>`) could be one built on `NativeHost`.
 - [ ] *(drawing)* **`naui-charts`.** Line, bar and scatter charts in a separate
       crate drawing on `Canvas`, so it can start before `NativeHost`. Windows's
-      `Canvas` now keeps up with charts of many points (P1).
+      `Canvas` keeps up with charts of many points since v0.15.0.
 - [ ] *(drawing)* **`naui-wgpu`.** A separate crate that connects a wgpu surface
       through `NativeHost` on all four platforms, and checks basic 2D and 3D
       drawing, resizing and scale-factor changes.
