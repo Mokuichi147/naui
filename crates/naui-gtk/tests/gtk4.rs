@@ -431,6 +431,10 @@ fn main() {
             window_placement_keeps_the_normal_size,
         ),
         (
+            "最大化を頼んだ直後の set_size は最大化を解いたときの大きさになる",
+            window_size_set_while_maximize_is_pending,
+        ),
+        (
             "最小化して元に戻せる (X11)",
             window_minimize_round_trips,
         ),
@@ -10150,6 +10154,46 @@ fn window_placement_keeps_the_normal_size(ui: &Ui) -> Result<()> {
             state: WindowState::Normal,
         }
     );
+    window.close();
+    Ok(())
+}
+
+/// `set_size` right after requesting maximization, before the compositor responds,
+/// also becomes the size it returns to (X11 window managers return to the size from
+/// before maximizing, so it has to be requested again).
+///
+/// SKIPped where the window manager does not respond to maximizing or un-maximizing
+/// (CI's Xvfb).
+fn window_size_set_while_maximize_is_pending(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    let window = ui.window("返事待ちの大きさ", 380.0, 260.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.show();
+    spin_until(Duration::from_secs(2), || window.size() == (380.0, 260.0));
+
+    window.set_state(WindowState::Maximized);
+    window.set_size(400.0, 280.0);
+    spin_until(Duration::from_secs(2), || {
+        toplevel_state(&window).contains(gtk::gdk::ToplevelState::MAXIMIZED)
+    });
+    if window.state() != WindowState::Maximized {
+        skip("ウィンドウマネージャが最大化に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    tick(&window.native_window());
+    assert_eq!(window.placement().size, (400.0, 280.0), "最大化の間");
+
+    window.set_state(WindowState::Normal);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Normal && window.size() == (400.0, 280.0)
+    });
+    if window.state() != WindowState::Normal {
+        skip("ウィンドウマネージャが最大化の解除に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    assert_eq!(window.size(), (400.0, 280.0), "戻ると決めた大きさ");
     window.close();
     Ok(())
 }

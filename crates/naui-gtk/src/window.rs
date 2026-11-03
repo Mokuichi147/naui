@@ -65,7 +65,8 @@ pub(crate) struct WindowInner {
     /// (window style classes change), so converting the default size (the normal size)
     /// back to content uses this one.
     normal_frame: Cell<Option<(f64, f64)>>,
-    /// The content size given to [`Window::set_size`] while out of the normal frame,
+    /// The content size given to [`Window::set_size`] while out of the normal frame
+    /// (or waiting for the compositor to respond to maximizing or fullscreen),
     /// requested again once back in it. X11 window managers return to the size they
     /// remembered from before maximizing and ignore the default size changed
     /// meanwhile.
@@ -383,8 +384,14 @@ impl Window {
             return false;
         }
         let want = self.default_size_for(fit.target);
-        if native.default_size() != want || fit.ticks >= FIT_RETRY_TICKS {
+        if native.default_size() != want {
             native.set_default_size(want.0, want.1);
+            fit.ticks = 0;
+        } else if fit.ticks >= FIT_RETRY_TICKS {
+            // X11 の GDK は前に計算したのと同じ大きさを送り直さない
+            // (最大化の返事を待つ間に頼んだ大きさが、そのまま残っていることがある)。
+            // 1px ずらして頼み、次の確かめで頼んだ値へ戻す。
+            native.set_default_size(want.0 + 1, want.1);
             fit.ticks = 0;
         }
         self.0.fit.set(Some(fit));
@@ -536,6 +543,14 @@ impl Window {
                 .is_some_and(|toplevel| toplevel.state().intersects(tiled))
     }
 
+    /// [`out_of_normal_frame`](Self::out_of_normal_frame), or maximizing or fullscreen
+    /// was requested and the compositor has not responded yet.
+    fn leaving_normal_frame(&self) -> bool {
+        self.out_of_normal_frame()
+            || self.0.maximize_requested.get()
+            || self.0.fullscreen_requested.get()
+    }
+
     /// The size and state to save, and to show it in next time. **The position is
     /// always `None`** (see [`position`](Self::position)).
     ///
@@ -546,9 +561,11 @@ impl Window {
     pub fn placement(&self) -> WindowPlacement {
         let size = match self.0.initial_size.get() {
             Some(size) => size,
-            None if self.out_of_normal_frame() => {
-                self.content_for_default_size(self.normal_frame_size())
-            }
+            None if self.out_of_normal_frame() => self
+                .0
+                .restore_size
+                .get()
+                .unwrap_or_else(|| self.content_for_default_size(self.normal_frame_size())),
             None => self.size(),
         };
         WindowPlacement {
@@ -757,17 +774,17 @@ impl Window {
                 self.0.fullscreen_requested.set(false);
             }
         }
-        if !self.out_of_normal_frame() {
-            if let Some(size) = self.0.restore_size.take() {
-                self.apply_default_size(size);
-                self.fit_after_layout(size);
-            }
-        }
         let state = self.state();
         self.0.on_state_change.update(state);
         if state != WindowState::Fullscreen {
             if let Some(next) = self.0.after_fullscreen.take() {
                 self.apply_state(next);
+            }
+        }
+        if !self.leaving_normal_frame() {
+            if let Some(size) = self.0.restore_size.take() {
+                self.apply_default_size(size);
+                self.fit_after_layout(size);
             }
         }
     }
@@ -879,13 +896,14 @@ impl Window {
         if self.0.initial_size.get().is_some() {
             // 表示するときに `show` が合わせる。
             self.0.initial_size.set(Some(size));
-        } else if self.out_of_normal_frame() {
-            // 通常の枠へ戻ったときに `report_state` が頼み直す。
-            self.0.restore_size.set(Some(size));
         } else {
-            self.0.restore_size.set(None);
+            // 通常の枠の外 (と、そこへ出る頼みの返事待ち) では、通常の枠へ
+            // 戻ったときに `report_state` が頼み直す。
+            let leaving = self.leaving_normal_frame();
+            self.0.restore_size.set(leaving.then_some(size));
             // 帯を付け外した直後は、足した帯の高さが前のままなので、
-            // 並び直した後の実寸で確かめる。
+            // 並び直した後の実寸で確かめる。最大化などが当たればそこで止まり、
+            // コンポジタが頼みに応えなければこちらで合う。
             self.fit_after_layout(size);
         }
     }
