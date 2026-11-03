@@ -776,7 +776,9 @@ impl TextArea {
     pub fn set_text(&self, text: &str) {
         // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
         // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
-        if self.text() == text {
+        // text() は改行を \n にそろえて返すので、渡された側もそろえてから比べる。
+        // そうしないと \r\n を含む文字列は毎回違う値に見える。
+        if self.text() == unix_newlines(text) {
             return;
         }
         let _ = self.0.native.SetText(&HSTRING::from(text));

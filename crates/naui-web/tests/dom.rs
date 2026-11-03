@@ -990,6 +990,12 @@ fn set_text_with_the_same_text_keeps_the_caret() {
         element.set_selection_range(1, 1).expect("カーソル");
         area.set_text(&area.text());
         assert_eq!(element.selection_start().ok().flatten(), Some(1));
+
+        // value は改行を \n にそろえて返す。\r\n で渡しても同じ文字列として扱う。
+        area.set_text("え\r\nお");
+        element.set_selection_range(1, 1).expect("カーソル");
+        area.set_text("え\r\nお");
+        assert_eq!(element.selection_start().ok().flatten(), Some(1));
         Ok(())
     });
 }
