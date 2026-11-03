@@ -25,6 +25,7 @@ use naui_core::{
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
 use objc2::rc::{autoreleasepool, Retained};
+use objc2::runtime::AnyObject;
 use objc2::runtime::{NSObjectProtocol, ProtocolObject};
 use objc2::sel;
 use objc2::{
@@ -42,9 +43,9 @@ use objc2_app_kit::{
     NSWindow, NSWindowStyleMask, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
-    NSArgumentDomain, NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents,
-    NSDefaultRunLoopMode, NSNotFound, NSNotification, NSPoint, NSRange, NSRect, NSRunLoop, NSSize,
-    NSString, NSUserDefaults,
+    NSArgumentDomain, NSArray, NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents,
+    NSDefaultRunLoopMode, NSMutableDictionary, NSNotFound, NSNotification, NSPoint, NSRange,
+    NSRect, NSRunLoop, NSSize, NSString, NSUserDefaults,
 };
 
 /// One test case.
@@ -2980,29 +2981,74 @@ fn stack_spacing_after_append(ui: &Ui) -> Result<()> {
 }
 
 /// The app's language goes into the arguments domain as `AppleLanguages`, the way
-/// launching with `-AppleLanguages (ja-JP)` would, and taking it back leaves the
-/// arguments the app was launched with alone.
+/// launching with `-AppleLanguages (ja-JP)` would, and taking it back puts the
+/// arguments the app was launched with back, `-AppleLanguages` among them.
 fn app_language_goes_into_the_arguments_domain(_ui: &Ui) -> Result<()> {
     let defaults = NSUserDefaults::standardUserDefaults();
     let domain = unsafe { NSArgumentDomain };
-    let before = defaults.volatileDomainForName(domain).len();
+    let key = NSString::from_str("AppleLanguages");
+    let first_language = || {
+        defaults
+            .volatileDomainForName(domain)
+            .objectForKey(&key)
+            .and_then(|languages| languages.downcast::<NSArray>().ok())
+            .and_then(|languages| languages.firstObject())
+            .and_then(|first| first.downcast::<NSString>().ok())
+            .map(|first| first.to_string())
+    };
+    let launched = defaults.volatileDomainForName(domain);
+
+    // 起動時に AppleLanguages が無い場合: 外すとキーごと消える。
+    let without: Retained<NSMutableDictionary<NSString, AnyObject>> =
+        NSMutableDictionary::dictionaryWithDictionary(&launched);
+    without.removeObjectForKey(&key);
+    defaults.removeVolatileDomainForName(domain);
+    unsafe { defaults.setVolatileDomain_forName(&without, domain) };
     naui_macos::apply_app_language(Some("ja-JP"));
-    let first = defaults
-        .arrayForKey(&NSString::from_str("AppleLanguages"))
-        .and_then(|languages| languages.firstObject())
-        .and_then(|first| first.downcast::<NSString>().ok())
-        .map(|first| first.to_string());
+    let applied = first_language();
     naui_macos::apply_app_language(None);
     let after = defaults.volatileDomainForName(domain);
+    let removed = after.objectForKey(&key).is_none();
+    let others_kept = after.len() == without.len();
+
+    // 起動時に -AppleLanguages (fr) があった場合: 外すと fr に戻る。
+    let with_launch_argument: Retained<NSMutableDictionary<NSString, AnyObject>> =
+        NSMutableDictionary::dictionaryWithDictionary(&without);
+    let french = NSArray::from_retained_slice(&[NSString::from_str("fr")]);
+    let french: &AnyObject = french.as_ref();
+    with_launch_argument.insert(&*key, french);
+    defaults.removeVolatileDomainForName(domain);
+    unsafe { defaults.setVolatileDomain_forName(&with_launch_argument, domain) };
+    naui_macos::apply_app_language(Some("ja-JP"));
+    let over_launch_argument = first_language();
+    // 2 回目の指定でも、戻す先は起動時の値のまま。
+    naui_macos::apply_app_language(Some("zh-CN"));
+    naui_macos::apply_app_language(None);
+    let restored = first_language();
+
+    defaults.removeVolatileDomainForName(domain);
+    unsafe { defaults.setVolatileDomain_forName(&launched, domain) };
+
     assert_eq!(
-        first.as_deref(),
+        applied.as_deref(),
         Some("ja-JP"),
         "アプリの言語が先頭に来ること"
     );
-    assert_eq!(after.len(), before, "外すと起動時の引数だけが残ること");
-    assert!(after
-        .objectForKey(&NSString::from_str("AppleLanguages"))
-        .is_none());
+    assert!(
+        removed,
+        "起動時に無かった AppleLanguages は外すと消えること"
+    );
+    assert!(others_kept, "外しても起動時のほかの引数は残ること");
+    assert_eq!(
+        over_launch_argument.as_deref(),
+        Some("ja-JP"),
+        "アプリの言語が起動時の -AppleLanguages より優先されること"
+    );
+    assert_eq!(
+        restored.as_deref(),
+        Some("fr"),
+        "外すと起動時の -AppleLanguages に戻ること"
+    );
     Ok(())
 }
 

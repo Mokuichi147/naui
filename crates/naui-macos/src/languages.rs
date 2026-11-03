@@ -30,6 +30,11 @@ thread_local! {
     static OBSERVING: Cell<bool> = const { Cell::new(false) };
     /// What [`preferred_languages`] returns instead of the OS's, for tests.
     static OVERRIDE: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+    /// The `AppleLanguages` the arguments domain held before [`apply_app_language`]
+    /// first replaced it (the inner `None` when it held none), so that `None` puts it
+    /// back. `None` while the app's language is not applied.
+    static ARGUMENT_LANGUAGES: RefCell<Option<Option<Retained<AnyObject>>>> =
+        const { RefCell::new(None) };
 }
 
 define_class!(
@@ -128,6 +133,9 @@ const APPLE_LANGUAGES: &str = "AppleLanguages";
 /// Makes `tag` the app's first language, the way launching it with
 /// `-AppleLanguages (tag)` would, or takes that back with `None`.
 ///
+/// `tag` takes precedence over an `-AppleLanguages` the app was launched with, and
+/// `None` puts that launch argument back.
+///
 /// The languages go into the arguments domain (`NSArgumentDomain`), a volatile
 /// domain that is searched before the app's and the user's own and is never
 /// written to disk. This is what the per-app language of System Settings amounts
@@ -145,11 +153,22 @@ pub fn apply_app_language(tag: Option<&str>) {
     let key = NSString::from_str(APPLE_LANGUAGES);
     match tag {
         Some(tag) => {
+            // 起動時の引数の値は、最初に上書きするときだけ取っておく。
+            ARGUMENT_LANGUAGES.with(|saved| {
+                saved
+                    .borrow_mut()
+                    .get_or_insert_with(|| current.objectForKey(&key));
+            });
             let languages = NSArray::from_retained_slice(&[NSString::from_str(tag)]);
             let languages: &AnyObject = languages.as_ref();
             domain.insert(&*key, languages);
         }
-        None => domain.removeObjectForKey(&key),
+        None => match ARGUMENT_LANGUAGES.with(|saved| saved.borrow_mut().take()) {
+            Some(Some(original)) => domain.insert(&*key, &*original),
+            Some(None) => domain.removeObjectForKey(&key),
+            // 一度も置いていなければ、起動時の引数に触れない。
+            None => return,
+        },
     }
     // 同じ名前の揮発ドメインがあると差し替えられないので、一度外してから置く。
     defaults.removeVolatileDomainForName(domain_name);
