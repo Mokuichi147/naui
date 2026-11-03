@@ -104,6 +104,11 @@ pub(crate) fn set_tooltip(element: &Element, text: Option<&str>) {
 
 /// The name reported to screen readers (`aria-label`). `None` removes it.
 pub(crate) fn set_accessible_label(element: &Element, text: Option<&str>) {
+    // 画像と動画の枠は名前を持てない `<div>` なので、中の `<img>` / `<video>` に付ける。
+    let inner = crate::layout::is_picture(element)
+        .then(|| element.first_element_child())
+        .flatten();
+    let element = inner.as_ref().unwrap_or(element);
     match text {
         Some(text) => {
             let _ = element.set_attribute("aria-label", text);

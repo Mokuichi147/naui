@@ -5875,7 +5875,14 @@ async fn fill_image_does_not_push_a_scroll() {
     });
     let (scroll, _pane, image) = kept.expect("組み立て");
     let _mounted = Mounted::new(&scroll);
-    let element: web_sys::HtmlImageElement = image.native_element().unchecked_into();
+    let frame = image.native_element();
+    let element: web_sys::HtmlImageElement = picture_of(&frame);
+    assert_eq!(computed(&frame, "contain"), "size", "枠を封じ込める");
+    assert_eq!(
+        computed(element.as_ref(), "contain"),
+        "none",
+        "画像そのものは封じ込めない (WebKit は object-fit で歪める)"
+    );
     for _ in 0..40 {
         if element.complete() && element.natural_height() > 0 {
             break;
@@ -5897,7 +5904,15 @@ async fn fill_image_does_not_push_a_scroll() {
 
     // `Auto` の軸が残るときは、縦横比から大きさを決めるので封じ込めない。
     image.set_sizing(Sizing::fill_width());
-    assert_eq!(computed(element.as_ref(), "contain"), "none");
+    assert_eq!(computed(&frame, "contain"), "none");
+}
+
+/// The `<img>` / `<video>` in an image's or a video's frame.
+fn picture_of<T: JsCast>(frame: &web_sys::Element) -> T {
+    frame
+        .first_element_child()
+        .expect("枠の中の画像")
+        .unchecked_into()
 }
 
 /// Waits until the `<img>` has finished loading (successfully or not).
@@ -5926,7 +5941,16 @@ async fn image_shows_bytes_and_pixels() {
     });
     let image = kept.expect("組み立て");
     let _mounted = Mounted::new(&image);
-    let element: web_sys::HtmlImageElement = image.native_element().unchecked_into();
+    let element: web_sys::HtmlImageElement = picture_of(&image.native_element());
+
+    image.set_accessible_label(Some("赤い札"));
+    assert_eq!(
+        element.get_attribute("aria-label").as_deref(),
+        Some("赤い札"),
+        "名前は枠の <div> でなく <img> に付ける"
+    );
+    image.set_accessible_label(None);
+    assert!(element.get_attribute("aria-label").is_none());
 
     image.set_bytes(RED_SVG.as_bytes());
     assert!(element.src().starts_with("blob:"), "blob: の URL で出す");
@@ -6003,6 +6027,13 @@ fn fill_video_does_not_ask_for_its_size() {
             "size",
             "Fill は大きさを求めない"
         );
+        let picture: web_sys::Element = picture_of(&element);
+        assert_eq!(picture.tag_name(), "VIDEO");
+        assert_eq!(
+            computed(&picture, "contain"),
+            "none",
+            "封じ込めるのは枠で、動画そのものではない"
+        );
 
         // `Auto` の軸が残るときは、縦横比から大きさを決めるので封じ込めない。
         video.set_sizing(Sizing::fill_width());
@@ -6049,7 +6080,8 @@ async fn capped_fill_image_asks_for_its_maximum() {
     });
     let (grid, image, rest) = kept.expect("組み立て");
     let _mounted = Mounted::new(&grid);
-    let element: web_sys::HtmlImageElement = image.native_element().unchecked_into();
+    let frame = image.native_element();
+    let element: web_sys::HtmlImageElement = picture_of(&frame);
     for _ in 0..40 {
         if element.complete() && element.natural_height() > 0 {
             break;
@@ -6058,7 +6090,7 @@ async fn capped_fill_image_asks_for_its_maximum() {
     }
     next_frames().await;
     assert_eq!(
-        computed(element.as_ref(), "contain"),
+        computed(&frame, "contain"),
         "none",
         "上限が自然な大きさを抑えるので封じ込めない"
     );
