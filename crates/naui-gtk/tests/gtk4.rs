@@ -435,6 +435,10 @@ fn main() {
             window_size_set_while_maximize_is_pending,
         ),
         (
+            "応えてもらえない最大化の間の set_size は後の復元に持ち越さない",
+            window_size_is_not_carried_over_after_ignored_maximize,
+        ),
+        (
             "最小化して元に戻せる (X11)",
             window_minimize_round_trips,
         ),
@@ -10194,6 +10198,45 @@ fn window_size_set_while_maximize_is_pending(ui: &Ui) -> Result<()> {
         return Ok(());
     }
     assert_eq!(window.size(), (400.0, 280.0), "戻ると決めた大きさ");
+    window.close();
+    Ok(())
+}
+
+/// When the window manager does not respond to maximizing, the size given to
+/// `set_size` while waiting is applied once the wait gives up, and is not carried
+/// over: after the user resizes, requesting the normal state keeps the user's size.
+///
+/// Meaningful only where maximizing is never answered (CI's Xvfb, with no window
+/// manager); SKIPped where the window manager maximizes it. The user's resizing is
+/// stood in for by changing GTK's default size directly.
+fn window_size_is_not_carried_over_after_ignored_maximize(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    let window = ui.window("応えない最大化", 380.0, 260.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.show();
+    spin_until(Duration::from_secs(2), || window.size() == (380.0, 260.0));
+
+    window.set_state(WindowState::Maximized);
+    window.set_size(400.0, 280.0);
+    // 返事を待つのをあきらめ、合わせ直しも終わるまで待つ。
+    spin_until(Duration::from_millis(2200), || false);
+    if window.state() != WindowState::Normal {
+        skip("ウィンドウマネージャが最大化に応える環境 (応えない環境向けの確認)");
+        window.close();
+        return Ok(());
+    }
+    assert_eq!(window.size(), (400.0, 280.0), "頼んだ大きさ");
+
+    let native = window.native_window();
+    let (width, height) = native.default_size();
+    native.set_default_size(width + 20, height + 20);
+    spin_until(Duration::from_secs(2), || window.size() == (420.0, 300.0));
+    assert_eq!(window.size(), (420.0, 300.0), "利用者が変えた大きさ");
+
+    window.set_state(WindowState::Normal);
+    // 古い大きさを頼み直していれば、少し後で戻される。
+    spin_until(Duration::from_secs(1), || window.size() != (420.0, 300.0));
+    assert_eq!(window.size(), (420.0, 300.0), "利用者が変えた大きさのまま");
     window.close();
     Ok(())
 }

@@ -99,6 +99,9 @@ pub(crate) struct WindowInner {
     /// Fullscreen was requested, has not shown up in the compositor's state yet, and
     /// leaving it has not been requested either.
     fullscreen_requested: Cell<bool>,
+    /// Counts maximize and fullscreen requests, so that the wait for a response
+    /// ([`Window::await_state_response`]) only gives up on the latest one.
+    state_requests: Cell<u32>,
     /// The state to apply after leaving fullscreen has finished. Some compositors
     /// ignore a maximize request while fullscreen, so fullscreen is left first.
     after_fullscreen: Cell<Option<WindowState>>,
@@ -129,6 +132,10 @@ const FIT_RETRY_TICKS: u32 = 6;
 /// How long (microseconds) before giving up on refitting. Limited to right after
 /// showing so that it does not keep fighting the user's resizing.
 const FIT_LIMIT_US: i64 = 1_000_000;
+/// How long (milliseconds) to wait for the compositor to respond to a maximize or
+/// fullscreen request. Window managers that refuse it (or none at all, as in CI's
+/// Xvfb) never respond, so after this it is taken as ignored.
+const STATE_RESPONSE_LIMIT_MS: u64 = 1000;
 
 /// A top-level window.
 ///
@@ -199,6 +206,7 @@ impl Window {
             minimize_requested: Cell::new(false),
             maximize_requested: Cell::new(false),
             fullscreen_requested: Cell::new(false),
+            state_requests: Cell::new(0),
             after_fullscreen: Cell::new(None),
             state_handler: RefCell::new(None),
         }));
@@ -729,14 +737,41 @@ impl Window {
             WindowState::Maximized => {
                 self.0.maximize_requested.set(true);
                 native.maximize();
+                self.await_state_response();
             }
             WindowState::Minimized => native.minimize(),
             WindowState::Fullscreen => {
                 self.0.fullscreen_requested.set(true);
                 native.fullscreen();
+                self.await_state_response();
             }
         }
         self.apply_restore_size();
+    }
+
+    /// If the compositor has not responded to the maximize or fullscreen request just
+    /// made within [`STATE_RESPONSE_LIMIT_MS`], takes it as ignored: it stops waiting
+    /// for it and applies the size given to `set_size` meanwhile. Otherwise that size
+    /// would be kept for a later restore and undo the user's resizing in between.
+    fn await_state_response(&self) {
+        let request = self.0.state_requests.get().wrapping_add(1);
+        self.0.state_requests.set(request);
+        let weak = Rc::downgrade(&self.0);
+        glib::timeout_add_local_once(
+            std::time::Duration::from_millis(STATE_RESPONSE_LIMIT_MS),
+            move || {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let window = Window(inner);
+                if window.0.state_requests.get() != request || window.out_of_normal_frame() {
+                    return;
+                }
+                window.0.maximize_requested.set(false);
+                window.0.fullscreen_requested.set(false);
+                window.apply_restore_size();
+            },
+        );
     }
 
     /// Notified when the display state changes. Receives the new
