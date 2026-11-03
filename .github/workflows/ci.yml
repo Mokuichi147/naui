@@ -308,19 +308,24 @@ jobs:
       # ブラウザを使うかは、ランナーが CHROMEDRIVER / GECKODRIVER の
       # どちらを見つけるかで決まるため、1 つずつ渡して 2 回走らせる。
       # DOM の実装差はここで拾う。
+      #
+      # wasm-bindgen-test-runner はドライバがポートを開くまで既定で 5 秒
+      # しか待たず、混んだランナーでは ChromeDriver が間に合わずに
+      # "driver failed to bind port during startup" で落ちた。
+      # WASM_BINDGEN_TEST_DRIVER_TIMEOUT で待つ時間を延ばす。
       - name: ブラウザテスト (Chrome)
         timeout-minutes: 10
         run: |
           driver="${CHROMEWEBDRIVER:-/usr/bin}/chromedriver"
           [ -x "$driver" ] || { echo "chromedriver が見つかりません: $driver" >&2; exit 1; }
-          CHROMEDRIVER="$driver" \
+          CHROMEDRIVER="$driver" WASM_BINDGEN_TEST_DRIVER_TIMEOUT=30 \
             cargo test --target wasm32-unknown-unknown -p naui-web
       - name: ブラウザテスト (Firefox)
         timeout-minutes: 10
         run: |
           driver="${GECKOWEBDRIVER:-/usr/bin}/geckodriver"
           [ -x "$driver" ] || { echo "geckodriver が見つかりません: $driver" >&2; exit 1; }
-          GECKODRIVER="$driver" \
+          GECKODRIVER="$driver" WASM_BINDGEN_TEST_DRIVER_TIMEOUT=30 \
             cargo test --target wasm32-unknown-unknown -p naui-web
       - name: Gallery を wasm へビルド
         run: ./build.sh
