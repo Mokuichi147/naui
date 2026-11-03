@@ -1265,6 +1265,8 @@ fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
     let view = canvas.native_view();
     view.layoutSubtreeIfNeeded();
     assert_eq!(canvas.size(), (120.0, 80.0), "指定した大きさになること");
+    // macOS 14 からの既定 (クリップしない) のままだと、面の外へ描いた線が見える。
+    assert!(view.clipsToBounds(), "面の外へ描いた分ははみ出さないこと");
 
     let bounds = view.bounds();
     let bitmap = view

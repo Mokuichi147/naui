@@ -209,7 +209,11 @@ impl CanvasView {
             wheel: WheelHandler::default(),
             tracking: RefCell::new(None),
         });
-        unsafe { msg_send![super(this), init] }
+        let this: Retained<Self> = unsafe { msg_send![super(this), init] };
+        // macOS 14 からは既定でクリップしないので、面の外へ描いた分がはみ出して
+        // 見えてしまう (ほかのバックエンドは面の大きさで切れる)。
+        this.setClipsToBounds(true);
+        this
     }
 
     fn emit_pointer(&self, phase: PointerPhase, event: &NSEvent, button: Option<PointerButton>) {
