@@ -48,6 +48,7 @@ mod file_drop;
 mod file_picker;
 mod file_saver;
 mod focus;
+mod group;
 mod interaction;
 mod keys;
 mod languages;
@@ -92,6 +93,7 @@ pub use editable_combo_box::EditableComboBox;
 pub use expander::Expander;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
+pub use group::{Group, Separator};
 #[doc(hidden)]
 pub use languages::override_preferred_languages_for_test;
 pub use layout::{Grid, Scroll, Spacer};
@@ -251,6 +253,18 @@ impl Ui {
     /// `Track::Fill`.
     pub fn spacer(&self) -> Result<Spacer> {
         Spacer::new()
+    }
+
+    /// A thin line that divides controls. `Horizontal` is a horizontal line (for
+    /// dividing a vertical stack), `Vertical` a vertical one.
+    pub fn separator(&self, orientation: Orientation) -> Result<Separator> {
+        Separator::new(orientation)
+    }
+
+    /// A frame with a heading around related controls. `text` is the heading; an empty
+    /// string leaves only the frame.
+    pub fn group(&self, text: &str) -> Result<Group> {
+        Group::new(text)
     }
 
     pub fn label(&self, text: &str) -> Result<Label> {

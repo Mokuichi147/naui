@@ -683,3 +683,20 @@ pub(crate) fn apply_padding(widget: &impl IsA<gtk::Widget>, padding: naui_core::
     widget.set_margin_bottom(to_px(padding.bottom));
     widget.set_margin_start(to_px(padding.left));
 }
+
+/// Like [`apply_padding`], but `left` and `right` stay on those physical sides in
+/// right-to-left text, where GTK puts the start margin on the right.
+///
+/// The widget's direction is read now, so call it again on `direction-changed`.
+pub(crate) fn apply_physical_padding(widget: &impl IsA<gtk::Widget>, padding: naui_core::Padding) {
+    let widget = widget.as_ref();
+    let (start, end) = if widget.direction() == gtk::TextDirection::Rtl {
+        (padding.right, padding.left)
+    } else {
+        (padding.left, padding.right)
+    };
+    widget.set_margin_top(to_px(padding.top));
+    widget.set_margin_end(to_px(end));
+    widget.set_margin_bottom(to_px(padding.bottom));
+    widget.set_margin_start(to_px(start));
+}

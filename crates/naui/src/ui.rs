@@ -1,11 +1,11 @@
 use crate::sys;
 use crate::{
     AdaptivePanes, Audio, Breadcrumbs, Button, Canvas, Checkbox, Clipboard, ColorPicker, ComboBox,
-    DatePicker, Dialog, Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Image,
-    Label, Link, List, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput, Popover,
-    PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Sheet, Sidebar, Slider, Spacer,
-    Spinner, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast, Toggle,
-    Toolbar, Tree, Video, Window,
+    DatePicker, Dialog, Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Group,
+    Image, Label, Link, List, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput,
+    Popover, PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Separator, Sheet, Sidebar,
+    Slider, Spacer, Spinner, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast,
+    Toggle, Toolbar, Tree, Video, Window,
 };
 use naui_core::{DatePickerMode, Orientation, Result, Settings, Tasks, Theme};
 
@@ -76,6 +76,20 @@ impl Ui {
     #[inline]
     pub fn spacer(&self) -> Result<Spacer> {
         self.0.spacer().map(Spacer)
+    }
+
+    /// A thin line that divides controls. `Horizontal` is a horizontal line (for
+    /// dividing a vertical stack), `Vertical` a vertical one.
+    #[inline]
+    pub fn separator(&self, orientation: Orientation) -> Result<Separator> {
+        self.0.separator(orientation).map(Separator)
+    }
+
+    /// A frame with a heading around related controls. `text` is the heading; an empty
+    /// string leaves only the frame.
+    #[inline]
+    pub fn group(&self, text: &str) -> Result<Group> {
+        self.0.group(text).map(Group)
     }
 
     #[inline]
