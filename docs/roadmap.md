@@ -226,13 +226,13 @@ internationalization and application layer tracks.
       `Fill` tracks hold no `Fill` child, their split is still left to
       `NSGridView`. A `Fill` track beside one with a capped child now gets its
       share instead of everything but the cap, as on Windows and the Web.
-- [ ] *(app)* **Message queue and the split of `update` and `render`.** Create the
-      crate with the model, message, `update` and `render`, and the queue that runs
-      them as described in [Application layer](#application-layer). Since `render` sets every
-      value each time, first check on each platform that a setter given the value
-      already shown does nothing: `set_text` on a focused text field must not move
-      the caret or break IME composition. Where it does something, naui's setter is
-      made to skip it, which also helps apps that do not use naui-app.
+- [x] *(app)* **Message queue and the split of `update` and `render`** (the
+      `naui-app` crate, `Program`, `App`, `Dispatch`, and `examples/todo`).
+      `GtkTextBuffer` replaced the whole text (moving the caret) and AppKit's
+      `setStringValue:` replaced the field editor's text (committing the IME
+      composition), so the setters of text fields, text areas, editable combo
+      boxes, number inputs and labels now skip a value equal to the one shown, on
+      all four platforms.
 
 ## P1: Do next
 

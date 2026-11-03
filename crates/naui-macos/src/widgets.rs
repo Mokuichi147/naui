@@ -194,6 +194,11 @@ impl Label {
     }
 
     pub fn set_text(&self, text: &str) {
+        // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
+        // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
+        if self.text() == text {
+            return;
+        }
         self.0.native.setStringValue(&NSString::from_str(text));
         // 文字が変われば要る大きさも変わる (折り返していれば行数ごと)。
         // 親の連なりへ伝えないと、`Grid` の `Auto` 行が前の高さのまま残る。
@@ -526,6 +531,11 @@ impl TextInput {
     }
 
     pub fn set_text(&self, text: &str) {
+        // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
+        // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
+        if self.text() == text {
+            return;
+        }
         self.0.native.setStringValue(&NSString::from_str(text));
     }
 
@@ -610,6 +620,11 @@ impl PasswordInput {
 
     /// Replaces the text. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
+        // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
+        // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
+        if self.text() == text {
+            return;
+        }
         self.0.native.setStringValue(&NSString::from_str(text));
     }
 
@@ -673,6 +688,11 @@ impl SearchInput {
 
     /// Replaces the text. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
+        // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
+        // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
+        if self.text() == text {
+            return;
+        }
         self.0.native.setStringValue(&NSString::from_str(text));
     }
 
@@ -899,6 +919,11 @@ impl TextArea {
 
     /// Replaces the text. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
+        // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
+        // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
+        if self.text() == text {
+            return;
+        }
         self.0.text_view.setString(&NSString::from_str(text));
         // setString: は textDidChange: を出さないので、ここで合わせる。
         self.0.placeholder.setHidden(!text.is_empty());

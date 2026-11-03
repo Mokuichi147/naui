@@ -744,6 +744,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "naui-app"
+version = "0.14.0"
+dependencies = [
+ "naui",
+]
+
+[[package]]
 name = "naui-core"
 version = "0.14.0"
 
@@ -1364,6 +1371,14 @@ dependencies = [
  "displaydoc",
  "serde_core",
  "zerovec",
+]
+
+[[package]]
+name = "todo"
+version = "0.14.0"
+dependencies = [
+ "naui",
+ "naui-app",
 ]
 
 [[package]]

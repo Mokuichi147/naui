@@ -1174,6 +1174,12 @@ Use [`TextInput`] for one line, [`TextArea`] for text with newlines,
 fields. Their APIs all have the same shape, and IME, copy / paste and undo are
 left to the native side.
 
+`set_text` with the text already shown does nothing, so the caret stays where it
+is and an IME composition in progress is not committed. The same holds for
+`EditableComboBox::set_text`, `NumberInput::set_value` and `Label::set_text`. An
+app can therefore set every value again after each change (as
+[naui-app](https://docs.rs/naui-app)'s `render` does) without disturbing the user.
+
 `TextInput` and `TextArea` can be made read-only with
 [`set_read_only(true)`](TextArea::set_read_only). Unlike `set_enabled(false)`, it
 is not dimmed and the text can be selected and copied, so use it for fields that

@@ -1290,6 +1290,16 @@ fn text_round_trip(ui: &Ui) -> Result<()> {
         "差し替え",
         "ネイティブの TextBox にも届くこと"
     );
+
+    // 表示中と同じ文字列は書き直さないので、カーソルの位置も変わらない。
+    let text_box = native::<TextBox>(&input);
+    text_box.SetSelectionStart(2).expect("カーソルの位置");
+    input.set_text("差し替え");
+    assert_eq!(
+        text_box.SelectionStart().expect("カーソルの位置"),
+        2,
+        "同じ文字列の set_text はカーソルを動かさないこと"
+    );
     Ok(())
 }
 
@@ -6345,6 +6355,17 @@ fn text_area_reports_newlines_as_lf(ui: &Ui) -> Result<()> {
     assert_eq!(area.text(), "一\n二");
     area.set_text("a\r\nb\rc");
     assert_eq!(area.text(), "a\nb\nc");
+
+    // 改行の書き方だけが違う文字列は同じ文字列として扱い、書き直さない。
+    // 書き直すとカーソルが先頭へ戻る。
+    let text_box = native::<TextBox>(&area);
+    text_box.SetSelectionStart(2).expect("カーソルの位置");
+    area.set_text("a\r\nb\rc");
+    assert_eq!(
+        text_box.SelectionStart().expect("カーソルの位置"),
+        2,
+        "\\r\\n を含む同じ文字列の set_text はカーソルを動かさないこと"
+    );
     Ok(())
 }
 

@@ -8,8 +8,10 @@ members = [
     "crates/naui-winui3",
     "crates/naui-gtk",
     "crates/naui",
+    "crates/naui-app",
     "examples/counter",
     "examples/i18n",
+    "examples/todo",
     "examples/gallery",
 ]
 exclude = ["tools/winui3-bindgen"]
@@ -29,6 +31,7 @@ naui-windows = { path = "crates/naui-windows", version = "0.14.0" }
 naui-winui3 = { path = "crates/naui-winui3", version = "0.14.0" }
 naui-gtk = { path = "crates/naui-gtk", version = "0.14.0" }
 naui = { path = "crates/naui", version = "0.14.0" }
+naui-app = { path = "crates/naui-app", version = "0.14.0" }
 
 [profile.release]
 opt-level = 3
