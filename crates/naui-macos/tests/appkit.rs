@@ -392,6 +392,10 @@ fn main() {
             "Stack に入れたグループが見出しの高さへ縮まず、中身の高さになる",
             group_in_stack_fits_its_content,
         ),
+        (
+            "中身より長い見出しのグループは見出しの幅を取り、指定した幅には従う",
+            group_keeps_the_heading_width,
+        ),
         ("グリッドが行と列を広げて子を置く", grid_places_children),
         (
             "グリッドの Auto の子が再レイアウトで横に広がらない",
@@ -3821,6 +3825,51 @@ fn group_in_stack_fits_its_content(ui: &Ui) -> Result<()> {
             "{orientation:?}: 中身はつぶれず自然な大きさになること: {frame:?} / {natural:?}"
         );
     }
+    Ok(())
+}
+
+/// A group whose heading is longer than its content is as wide as the heading, so
+/// the heading is not cut off. A width the app specifies still wins.
+fn group_keeps_the_heading_width(ui: &Ui) -> Result<()> {
+    let heading = "A heading much longer than the content";
+    let pane = ui.stack(Orientation::Horizontal)?;
+    let group = ui.group(heading)?;
+    group.set_child(&ui.checkbox("On")?);
+    pane.append(&group);
+    pane.append(&ui.label("次")?);
+
+    let root = pane.native_view();
+    root.setFrameSize(NSSize::new(600.0, 200.0));
+    root.layoutSubtreeIfNeeded();
+    let box_view = group.native_view();
+    let native = box_view.downcast_ref::<NSBox>().expect("NSBox であること");
+    let title = native.titleRect();
+    let frame = box_view.frame();
+    assert!(
+        frame.size.width + 0.5 >= title.origin.x + title.size.width,
+        "枠が見出しを収める幅になること: {frame:?} / {title:?}"
+    );
+    // 見出しの幅は中身より広いので、中身の自然な幅まで縮めてはいない。
+    assert!(frame.size.width > 120.0, "見出しの幅を取ること: {frame:?}");
+
+    // 見出しを短くすると、その幅まで縮められる。
+    group.set_text("短");
+    root.layoutSubtreeIfNeeded();
+    assert!(
+        box_view.frame().size.width < frame.size.width - 50.0,
+        "短い見出しでは狭くなること: {:?}",
+        box_view.frame()
+    );
+
+    // アプリが決めた幅は見出しより狭くても勝つ。
+    group.set_text(heading);
+    group.set_sizing(Sizing::fixed(80.0, 60.0));
+    root.layoutSubtreeIfNeeded();
+    assert!(
+        (box_view.frame().size.width - 80.0).abs() < 0.5,
+        "固定幅に従うこと: {:?}",
+        box_view.frame()
+    );
     Ok(())
 }
 
