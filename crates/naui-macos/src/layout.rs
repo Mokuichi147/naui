@@ -430,6 +430,10 @@ struct GridGrow {
     /// `Fill` tracks split the room by weight
     /// ([`ContentSizedGridView::share_grow`]).
     share: Option<Retained<NSLayoutConstraint>>,
+    /// The proportion `k` [`Self::share`] was made with. Kept here rather than read
+    /// back with `multiplier`: AppKit turns a proportion of 0 into a constraint on
+    /// the child alone, whose `multiplier` reads 1.
+    share_proportion: f64,
     cell: GridCell,
     horizontal: bool,
 }
@@ -777,8 +781,7 @@ impl ContentSizedGridView {
     ///
     /// A cell whose tracks take no share (`Auto`, `Fixed`, and `Fill` tracks that
     /// stay at what they need) has `k = 0`: its child wishes for what its tracks
-    /// need, the size they get (still written against the grid, with a proportion
-    /// of 0, so that `k` alone tells the constraints apart). The wish to grow
+    /// need, the size they get (a constraint on the child alone). The wish to grow
     /// cannot stay for it: "the grid less
     /// what the other tracks need" is more than its tracks get once the shares are
     /// larger than what their tracks need, and the solver would shrink the grid to
@@ -791,7 +794,11 @@ impl ContentSizedGridView {
     /// keeps the weights without naui recomputing anything, and only which tracks
     /// stay at what they need is decided on each layout. The proportion `k` cannot
     /// be changed on an existing constraint, so a new one replaces it when `k`
-    /// changes.
+    /// changes. The current `k` is kept in [`GridGrow::share_proportion`]: a
+    /// constraint made with `k = 0` reads back a `multiplier` of 1, and keeping it
+    /// when `k` becomes 1 would leave the child wishing for `c` alone, a negative
+    /// size. The solver can settle that either way, and may give one track
+    /// everything.
     fn share_grow(&self, grow: &mut GridGrow, split: &FillSplit) -> bool {
         let mut changed = false;
         if grow.grow.isActive() {
@@ -805,7 +812,7 @@ impl ContentSizedGridView {
         };
         let (k, constant) = split.cell(grow.start(), grow.span(), spacing);
         if let Some(share) = &grow.share {
-            if (share.multiplier() - k).abs() < 1e-9 {
+            if (grow.share_proportion - k).abs() < 1e-9 {
                 if (share.constant() - constant).abs() > 0.5 {
                     share.setConstant(constant);
                     changed = true;
@@ -820,14 +827,17 @@ impl ContentSizedGridView {
             }
             share.setActive(false);
         }
-        let share = if grow.horizontal {
-            grow.view
-                .widthAnchor()
-                .constraintEqualToAnchor_multiplier_constant(&self.widthAnchor(), k, constant)
+        let (child, grid) = if grow.horizontal {
+            (grow.view.widthAnchor(), self.widthAnchor())
         } else {
-            grow.view
-                .heightAnchor()
-                .constraintEqualToAnchor_multiplier_constant(&self.heightAnchor(), k, constant)
+            (grow.view.heightAnchor(), self.heightAnchor())
+        };
+        // 係数 0 でグリッドと結んでも、AppKit は子だけの制約 (相手なし、係数 1)
+        // に置き換える。置き換えに頼らず、初めから子だけの制約として書く。
+        let share = if k == 0.0 {
+            child.constraintEqualToConstant(constant)
+        } else {
+            child.constraintEqualToAnchor_multiplier_constant(&grid, k, constant)
         };
         // 上限付きの子は、上限まで伸びたいという希望と同じ弱さで取り分を望む。
         // 取り分が上限より小さい間は満たされるので、グリッドを押し広げない
@@ -844,6 +854,7 @@ impl ContentSizedGridView {
         ))));
         share.setActive(true);
         grow.share = Some(share);
+        grow.share_proportion = k;
         true
     }
 
@@ -1322,6 +1333,7 @@ impl Grid {
             grow,
             capped: max.is_some(),
             share: None,
+            share_proportion: 0.0,
             cell: *cell,
             horizontal,
         });

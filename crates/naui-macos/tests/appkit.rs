@@ -34,12 +34,13 @@ use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSBox, NSBoxType, NSButton, NSColor,
     NSColorSpace, NSComboBox, NSControlStateValueOff, NSControlStateValueOn, NSDatePicker,
     NSDatePickerElementFlags, NSEvent, NSEventMask, NSEventModifierFlags, NSEventType, NSImage,
-    NSImageScaling, NSImageView, NSLayoutConstraint, NSLayoutConstraintOrientation,
-    NSOutlineViewDelegate, NSResponder, NSScrollView, NSScrollerStyle, NSSearchField,
-    NSSecureTextField, NSSegmentedControl, NSStandardKeyBindingResponding, NSStepper, NSSwitch,
-    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSTintProminence,
-    NSTitlePosition, NSUserInterfaceItemIdentification, NSUserInterfaceLayoutDirection, NSView,
-    NSWindow, NSWindowStyleMask, NSWindowTitleVisibility,
+    NSImageScaling, NSImageView, NSLayoutAttribute, NSLayoutConstraint,
+    NSLayoutConstraintOrientation, NSLayoutRelation, NSOutlineViewDelegate, NSResponder,
+    NSScrollView, NSScrollerStyle, NSSearchField, NSSecureTextField, NSSegmentedControl,
+    NSStandardKeyBindingResponding, NSStepper, NSSwitch, NSTableViewDelegate, NSTextField,
+    NSTextInputClient, NSTextView, NSTintProminence, NSTitlePosition,
+    NSUserInterfaceItemIdentification, NSUserInterfaceLayoutDirection, NSView, NSWindow,
+    NSWindowStyleMask, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
     NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSDefaultRunLoopMode,
@@ -11930,6 +11931,14 @@ fn grid_spanning_child_respects_existing_minimums(ui: &Ui) -> Result<()> {
                                 room - spacing - expected_first,
                             )
                     });
+                    // 取り分の制約が満たせない形 (子の大きさが負など) だと、ソルバーは
+                    // どちらへ倒しても誤差が同じになり、片方へ全部を渡すことがある。
+                    // 大きさが期待どおりでも、満たせない希望が残っていないかを見る。
+                    let unsatisfied = unsatisfied_grid_grows(&[
+                        &grid.native_view(),
+                        &first.native_view(),
+                        &second.native_view(),
+                    ]);
                     let actual = extent(&content);
                     let first_size = extent(&first.native_view());
                     let second_size = extent(&second.native_view());
@@ -11956,10 +11965,15 @@ fn grid_spanning_child_respects_existing_minimums(ui: &Ui) -> Result<()> {
                             root.constraints(),
                         );
                     }
-                    seen.push((room, actual, first_size, second_size));
+                    seen.push((room, actual, first_size, second_size, unsatisfied));
                 }
                 window.close();
-                for (room, actual, first, second) in seen {
+                for (room, actual, first, second, unsatisfied) in seen {
+                    assert!(
+                        unsatisfied.is_empty(),
+                        "縦 {vertical}、またぐ子が先 {spanning_first}、すき間 {spacing}、要求 {room}: \
+                         満たされていない取り分の制約 {unsatisfied:?}"
+                    );
                     let available = room - spacing;
                     let expected_first = (available / 4.0).max(minimum);
                     assert!(
@@ -11974,6 +11988,46 @@ fn grid_spanning_child_respects_existing_minimums(ui: &Ui) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// The active wishes on grid children (`naui.grid.grow.*`, both the wish to grow and
+/// the share) that the current frames do not satisfy, found on `views`.
+fn unsatisfied_grid_grows(views: &[&NSView]) -> Vec<String> {
+    let extent = |item: Option<Retained<objc2::runtime::AnyObject>>, attribute| {
+        let view = item?.downcast::<NSView>().ok()?;
+        let size = view.frame().size;
+        match attribute {
+            NSLayoutAttribute::Width => Some(size.width),
+            NSLayoutAttribute::Height => Some(size.height),
+            _ => None,
+        }
+    };
+    let mut found = Vec::new();
+    for view in views {
+        for constraint in view.constraints().iter() {
+            let ours = constraint
+                .identifier()
+                .is_some_and(|id| id.to_string().starts_with("naui.grid.grow."));
+            if !ours || !constraint.isActive() || constraint.relation() != NSLayoutRelation::Equal {
+                continue;
+            }
+            let Some(first) = extent(
+                unsafe { constraint.firstItem() },
+                constraint.firstAttribute(),
+            ) else {
+                continue;
+            };
+            let second = extent(
+                unsafe { constraint.secondItem() },
+                constraint.secondAttribute(),
+            )
+            .map_or(0.0, |second| second * constraint.multiplier());
+            if (first - second - constraint.constant()).abs() > 0.5 {
+                found.push(format!("{constraint:?} (実際 {first})"));
+            }
+        }
+    }
+    found
 }
 
 /// The shares follow the window as it is resized, and capping a `Fill` child at its
