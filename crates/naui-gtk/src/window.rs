@@ -65,6 +65,18 @@ pub(crate) struct WindowInner {
     /// (window style classes change), so converting the default size (the normal size)
     /// back to content uses this one.
     normal_frame: Cell<Option<(f64, f64)>>,
+    /// The content size given to [`Window::set_size`] while out of the normal frame
+    /// (or waiting for the compositor to respond to maximizing or fullscreen),
+    /// requested again when coming back from out of it. X11 window managers return to
+    /// the size they remembered from before maximizing and ignore the default size
+    /// changed meanwhile. Kept while in the normal frame (a response may still come
+    /// late), and dropped once the size there changes from it (the user resized).
+    restore_size: Cell<Option<(f64, f64)>>,
+    /// It came back to the normal frame while waiting for another maximize or
+    /// fullscreen request, so `restore_size` is applied once that wait ends.
+    restore_due: Cell<bool>,
+    /// Whether [`Window::report_state`] last saw it out of the normal frame.
+    was_out_of_frame: Cell<bool>,
     /// The content size being refitted ([`Window::fit_after_layout`]).
     fit: Cell<Option<Fit>>,
     /// A per-frame callback for refitting is attached.
@@ -93,6 +105,9 @@ pub(crate) struct WindowInner {
     /// Fullscreen was requested, has not shown up in the compositor's state yet, and
     /// leaving it has not been requested either.
     fullscreen_requested: Cell<bool>,
+    /// Counts maximize and fullscreen requests, so that the wait for a response
+    /// ([`Window::await_state_response`]) only gives up on the latest one.
+    state_requests: Cell<u32>,
     /// The state to apply after leaving fullscreen has finished. Some compositors
     /// ignore a maximize request while fullscreen, so fullscreen is left first.
     after_fullscreen: Cell<Option<WindowState>>,
@@ -123,6 +138,10 @@ const FIT_RETRY_TICKS: u32 = 6;
 /// How long (microseconds) before giving up on refitting. Limited to right after
 /// showing so that it does not keep fighting the user's resizing.
 const FIT_LIMIT_US: i64 = 1_000_000;
+/// How long (milliseconds) to wait for the compositor to respond to a maximize or
+/// fullscreen request. Window managers that refuse it (or none at all, as in CI's
+/// Xvfb) never respond, so after this it is taken as ignored.
+const STATE_RESPONSE_LIMIT_MS: u64 = 1000;
 
 /// A top-level window.
 ///
@@ -183,6 +202,9 @@ impl Window {
             closing: Cell::new(false),
             initial_size: Cell::new(None),
             normal_frame: Cell::new(None),
+            restore_size: Cell::new(None),
+            restore_due: Cell::new(false),
+            was_out_of_frame: Cell::new(false),
             fit: Cell::new(None),
             fitting: Cell::new(false),
             on_state_change: StateHandler::default(),
@@ -192,6 +214,7 @@ impl Window {
             minimize_requested: Cell::new(false),
             maximize_requested: Cell::new(false),
             fullscreen_requested: Cell::new(false),
+            state_requests: Cell::new(0),
             after_fullscreen: Cell::new(None),
             state_handler: RefCell::new(None),
         }));
@@ -377,8 +400,14 @@ impl Window {
             return false;
         }
         let want = self.default_size_for(fit.target);
-        if native.default_size() != want || fit.ticks >= FIT_RETRY_TICKS {
+        if native.default_size() != want {
             native.set_default_size(want.0, want.1);
+            fit.ticks = 0;
+        } else if fit.ticks >= FIT_RETRY_TICKS {
+            // X11 の GDK は前に計算したのと同じ大きさを送り直さない
+            // (最大化の返事を待つ間に頼んだ大きさが、そのまま残っていることがある)。
+            // 1px ずらして頼み、次の確かめで頼んだ値へ戻す。
+            native.set_default_size(want.0 + 1, want.1);
             fit.ticks = 0;
         }
         self.0.fit.set(Some(fit));
@@ -472,6 +501,19 @@ impl Window {
             self.0.normal_frame.set(Some(self.frame_size()));
         }
         let size = self.size();
+        // 通常の枠で (返事待ちでも合わせ直し中でもなく) 覚えた大きさから
+        // 変わったなら、利用者が変えたので、後の復元へ持ち越さない。
+        if let Some(restore) = self.0.restore_size.get() {
+            let restore = (f64::from(to_px(restore.0)), f64::from(to_px(restore.1)));
+            if self.0.overlay.height() > 0
+                && size != restore
+                && !self.leaving_normal_frame()
+                && !self.0.restore_due.get()
+                && !self.0.fitting.get()
+            {
+                self.0.restore_size.set(None);
+            }
+        }
         if self.0.last_size.replace(size) != size {
             self.0.on_resize.emit(size);
         }
@@ -530,20 +572,35 @@ impl Window {
                 .is_some_and(|toplevel| toplevel.state().intersects(tiled))
     }
 
+    /// [`out_of_normal_frame`](Self::out_of_normal_frame), or maximizing or fullscreen
+    /// was requested and the compositor has not responded yet.
+    fn leaving_normal_frame(&self) -> bool {
+        self.out_of_normal_frame()
+            || self.0.maximize_requested.get()
+            || self.0.fullscreen_requested.get()
+    }
+
     /// The size and state to save, and to show it in next time. **The position is
     /// always `None`** (see [`position`](Self::position)).
     ///
     /// The size is that of the normal state. GTK4 keeps the size from before
     /// maximizing, going fullscreen or tiling as the window's default size, so while
-    /// in one of those it is converted from there. A minimized window reports the
-    /// state it returns to (maximized if it was maximized, as far as X11 tells).
+    /// in one of those it is converted from there. The size given to `set_size` there
+    /// (or while waiting for the compositor to respond to maximizing or fullscreen)
+    /// is reported as is. A minimized window reports the state it returns to
+    /// (maximized if it was maximized, as far as X11 tells).
     pub fn placement(&self) -> WindowPlacement {
-        let size = match self.0.initial_size.get() {
-            Some(size) => size,
-            None if self.out_of_normal_frame() => {
+        let restore = self
+            .0
+            .restore_size
+            .get()
+            .filter(|_| self.leaving_normal_frame() || self.0.restore_due.get());
+        let size = match (self.0.initial_size.get(), restore) {
+            (Some(size), _) | (None, Some(size)) => size,
+            (None, None) if self.out_of_normal_frame() => {
                 self.content_for_default_size(self.normal_frame_size())
             }
-            None => self.size(),
+            (None, None) => self.size(),
         };
         WindowPlacement {
             size,
@@ -706,13 +763,49 @@ impl Window {
             WindowState::Maximized => {
                 self.0.maximize_requested.set(true);
                 native.maximize();
+                self.await_state_response();
             }
             WindowState::Minimized => native.minimize(),
             WindowState::Fullscreen => {
                 self.0.fullscreen_requested.set(true);
                 native.fullscreen();
+                self.await_state_response();
             }
         }
+        // 返事待ちを取り消して通常の枠のままなら、待っていた大きさを当てる。
+        if self.0.restore_due.get() {
+            self.apply_restore_size();
+        }
+    }
+
+    /// Stops waiting for the maximize or fullscreen request just made after
+    /// [`STATE_RESPONSE_LIMIT_MS`]: by then the compositor has responded, or it is
+    /// taken as ignored (window managers that refuse it never respond, and a request
+    /// for the state it is already in gets no response either). A `restore_size` that
+    /// was waiting on it is applied then. Otherwise `restore_size` is left as is: the
+    /// size is already applied by `set_size`'s refit, and if the response comes late,
+    /// coming back from it still returns to that size.
+    fn await_state_response(&self) {
+        let request = self.0.state_requests.get().wrapping_add(1);
+        self.0.state_requests.set(request);
+        let weak = Rc::downgrade(&self.0);
+        glib::timeout_add_local_once(
+            std::time::Duration::from_millis(STATE_RESPONSE_LIMIT_MS),
+            move || {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let window = Window(inner);
+                if window.0.state_requests.get() != request {
+                    return;
+                }
+                window.0.maximize_requested.set(false);
+                window.0.fullscreen_requested.set(false);
+                if window.0.restore_due.get() {
+                    window.apply_restore_size();
+                }
+            },
+        );
     }
 
     /// Notified when the display state changes. Receives the new
@@ -757,6 +850,28 @@ impl Window {
             if let Some(next) = self.0.after_fullscreen.take() {
                 self.apply_state(next);
             }
+        }
+        // 通常の枠の外から戻ったときだけ、その間に頼まれた大きさを頼み直す。
+        let out = self.out_of_normal_frame();
+        if self.0.was_out_of_frame.replace(out) && !out {
+            self.apply_restore_size();
+        }
+    }
+
+    /// Requests `restore_size` again, back in the normal frame. While still waiting
+    /// for another maximize or fullscreen request, it is applied once that wait ends.
+    fn apply_restore_size(&self) {
+        if self.out_of_normal_frame() {
+            return;
+        }
+        if self.leaving_normal_frame() {
+            self.0.restore_due.set(true);
+            return;
+        }
+        self.0.restore_due.set(false);
+        if let Some(size) = self.0.restore_size.take() {
+            self.apply_default_size(size);
+            self.fit_after_layout(size);
         }
     }
 
@@ -859,7 +974,8 @@ impl Window {
     /// the header bar and menu bar strips are added. When called before it is on
     /// screen, it is shown at this size. While maximized, in fullscreen or tiled, the
     /// window keeps its frame and this becomes the size it returns to (GTK4 uses the
-    /// default size when it leaves those states).
+    /// default size when it leaves those states; X11 window managers return to the
+    /// size from before, so it is requested again once back in the normal frame).
     pub fn set_size(&self, width: f64, height: f64) {
         let size = (width.max(0.0), height.max(0.0));
         self.apply_default_size(size);
@@ -867,8 +983,16 @@ impl Window {
             // 表示するときに `show` が合わせる。
             self.0.initial_size.set(Some(size));
         } else {
+            // 通常の枠の外 (と、そこへ出る頼みの返事待ち) では、通常の枠へ
+            // 戻ったときに `report_state` が頼み直す。
+            let leaving = self.leaving_normal_frame();
+            self.0.restore_size.set(leaving.then_some(size));
+            if !leaving {
+                self.0.restore_due.set(false);
+            }
             // 帯を付け外した直後は、足した帯の高さが前のままなので、
-            // 並び直した後の実寸で確かめる。
+            // 並び直した後の実寸で確かめる。最大化などが当たればそこで止まり、
+            // コンポジタが頼みに応えなければこちらで合う。
             self.fit_after_layout(size);
         }
     }

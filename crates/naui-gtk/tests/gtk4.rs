@@ -439,6 +439,22 @@ fn main() {
             window_placement_keeps_the_normal_size,
         ),
         (
+            "最大化を頼んだ直後の set_size は最大化を解いたときの大きさになる",
+            window_size_set_while_maximize_is_pending,
+        ),
+        (
+            "応えてもらえない最大化の間の set_size は後の復元に持ち越さない",
+            window_size_is_not_carried_over_after_ignored_maximize,
+        ),
+        (
+            "最大化の間に最大化を頼み直しても、利用者が戻せば set_size の大きさになる",
+            window_size_applies_after_repeated_maximize,
+        ),
+        (
+            "最大化の返事が遅れて届いても set_size の大きさへ戻る",
+            window_size_applies_after_late_maximize,
+        ),
+        (
             "最小化して元に戻せる (X11)",
             window_minimize_round_trips,
         ),
@@ -10211,6 +10227,182 @@ fn window_placement_keeps_the_normal_size(ui: &Ui) -> Result<()> {
             state: WindowState::Normal,
         }
     );
+    window.close();
+    Ok(())
+}
+
+/// `set_size` right after requesting maximization, before the compositor responds,
+/// also becomes the size it returns to, and `placement` reports it from the start (X11 window managers return to the size from
+/// before maximizing, so it has to be requested again).
+///
+/// SKIPped where the window manager does not respond to maximizing or un-maximizing
+/// (CI's Xvfb).
+fn window_size_set_while_maximize_is_pending(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    let window = ui.window("返事待ちの大きさ", 380.0, 260.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.show();
+    // 並べ終わり、コンポジタから最初の状態が届くまで待つ。
+    spin_until(Duration::from_secs(2), || {
+        !toplevel_state(&window).is_empty() && window.size() == (380.0, 260.0)
+    });
+    tick(&window.native_window());
+
+    window.set_state(WindowState::Maximized);
+    window.set_size(400.0, 280.0);
+    assert_eq!(window.placement().size, (400.0, 280.0), "返事を待つ間");
+    spin_until(Duration::from_secs(2), || {
+        toplevel_state(&window).contains(gtk::gdk::ToplevelState::MAXIMIZED)
+    });
+    if window.state() != WindowState::Maximized {
+        skip("ウィンドウマネージャが最大化に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    tick(&window.native_window());
+    assert_eq!(window.placement().size, (400.0, 280.0), "最大化の間");
+
+    window.set_state(WindowState::Normal);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Normal && window.size() == (400.0, 280.0)
+    });
+    if window.state() != WindowState::Normal {
+        skip("ウィンドウマネージャが最大化の解除に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    assert_eq!(window.size(), (400.0, 280.0), "戻ると決めた大きさ");
+    window.close();
+    Ok(())
+}
+
+/// When the window manager does not respond to maximizing, the size given to
+/// `set_size` while waiting is applied once the wait gives up, and is not carried
+/// over: after the user resizes, requesting the normal state keeps the user's size.
+///
+/// Meaningful only where maximizing is never answered (CI's Xvfb, with no window
+/// manager); SKIPped where the window manager maximizes it. The user's resizing is
+/// stood in for by changing GTK's default size directly.
+fn window_size_is_not_carried_over_after_ignored_maximize(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    let window = ui.window("応えない最大化", 380.0, 260.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.show();
+    spin_until(Duration::from_secs(2), || window.size() == (380.0, 260.0));
+
+    window.set_state(WindowState::Maximized);
+    window.set_size(400.0, 280.0);
+    // 返事を待つのをあきらめ、合わせ直しも終わるまで待つ。
+    spin_until(Duration::from_millis(2200), || false);
+    if window.state() != WindowState::Normal {
+        skip("ウィンドウマネージャが最大化に応える環境 (応えない環境向けの確認)");
+        window.close();
+        return Ok(());
+    }
+    assert_eq!(window.size(), (400.0, 280.0), "頼んだ大きさ");
+
+    let native = window.native_window();
+    let (width, height) = native.default_size();
+    native.set_default_size(width + 20, height + 20);
+    spin_until(Duration::from_secs(2), || window.size() == (420.0, 300.0));
+    assert_eq!(window.size(), (420.0, 300.0), "利用者が変えた大きさ");
+
+    window.set_state(WindowState::Normal);
+    // 古い大きさを頼み直していれば、少し後で戻される。
+    spin_until(Duration::from_secs(1), || window.size() != (420.0, 300.0));
+    assert_eq!(window.size(), (420.0, 300.0), "利用者が変えた大きさのまま");
+    window.close();
+    Ok(())
+}
+
+/// Requesting maximization again while maximized gets no response (the state does
+/// not change), but once the user un-maximizes, the size given to `set_size` while
+/// maximized is still the one it returns to.
+///
+/// The user's un-maximizing is stood in for by GTK's `unmaximize` directly (naui's
+/// `set_state` withdraws the unanswered request itself). SKIPped where the window
+/// manager does not respond to maximizing or un-maximizing (CI's Xvfb).
+fn window_size_applies_after_repeated_maximize(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    let window = ui.window("頼み直した最大化", 380.0, 260.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.show();
+    // 並べ終わり、コンポジタから最初の状態が届くまで待つ。
+    spin_until(Duration::from_secs(2), || {
+        !toplevel_state(&window).is_empty() && window.size() == (380.0, 260.0)
+    });
+    tick(&window.native_window());
+
+    window.set_state(WindowState::Maximized);
+    spin_until(Duration::from_secs(2), || {
+        toplevel_state(&window).contains(gtk::gdk::ToplevelState::MAXIMIZED)
+    });
+    if window.state() != WindowState::Maximized {
+        skip("ウィンドウマネージャが最大化に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    window.set_state(WindowState::Maximized);
+    window.set_size(400.0, 280.0);
+    // 頼み直しの返事を待つのをあきらめるまで待つ。
+    spin_until(Duration::from_millis(1200), || false);
+
+    window.native_window().unmaximize();
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Normal && window.size() == (400.0, 280.0)
+    });
+    if window.state() != WindowState::Normal {
+        skip("ウィンドウマネージャが最大化の解除に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    assert_eq!(window.size(), (400.0, 280.0), "戻ると決めた大きさ");
+    window.close();
+    Ok(())
+}
+
+/// Even when the compositor's response to maximizing arrives after the wait for it
+/// has ended, un-maximizing returns to the size given to `set_size` while waiting.
+///
+/// A late response is stood in for by not running the main loop for longer than
+/// the wait right after the request, so the wait ends before the request reaches
+/// the window manager. SKIPped where the window manager does not respond to
+/// maximizing or un-maximizing (CI's Xvfb).
+fn window_size_applies_after_late_maximize(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    let window = ui.window("遅れた最大化", 380.0, 260.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.show();
+    // 並べ終わり、コンポジタから最初の状態が届くまで待つ。
+    spin_until(Duration::from_secs(2), || {
+        !toplevel_state(&window).is_empty() && window.size() == (380.0, 260.0)
+    });
+    tick(&window.native_window());
+
+    window.set_state(WindowState::Maximized);
+    window.set_size(400.0, 280.0);
+    std::thread::sleep(Duration::from_millis(1300));
+    spin_until(Duration::from_secs(2), || {
+        toplevel_state(&window).contains(gtk::gdk::ToplevelState::MAXIMIZED)
+    });
+    if window.state() != WindowState::Maximized {
+        skip("ウィンドウマネージャが最大化に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    tick(&window.native_window());
+    assert_eq!(window.placement().size, (400.0, 280.0), "最大化の間");
+
+    window.set_state(WindowState::Normal);
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Normal && window.size() == (400.0, 280.0)
+    });
+    if window.state() != WindowState::Normal {
+        skip("ウィンドウマネージャが最大化の解除に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    assert_eq!(window.size(), (400.0, 280.0), "戻ると決めた大きさ");
     window.close();
     Ok(())
 }
