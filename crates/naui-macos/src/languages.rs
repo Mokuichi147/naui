@@ -131,9 +131,10 @@ const APPLE_LANGUAGES: &str = "AppleLanguages";
 /// The languages go into the arguments domain (`NSArgumentDomain`), a volatile
 /// domain that is searched before the app's and the user's own and is never
 /// written to disk. This is what the per-app language of System Settings amounts
-/// to: AppKit and Core Text then choose glyphs, and the system frameworks their
-/// strings, for that language. Call it before `NSApplication` and the locale are
-/// first used. Public for tests.
+/// to: AppKit and Core Text then choose glyphs for that language. The strings the
+/// system frameworks carry are not switched by it (a file dialog stayed in the
+/// same language whichever tag was given). Call it before `NSApplication` and the
+/// locale are first used. Public for tests.
 #[doc(hidden)]
 pub fn apply_app_language(tag: Option<&str>) {
     let defaults = NSUserDefaults::standardUserDefaults();

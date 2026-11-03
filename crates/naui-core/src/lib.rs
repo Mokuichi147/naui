@@ -338,10 +338,11 @@ impl Settings {
     /// | `FrameworkElement.Language` on each window's content | `AppleLanguages` in the arguments domain (the per-app language of System Settings) | `PANGO_LANGUAGE` before GTK starts | `lang` on `<html>` |
     ///
     /// It is read once at startup: macOS and Linux cannot change it in a running
-    /// app. On macOS it also makes the strings the native controls carry
-    /// themselves (file dialogs, context menus) use that language, and
-    /// [`Ui::preferred_languages`] lists it first, as for an app whose language is
-    /// set in System Settings.
+    /// app. On macOS [`Ui::preferred_languages`] lists it first, as for an app
+    /// whose language is set in System Settings. The strings the native controls
+    /// carry themselves (file dialogs, context menus) are not switched by it on any
+    /// platform: AppKit chooses those itself, and a file dialog was seen to stay in
+    /// the same language whichever tag was given.
     ///
     /// [`Ui::preferred_languages`]: https://docs.rs/naui/latest/naui/struct.Ui.html#method.preferred_languages
     pub fn language(mut self, tag: impl Into<String>) -> Self {

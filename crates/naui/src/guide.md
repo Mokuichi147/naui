@@ -263,9 +263,10 @@ let settings = Settings::new("notes").language("ja-JP");
 
 Only the Web and Windows can take a language per element; macOS and Linux have it
 only per run of text, or for the whole app. So naui takes one language for the
-whole app, once at startup. On macOS the native controls' own strings (file
-dialogs, context menus) then follow it as well, and [`Ui::preferred_languages`]
-lists it first; elsewhere they stay in the OS language.
+whole app, once at startup. On macOS [`Ui::preferred_languages`] also lists it
+first. The native controls' own strings (file dialogs, context menus) are not
+switched by it: on macOS AppKit chooses them itself, and elsewhere they stay in the
+OS language.
 
 ## Layout and size
 

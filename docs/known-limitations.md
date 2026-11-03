@@ -54,8 +54,10 @@ that shape are covered in
   AppKit and Core Text the locale). It applies to the whole app: no platform but
   the Web and Windows can take a language per widget. On Windows naui sets it on each
   window's content; a `Dialog` or `Sheet`, which WinUI shows in a separate layer,
-  is not given it. On macOS it also switches the native
-  controls' own strings and is listed first by `Ui::preferred_languages`.
+  is not given it. On macOS it is listed first by `Ui::preferred_languages`, but
+  the native controls' own strings are not switched by it: AppKit chooses them
+  itself, and the file dialog stayed in Japanese for `ja-JP`, `en-US` and `zh-CN`
+  alike in an app bundle whose development region is Japanese.
 - `Ui::on_preferred_languages_change` is never called on Linux, which decides the
   languages from environment variables at startup. Elsewhere it is called only
   when the list itself changes: a change of region or format alone does not call
