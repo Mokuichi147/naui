@@ -248,6 +248,10 @@ fn main() {
             group_padding_spaces_the_child,
         ),
         (
+            "右から左の文字でも、グループの余白の左右は物理的な左右のまま",
+            group_padding_stays_physical_right_to_left,
+        ),
+        (
             "スタックの余白が中身を狭める",
             stack_padding_shrinks_content,
         ),
@@ -2630,6 +2634,39 @@ fn group_padding_spaces_the_child(ui: &Ui) -> Result<()> {
     group.set_padding(Padding::symmetric(4.0, 20.0));
     let (_, custom) = measure_width(&bin);
     assert_eq!(custom - bare, 40);
+    Ok(())
+}
+
+/// The padding's `left` and `right` are the physical sides, also in right-to-left
+/// text, where GTK puts the start margin on the right.
+fn group_padding_stays_physical_right_to_left(ui: &Ui) -> Result<()> {
+    let group = ui.group("")?;
+    let label = ui.label("あ")?;
+    group.set_child(&label);
+    group.set_padding(Padding {
+        top: 2.0,
+        right: 20.0,
+        bottom: 2.0,
+        left: 4.0,
+    });
+    let frame = bin_of(&group)
+        .first_child()
+        .and_downcast::<gtk::Frame>()
+        .expect("GtkFrame");
+    let holder = frame.child().expect("余白を持つ AdwBin");
+    assert_eq!((holder.margin_start(), holder.margin_end()), (4, 20));
+
+    // 向きが変わったら start と end を入れ替える。GTK4 の向きは親から継がれず、
+    // 余白は AdwBin 自身の向きで start と end が決まるので、AdwBin の向きを変える。
+    holder.set_direction(gtk::TextDirection::Rtl);
+    assert_eq!((holder.margin_start(), holder.margin_end()), (20, 4));
+    group.set_padding(Padding {
+        left: 1.0,
+        ..Padding::symmetric(0.0, 8.0)
+    });
+    assert_eq!((holder.margin_start(), holder.margin_end()), (8, 1));
+    holder.set_direction(gtk::TextDirection::Ltr);
+    assert_eq!((holder.margin_start(), holder.margin_end()), (1, 8));
     Ok(())
 }
 

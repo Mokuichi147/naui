@@ -38,8 +38,8 @@ use objc2_app_kit::{
     NSOutlineViewDelegate, NSResponder, NSScrollView, NSScrollerStyle, NSSearchField,
     NSSecureTextField, NSSegmentedControl, NSStandardKeyBindingResponding, NSStepper, NSSwitch,
     NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSTintProminence,
-    NSTitlePosition, NSUserInterfaceItemIdentification, NSView, NSWindow, NSWindowStyleMask,
-    NSWindowTitleVisibility,
+    NSTitlePosition, NSUserInterfaceItemIdentification, NSUserInterfaceLayoutDirection, NSView,
+    NSWindow, NSWindowStyleMask, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
     NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents, NSDefaultRunLoopMode,
@@ -372,6 +372,10 @@ fn main() {
         (
             "グループが NSBox の枠になり、見出しと余白の内側に中身を置く",
             group_frames_its_child,
+        ),
+        (
+            "右から左の文字でも、グループの余白の左右は物理的な左右のまま",
+            group_padding_stays_physical_right_to_left,
         ),
         ("グリッドが行と列を広げて子を置く", grid_places_children),
         (
@@ -3584,6 +3588,41 @@ fn group_frames_its_child(ui: &Ui) -> Result<()> {
     let next = ui.label("次")?;
     group.set_child(&next);
     assert!(unsafe { body.native_view().superview() }.is_none());
+    Ok(())
+}
+
+/// The padding's `left` and `right` are the physical sides, also in right-to-left
+/// text, the same as on Windows and the Web.
+fn group_padding_stays_physical_right_to_left(ui: &Ui) -> Result<()> {
+    let group = ui.group("")?;
+    let body = ui.stack(Orientation::Vertical)?;
+    body.append(&ui.label("中身")?);
+    group.set_child(&body);
+    group.set_padding(Padding {
+        top: 2.0,
+        right: 20.0,
+        bottom: 2.0,
+        left: 4.0,
+    });
+
+    let view = group.native_view();
+    let native = view.downcast_ref::<NSBox>().expect("NSBox であること");
+    let content = native.contentView().expect("contentView");
+    for view in [view.as_ref(), &*content, &*body.native_view()] {
+        view.setUserInterfaceLayoutDirection(NSUserInterfaceLayoutDirection::RightToLeft);
+    }
+    view.setFrameSize(NSSize::new(300.0, 200.0));
+    view.layoutSubtreeIfNeeded();
+    let inside = content.frame();
+    let frame = body.native_view().frame();
+    assert!(
+        (frame.origin.x - 4.0).abs() < 0.5,
+        "左の余白は left のまま: {frame:?}"
+    );
+    assert!(
+        (inside.size.width - frame.size.width - 24.0).abs() < 0.5,
+        "右の余白は right のまま: {inside:?} / {frame:?}"
+    );
     Ok(())
 }
 

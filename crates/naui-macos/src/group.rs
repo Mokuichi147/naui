@@ -12,7 +12,10 @@
 //!
 //! A group's content is placed in the box's `contentView` with constraints. The
 //! box's own margins are 0 and the padding is the constants of those constraints,
-//! because `contentViewMargins` can only be the same on both sides.
+//! because `contentViewMargins` can only be the same on both sides. The padding
+//! insets a layout guide by its physical sides (`left` / `right`), the same as on
+//! Windows and the Web, and the content is tied to the guide's leading and trailing
+//! edges, so that in right-to-left text it still starts on the leading side.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -20,7 +23,7 @@ use std::rc::Rc;
 use objc2::rc::Retained;
 use objc2::{MainThreadMarker, Message};
 use objc2_app_kit::{
-    NSBox, NSBoxType, NSLayoutConstraint, NSLayoutPriority, NSTitlePosition, NSView,
+    NSBox, NSBoxType, NSLayoutConstraint, NSLayoutGuide, NSLayoutPriority, NSTitlePosition, NSView,
 };
 use objc2_foundation::{NSArray, NSSize, NSString};
 
@@ -72,10 +75,12 @@ impl Separator {
 
 struct GroupInner {
     native: Retained<NSBox>,
+    /// The inside of the box less the padding, on the box's `contentView`.
+    inset: Retained<NSLayoutGuide>,
     /// The content's handle. Held to keep it alive along with its trampolines.
     child: RefCell<Option<Box<dyn Widget>>>,
-    /// The constraints placing the content in the box. Recreated when it is replaced
-    /// or the padding changes.
+    /// The constraints placing the guide and the content in the box. Recreated when
+    /// the content is replaced or the padding changes.
     constraints: RefCell<Vec<Retained<NSLayoutConstraint>>>,
     padding: Cell<Padding>,
 }
@@ -97,13 +102,19 @@ impl Group {
         let native = NSBox::new(mtm);
         native.setBoxType(NSBoxType::Primary);
         native.setContentViewMargins(NSSize::new(0.0, 0.0));
+        let inset = NSLayoutGuide::new();
+        if let Some(content) = native.contentView() {
+            content.addLayoutGuide(&inset);
+        }
         let this = Self(Rc::new(GroupInner {
             native,
+            inset,
             child: RefCell::new(None),
             constraints: RefCell::new(Vec::new()),
             padding: Cell::new(naui_core::DEFAULT_GROUP_PADDING),
         }));
         this.set_text(text);
+        this.0.place_child();
 
         // 中身の指定があとから変わったときに張り直す。最大の大きさは
         // 制約の強さに関わるので、中身の制約を作り直す。
@@ -139,6 +150,8 @@ impl Group {
 
     /// The space between the frame and the content. The default is
     /// [`DEFAULT_GROUP_PADDING`](naui_core::DEFAULT_GROUP_PADDING).
+    ///
+    /// `left` and `right` are the physical sides, also in right-to-left text.
     pub fn set_padding(&self, padding: Padding) {
         self.0.padding.set(padding);
         self.0.place_child();
@@ -165,48 +178,64 @@ impl Group {
 impl GroupInner {
     /// Ties the content to the inside of the box, `padding` away from its edges.
     ///
-    /// The leading and top edges are fixed. The trailing and bottom edges may not
-    /// pass the inside and want to reach it just below required, so content with a
-    /// maximum stops there instead of breaking the constraints.
+    /// The padding is on the physical sides: `left` stays on the left in
+    /// right-to-left text too. The content's leading and top edges are fixed. The
+    /// trailing and bottom edges may not pass the inside and want to reach it just
+    /// below required, so content with a maximum stops there instead of breaking the
+    /// constraints.
     fn place_child(&self) {
         let mut constraints = self.constraints.borrow_mut();
         if !constraints.is_empty() {
             NSLayoutConstraint::deactivateConstraints(&NSArray::from_retained_slice(&constraints));
             constraints.clear();
         }
-        let Some(child) = self
-            .child
-            .borrow()
-            .as_ref()
-            .map(|child| child.native_view())
-        else {
-            return;
-        };
         let Some(content) = self.native.contentView() else {
             return;
         };
         let padding = self.padding.get();
-        let leading = child
-            .leadingAnchor()
-            .constraintEqualToAnchor_constant(&content.leadingAnchor(), padding.left);
-        let top = child
-            .topAnchor()
-            .constraintEqualToAnchor_constant(&content.topAnchor(), padding.top);
-        let trailing_limit = child
-            .trailingAnchor()
-            .constraintLessThanOrEqualToAnchor_constant(&content.trailingAnchor(), -padding.right);
-        let bottom_limit = child
-            .bottomAnchor()
-            .constraintLessThanOrEqualToAnchor_constant(&content.bottomAnchor(), -padding.bottom);
-        let trailing = child
-            .trailingAnchor()
-            .constraintEqualToAnchor_constant(&content.trailingAnchor(), -padding.right);
-        let bottom = child
-            .bottomAnchor()
-            .constraintEqualToAnchor_constant(&content.bottomAnchor(), -padding.bottom);
-        trailing.setPriority(crate::layout::CROSS_FILL_PRIORITY);
-        bottom.setPriority(crate::layout::CROSS_FILL_PRIORITY);
-        constraints.extend([leading, top, trailing_limit, bottom_limit, trailing, bottom]);
+        let inset = &self.inset;
+        constraints.extend([
+            inset
+                .leftAnchor()
+                .constraintEqualToAnchor_constant(&content.leftAnchor(), padding.left),
+            inset
+                .topAnchor()
+                .constraintEqualToAnchor_constant(&content.topAnchor(), padding.top),
+            inset
+                .rightAnchor()
+                .constraintEqualToAnchor_constant(&content.rightAnchor(), -padding.right),
+            inset
+                .bottomAnchor()
+                .constraintEqualToAnchor_constant(&content.bottomAnchor(), -padding.bottom),
+        ]);
+        if let Some(child) = self
+            .child
+            .borrow()
+            .as_ref()
+            .map(|child| child.native_view())
+        {
+            let leading = child
+                .leadingAnchor()
+                .constraintEqualToAnchor(&inset.leadingAnchor());
+            let top = child
+                .topAnchor()
+                .constraintEqualToAnchor(&inset.topAnchor());
+            let trailing_limit = child
+                .trailingAnchor()
+                .constraintLessThanOrEqualToAnchor(&inset.trailingAnchor());
+            let bottom_limit = child
+                .bottomAnchor()
+                .constraintLessThanOrEqualToAnchor(&inset.bottomAnchor());
+            let trailing = child
+                .trailingAnchor()
+                .constraintEqualToAnchor(&inset.trailingAnchor());
+            let bottom = child
+                .bottomAnchor()
+                .constraintEqualToAnchor(&inset.bottomAnchor());
+            trailing.setPriority(crate::layout::CROSS_FILL_PRIORITY);
+            bottom.setPriority(crate::layout::CROSS_FILL_PRIORITY);
+            constraints.extend([leading, top, trailing_limit, bottom_limit, trailing, bottom]);
+        }
         NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&constraints));
         drop(constraints);
         crate::layout::invalidate_ancestors(&self.native);

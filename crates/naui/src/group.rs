@@ -37,6 +37,8 @@ impl Group {
 
     /// The space between the frame and the content. The default is
     /// [`DEFAULT_GROUP_PADDING`](naui_core::DEFAULT_GROUP_PADDING).
+    ///
+    /// `left` and `right` are the physical sides, also in right-to-left text.
     #[inline]
     pub fn set_padding(&self, padding: Padding) {
         self.0.set_padding(padding)

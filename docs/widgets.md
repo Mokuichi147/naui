@@ -340,9 +340,10 @@ collected in [Known limitations](known-limitations.md).
   disclosure `NSButton` (the chevron is an SF Symbol) and an `NSStackView`.
 - **`Separator` / `Group`**: Both are `NSBox`. A separator box takes its direction
   from its frame, so its thickness is held at 1 pt by a constraint below required
-  (a size the app specifies wins). A group's padding is the constants of the
-  constraints placing the content in the box's `contentView`, because
-  `contentViewMargins` can only be the same on both sides. An empty heading sets
+  (a size the app specifies wins). A group's padding insets a layout guide in the
+  box's `contentView` by its physical left and right, because
+  `contentViewMargins` can only be the same on both sides; the content is tied to
+  the guide's leading and trailing edges. An empty heading sets
   `NSNoTitle`, since `NSBox` keeps the title's height even for an empty title.
 - **`Toolbar`**: Since items are identified by index, "Customize Toolbar"
   (rearranging by the user) is turned off. Separators follow macOS conventions with
@@ -436,7 +437,8 @@ collected in [Known limitations](known-limitations.md).
   cell (margins, `halign` / `valign`).
 - **`Group`**: A `GtkFrame`, whose child is an `AdwBin` holding the padding as its
   margins, so that moving the content elsewhere does not carry the padding with
-  it.
+  it. The padding's `left` and `right` stay physical: in right-to-left text the
+  start and end margins are swapped.
 - **`SplitView`**: A `GtkPaned`. The panes' minimum sizes are held by a container
   wrapped around each pane, so they do not conflict with the `size_request` the app
   specifies with `Sizing`.

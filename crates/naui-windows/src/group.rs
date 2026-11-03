@@ -198,6 +198,8 @@ impl Group {
 
     /// The space between the card's edge and the content. The default is
     /// [`DEFAULT_GROUP_PADDING`](naui_core::DEFAULT_GROUP_PADDING).
+    ///
+    /// `left` and `right` are the physical sides, also in right-to-left text.
     pub fn set_padding(&self, padding: Padding) {
         let _ = self.0.card.SetPadding(thickness(padding));
     }
