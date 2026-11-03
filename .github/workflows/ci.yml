@@ -62,7 +62,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
-        run: cargo build -p naui-core -p naui-macos -p naui -p counter -p i18n -p gallery
+        run: cargo build -p naui-core -p naui-macos -p naui -p naui-app -p counter -p i18n -p todo -p gallery
       # AppKit の統合テストは harness = false の自前ランナーで、
       # ネイティブのコントロールを実際に作って操作する。
       #
@@ -71,7 +71,7 @@ jobs:
       # 測る。片方でしか出ない崩れを CI で拾えるようにするため。
       - name: テスト
         timeout-minutes: 10
-        run: cargo test -p naui-core -p naui-macos -p naui
+        run: cargo test -p naui-core -p naui-macos -p naui -p naui-app
 
       # 翻訳の例の、言語の選び方と張り直しの単体テスト (UI を作らない)。
       - name: テスト (examples/i18n)
@@ -96,11 +96,11 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
-        run: cargo build -p naui-core -p naui-winui3 -p naui-windows -p naui -p counter -p i18n -p gallery
+        run: cargo build -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app -p counter -p i18n -p todo -p gallery
       # 他の環境と同じく、バックエンドのクレートまで lint をかける。
       # naui-windows は WinRT の生ポインタを触るので、警告を残さない。
       - name: clippy
-        run: cargo clippy -p naui-core -p naui-winui3 -p naui-windows -p naui --all-targets -- -D warnings
+        run: cargo clippy -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app -p todo --all-targets -- -D warnings
       # ランタイムを同梱する経路 (build.rs と naui-winui3::self_contained) は
       # フィーチャーを付けたときだけ組み込まれる。
       - name: clippy (ランタイム同梱)
@@ -111,7 +111,7 @@ jobs:
         run: cargo build -p gallery --features self-contained
       # docs.rs は Windows 向けにこのクレート群を文書化するので、ここで見る。
       - name: ドキュメント
-        run: cargo doc --no-deps -p naui-core -p naui-winui3 -p naui-windows -p naui
+        run: cargo doc --no-deps -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app
         env:
           RUSTDOCFLAGS: -D warnings
       # WinUI 3 のコントロールは Windows SDK ではなく Windows App SDK に
@@ -138,7 +138,7 @@ jobs:
       # 入って本物のコントロールを作り、UI オートメーション経由で操作する。
       - name: テスト
         timeout-minutes: 10
-        run: cargo test -p naui-core -p naui-winui3 -p naui-windows -p naui
+        run: cargo test -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app
       # 同じテストを、exe の隣へ同梱したランタイムで走らせる。build.rs が
       # nuget.org から部品を取ってきてテストの exe の隣 (`target/debug/deps/`)
       # へ並べるので、naui はフレームワークパッケージではなくそちらを使う。
@@ -263,7 +263,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
-        run: cargo build -p naui-core -p naui-gtk -p naui -p counter -p i18n -p gallery
+        run: cargo build -p naui-core -p naui-gtk -p naui -p naui-app -p counter -p i18n -p todo -p gallery
       # GTK4 はディスプレイを要求する。libadwaita は D-Bus のセッションバスから
       # 配色設定を読むため、dbus-run-session も通す。
       - name: テスト
@@ -271,7 +271,7 @@ jobs:
         run: |
           xvfb-run -a --server-args="-screen 0 1280x1024x24" \
             dbus-run-session -- \
-            cargo test -p naui-core -p naui-gtk -p naui
+            cargo test -p naui-core -p naui-gtk -p naui -p naui-app
 
   web:
     name: Web (wasm / DOM)
@@ -296,7 +296,7 @@ jobs:
           tool: wasm-bindgen-cli@${{ steps.wb.outputs.version }}
       # __api_contract がバックエンド間のシグネチャのずれを型検査で拾う。
       - name: API 互換性を確認
-        run: cargo check --target wasm32-unknown-unknown -p naui-core -p naui-web -p naui
+        run: cargo check --target wasm32-unknown-unknown -p naui-core -p naui-web -p naui -p naui-app
       # Web バックエンドはウィジェットを自前で描かず、ブラウザの挙動
       # (`<label>` を押すとチェックが入る、同じ name のラジオが排他になる、
       # Flexbox が子を並べる) にそのまま乗っている。そこは実ブラウザの上

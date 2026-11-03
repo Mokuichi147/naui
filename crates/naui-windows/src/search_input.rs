@@ -132,6 +132,11 @@ impl SearchInput {
 
     /// Replaces the text. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
+        // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
+        // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
+        if self.text() == text {
+            return;
+        }
         let _ = self.0.native.SetText(&HSTRING::from(text));
     }
 

@@ -338,6 +338,10 @@ fn main() {
             app_language_goes_into_the_arguments_domain,
         ),
         (
+            "表示中と同じ文字列の set_text はカーソルも変換中の文字も動かさない",
+            set_text_with_the_same_text_keeps_the_composition,
+        ),
+        (
             "Stack へ差し込んでも外しても向きを変えても入力欄のフォーカスと変換中の文字が残る",
             stack_insert_keeps_focus,
         ),
@@ -934,6 +938,10 @@ fn main() {
         (
             "数値入力の値がネイティブと往復する",
             number_input_value_round_trips,
+        ),
+        (
+            "丸めると表示中と同じになる set_value は数値入力を書き直さない",
+            number_input_skips_values_equal_after_rounding,
         ),
         (
             "数値入力が小数桁と範囲を守る",
@@ -2995,6 +3003,72 @@ fn app_language_goes_into_the_arguments_domain(_ui: &Ui) -> Result<()> {
     assert!(after
         .objectForKey(&NSString::from_str("AppleLanguages"))
         .is_none());
+    Ok(())
+}
+
+/// Setting the text a field already shows does nothing: the caret stays and the IME
+/// composition is not committed. An app that sets every value on every update (as
+/// naui-app's `render` does) relies on this.
+fn set_text_with_the_same_text_keeps_the_composition(ui: &Ui) -> Result<()> {
+    let window = ui.window("同じ文字列", 320.0, 200.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let field = ui.text_input("あいう")?;
+    field.set_sizing(Sizing::fill_width());
+    let area = ui.text_area("えお")?;
+    area.set_sizing(Sizing::fixed(200.0, 60.0));
+    root.append(&field);
+    root.append(&area);
+    window.set_child(&root);
+    window.show();
+
+    let field_view: Retained<NSTextField> = field
+        .native_view()
+        .downcast()
+        .expect("NSTextField であること");
+    assert!(field.request_focus());
+    let editor = field_view
+        .currentEditor()
+        .and_then(|editor| editor.downcast::<NSTextView>().ok())
+        .expect("入力欄が編集中になること");
+    editor.setSelectedRange(NSRange::new(1, 0));
+    unsafe {
+        editor.setMarkedText_selectedRange_replacementRange(
+            &NSString::from_str("か"),
+            NSRange::new(1, 0),
+            NSRange::new(NSNotFound as usize, 0),
+        )
+    };
+    let shown = field.text();
+    let selection = editor.selectedRange();
+    field.set_text(&shown);
+    assert!(
+        unsafe { editor.hasMarkedText() },
+        "同じ文字列では変換中の文字が残ること"
+    );
+    assert_eq!(editor.selectedRange(), selection, "カーソルが動かないこと");
+
+    assert!(area.request_focus());
+    let text_view = window
+        .native_window()
+        .firstResponder()
+        .and_then(|r| r.downcast::<NSTextView>().ok())
+        .expect("NSTextView");
+    text_view.setSelectedRange(NSRange::new(1, 0));
+    unsafe {
+        text_view.setMarkedText_selectedRange_replacementRange(
+            &NSString::from_str("き"),
+            NSRange::new(1, 0),
+            NSRange::new(NSNotFound as usize, 0),
+        )
+    };
+    let selection = text_view.selectedRange();
+    area.set_text(&area.text());
+    assert!(
+        unsafe { text_view.hasMarkedText() },
+        "複数行でも同じ文字列では変換中の文字が残ること"
+    );
+    assert_eq!(text_view.selectedRange(), selection);
+    window.close();
     Ok(())
 }
 
@@ -10523,6 +10597,31 @@ fn number_input_value_round_trips(ui: &Ui) -> Result<()> {
     number.set_enabled(false);
     assert!(!number.native_field().isEnabled());
     assert!(!number.native_stepper().isEnabled());
+    Ok(())
+}
+
+/// A value that rounds to the one shown does not rewrite the field. An app that
+/// sets every value on every update (as naui-app's `render` does) may hold a finer
+/// value than the field shows, and rewriting would move the caret mid-edit.
+fn number_input_skips_values_equal_after_rounding(ui: &Ui) -> Result<()> {
+    let number = ui.number_input(0.0)?;
+    number.set_step(0.1);
+    number.set_decimals(1);
+    number.set_value(12.34);
+    assert_eq!(number.value(), 12.3);
+
+    // 書き直されたかどうかを見分けるため、通知を出さずに表示だけを変えておく。
+    let field = number.native_field();
+    field.setStringValue(&NSString::from_str("12.30"));
+    number.set_value(12.34);
+    assert_eq!(
+        field.stringValue().to_string(),
+        "12.30",
+        "丸めた値が同じなら書き直さないこと"
+    );
+    number.set_value(12.36);
+    assert_eq!(number.value(), 12.4);
+    assert_eq!(field.stringValue().to_string(), "12.4");
     Ok(())
 }
 

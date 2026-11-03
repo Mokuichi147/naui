@@ -151,6 +151,10 @@ fn main() {
             number_input_value_round_trips,
         ),
         (
+            "丸めると表示中と同じになる set_value は数値入力を書き直さない",
+            number_input_skips_values_equal_after_rounding,
+        ),
+        (
             "数値入力が小数桁と刻みと範囲を GtkSpinButton へ渡す",
             number_input_applies_the_spec,
         ),
@@ -234,6 +238,10 @@ fn main() {
             tabs_do_not_widen_with_the_number_of_tabs,
         ),
         ("大きさを指定し直すと以前の指定が消える", sizing_is_replaced),
+        (
+            "表示中と同じ文字列の set_text はカーソルを動かさない",
+            set_text_with_the_same_text_keeps_the_caret,
+        ),
         ("スペーサーが両方向に広がる", spacer_expands),
         (
             "区切り線が GtkSeparator になり、引いた向きいっぱいに伸びる",
@@ -1881,6 +1889,32 @@ fn number_input_value_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// A value that rounds to the one shown does not rewrite the field. An app that
+/// sets every value on every update (as naui-app's `render` does) may hold a finer
+/// value than the field shows, and rewriting would move the caret mid-edit.
+fn number_input_skips_values_equal_after_rounding(ui: &Ui) -> Result<()> {
+    let number = ui.number_input(0.0)?;
+    number.set_step(0.1);
+    number.set_decimals(1);
+    number.set_value(12.34);
+    assert_eq!(number.value(), 12.3);
+
+    // 書き直されたかどうかを見分けるため、値の変わらない表示へ変えておく。
+    // `GtkSpinButton` は同じ値の `set_value` でも表示を整え直す。
+    // 数字だけを受け付ける欄は小数桁を超える打鍵を丸ごと拒むので、
+    // 桁数はそのままで頭に 0 を足す。
+    let native: gtk::SpinButton = number.native_widget().downcast().expect("GtkSpinButton");
+    native.set_text("012.3");
+    assert_eq!(native.text(), "012.3");
+    assert_eq!(number.value(), 12.3);
+    number.set_value(12.34);
+    assert_eq!(native.text(), "012.3", "丸めた値が同じなら書き直さないこと");
+    number.set_value(12.36);
+    assert_eq!(number.value(), 12.4);
+    assert_eq!(native.value(), 12.4);
+    Ok(())
+}
+
 /// Decimal places, step and range apply both to the `GtkSpinButton` and to naui's
 /// value.
 fn number_input_applies_the_spec(ui: &Ui) -> Result<()> {
@@ -2554,6 +2588,33 @@ fn sizing_is_replaced(ui: &Ui) -> Result<()> {
 
     button.set_sizing(Sizing::fixed(120.0, 40.0));
     assert_eq!(measure_width(&bin), (120, 120));
+    Ok(())
+}
+
+/// Setting the text a field already shows does nothing: the caret stays. An app
+/// that sets every value on every update (as naui-app's `render` does) relies on
+/// this. `GtkText` already skips an equal string; `GtkTextBuffer` would replace it
+/// all and put the caret at the end.
+fn set_text_with_the_same_text_keeps_the_caret(ui: &Ui) -> Result<()> {
+    let field = ui.text_input("あいう")?;
+    let native: gtk::Entry = field.native_widget().downcast().expect("GtkEntry");
+    native.set_position(1);
+    field.set_text(&field.text());
+    assert_eq!(native.position(), 1, "1 行入力のカーソルが動かないこと");
+
+    let area = ui.text_area("えお\nかき")?;
+    let view: gtk::TextView = area.native_widget().downcast().expect("GtkTextView");
+    let buffer = view.buffer();
+    buffer.place_cursor(&buffer.iter_at_offset(2));
+    area.set_text(&area.text());
+    let cursor = buffer.iter_at_mark(&buffer.get_insert());
+    assert_eq!(cursor.offset(), 2, "複数行のカーソルが動かないこと");
+
+    let number = ui.number_input(3.0)?;
+    let (log, sink) = recorder::<f64>();
+    number.on_change(sink);
+    number.set_value(3.0);
+    assert!(log.borrow().is_empty());
     Ok(())
 }
 

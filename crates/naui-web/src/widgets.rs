@@ -338,6 +338,11 @@ impl Label {
     }
 
     pub fn set_text(&self, text: &str) {
+        // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
+        // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
+        if self.text() == text {
+            return;
+        }
         self.0.element.set_text_content(Some(text));
     }
 
@@ -596,6 +601,11 @@ impl TextInput {
     }
 
     pub fn set_text(&self, text: &str) {
+        // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
+        // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
+        if self.text() == text {
+            return;
+        }
         self.0.input.set_value(text);
     }
 
@@ -688,6 +698,11 @@ impl PasswordInput {
 
     /// Replaces the text. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
+        // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
+        // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
+        if self.text() == text {
+            return;
+        }
         self.0.input.set_value(text);
     }
 
@@ -759,6 +774,11 @@ impl SearchInput {
 
     /// Replaces the text. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
+        // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
+        // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
+        if self.text() == text {
+            return;
+        }
         self.0.input.set_value(text);
     }
 
@@ -852,6 +872,13 @@ impl TextArea {
 
     /// Replaces the text. `on_change` is not called.
     pub fn set_text(&self, text: &str) {
+        // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
+        // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
+        // <textarea> の value は改行を \n にそろえて返すので、渡された側も
+        // そろえてから比べる。そうしないと \r\n を含む文字列は毎回違う値に見える。
+        if self.text() == text.replace("\r\n", "\n").replace('\r', "\n") {
+            return;
+        }
         self.0.element.set_value(text);
     }
 
