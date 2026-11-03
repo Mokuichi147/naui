@@ -4,6 +4,9 @@
 //! The field's text lives in the model too. `render` sets it back on every update,
 //! which is harmless: naui's setters do nothing when the value is already shown, so
 //! the caret stays and the IME composition is not broken.
+//!
+//! The selection lives in the model as well, and `render` sets it on the list, so
+//! the row shown as selected is always the one Remove deletes.
 
 use std::cell::RefCell;
 
@@ -67,6 +70,12 @@ impl Program for Todo {
             let rows: Vec<ListItem> = self.items.iter().map(ListItem::new).collect();
             view.list.set_items(&rows);
             *view.shown.borrow_mut() = self.items.clone();
+        }
+        // `set_items` clears the selection without notifying, so the model's selection
+        // is set back. Adding appends, so the selected row keeps its index.
+        let selection: Vec<usize> = self.selected.into_iter().collect();
+        if view.list.selection() != selection {
+            view.list.set_selection(&selection);
         }
         view.remove.set_enabled(self.selected.is_some());
         view.summary.set_text(&match self.items.len() {
