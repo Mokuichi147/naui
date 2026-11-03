@@ -172,6 +172,10 @@ pub fn is_svg(bytes: &[u8]) -> bool {
 /// How many bytes from the start [`is_svg`] looks through for the root element.
 const SVG_LOOK: usize = 4096;
 
+/// How many bytes of a UTF-16 document [`svg_size`] turns into UTF-8: the part where
+/// the root element starts ([`SVG_LOOK`] characters) and room for its start tag.
+const SVG_TAG_LOOK: usize = 64 * 1024;
+
 /// UTF-16 text with a byte order mark, as UTF-8. `None` without one of the marks.
 ///
 /// SVG is looked into as UTF-8 bytes; the few documents written in UTF-16 are
@@ -264,12 +268,12 @@ fn doctype_len(bytes: &[u8]) -> Option<usize> {
 }
 
 /// The size an SVG document gives itself, in CSS pixels: its root element's `width`
-/// and `height`, falling back to the `viewBox` for whichever is missing or relative
-/// (`em`, `ex`, `%`). Absolute units (`in`, `cm`, `mm`, `Q`, `pt`, `pc`) are converted
-/// at CSS's 96 pixels to the inch. Whatever is still missing, with no `viewBox` to
-/// keep the aspect ratio from, is taken from the default size of 300 × 150, as a
-/// browser shows such an SVG. `None` only if the bytes are not SVG or its start tag
-/// is cut off.
+/// and `height`, with the aspect ratio of the `viewBox` filling in whichever is
+/// missing or relative (`em`, `ex`, `%`). Absolute units (`in`, `cm`, `mm`, `Q`,
+/// `pt`, `pc`) are converted at CSS's 96 pixels to the inch. Without either, the
+/// default size of 300 × 150 is used, as a browser shows such an SVG: the `viewBox`'s
+/// aspect ratio fitted inside it, or, with no `viewBox` either, as it is. `None`
+/// only if the bytes are not SVG or its start tag is cut off.
 ///
 /// For platforms whose SVG image source does not report a natural size (WinUI's
 /// `SvgImageSource`). Only the root start tag is read.
@@ -278,11 +282,13 @@ fn doctype_len(bytes: &[u8]) -> Option<usize> {
 /// # use naui_core::media::svg_size;
 /// assert_eq!(svg_size(br#"<svg width="24" height="16"/>"#), Some((24.0, 16.0)));
 /// assert_eq!(svg_size(br#"<svg viewBox="0 0 48 32" width="24px"/>"#), Some((24.0, 16.0)));
+/// assert_eq!(svg_size(br#"<svg viewBox="0 0 100 100"/>"#), Some((150.0, 150.0)));
 /// assert_eq!(svg_size(b"<svg/>"), Some((300.0, 150.0)));
 /// assert_eq!(svg_size(b"\x89PNG"), None);
 /// ```
 pub fn svg_size(bytes: &[u8]) -> Option<(f64, f64)> {
-    let decoded = decode_utf16(bytes);
+    // UTF-16 は根の開始タグに要る先頭だけを直す。文書全体は写さない。
+    let decoded = decode_utf16(&bytes[..bytes.len().min(SVG_TAG_LOOK)]);
     let bytes = decoded.as_deref().unwrap_or(bytes);
     // 先頭のコメントの中の `<svg` ではなく、根の要素の開始タグを読む。
     let attributes = start_tag_attributes(svg_root(bytes)?)?;
@@ -334,7 +340,16 @@ pub fn svg_size(bytes: &[u8]) -> Option<(f64, f64)> {
         (Some(w), Some(h), _) => Some((w, h)),
         (Some(w), None, Some((vw, vh))) => Some((w, w * vh / vw)),
         (None, Some(h), Some((vw, vh))) => Some((h * vw / vh, h)),
-        (None, None, Some(size)) => Some(size),
+        // viewBox は縦横比だけを決める。大きさは 300×150 にその比で収める
+        // (CSS の既定の大きさに contain で合わせる)。
+        (None, None, Some((vw, vh))) => {
+            let (dw, dh) = DEFAULT_SVG_SIZE;
+            Some(if vw / vh > dw / dh {
+                (dw, dw * vh / vw)
+            } else {
+                (dh * vw / vh, dh)
+            })
+        }
         // 縦横比も無いときは、CSS の置換要素の既定の大きさ 300×150 で埋める。
         (Some(w), None, None) => Some((w, DEFAULT_SVG_SIZE.1)),
         (None, Some(h), None) => Some((DEFAULT_SVG_SIZE.0, h)),
@@ -562,6 +577,15 @@ mod tests {
         assert!(is_svg(&be));
         assert_eq!(svg_size(&le), Some((24.0, 16.0)));
         assert_eq!(svg_size(&be), Some((24.0, 16.0)));
+        // 大きな文書でも、変換するのは先頭だけで足りる。
+        let mut large = le.clone();
+        large.extend(
+            "<rect/>"
+                .repeat(100_000)
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes),
+        );
+        assert_eq!(svg_size(&large), Some((24.0, 16.0)));
         // BOM の無い UTF-16 と、BOM の後ろが SVG でないものは認めない。
         assert!(!is_svg(&le[2..]));
         assert!(!is_svg(b"\xFF\xFE\x89\0P\0N\0G\0"));
@@ -587,14 +611,24 @@ mod tests {
 <svg xmlns="http://www.w3.org/2000/svg"
      width='24.5' height="16px" stroke-width="3"><rect width="100" height="100"/></svg>"#;
         assert_eq!(svg_size(svg), Some((24.5, 16.0)));
-        // stroke-width の width を取り違えない。
+        // stroke-width の width を取り違えない。寸法が無ければ viewBox は比率だけで、
+        // 300×150 に収める。
         assert_eq!(
             svg_size(br#"<svg stroke-width="3" viewBox="0,0,10,20">"#),
-            Some((10.0, 20.0))
+            Some((75.0, 150.0))
         );
         assert_eq!(
             svg_size(br#"<svg width="50%" viewBox="0 0 10 20">"#),
-            Some((10.0, 20.0))
+            Some((75.0, 150.0))
+        );
+        assert_eq!(
+            svg_size(br#"<svg viewBox="0 0 100 100">"#),
+            Some((150.0, 150.0))
+        );
+        // 300×150 より横長なら幅で収める。
+        assert_eq!(
+            svg_size(br#"<svg viewBox="0 0 400 100">"#),
+            Some((300.0, 75.0))
         );
         assert_eq!(
             svg_size(br#"<svg height="40" viewBox="0 0 10 20">"#),
