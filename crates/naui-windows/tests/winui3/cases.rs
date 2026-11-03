@@ -4693,7 +4693,8 @@ fn image_takes_bytes_pixels_and_svg(ui: &Ui) -> Result<()> {
     );
     assert!(image.set_pixels(3, 3, &[0; 4]).is_err());
 
-    let path = std::env::temp_dir().join(format!("naui-svg-{}.svg", std::process::id()));
+    // 名前の # は URL のフラグメントではない。パスでも file: の URL でも SVG として読む。
+    let path = std::env::temp_dir().join(format!("naui-svg#{}.svg", std::process::id()));
     std::fs::write(&path, RED_SVG).expect("SVG を書き出せない");
     image.set_source(path.to_str().expect("UTF-8 のパス"));
     assert!(

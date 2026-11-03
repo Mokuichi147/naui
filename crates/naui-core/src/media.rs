@@ -380,16 +380,22 @@ fn trim_ascii_start(bytes: &[u8]) -> &[u8] {
 }
 
 /// Whether a file path or URL names an SVG file, judged by its extension
-/// (`.svg` / `.svgz`, ignoring case, a query and a fragment).
+/// (`.svg` / `.svgz`, ignoring case). A URL's query and fragment are ignored; in a
+/// file path, `#` and `?` are part of the name.
 ///
 /// ```
 /// # use naui_core::media::is_svg_source;
 /// assert!(is_svg_source("icons/save.svg"));
 /// assert!(is_svg_source("https://example.com/logo.SVG?v=2"));
+/// assert!(is_svg_source(r"C:\icons\logo#dark.svg"));
 /// assert!(!is_svg_source("photo.png"));
 /// ```
 pub fn is_svg_source(source: &str) -> bool {
-    let path = source.split(['?', '#']).next().unwrap_or(source);
+    let path = if is_url(source) {
+        source.split(['?', '#']).next().unwrap_or(source)
+    } else {
+        source
+    };
     let lower = path.to_ascii_lowercase();
     lower.ends_with(".svg") || lower.ends_with(".svgz")
 }
@@ -629,6 +635,11 @@ mod tests {
         assert!(is_svg_source("a.svgz"));
         assert!(is_svg_source("C:\\icons\\Save.Svg"));
         assert!(is_svg_source("https://example.com/a.svg#frag"));
+        assert!(is_svg_source("file:///C:/icons/logo%23dark.svg"));
+        // パスの # と ? は名前の一部で、そこから先を捨てない。
+        assert!(is_svg_source(r"C:\icons\logo#dark.svg"));
+        assert!(is_svg_source("/icons/what?.svg"));
+        assert!(!is_svg_source(r"C:\icons\a.svg#b.png"));
         assert!(!is_svg_source("a.svg.png"));
         assert!(!is_svg_source("https://example.com/svg"));
     }
