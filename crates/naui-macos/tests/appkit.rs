@@ -922,6 +922,10 @@ fn main() {
             number_input_value_round_trips,
         ),
         (
+            "丸めると表示中と同じになる set_value は数値入力を書き直さない",
+            number_input_skips_values_equal_after_rounding,
+        ),
+        (
             "数値入力が小数桁と範囲を守る",
             number_input_applies_the_spec,
         ),
@@ -10418,6 +10422,31 @@ fn number_input_value_round_trips(ui: &Ui) -> Result<()> {
     number.set_enabled(false);
     assert!(!number.native_field().isEnabled());
     assert!(!number.native_stepper().isEnabled());
+    Ok(())
+}
+
+/// A value that rounds to the one shown does not rewrite the field. An app that
+/// sets every value on every update (as naui-app's `render` does) may hold a finer
+/// value than the field shows, and rewriting would move the caret mid-edit.
+fn number_input_skips_values_equal_after_rounding(ui: &Ui) -> Result<()> {
+    let number = ui.number_input(0.0)?;
+    number.set_step(0.1);
+    number.set_decimals(1);
+    number.set_value(12.34);
+    assert_eq!(number.value(), 12.3);
+
+    // 書き直されたかどうかを見分けるため、通知を出さずに表示だけを変えておく。
+    let field = number.native_field();
+    field.setStringValue(&NSString::from_str("12.30"));
+    number.set_value(12.34);
+    assert_eq!(
+        field.stringValue().to_string(),
+        "12.30",
+        "丸めた値が同じなら書き直さないこと"
+    );
+    number.set_value(12.36);
+    assert_eq!(number.value(), 12.4);
+    assert_eq!(field.stringValue().to_string(), "12.4");
     Ok(())
 }
 

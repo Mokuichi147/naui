@@ -168,16 +168,23 @@ impl NumberInput {
     pub fn set_value(&self, value: f64) {
         // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
         // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
+        // 比べるのは丸めと範囲制限の後の値。モデルが 1.6 を持ち表示が 2 のとき、
+        // 渡された値のままでは毎回違うと判定されて書き直してしまう。
+        let value = self.0.spec.get().clamp(value);
         if self.value() == value {
             return;
         }
-        self.force_value(value);
+        self.write_value(value);
     }
 
     /// Writes the value even when it equals the current one, for when the spec
     /// changed and the display needs rounding and clamping again.
     fn force_value(&self, value: f64) {
-        let value = self.0.spec.get().clamp(value);
+        self.write_value(self.0.spec.get().clamp(value));
+    }
+
+    /// Stores an already rounded and clamped value and writes it into the control.
+    fn write_value(&self, value: f64) {
         self.0.value.set(value);
         self.write_native(value);
         self.write_native_text(value);

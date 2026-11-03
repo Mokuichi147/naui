@@ -814,6 +814,30 @@ fn canvas_reports_wheel() {
 
 // -------------------------------------------------------- NumberInput
 
+/// A value that rounds to the one shown does not rewrite the field. An app that
+/// sets every value on every update (as naui-app's `render` does) may hold a finer
+/// value than the field shows, and rewriting would move the caret mid-edit.
+#[wasm_bindgen_test]
+fn number_input_skips_values_equal_after_rounding() {
+    with_ui(|ui| {
+        let number = ui.number_input(0.0)?;
+        number.set_step(0.1);
+        number.set_decimals(1);
+        number.set_value(12.34);
+        assert_eq!(number.value(), 12.3);
+
+        // 書き直されたかどうかを見分けるため、通知を出さずに表示だけを変えておく。
+        let input = number.native_input();
+        input.set_value("12.30");
+        number.set_value(12.34);
+        assert_eq!(input.value(), "12.30", "丸めた値が同じなら書き直さないこと");
+        number.set_value(12.36);
+        assert_eq!(number.value(), 12.4);
+        assert_eq!(input.value(), "12.4");
+        Ok(())
+    });
+}
+
 #[wasm_bindgen_test]
 fn number_input_clamps_to_its_range() {
     with_ui(|ui| {
