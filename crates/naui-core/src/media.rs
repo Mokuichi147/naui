@@ -193,8 +193,9 @@ fn svg_root(bytes: &[u8]) -> Option<&[u8]> {
 }
 
 /// The size an SVG document gives itself, in CSS pixels: its root element's `width`
-/// and `height`, falling back to the `viewBox` for whichever is missing or not in
-/// pixels. `None` if it says nothing usable.
+/// and `height`, falling back to the `viewBox` for whichever is missing or relative
+/// (`em`, `ex`, `%`). Absolute units (`in`, `cm`, `mm`, `Q`, `pt`, `pc`) are converted
+/// at CSS's 96 pixels to the inch. `None` if it says nothing usable.
 ///
 /// For platforms whose SVG image source does not report a natural size (WinUI's
 /// `SvgImageSource`). Only the root start tag is read.
@@ -213,10 +214,26 @@ pub fn svg_size(bytes: &[u8]) -> Option<(f64, f64)> {
 
     let pixels = |name: &str| {
         let value = attribute(tag, name)?;
-        let number = value.strip_suffix("px").unwrap_or(value).trim();
+        let unit_at = value
+            .rfind(|c: char| !c.is_ascii_alphabetic())
+            .map_or(0, |at| at + 1);
+        let (number, unit) = value.split_at(unit_at);
+        // CSS の絶対単位は 1in = 96px で換算する。em・ex・% は文書の外で決まるので読まない。
+        let scale = match unit.to_ascii_lowercase().as_str() {
+            "" | "px" => 1.0,
+            "in" => 96.0,
+            "cm" => 96.0 / 2.54,
+            "mm" => 96.0 / 25.4,
+            "q" => 96.0 / 101.6,
+            "pt" => 96.0 / 72.0,
+            "pc" => 96.0 / 6.0,
+            _ => return None,
+        };
         number
+            .trim()
             .parse::<f64>()
             .ok()
+            .map(|v| v * scale)
             .filter(|v| v.is_finite() && *v > 0.0)
     };
     let view_box = attribute(tag, "viewBox").and_then(|value| {
@@ -448,6 +465,25 @@ mod tests {
             Some((20.0, 40.0))
         );
         assert_eq!(svg_size(br#"<svg width="2em">"#), None);
+        // 物理単位は 1in = 96px で換算する。
+        assert_eq!(
+            svg_size(br#"<svg width="1in" height="1in" viewBox="0 0 10 10">"#),
+            Some((96.0, 96.0))
+        );
+        assert_eq!(
+            svg_size(br#"<svg width="72pt" height="6pc">"#),
+            Some((96.0, 96.0))
+        );
+        let (w, h) = svg_size(br#"<svg width="2.54cm" height="25.4MM">"#).unwrap();
+        assert!((w - 96.0).abs() < 1e-9 && (h - 96.0).abs() < 1e-9);
+        assert_eq!(
+            svg_size(br#"<svg width="0.5in" viewBox="0 0 10 20">"#),
+            Some((48.0, 96.0))
+        );
+        assert_eq!(
+            svg_size(br#"<svg width="1e1" height="2E1px">"#),
+            Some((10.0, 20.0))
+        );
         assert_eq!(svg_size(b"\x89PNG"), None);
         // コメントの中の <svg は根の要素ではない。
         assert_eq!(
