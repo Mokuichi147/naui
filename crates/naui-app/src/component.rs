@@ -41,6 +41,13 @@ use crate::{Dispatch, Program};
 /// argument, and [`Children::sync`] asks for it through [`Change::Remove`], so the
 /// two always happen together and in this order.
 ///
+/// A component nested in another's view is taken down with it: dropping a [`Mounted`]
+/// or [`Children`] takes what it holds down too, so a parent has nothing to do for
+/// its children. They go when the parent's widgets are dropped, so a nested child's
+/// [`unmount`](Self::unmount) runs after the parent's, once the parent's root widget
+/// is out of its container. Its dispatch is already disconnected by then, along with
+/// the parent's. Its root stays in the parent's containers, which go away with it.
+///
 /// ```no_run
 /// use naui::{Orientation, Ui};
 /// use naui_app::{Component, Dispatch, Program};
@@ -135,6 +142,11 @@ pub trait Component: Program {
     /// The dispatch is already disconnected, so what this sends is dropped. The
     /// model is not given: by the time the parent takes a child down, its `update`
     /// has usually removed the model already. Does nothing by default.
+    ///
+    /// It runs once, however the component is taken down, except in two cases where
+    /// the widgets should not be touched: when the app has already ended (the OS
+    /// takes back what is left), and while a panic is unwinding. A component that has
+    /// to save something when the app ends should do that from a message instead.
     fn unmount(view: &Self::View) {
         let _ = view;
     }
@@ -174,12 +186,17 @@ pub trait Component: Program {
 /// nothing, and then replace the child with `set_child`: the old one's
 /// [`Component::unmount`] runs while its widgets are still shown.
 ///
-/// Dropping it without `unmount` disconnects its dispatch too, but does not call
-/// [`Component::unmount`] (the widgets may already be gone, as when the app ends).
+/// Dropping it takes the component down in the same way, except that nothing removes
+/// the root widget from its container. That is what a parent's own removal does for
+/// the children in its view. When the root has to leave a container that stays, call
+/// [`unmount`](Self::unmount).
 pub struct Mounted<C: Program> {
     view: C::View,
-    /// While this is alive, the component's dispatch sends.
-    link: Rc<()>,
+    /// While this is alive, the component's dispatch sends. Taken when it is taken
+    /// down, so that happens once.
+    link: Option<Rc<()>>,
+    dispatch: Dispatch<C::Message>,
+    unmount: fn(&C::View),
 }
 
 impl<C: Component> Mounted<C> {
@@ -193,7 +210,12 @@ impl<C: Component> Mounted<C> {
         dispatch: &Dispatch<M>,
         wrap: impl Fn(C::Message) -> M + 'static,
     ) -> naui::Result<Self> {
-        Self::build(dispatch, wrap, |dispatch| C::mount(ui, dispatch))
+        Self::build(
+            dispatch,
+            wrap,
+            |dispatch| C::mount(ui, dispatch),
+            C::unmount,
+        )
     }
 
     /// The widget to place in a container.
@@ -205,7 +227,7 @@ impl<C: Component> Mounted<C> {
     /// [`Component::unmount`], calls `remove` with the root widget to take it out
     /// of its container, and drops the widgets.
     pub fn unmount(self, remove: impl FnOnce(&dyn Widget)) {
-        self.unmount_with(C::unmount, |view| remove(C::root(view)));
+        self.unmount_with(|view| remove(C::root(view)));
     }
 }
 
@@ -215,10 +237,27 @@ impl<C: Program> Mounted<C> {
         dispatch: &Dispatch<M>,
         wrap: impl Fn(C::Message) -> M + 'static,
         mount: impl FnOnce(&Dispatch<C::Message>) -> Result<C::View, E>,
+        unmount: fn(&C::View),
     ) -> Result<Self, E> {
         let link = Rc::new(());
-        let view = mount(&dispatch.wrapped(wrap, Some(Rc::downgrade(&link))))?;
-        Ok(Self { view, link })
+        let dispatch = dispatch.wrapped(wrap, Some(Rc::downgrade(&link)));
+        Self::with_link(link, dispatch, mount, unmount)
+    }
+
+    /// Builds the view with `mount`, given a dispatch that sends while `link` is alive.
+    fn with_link<E>(
+        link: Rc<()>,
+        dispatch: Dispatch<C::Message>,
+        mount: impl FnOnce(&Dispatch<C::Message>) -> Result<C::View, E>,
+        unmount: fn(&C::View),
+    ) -> Result<Self, E> {
+        let view = mount(&dispatch)?;
+        Ok(Self {
+            view,
+            link: Some(link),
+            dispatch,
+            unmount,
+        })
     }
 
     /// The widgets built by `mount`.
@@ -231,16 +270,29 @@ impl<C: Program> Mounted<C> {
         model.render(&self.view);
     }
 
-    pub(crate) fn unmount_with(
-        self,
-        unmount: impl FnOnce(&C::View),
-        remove: impl FnOnce(&C::View),
-    ) {
-        let Self { view, link } = self;
+    /// Takes the component down, with `remove` taking its root out of its container.
+    /// The widgets are dropped on the way out.
+    pub(crate) fn unmount_with(mut self, remove: impl FnOnce(&C::View)) {
+        self.take_down(remove);
+    }
+
+    fn take_down(&mut self, remove: impl FnOnce(&C::View)) {
+        let Some(link) = self.link.take() else {
+            return;
+        };
         drop(link);
-        unmount(&view);
-        remove(&view);
-        drop(view);
+        // アプリが終わったあとはウィジェットに触らない。巻き戻しの途中で後片付けが
+        // また panic すると abort になるので、そのときも呼ばない。
+        if self.dispatch.mailbox.app_is_there() && !std::thread::panicking() {
+            (self.unmount)(&self.view);
+        }
+        remove(&self.view);
+    }
+}
+
+impl<C: Program> Drop for Mounted<C> {
+    fn drop(&mut self) {
+        self.take_down(|_| {});
     }
 }
 
@@ -265,10 +317,9 @@ pub(crate) enum Step<'a, V> {
 }
 
 /// A mounted child, under its key.
-struct Entry<K, V> {
+struct Entry<K, C: Program> {
     key: K,
-    view: V,
-    link: Rc<()>,
+    mounted: Mounted<C>,
 }
 
 /// Makes the dispatch of the child under a key, sending while the link is alive.
@@ -276,14 +327,16 @@ type MakeDispatch<K, M> = Box<dyn Fn(&K, Weak<()>) -> Dispatch<M>>;
 
 /// The lifecycle part of [`Children`], which does not need a window.
 pub(crate) struct Keyed<K, C: Program> {
-    entries: RefCell<Vec<Entry<K, C::View>>>,
+    entries: RefCell<Vec<Entry<K, C>>>,
     dispatch: MakeDispatch<K, C::Message>,
+    unmount: fn(&C::View),
 }
 
 impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
     pub(crate) fn new<M: 'static>(
         dispatch: &Dispatch<M>,
         wrap: impl Fn(K, C::Message) -> M + 'static,
+        unmount: fn(&C::View),
     ) -> Self {
         let parent = dispatch.clone();
         let wrap = Rc::new(wrap);
@@ -294,6 +347,7 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
                 let wrap = wrap.clone();
                 parent.wrapped(move |message| wrap(key.clone(), message), Some(link))
             }),
+            unmount,
         }
     }
 
@@ -306,7 +360,7 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
             entries
                 .iter()
                 .find(|entry| entry.key == *key)
-                .map(|entry| &entry.view)
+                .map(|entry| entry.mounted.view())
         })
         .ok()
     }
@@ -315,7 +369,6 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
         &self,
         models: impl IntoIterator<Item = (K, &'a C)>,
         mut mount: impl FnMut(&Dispatch<C::Message>) -> Result<C::View, E>,
-        unmount: impl Fn(&C::View),
         mut place: impl FnMut(Step<'_, C::View>),
     ) -> Result<(), E>
     where
@@ -335,10 +388,10 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
                 index += 1;
                 continue;
             }
-            let Entry { view, link, .. } = entries.remove(index);
-            drop(link);
-            unmount(&view);
-            place(Step::Remove { index, view: &view });
+            let entry = entries.remove(index);
+            entry
+                .mounted
+                .unmount_with(|view| place(Step::Remove { index, view }));
         }
 
         // 2. 先頭から順に、求める並びへそろえる。index より前はそろっている。
@@ -362,17 +415,18 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
                 let entry = entries.remove(from);
                 place(Step::Remove {
                     index: from,
-                    view: &entry.view,
+                    view: entry.mounted.view(),
                 });
                 place(Step::Insert {
                     index,
-                    view: &entry.view,
+                    view: entry.mounted.view(),
                 });
                 entries.insert(index, entry);
             } else {
                 let link = Rc::new(());
-                let view = match mount(&(self.dispatch)(key, Rc::downgrade(&link))) {
-                    Ok(view) => view,
+                let dispatch = (self.dispatch)(key, Rc::downgrade(&link));
+                let mounted = match Mounted::with_link(link, dispatch, &mut mount, self.unmount) {
+                    Ok(mounted) => mounted,
                     Err(error) => {
                         // この子だけ外したまま続け、ほかの子は置いて描く。
                         // 次の呼び出しでまた作ってみる。
@@ -380,13 +434,15 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
                         continue;
                     }
                 };
-                place(Step::Insert { index, view: &view });
+                place(Step::Insert {
+                    index,
+                    view: mounted.view(),
+                });
                 entries.insert(
                     index,
                     Entry {
                         key: key.clone(),
-                        view,
-                        link,
+                        mounted,
                     },
                 );
                 present.insert(key.clone());
@@ -397,7 +453,7 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
 
         // 3. それぞれを描く。
         for (entry, model) in entries.iter().zip(placed) {
-            model.render(&entry.view);
+            entry.mounted.render(model);
         }
         failure.map_or(Ok(()), Err)
     }
@@ -446,6 +502,8 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
 /// The container can hold other widgets too, as long as the positions are offset
 /// by them. A message a child sent before it was unmounted can still be waiting in
 /// the queue, so the parent's `update` has to expect a key that is no longer there.
+///
+/// Dropping it takes every child down, as dropping a [`Mounted`] does.
 pub struct Children<K, C: Program> {
     keyed: Keyed<K, C>,
     ui: Ui,
@@ -461,7 +519,7 @@ impl<K: Clone + Eq + Hash + 'static, C: Component> Children<K, C> {
         wrap: impl Fn(K, C::Message) -> M + 'static,
     ) -> Self {
         Self {
-            keyed: Keyed::new(dispatch, wrap),
+            keyed: Keyed::new(dispatch, wrap, C::unmount),
             ui: ui.clone(),
         }
     }
@@ -491,7 +549,6 @@ impl<K: Clone + Eq + Hash + 'static, C: Component> Children<K, C> {
         self.keyed.sync_with(
             models,
             |dispatch| C::mount(&self.ui, dispatch),
-            C::unmount,
             |step| {
                 place(match step {
                     Step::Insert { index, view } => Change::Insert {

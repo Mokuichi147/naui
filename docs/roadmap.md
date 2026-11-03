@@ -235,7 +235,8 @@ Model–View–Update structure is complete in v0.16.0 (the guide stays in P2).
       collection in the model) asks for it as a `Change`, so they always come in
       one order: the child's dispatch is disconnected, its `unmount` runs while
       its widgets are still in place, the root is removed, and the widgets are
-      dropped.
+      dropped. Dropping a `Mounted` or `Children` takes its children down too, so
+      components nested in a view go with it, with nothing for the parent to do.
 - [ ] *(app)* **Effects and lifecycles.** `Program::update` returns an
       `Effect<Message>` (a breaking change, made while naui-app has no users),
       which gathers asynchronous work: tasks (`Tasks::spawn`), work on other

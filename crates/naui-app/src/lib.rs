@@ -98,7 +98,8 @@
 //! there, [`Children`] for ones that come and go with a collection in the model.
 //! Taking a child down ([`Mounted::unmount`], or [`Children::sync`] once its key is
 //! gone) disconnects its dispatch, calls [`Component::unmount`], has the parent
-//! remove its root widget, and drops the widgets, in that order. See
+//! remove its root widget, and drops the widgets, in that order. Components nested
+//! in its view are taken down with it, when those widgets are dropped. See
 //! [`examples/checklist`](https://github.com/mokuichi147/naui/tree/main/examples/checklist).
 //!
 //! ## Not yet here
@@ -147,6 +148,9 @@ pub trait Program: 'static {
 trait Mailbox<M> {
     fn post(&self, message: M);
     fn is_connected(&self) -> bool;
+    /// Whether the app is still there, whether or not a component in between is
+    /// still mounted.
+    fn app_is_there(&self) -> bool;
 }
 
 /// An app's own mailbox. It refers to the app weakly.
@@ -160,6 +164,10 @@ impl<P: Program> Mailbox<P::Message> for ToApp<P> {
     }
 
     fn is_connected(&self) -> bool {
+        self.app_is_there()
+    }
+
+    fn app_is_there(&self) -> bool {
         self.0.strong_count() > 0
     }
 }
@@ -184,6 +192,10 @@ impl<M: 'static, C, F: Fn(C) -> M> Mailbox<C> for Wrapped<M, F> {
             .as_ref()
             .is_none_or(|link| link.strong_count() > 0)
             && self.parent.is_connected()
+    }
+
+    fn app_is_there(&self) -> bool {
+        self.parent.mailbox.app_is_there()
     }
 }
 

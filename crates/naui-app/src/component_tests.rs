@@ -87,6 +87,14 @@ fn mount_row(
     }
 }
 
+/// A row's `unmount`. Its dispatch is already disconnected, so what it sends is
+/// dropped.
+fn unmount_row(view: &RowView) {
+    assert!(!view.dispatch.is_connected());
+    view.dispatch.send(RowMsg::Rename("from unmount".into()));
+    view.log.borrow_mut().push(format!("unmount {}", view.name));
+}
+
 /// A parent that holds one row and forwards its messages to it.
 struct Parent {
     row: Row,
@@ -127,7 +135,8 @@ fn parent(log: &Log) -> App<Parent> {
         log: log.clone(),
     };
     App::new(model, |dispatch| {
-        let mounted = Mounted::<Row>::build(dispatch, ParentMsg::Row, mount_row(log, "row"))?;
+        let mounted =
+            Mounted::<Row>::build(dispatch, ParentMsg::Row, mount_row(log, "row"), unmount_row)?;
         Ok::<_, Infallible>(RefCell::new(Some(mounted)))
     })
     .expect("build")
@@ -185,16 +194,9 @@ fn unmount_disconnects_then_cleans_up_then_removes_then_drops() {
     let dispatch = child_dispatch(&app);
     log.borrow_mut().clear();
     let mounted = app.view().borrow_mut().take().expect("mounted");
-    mounted.unmount_with(
-        |view| {
-            // 送り口はもう切れていて、ここから送っても親へ届かない。
-            assert!(!view.dispatch.is_connected());
-            view.dispatch.send(RowMsg::Rename("from unmount".into()));
-            view.log.borrow_mut().push("unmount".into());
-        },
-        |view| view.log.borrow_mut().push("remove root".into()),
-    );
-    assert_eq!(*log.borrow(), ["unmount", "remove root", "drop row"]);
+    mounted.unmount_with(|view| view.log.borrow_mut().push("remove root".into()));
+    // 後片付けは 1 回だけ (外したあとの破棄でもう一度呼ばない)。
+    assert_eq!(*log.borrow(), ["unmount row", "remove root", "drop row"]);
     assert!(!dispatch.is_connected());
     dispatch.send(RowMsg::Rename("late".into()));
     assert!(app.model().got.is_empty(), "外したあとの送信は捨てられる");
@@ -202,14 +204,156 @@ fn unmount_disconnects_then_cleans_up_then_removes_then_drops() {
 }
 
 #[test]
-fn dropping_a_mounted_child_disconnects_it_without_unmount() {
+fn dropping_a_mounted_child_takes_it_down() {
     let log = Log::default();
     let app = parent(&log);
     let dispatch = child_dispatch(&app);
     log.borrow_mut().clear();
     drop(app.view().borrow_mut().take());
-    assert_eq!(*log.borrow(), ["drop row"]);
+    assert_eq!(*log.borrow(), ["unmount row", "drop row"]);
     assert!(!dispatch.is_connected());
+}
+
+#[test]
+fn the_app_ending_does_not_call_unmount() {
+    let log = Log::default();
+    let app = parent(&log);
+    log.borrow_mut().clear();
+    drop(app);
+    assert_eq!(
+        *log.borrow(),
+        ["drop row"],
+        "終了後はウィジェットに触らない"
+    );
+}
+
+#[test]
+fn unwinding_does_not_call_unmount() {
+    let log = Log::default();
+    let app = parent(&log);
+    let mounted = app.view().borrow_mut().take().expect("mounted");
+    log.borrow_mut().clear();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        let _mounted = mounted;
+        panic!("unwinding (intended)");
+    }));
+    assert!(outcome.is_err());
+    assert_eq!(*log.borrow(), ["drop row"]);
+}
+
+/// A component whose view holds other components, one always there and some under
+/// keys.
+struct Outer;
+
+enum OuterMsg {
+    Inner(#[allow(dead_code)] RowMsg),
+    Row(#[allow(dead_code)] u32, #[allow(dead_code)] RowMsg),
+}
+
+struct OuterView {
+    inner: Mounted<Row>,
+    rows: Keyed<u32, Row>,
+    log: Log,
+}
+
+impl Program for Outer {
+    type Message = OuterMsg;
+    type View = OuterView;
+
+    fn update(&mut self, _: OuterMsg) {}
+
+    fn render(&self, _: &OuterView) {}
+}
+
+fn unmount_outer(view: &OuterView) {
+    view.log.borrow_mut().push("unmount outer".into());
+}
+
+/// Mounts an [`Outer`] under the app, with an inner row and two keyed rows.
+fn mount_outer(app: &App<Parent>, log: &Log) -> Mounted<Outer> {
+    let outer = Mounted::<Outer>::build(
+        &app.dispatch(),
+        |_| ParentMsg::Row(RowMsg::Rename("from outer".into())),
+        |dispatch| {
+            let inner = Mounted::<Row>::build(
+                dispatch,
+                OuterMsg::Inner,
+                mount_row(log, "inner"),
+                unmount_row,
+            )?;
+            Ok::<_, Infallible>(OuterView {
+                inner,
+                rows: Keyed::new(dispatch, OuterMsg::Row, unmount_row),
+                log: log.clone(),
+            })
+        },
+        unmount_outer,
+    )
+    .expect("mount");
+    let rows = [row(1, "a", log), row(2, "b", log)];
+    let mut names = ["a", "b"].into_iter();
+    outer
+        .view()
+        .rows
+        .sync_with(
+            rows.iter().map(|row| (row.id, row)),
+            |dispatch| mount_row(log, names.next().expect("a name"))(dispatch),
+            |_| {},
+        )
+        .expect("sync");
+    outer
+}
+
+#[test]
+fn unmounting_a_parent_takes_the_children_in_its_view_down() {
+    let log = Log::default();
+    let app = parent(&log);
+    let outer = mount_outer(&app, &log);
+    let inner = outer.view().inner.view().dispatch.clone();
+    let row = outer.view().rows.view(&1).expect("row 1").dispatch.clone();
+    log.borrow_mut().clear();
+    outer.unmount_with(|view| view.log.borrow_mut().push("remove outer".into()));
+    assert_eq!(
+        *log.borrow(),
+        [
+            "unmount outer",
+            "remove outer",
+            "unmount inner",
+            "drop inner",
+            "unmount a",
+            "drop a",
+            "unmount b",
+            "drop b"
+        ]
+    );
+    assert!(!inner.is_connected());
+    assert!(!row.is_connected());
+    assert!(app.dispatch().is_connected());
+}
+
+#[test]
+fn a_parents_dispatch_being_cut_cuts_the_childrens() {
+    let log = Log::default();
+    let app = parent(&log);
+    let outer = mount_outer(&app, &log);
+    let inner = outer.view().inner.view().dispatch.clone();
+    assert!(inner.is_connected());
+    // 親の後片付けの間に、子の送り口からも親へ届かない。
+    let check = inner.clone();
+    outer.unmount_with(move |_| assert!(!check.is_connected()));
+    inner.send(RowMsg::Rename("late".into()));
+    assert!(app.model().got.is_empty());
+}
+
+#[test]
+fn the_app_ending_does_not_call_a_nested_childs_unmount() {
+    let log = Log::default();
+    let app = parent(&log);
+    let outer = mount_outer(&app, &log);
+    drop(app);
+    log.borrow_mut().clear();
+    drop(outer);
+    assert_eq!(*log.borrow(), ["drop inner", "drop a", "drop b"]);
 }
 
 #[test]
@@ -217,10 +361,15 @@ fn a_failing_mount_returns_its_error_and_leaves_nothing_connected() {
     let log = Log::default();
     let app = parent(&log);
     let mut kept = None;
-    let result = Mounted::<Row>::build(&app.dispatch(), ParentMsg::Row, |dispatch| {
-        kept = Some(dispatch.clone());
-        Err::<RowView, _>("no widgets")
-    });
+    let result = Mounted::<Row>::build(
+        &app.dispatch(),
+        ParentMsg::Row,
+        |dispatch| {
+            kept = Some(dispatch.clone());
+            Err::<RowView, _>("no widgets")
+        },
+        unmount_row,
+    );
     assert_eq!(result.err().map(|_| ()), Some(()));
     assert!(!kept.expect("dispatch").is_connected());
 }
@@ -265,7 +414,7 @@ impl Fixture {
     fn new() -> Self {
         let log = Log::default();
         let app = parent(&log);
-        let keyed = Keyed::new(&app.dispatch(), ParentMsg::Keyed);
+        let keyed = Keyed::new(&app.dispatch(), ParentMsg::Keyed, unmount_row);
         log.borrow_mut().clear();
         Self {
             container: Container {
@@ -291,7 +440,6 @@ impl Fixture {
                     let name = format!("v{mounted}");
                     mount_row(&log, name)(dispatch)
                 },
-                |view| view.log.borrow_mut().push(format!("unmount {}", view.name)),
                 |step| container.apply(step),
             )
             .expect("sync");
@@ -447,7 +595,6 @@ impl Fixture {
                 *mounted += 1;
                 mount_row(&log, format!("v{mounted}"))(dispatch).map_err(|never| match never {})
             },
-            |_| {},
             |step| container.apply(step),
         )
     }
