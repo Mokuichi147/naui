@@ -4682,6 +4682,15 @@ fn image_takes_bytes_pixels_and_svg(ui: &Ui) -> Result<()> {
         "SVG は SvgImageSource で読む"
     );
     assert_eq!(natural_size(&image), (24.0, 16.0), "SVG の大きさを求める");
+    // 寸法も viewBox も持たない SVG は、ブラウザと同じ 300×150 で出す (Auto が 0 にならない)。
+    image.set_bytes(
+        br#"<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>"#,
+    );
+    assert_eq!(
+        natural_size(&image),
+        (300.0, 150.0),
+        "寸法の無い SVG の大きさ"
+    );
 
     image.set_pixels(3, 2, &[0, 0, 255, 255].repeat(6))?;
     assert!(

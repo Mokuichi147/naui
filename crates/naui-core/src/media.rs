@@ -266,7 +266,10 @@ fn doctype_len(bytes: &[u8]) -> Option<usize> {
 /// The size an SVG document gives itself, in CSS pixels: its root element's `width`
 /// and `height`, falling back to the `viewBox` for whichever is missing or relative
 /// (`em`, `ex`, `%`). Absolute units (`in`, `cm`, `mm`, `Q`, `pt`, `pc`) are converted
-/// at CSS's 96 pixels to the inch. `None` if it says nothing usable.
+/// at CSS's 96 pixels to the inch. Whatever is still missing, with no `viewBox` to
+/// keep the aspect ratio from, is taken from the default size of 300 × 150, as a
+/// browser shows such an SVG. `None` only if the bytes are not SVG or its start tag
+/// is cut off.
 ///
 /// For platforms whose SVG image source does not report a natural size (WinUI's
 /// `SvgImageSource`). Only the root start tag is read.
@@ -275,7 +278,8 @@ fn doctype_len(bytes: &[u8]) -> Option<usize> {
 /// # use naui_core::media::svg_size;
 /// assert_eq!(svg_size(br#"<svg width="24" height="16"/>"#), Some((24.0, 16.0)));
 /// assert_eq!(svg_size(br#"<svg viewBox="0 0 48 32" width="24px"/>"#), Some((24.0, 16.0)));
-/// assert_eq!(svg_size(b"<svg/>"), None);
+/// assert_eq!(svg_size(b"<svg/>"), Some((300.0, 150.0)));
+/// assert_eq!(svg_size(b"\x89PNG"), None);
 /// ```
 pub fn svg_size(bytes: &[u8]) -> Option<(f64, f64)> {
     let decoded = decode_utf16(bytes);
@@ -331,9 +335,17 @@ pub fn svg_size(bytes: &[u8]) -> Option<(f64, f64)> {
         (Some(w), None, Some((vw, vh))) => Some((w, w * vh / vw)),
         (None, Some(h), Some((vw, vh))) => Some((h * vw / vh, h)),
         (None, None, Some(size)) => Some(size),
-        _ => None,
+        // 縦横比も無いときは、CSS の置換要素の既定の大きさ 300×150 で埋める。
+        (Some(w), None, None) => Some((w, DEFAULT_SVG_SIZE.1)),
+        (None, Some(h), None) => Some((DEFAULT_SVG_SIZE.0, h)),
+        (None, None, None) => Some(DEFAULT_SVG_SIZE),
     }
 }
+
+/// The size of an SVG that gives none of its own, in CSS pixels: CSS's default
+/// object size for replaced elements, which SVG 2 takes for a missing `width` or
+/// `height` when there is no `viewBox` to go by.
+const DEFAULT_SVG_SIZE: (f64, f64) = (300.0, 150.0);
 
 /// The `name="value"` (or `'value'`) pairs of the start tag `tag` begins with, read
 /// in order up to its closing `>` or `/>`. `None` if the tag does not close.
@@ -588,7 +600,18 @@ mod tests {
             svg_size(br#"<svg height="40" viewBox="0 0 10 20">"#),
             Some((20.0, 40.0))
         );
-        assert_eq!(svg_size(br#"<svg width="2em">"#), None);
+        // 寸法も viewBox も無ければ、足りない方を 300×150 で埋める。
+        assert_eq!(svg_size(br#"<svg width="2em">"#), Some((300.0, 150.0)));
+        assert_eq!(
+            svg_size(br#"<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>"#),
+            Some((300.0, 150.0))
+        );
+        assert_eq!(svg_size(br#"<svg width="24">"#), Some((24.0, 150.0)));
+        assert_eq!(
+            svg_size(br#"<svg height="50%" width="1in">"#),
+            Some((96.0, 150.0))
+        );
+        assert_eq!(svg_size(br#"<svg height="16">"#), Some((300.0, 16.0)));
         // 引用符の中の > や属性名らしき文字列は値の一部として読む。
         assert_eq!(
             svg_size(br#"<svg aria-label="A > B" width="24" height="16">"#),
