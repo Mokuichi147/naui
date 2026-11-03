@@ -338,7 +338,9 @@ impl Settings {
     /// | `FrameworkElement.Language` on each window's content | `AppleLanguages` in the arguments domain (the per-app language of System Settings) | `PANGO_LANGUAGE` before GTK starts | `lang` on `<html>` |
     ///
     /// It is read once at startup: macOS and Linux cannot change it in a running
-    /// app. On macOS [`Ui::preferred_languages`] lists it first, as for an app
+    /// app. Linux sets `PANGO_LANGUAGE` only while no other thread is running, as
+    /// changing the environment would race a thread reading it; call `run` before
+    /// starting threads (or set `PANGO_LANGUAGE` yourself) to have it there. On macOS [`Ui::preferred_languages`] lists it first, as for an app
     /// whose language is set in System Settings. The strings the native controls
     /// carry themselves (file dialogs, context menus) are not switched by it on any
     /// platform: AppKit chooses those itself, and a file dialog was seen to stay in
