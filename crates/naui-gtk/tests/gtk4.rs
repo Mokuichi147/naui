@@ -6977,6 +6977,11 @@ fn image_loads_bytes(ui: &Ui) -> Result<()> {
         (24, 16),
         "SVG は自分の大きさで描かれる"
     );
+    assert_eq!(
+        drawn_texture_size(&paintable, 96.0, 64.0),
+        (96, 64),
+        "SVG は表示する大きさの画素で描き直される"
+    );
 
     image.set_bytes(b"not an image");
     assert!(!image.is_loaded(), "読めないバイト列は何も出さない");
@@ -7009,11 +7014,34 @@ fn image_shows_pixels(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// The pixel size of the texture `paintable` draws when drawn at `width` × `height`.
+fn drawn_texture_size(paintable: &gtk::gdk::Paintable, width: f64, height: f64) -> (i32, i32) {
+    let snapshot = gtk::Snapshot::new();
+    paintable.snapshot(&snapshot, width, height);
+    let node = snapshot.to_node().expect("描いたもの");
+    let texture = node
+        .downcast_ref::<gtk::gsk::TextureNode>()
+        .expect("画像として描かれる")
+        .texture();
+    (texture.width(), texture.height())
+}
+
 fn image_loads_an_svg_file(ui: &Ui) -> Result<()> {
     let path = std::env::temp_dir().join(format!("naui-gtk-test-{}.svg", std::process::id()));
     std::fs::write(&path, RED_SVG).expect("SVG を書く");
     let image = ui.image(path.to_str().expect("パス"))?;
     assert!(image.is_loaded(), "SVG ファイルが読み込まれる");
+    let native: gtk::Picture = image.native_widget().downcast().expect("GtkPicture");
+    let paintable = native.paintable().expect("paintable");
+    assert_eq!(
+        (paintable.intrinsic_width(), paintable.intrinsic_height()),
+        (24, 16)
+    );
+    assert_eq!(
+        drawn_texture_size(&paintable, 240.0, 160.0),
+        (240, 160),
+        "SVG ファイルも表示する大きさの画素で描き直される"
+    );
     let _ = std::fs::remove_file(&path);
     Ok(())
 }
