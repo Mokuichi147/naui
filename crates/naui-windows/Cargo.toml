@@ -63,6 +63,8 @@ windows = { version = "0.62", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 naui-winui3.workspace = true
+# gzip で包んだ SVG (.svgz) を開く。SvgImageSource は平文の SVG しか読まない。
+flate2 = "1.1"
 
 # 統合テストは WinUI 3 の実コントロールを直に読むので、投影 (naui-winui3) と
 # WinRT の基本型が要る。Windows 以外ではクレートごと空になるため引き込まない。

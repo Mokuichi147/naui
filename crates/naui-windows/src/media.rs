@@ -384,7 +384,9 @@ impl Image {
     ///
     /// The bytes are written into an `InMemoryRandomAccessStream` and handed to a
     /// `BitmapImage` (`SetSource`), or, for SVG, which `BitmapImage` cannot read, to
-    /// an `SvgImageSource` (`SetSourceAsync`). Either way WinUI decodes them.
+    /// an `SvgImageSource` (`SetSourceAsync`). Either way WinUI decodes them. A
+    /// gzip-compressed SVG (SVGZ) is unpacked here first, since `SvgImageSource`
+    /// reads only plain SVG.
     pub fn set_bytes(&self, bytes: &[u8]) {
         self.0.source.borrow_mut().clear();
         self.show_bytes(bytes);
@@ -458,7 +460,8 @@ impl Image {
         let svg = naui_core::media::is_svg_source(&source);
         if svg && !is_url(&source) {
             // 手元の SVG は読み込んでバイト列と同じ経路で出す。SvgImageSource は
-            // 自分の大きさを教えないので、文書から読む必要がある。
+            // 自分の大きさを教えないので、文書から読む必要がある。.svgz もここで
+            // 展開する (SvgImageSource は gzip を解かない)。
             match std::fs::read(&*source) {
                 Ok(bytes) => {
                     drop(source);
@@ -503,6 +506,8 @@ impl Image {
             return;
         };
         self.forget_natural_size();
+        let unzipped = gunzip_svg(bytes);
+        let bytes = unzipped.as_deref().unwrap_or(bytes);
         let svg = naui_core::media::svg_size(bytes);
         let image_source = stream_from(bytes).and_then(|stream| {
             if naui_core::media::is_svg(bytes) {
@@ -567,6 +572,23 @@ fn stream_from(bytes: &[u8]) -> windows_core::Result<InMemoryRandomAccessStream>
     writer.DetachStream()?;
     stream.Seek(0)?;
     Ok(stream)
+}
+
+/// The SVG inside gzip-compressed bytes (an SVGZ file), or `None` if they are not
+/// gzip or what they hold is not SVG.
+///
+/// `SvgImageSource` reads only plain SVG, and `BitmapImage` no SVG at all.
+fn gunzip_svg(bytes: &[u8]) -> Option<Vec<u8>> {
+    use std::io::Read;
+
+    if !bytes.starts_with(&[0x1F, 0x8B]) {
+        return None;
+    }
+    let mut svg = Vec::new();
+    flate2::read::GzDecoder::new(bytes)
+        .read_to_end(&mut svg)
+        .ok()?;
+    naui_core::media::is_svg(&svg).then_some(svg)
 }
 
 // --------------------------------------------------------------- 再生の中身
@@ -1237,6 +1259,24 @@ mod tests {
             "file://server/share/a.png"
         );
         assert_eq!(file_uri("/tmp/a.png"), "file:///tmp/a.png");
+    }
+
+    #[test]
+    fn gunzip_svg_unpacks_svgz() {
+        use std::io::Write;
+
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16"/>"#;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(svg).unwrap();
+        let svgz = encoder.finish().unwrap();
+        assert_eq!(gunzip_svg(&svgz).as_deref(), Some(&svg[..]));
+        // 平文の SVG と gzip でないものはそのまま通す。
+        assert_eq!(gunzip_svg(svg), None);
+        assert_eq!(gunzip_svg(b"\x89PNG\r\n\x1a\n"), None);
+        // gzip でも中身が SVG でなければ取らない。
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(b"plain text").unwrap();
+        assert_eq!(gunzip_svg(&encoder.finish().unwrap()), None);
     }
 
     #[test]

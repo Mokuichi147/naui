@@ -4500,6 +4500,31 @@ fn image_takes_bytes_pixels_and_svg(ui: &Ui) -> Result<()> {
         "SVG ファイルも SvgImageSource で読む"
     );
     assert_eq!(natural_size(&image), (24.0, 16.0));
+
+    // gzip で包んだ .svgz は展開してから SvgImageSource に渡す。
+    let svgz = {
+        use std::io::Write;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder
+            .write_all(RED_SVG.as_bytes())
+            .expect("gzip に書けない");
+        encoder.finish().expect("gzip を閉じられない")
+    };
+    let path = std::env::temp_dir().join(format!("naui-svg-{}.svgz", std::process::id()));
+    std::fs::write(&path, &svgz).expect("SVGZ を書き出せない");
+    image.set_source(path.to_str().expect("UTF-8 のパス"));
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        xaml_image(&image)
+            .Source()
+            .and_then(|source| source.cast::<SvgImageSource>())
+            .is_ok(),
+        "SVGZ ファイルも SvgImageSource で読む"
+    );
+    assert_eq!(natural_size(&image), (24.0, 16.0), "SVGZ の大きさを求める");
+
+    image.set_bytes(&svgz);
+    assert_eq!(natural_size(&image), (24.0, 16.0), "SVGZ のバイト列も読む");
     Ok(())
 }
 

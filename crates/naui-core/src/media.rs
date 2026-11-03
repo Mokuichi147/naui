@@ -160,16 +160,22 @@ pub fn source_url(source: &str) -> String {
 /// assert!(!is_svg(b"\x89PNG\r\n\x1a\n"));
 /// ```
 pub fn is_svg(bytes: &[u8]) -> bool {
+    svg_root(bytes).is_some()
+}
+
+/// `bytes` from the root `<svg` start tag on, found the way [`is_svg`] describes.
+fn svg_root(bytes: &[u8]) -> Option<&[u8]> {
     const LOOK: usize = 4096;
     let head = &bytes[..bytes.len().min(LOOK)];
-    let head = head.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(head);
-    let mut rest = head;
+    let mut rest = head.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(head);
     loop {
         rest = trim_ascii_start(rest);
         if rest.starts_with(b"<svg") {
-            return rest
+            let is_tag = rest
                 .get(4)
                 .is_none_or(|next| next.is_ascii_whitespace() || matches!(next, b'>' | b'/'));
+            // rest は head の末尾側なので、長さの差がそのまま bytes の中の位置になる。
+            return is_tag.then(|| &bytes[head.len() - rest.len()..]);
         }
         // 宣言・コメント・DOCTYPE は読み飛ばす。それ以外の要素が先に来たら SVG ではない。
         let end: &[u8] = if rest.starts_with(b"<?") {
@@ -179,11 +185,9 @@ pub fn is_svg(bytes: &[u8]) -> bool {
         } else if rest.starts_with(b"<!") {
             b">"
         } else {
-            return false;
+            return None;
         };
-        let Some(at) = rest.windows(end.len()).position(|window| window == end) else {
-            return false;
-        };
+        let at = rest.windows(end.len()).position(|window| window == end)?;
         rest = &rest[at + end.len()..];
     }
 }
@@ -202,11 +206,8 @@ pub fn is_svg(bytes: &[u8]) -> bool {
 /// assert_eq!(svg_size(b"<svg/>"), None);
 /// ```
 pub fn svg_size(bytes: &[u8]) -> Option<(f64, f64)> {
-    if !is_svg(bytes) {
-        return None;
-    }
-    let start = bytes.windows(4).position(|window| window == b"<svg")?;
-    let rest = &bytes[start..];
+    // 先頭のコメントの中の `<svg` ではなく、根の要素の開始タグを読む。
+    let rest = svg_root(bytes)?;
     let end = rest.iter().position(|&byte| byte == b'>')?;
     let tag = std::str::from_utf8(&rest[..end]).ok()?;
 
@@ -291,13 +292,22 @@ pub fn is_svg_source(source: &str) -> bool {
 /// The pixel format of `Image::set_pixels`: rows from top to bottom, each pixel red,
 /// green, blue and alpha, with straight (not premultiplied) alpha.
 pub fn check_pixels(width: u32, height: u32, rgba: &[u8]) -> crate::Result<()> {
-    let expected = (width as u64) * (height as u64) * 4;
     if width == 0 || height == 0 {
         return Err(crate::Error::new(
             "show the pixels",
             format!("the size {width} x {height} has no pixels"),
         ));
     }
+    // u32 同士の積の 4 倍は u64 にも収まらないことがある。回り込んだ値で照合しない。
+    let Some(expected) = (width as u64)
+        .checked_mul(height as u64)
+        .and_then(|pixels| pixels.checked_mul(4))
+    else {
+        return Err(crate::Error::new(
+            "show the pixels",
+            format!("the size {width} x {height} is too large"),
+        ));
+    };
     if rgba.len() as u64 != expected {
         return Err(crate::Error::new(
             "show the pixels",
@@ -439,6 +449,11 @@ mod tests {
         );
         assert_eq!(svg_size(br#"<svg width="2em">"#), None);
         assert_eq!(svg_size(b"\x89PNG"), None);
+        // コメントの中の <svg は根の要素ではない。
+        assert_eq!(
+            svg_size(br#"<!-- <svg width="1" height="1"> --><svg width="24" height="16"/>"#),
+            Some((24.0, 16.0))
+        );
     }
 
     #[test]
@@ -455,6 +470,9 @@ mod tests {
         assert!(check_pixels(2, 1, &[0; 8]).is_ok());
         assert!(check_pixels(2, 1, &[0; 7]).is_err());
         assert!(check_pixels(0, 1, &[]).is_err());
+        // 2^31 × 2^31 × 4 は u64 で 0 に回る。空のバッファを通さない。
+        assert!(check_pixels(1 << 31, 1 << 31, &[]).is_err());
+        assert!(check_pixels(u32::MAX, u32::MAX, &[]).is_err());
     }
 
     #[test]
