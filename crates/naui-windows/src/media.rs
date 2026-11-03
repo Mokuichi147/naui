@@ -48,6 +48,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
+use std::sync::Mutex;
 
 use naui_core::media::is_url;
 use naui_core::{Fit, PlaybackState, Result};
@@ -56,8 +57,8 @@ use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Border, Canvas, Grid, Image as XamlImage, MediaPlayerElement, UIElementCollection,
 };
-use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::BitmapImage;
-use naui_winui3::Microsoft::UI::Xaml::Media::Stretch;
+use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::{BitmapImage, BitmapSource, SvgImageSource};
+use naui_winui3::Microsoft::UI::Xaml::Media::{ImageSource, Stretch};
 use naui_winui3::Microsoft::UI::Xaml::{
     FrameworkElement, RoutedEventHandler, SizeChangedEventHandler, UIElement,
 };
@@ -68,6 +69,10 @@ use windows::Media::Playback::{
     MediaPlayerFailedEventArgs,
 };
 use windows::Storage::StorageFile;
+use windows::Storage::Streams::{
+    DataReader, DataWriter, IRandomAccessStreamWithContentType, InMemoryRandomAccessStream,
+    RandomAccessStreamReference,
+};
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::to_error;
@@ -143,6 +148,68 @@ fn unescape_non_ascii(url: &str) -> String {
         }
     }
     out
+}
+
+/// The local path a `file:` URL names, or `None` for other URLs and for
+/// percent-encoding that is not UTF-8.
+///
+/// The query and fragment are dropped, `%XX` is decoded as UTF-8, a drive letter
+/// loses the `/` before it (`file:///C:/a.svg` → `C:\a.svg`) and a host other than
+/// `localhost` becomes a UNC path (`file://server/share/a.svg` → `\\server\share\a.svg`).
+fn file_path(url: &str) -> Option<String> {
+    let rest = url
+        .get(..5)
+        .filter(|scheme| scheme.eq_ignore_ascii_case("file:"))
+        .map(|_| &url[5..])?;
+    let rest = rest.split(['?', '#']).next().unwrap_or(rest);
+    let path = match rest.strip_prefix("//") {
+        Some(authority) => {
+            let (host, path) = authority.split_at(authority.find('/').unwrap_or(authority.len()));
+            if host.is_empty() || host.eq_ignore_ascii_case("localhost") {
+                path.to_string()
+            } else {
+                format!("//{host}{path}")
+            }
+        }
+        None => rest.to_string(),
+    };
+    let path = percent_decode(&path)?;
+    // `/C:/...` の先頭の `/` はドライブ名の前に付いた区切りで、パスには要らない。
+    let bytes = path.as_bytes();
+    let path = if bytes.len() >= 3
+        && bytes[0] == b'/'
+        && bytes[1].is_ascii_alphabetic()
+        && bytes[2] == b':'
+    {
+        &path[1..]
+    } else {
+        &path[..]
+    };
+    Some(path.replace('/', "\\"))
+}
+
+/// Decodes every `%XX`, and `None` if the result is not UTF-8.
+fn percent_decode(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let escaped = text
+            .get(i + 1..i + 3)
+            .filter(|hex| bytes[i] == b'%' && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        match escaped {
+            Some(byte) => {
+                out.push(byte);
+                i += 3;
+            }
+            None => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 /// Turns a local file path into a `file://` that `Windows.Foundation.Uri` can read.
@@ -256,6 +323,12 @@ struct ImageInner {
     /// empty.
     image: XamlImage,
     source: RefCell<String>,
+    /// The size an SVG shown now gives itself (see [`naui_core::media::svg_size`]).
+    /// `SvgImageSource` has no pixel size to read, unlike `BitmapImage`.
+    svg_size: Cell<Option<(u32, u32)>>,
+    /// The number of the fetch bringing the SVG on the network to show next (see
+    /// [`Image::fetch_svg`]), or 0.
+    svg_fetch: Cell<u64>,
     fit: Cell<Fit>,
     alt: RefCell<String>,
 }
@@ -282,6 +355,8 @@ impl Image {
             opened: Cell::new(false),
             image,
             source: RefCell::new(String::new()),
+            svg_size: Cell::new(None),
+            svg_fetch: Cell::new(0),
             fit: Cell::new(Fit::default()),
             alt: RefCell::new(String::new()),
         }));
@@ -342,21 +417,59 @@ impl Image {
     /// for (not the previous image's either).
     fn take_natural_size(&self) {
         let pixels = |value: windows_core::Result<i32>| value.unwrap_or(0).max(0) as u32;
-        let size = self
-            .0
-            .image
-            .Source()
-            .ok()
-            .and_then(|source| source.cast::<BitmapImage>().ok())
-            .filter(|_| self.0.opened.get())
-            .map(|bitmap| (pixels(bitmap.PixelWidth()), pixels(bitmap.PixelHeight())));
+        let size = self.0.svg_size.get().or_else(|| {
+            self.0
+                .image
+                .Source()
+                .ok()
+                .and_then(|source| source.cast::<BitmapImage>().ok())
+                .filter(|_| self.0.opened.get())
+                .map(|bitmap| (pixels(bitmap.PixelWidth()), pixels(bitmap.PixelHeight())))
+        });
         self.0.frame.ask_for(&self.0.native, size);
     }
 
     /// Forgets the natural size of the image that was shown.
     fn forget_natural_size(&self) {
         self.0.opened.set(false);
+        self.0.svg_size.set(None);
+        // 前に取りに行った SVG は、届いても出さない。
+        self.0.svg_fetch.set(0);
         self.take_natural_size();
+    }
+
+    /// Fetches an SVG on the network off the UI thread, then shows it like
+    /// [`set_bytes`](Self::set_bytes).
+    ///
+    /// Handing the URI to `SvgImageSource` would leave the image without a size
+    /// (`SvgImageSource` reports none) and an SVGZ served without
+    /// `Content-Encoding: gzip` unreadable (it does not unpack gzip). With the document
+    /// in hand, both go through [`show_bytes`](Self::show_bytes). A document that
+    /// arrives after another image has been set is dropped.
+    fn fetch_svg(&self, uri: &Uri) -> windows_core::Result<()> {
+        let queue = DispatcherQueue::GetForCurrentThread()?;
+        let load = RandomAccessStreamReference::CreateFromUri(uri)?.OpenReadAsync()?;
+        let id = next_id();
+        self.0.svg_fetch.set(id);
+        SVG_FETCHES.with(|map| map.borrow_mut().insert(id, Rc::downgrade(&self.0)));
+        // 読み込みが終わるとスレッドプールで呼ばれる。中身を読み切って UI スレッドへ渡す。
+        let started = load.when(move |stream| {
+            let document = stream.and_then(|stream| read_all(&stream));
+            // DispatcherQueueHandler は何度も呼べる形なので、一度きりの中身はセルに預ける。
+            let slot = Mutex::new(Some(document));
+            let _ = queue.TryEnqueue(&DispatcherQueueHandler::new(move || {
+                if let Some(document) = slot.lock().ok().and_then(|mut slot| slot.take()) {
+                    deliver_svg(id, document);
+                }
+                Ok(())
+            }));
+        });
+        if let Err(error) = started {
+            SVG_FETCHES.with(|map| map.borrow_mut().remove(&id));
+            self.0.svg_fetch.set(0);
+            return Err(error);
+        }
+        Ok(())
     }
 
     /// The location currently specified (exactly the string that was passed).
@@ -370,6 +483,32 @@ impl Image {
     pub fn set_source(&self, source: &str) {
         *self.0.source.borrow_mut() = source.to_string();
         self.apply_source();
+    }
+
+    /// Shows an image from the contents of an image file held in memory.
+    /// [`source`](Self::source) becomes empty.
+    ///
+    /// The bytes are written into an `InMemoryRandomAccessStream` and handed to a
+    /// `BitmapImage` (`SetSource`), or, for SVG, which `BitmapImage` cannot read, to
+    /// an `SvgImageSource` (`SetSourceAsync`). Either way WinUI decodes them. A
+    /// gzip-compressed SVG (SVGZ) is unpacked here first, since `SvgImageSource`
+    /// reads only plain SVG.
+    pub fn set_bytes(&self, bytes: &[u8]) {
+        self.0.source.borrow_mut().clear();
+        self.show_bytes(bytes);
+    }
+
+    /// Shows pixels the app made itself: `width` × `height` pixels, rows from top to
+    /// bottom, each pixel 4 bytes of red, green, blue and alpha (straight alpha).
+    /// [`source`](Self::source) becomes empty.
+    ///
+    /// The pixels are packed into an uncompressed PNG and shown like
+    /// [`set_bytes`](Self::set_bytes). Returns `Err` without changing the image when
+    /// `rgba` is not exactly `width * height * 4` bytes.
+    pub fn set_pixels(&self, width: u32, height: u32, rgba: &[u8]) -> Result<()> {
+        let png = naui_core::media::encode_png(width, height, rgba)?;
+        self.set_bytes(&png);
+        Ok(())
     }
 
     /// Whether loading could be requested (whether the element could be built).
@@ -424,6 +563,29 @@ impl Image {
             return;
         }
 
+        let svg = naui_core::media::is_svg_source(&source);
+        let local = if is_url(&source) {
+            file_path(&source)
+        } else {
+            Some(source.clone())
+        };
+        if let Some(path) = local.filter(|_| svg) {
+            // 手元の SVG は (file: の URL で渡されても) 読み込んでバイト列と同じ経路で
+            // 出す。SvgImageSource は自分の大きさを教えないので、文書から読む必要が
+            // ある。.svgz もここで展開する (SvgImageSource は gzip を解かない)。
+            match read_file_within(&path, SVG_MAX) {
+                Ok(bytes) => {
+                    drop(source);
+                    self.show_bytes(&bytes);
+                }
+                Err(error) => {
+                    eprintln!("naui-windows: could not read the SVG ({source}): {error}");
+                    self.take_down(&children);
+                }
+            }
+            return;
+        }
+
         // WinUI はファイルパスではなく URI を要求する。
         let uri = match Uri::CreateUri(&HSTRING::from(source_uri(&source))) {
             Ok(uri) => uri,
@@ -433,17 +595,70 @@ impl Image {
                 return;
             }
         };
-        let bitmap = match BitmapImage::CreateInstanceWithUriSource(&uri) {
-            Ok(bitmap) => bitmap,
+        drop(source);
+        if svg {
+            // ネットワーク上の SVG は取ってきてから出す。それまでは前の画像も出さない。
+            self.take_down(&children);
+            if let Err(error) = self.fetch_svg(&uri) {
+                eprintln!("naui-windows: failed to start fetching the SVG: {error}");
+            }
+            return;
+        }
+        match BitmapImage::CreateInstanceWithUriSource(&uri).and_then(|bitmap| bitmap.cast()) {
+            Ok(image_source) => self.put(&children, &image_source),
             Err(error) => {
                 eprintln!("naui-windows: failed to start loading the Image: {error}");
+                self.take_down(&children);
+            }
+        }
+    }
+
+    /// Decodes an image file's contents through a stream and shows it.
+    fn show_bytes(&self, bytes: &[u8]) {
+        let Ok(children) = self.0.frame.stage.Children() else {
+            return;
+        };
+        self.forget_natural_size();
+        let unzipped = match gunzip_svg(bytes) {
+            Ok(unzipped) => unzipped,
+            Err(error) => {
+                eprintln!("naui-windows: refused the image: {error}");
                 self.take_down(&children);
                 return;
             }
         };
-        if let Err(error) = self.0.image.SetSource(&bitmap) {
+        let bytes = unzipped.as_deref().unwrap_or(bytes);
+        let svg = naui_core::media::svg_size(bytes);
+        let image_source = stream_from(bytes).and_then(|stream| {
+            if naui_core::media::is_svg(bytes) {
+                let source = SvgImageSource::new()?;
+                // 読み込みは非同期。結果は Image の ImageOpened / ImageFailed で届く。
+                let _ = source.SetSourceAsync(&stream)?;
+                source.cast::<ImageSource>()
+            } else {
+                let bitmap = BitmapImage::new()?;
+                bitmap.cast::<BitmapSource>()?.SetSource(&stream)?;
+                bitmap.cast::<ImageSource>()
+            }
+        });
+        match image_source {
+            Ok(image_source) => {
+                self.0.svg_size.set(svg.map(svg_pixels));
+                self.put(&children, &image_source);
+                self.take_natural_size();
+            }
+            Err(error) => {
+                eprintln!("naui-windows: could not read the image: {error}");
+                self.take_down(&children);
+            }
+        }
+    }
+
+    /// Hands the image source to the `Image` and puts it on the `Canvas`.
+    fn put(&self, children: &UIElementCollection, image_source: &ImageSource) {
+        if let Err(error) = self.0.image.SetSource(image_source) {
             eprintln!("naui-windows: failed to replace the Image: {error}");
-            self.take_down(&children);
+            self.take_down(children);
             return;
         }
         if children.Size().is_ok_and(|size| size > 0) {
@@ -461,6 +676,125 @@ impl Image {
         // ここで合わせる。
         self.fit_to_host();
     }
+}
+
+/// An SVG's size in CSS pixels, rounded up to whole pixels for the natural size.
+fn svg_pixels((width, height): (f64, f64)) -> (u32, u32) {
+    (width.ceil() as u32, height.ceil() as u32)
+}
+
+/// The most bytes an SVG may take in memory: as read from a local file, as fetched
+/// from the network, and as unpacked from gzip (see [`gunzip_svg`]). Larger
+/// documents are refused rather than held in memory whole.
+const SVG_MAX: usize = 64 * 1024 * 1024;
+
+/// Reads a file whole, or fails with `InvalidData` if it is larger than `limit`
+/// bytes. Only `limit + 1` bytes are ever read, so a file that grows meanwhile is
+/// caught too.
+fn read_file_within(path: &str, limit: usize) -> std::io::Result<Vec<u8>> {
+    use std::io::Read;
+
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)?
+        .take(limit as u64 + 1)
+        .read_to_end(&mut bytes)?;
+    if bytes.len() > limit {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            format!("the file is larger than {limit} bytes"),
+        ));
+    }
+    Ok(bytes)
+}
+
+/// Reads a stream to its end, up to [`SVG_MAX`] bytes. Blocks, so it is called off
+/// the UI thread.
+fn read_all(stream: &IRandomAccessStreamWithContentType) -> windows_core::Result<Vec<u8>> {
+    const CHUNK: u32 = 64 * 1024;
+    let reader = DataReader::CreateDataReader(stream)?;
+    let mut document = Vec::new();
+    loop {
+        let loaded = reader.LoadAsync(CHUNK)?.join()? as usize;
+        if loaded == 0 {
+            return Ok(document);
+        }
+        if document.len() + loaded > SVG_MAX {
+            return Err(windows_core::Error::new(
+                windows::Win32::Foundation::E_OUTOFMEMORY,
+                format!("the SVG is larger than {SVG_MAX} bytes"),
+            ));
+        }
+        let start = document.len();
+        document.resize(start + loaded, 0);
+        reader.ReadBytes(&mut document[start..])?;
+    }
+}
+
+/// Shows the SVG fetched by [`Image::fetch_svg`] number `id`, on the UI thread, if
+/// its image still waits for it.
+fn deliver_svg(id: u64, document: windows_core::Result<Vec<u8>>) {
+    let Some(inner) = SVG_FETCHES
+        .with(|map| map.borrow_mut().remove(&id))
+        .and_then(|weak| weak.upgrade())
+    else {
+        return;
+    };
+    if inner.svg_fetch.get() != id {
+        return;
+    }
+    inner.svg_fetch.set(0);
+    match document {
+        Ok(document) => Image(inner).show_bytes(&document),
+        Err(error) => {
+            let source = inner.source.borrow().clone();
+            eprintln!("naui-windows: could not fetch the SVG ({source}): {error}");
+        }
+    }
+}
+
+/// Writes bytes into an in-memory stream positioned at its start.
+///
+/// The write completes without leaving the process, so waiting for it on the UI
+/// thread does not stall.
+fn stream_from(bytes: &[u8]) -> windows_core::Result<InMemoryRandomAccessStream> {
+    let stream = InMemoryRandomAccessStream::new()?;
+    let writer = DataWriter::CreateDataWriter(&stream)?;
+    writer.WriteBytes(bytes)?;
+    writer.StoreAsync()?.join()?;
+    writer.DetachStream()?;
+    stream.Seek(0)?;
+    Ok(stream)
+}
+
+/// The SVG inside gzip-compressed bytes (an SVGZ file), or `Ok(None)` if they are
+/// not gzip or what they hold is not SVG. `Err` if it unpacks to more than
+/// [`SVG_MAX`] bytes: a small file can unpack to far more, so the unpacked size is
+/// limited too, not only what is fetched.
+///
+/// `SvgImageSource` reads only plain SVG, and `BitmapImage` no SVG at all.
+fn gunzip_svg(bytes: &[u8]) -> std::result::Result<Option<Vec<u8>>, String> {
+    gunzip_svg_within(bytes, SVG_MAX)
+}
+
+/// [`gunzip_svg`] with the limit on the unpacked size given.
+fn gunzip_svg_within(bytes: &[u8], limit: usize) -> std::result::Result<Option<Vec<u8>>, String> {
+    use std::io::Read;
+
+    if !bytes.starts_with(&[0x1F, 0x8B]) {
+        return Ok(None);
+    }
+    let mut svg = Vec::new();
+    // 上限より 1 バイトだけ多く読めば、超えたかどうかが分かる。
+    let read = flate2::read::GzDecoder::new(bytes)
+        .take(limit as u64 + 1)
+        .read_to_end(&mut svg);
+    if read.is_err() {
+        return Ok(None);
+    }
+    if svg.len() > limit {
+        return Err(format!("the SVGZ unpacks to more than {limit} bytes"));
+    }
+    Ok(naui_core::media::is_svg(&svg).then_some(svg))
 }
 
 // --------------------------------------------------------------- 再生の中身
@@ -493,6 +827,11 @@ thread_local! {
 
     /// The next number to hand out.
     static NEXT_ID: Cell<u64> = const { Cell::new(0) };
+
+    /// The images waiting for the size of an SVG on the network, by fetch number
+    /// (see [`Image::fetch_svg_size`]). Weak references, as with [`PLAYBACKS`].
+    static SVG_FETCHES: RefCell<HashMap<u64, Weak<ImageInner>>> =
+        RefCell::new(HashMap::new());
 }
 
 fn next_id() -> u64 {
@@ -1131,6 +1470,88 @@ mod tests {
             "file://server/share/a.png"
         );
         assert_eq!(file_uri("/tmp/a.png"), "file:///tmp/a.png");
+    }
+
+    #[test]
+    fn file_path_reads_file_urls() {
+        assert_eq!(
+            file_path("file:///C:/Users/me/icon.svg").as_deref(),
+            Some(r"C:\Users\me\icon.svg")
+        );
+        assert_eq!(
+            file_path("FILE://localhost/C:/a%20b/%E5%86%99.svg?v=1#x").as_deref(),
+            Some(r"C:\a b\写.svg")
+        );
+        assert_eq!(
+            file_path("file://server/share/a.svg").as_deref(),
+            Some(r"\\server\share\a.svg")
+        );
+        // core の file_url で作った URL は元のパスに戻る。
+        let url = naui_core::media::file_url("C:/Users/太郎/写真 #1.svg");
+        assert_eq!(
+            file_path(&url).as_deref(),
+            Some(r"C:\Users\太郎\写真 #1.svg")
+        );
+        assert_eq!(file_path("https://example.com/a.svg"), None);
+        assert_eq!(file_path("file:///C:/%FF.svg"), None);
+        assert_eq!(
+            file_path("file:///C:/%+1.svg").as_deref(),
+            Some(r"C:\%+1.svg")
+        );
+    }
+
+    #[test]
+    fn gunzip_svg_unpacks_svgz() {
+        use std::io::Write;
+
+        let svg = br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16"/>"#;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(svg).unwrap();
+        let svgz = encoder.finish().unwrap();
+        assert_eq!(gunzip_svg(&svgz), Ok(Some(svg.to_vec())));
+        // 平文の SVG と gzip でないものはそのまま通す。
+        assert_eq!(gunzip_svg(svg), Ok(None));
+        assert_eq!(gunzip_svg(b"\x89PNG\r\n\x1a\n"), Ok(None));
+        // gzip でも中身が SVG でなければ取らない。
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(b"plain text").unwrap();
+        assert_eq!(gunzip_svg(&encoder.finish().unwrap()), Ok(None));
+        // 展開した大きさが上限ちょうどなら通し、1 バイトでも超えたら拒む。
+        assert_eq!(gunzip_svg_within(&svgz, svg.len()), Ok(Some(svg.to_vec())));
+        assert!(gunzip_svg_within(&svgz, svg.len() - 1).is_err());
+    }
+
+    #[test]
+    fn read_file_within_refuses_large_files() {
+        let path = std::env::temp_dir().join(format!("naui-limit-{}.svg", std::process::id()));
+        std::fs::write(&path, b"<svg/>").unwrap();
+        let path_str = path.to_str().unwrap();
+        // ちょうど上限までは読み、1 バイトでも超えたら拒む。
+        assert_eq!(read_file_within(path_str, 6).unwrap(), b"<svg/>");
+        let error = read_file_within(path_str, 5).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A small SVGZ that unpacks past the limit (a gzip bomb) is refused without
+    /// unpacking all of it.
+    #[test]
+    fn gunzip_svg_refuses_a_bomb() {
+        use std::io::Write;
+
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        encoder.write_all(b"<svg>").unwrap();
+        let zeros = vec![b' '; 1024 * 1024];
+        for _ in 0..(SVG_MAX / zeros.len() + 1) {
+            encoder.write_all(&zeros).unwrap();
+        }
+        let bomb = encoder.finish().unwrap();
+        assert!(
+            bomb.len() < 1024 * 1024,
+            "圧縮後は小さい ({} バイト)",
+            bomb.len()
+        );
+        assert!(gunzip_svg(&bomb).is_err());
     }
 
     #[test]

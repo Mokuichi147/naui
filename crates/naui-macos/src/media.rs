@@ -33,8 +33,8 @@ use objc2_av_foundation::{
 use objc2_av_kit::{AVPlayerView, AVPlayerViewControlsStyle};
 use objc2_core_media::{CMTime, CMTimeFlags};
 use objc2_foundation::{
-    NSNotification, NSNotificationCenter, NSObjectNSKeyValueObserverRegistration, NSPoint, NSRect,
-    NSSize, NSString, NSURL,
+    NSData, NSNotification, NSNotificationCenter, NSObjectNSKeyValueObserverRegistration, NSPoint,
+    NSRect, NSSize, NSString, NSURL,
 };
 
 use crate::widgets::{impl_widget, Widget};
@@ -237,6 +237,33 @@ impl Image {
         let image =
             to_url(source).and_then(|url| NSImage::initWithContentsOfURL(NSImage::alloc(), &url));
         self.0.native.as_super().setImage(image.as_deref());
+    }
+
+    /// Shows an image from the contents of an image file held in memory
+    /// (`NSImage`'s `initWithData:`, so the formats are those NSImage reads).
+    /// [`source`](Self::source) becomes empty.
+    ///
+    /// If it cannot be read, nothing is shown and [`is_loaded`](Self::is_loaded) is
+    /// `false`.
+    pub fn set_bytes(&self, bytes: &[u8]) {
+        self.0.source.borrow_mut().clear();
+        let data = NSData::with_bytes(bytes);
+        let image = NSImage::initWithData(NSImage::alloc(), &data);
+        self.0.native.as_super().setImage(image.as_deref());
+    }
+
+    /// Shows pixels the app made itself: `width` × `height` pixels, rows from top to
+    /// bottom, each pixel 4 bytes of red, green, blue and alpha (straight alpha).
+    /// [`source`](Self::source) becomes empty.
+    ///
+    /// The pixels are packed into an uncompressed PNG and read like
+    /// [`set_bytes`](Self::set_bytes), so NSImage treats them as sRGB, as it would a
+    /// file. Returns `Err` without changing the image when `rgba` is not exactly
+    /// `width * height * 4` bytes.
+    pub fn set_pixels(&self, width: u32, height: u32, rgba: &[u8]) -> naui_core::Result<()> {
+        let png = naui_core::media::encode_png(width, height, rgba)?;
+        self.set_bytes(&png);
+        Ok(())
     }
 
     /// Whether it has loaded.

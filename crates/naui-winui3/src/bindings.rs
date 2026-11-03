@@ -341100,6 +341100,984 @@ pub mod Microsoft {
                         PixelWidthProperty: usize,
                         PixelHeightProperty: usize,
                     }
+                    windows_core::imp::define_interface!(
+                        ISvgImageSource,
+                        ISvgImageSource_Vtbl,
+                        0xd5b61d3c_b68d_53a2_b07b_ba6adfdd5887
+                    );
+                    impl windows_core::RuntimeType for ISvgImageSource {
+                        const SIGNATURE: windows_core::imp::ConstBuffer =
+                            windows_core::imp::ConstBuffer::for_interface::<Self>();
+                    }
+                    impl windows_core::RuntimeName for ISvgImageSource {
+                        const NAME: &'static str =
+                            "Microsoft.UI.Xaml.Media.Imaging.ISvgImageSource";
+                    }
+                    pub trait ISvgImageSource_Impl: windows_core::IUnknownImpl {
+                        fn UriSource(&self) -> windows_core::Result<windows::Foundation::Uri>;
+                        fn SetUriSource(
+                            &self,
+                            value: windows_core::Ref<'_, windows::Foundation::Uri>,
+                        ) -> windows_core::Result<()>;
+                        fn RasterizePixelWidth(&self) -> windows_core::Result<f64>;
+                        fn SetRasterizePixelWidth(&self, value: f64) -> windows_core::Result<()>;
+                        fn RasterizePixelHeight(&self) -> windows_core::Result<f64>;
+                        fn SetRasterizePixelHeight(&self, value: f64) -> windows_core::Result<()>;
+                        fn Opened(
+                            &self,
+                            handler: windows_core::Ref<
+                                '_,
+                                windows::Foundation::TypedEventHandler<
+                                    SvgImageSource,
+                                    SvgImageSourceOpenedEventArgs,
+                                >,
+                            >,
+                        ) -> windows_core::Result<i64>;
+                        fn RemoveOpened(&self, token: i64) -> windows_core::Result<()>;
+                        fn OpenFailed(
+                            &self,
+                            handler: windows_core::Ref<
+                                '_,
+                                windows::Foundation::TypedEventHandler<
+                                    SvgImageSource,
+                                    SvgImageSourceFailedEventArgs,
+                                >,
+                            >,
+                        ) -> windows_core::Result<i64>;
+                        fn RemoveOpenFailed(&self, token: i64) -> windows_core::Result<()>;
+                        fn SetSourceAsync(
+                            &self,
+                            streamSource: windows_core::Ref<
+                                '_,
+                                windows::Storage::Streams::IRandomAccessStream,
+                            >,
+                        ) -> windows_core::Result<
+                            windows_future::IAsyncOperation<SvgImageSourceLoadStatus>,
+                        >;
+                    }
+                    impl ISvgImageSource_Vtbl {
+                        pub const fn new<Identity: ISvgImageSource_Impl, const OFFSET: isize>(
+                        ) -> Self {
+                            unsafe extern "system" fn UriSource<
+                                Identity: ISvgImageSource_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                result__: *mut *mut core::ffi::c_void,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    match ISvgImageSource_Impl::UriSource(this) {
+                                        Ok(ok__) => {
+                                            result__.write(core::mem::transmute_copy(&ok__));
+                                            core::mem::forget(ok__);
+                                            windows_core::HRESULT(0)
+                                        }
+                                        Err(err) => err.into(),
+                                    }
+                                }
+                            }
+                            unsafe extern "system" fn SetUriSource<
+                                Identity: ISvgImageSource_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                value: *mut core::ffi::c_void,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    ISvgImageSource_Impl::SetUriSource(
+                                        this,
+                                        core::mem::transmute_copy(&value),
+                                    )
+                                    .into()
+                                }
+                            }
+                            unsafe extern "system" fn RasterizePixelWidth<
+                                Identity: ISvgImageSource_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                result__: *mut f64,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    match ISvgImageSource_Impl::RasterizePixelWidth(this) {
+                                        Ok(ok__) => {
+                                            result__.write(core::mem::transmute_copy(&ok__));
+                                            windows_core::HRESULT(0)
+                                        }
+                                        Err(err) => err.into(),
+                                    }
+                                }
+                            }
+                            unsafe extern "system" fn SetRasterizePixelWidth<
+                                Identity: ISvgImageSource_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                value: f64,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    ISvgImageSource_Impl::SetRasterizePixelWidth(this, value).into()
+                                }
+                            }
+                            unsafe extern "system" fn RasterizePixelHeight<
+                                Identity: ISvgImageSource_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                result__: *mut f64,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    match ISvgImageSource_Impl::RasterizePixelHeight(this) {
+                                        Ok(ok__) => {
+                                            result__.write(core::mem::transmute_copy(&ok__));
+                                            windows_core::HRESULT(0)
+                                        }
+                                        Err(err) => err.into(),
+                                    }
+                                }
+                            }
+                            unsafe extern "system" fn SetRasterizePixelHeight<
+                                Identity: ISvgImageSource_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                value: f64,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    ISvgImageSource_Impl::SetRasterizePixelHeight(this, value)
+                                        .into()
+                                }
+                            }
+                            unsafe extern "system" fn Opened<
+                                Identity: ISvgImageSource_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                handler: *mut core::ffi::c_void,
+                                result__: *mut i64,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    match ISvgImageSource_Impl::Opened(
+                                        this,
+                                        core::mem::transmute_copy(&handler),
+                                    ) {
+                                        Ok(ok__) => {
+                                            result__.write(core::mem::transmute_copy(&ok__));
+                                            windows_core::HRESULT(0)
+                                        }
+                                        Err(err) => err.into(),
+                                    }
+                                }
+                            }
+                            unsafe extern "system" fn RemoveOpened<
+                                Identity: ISvgImageSource_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                token: i64,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    ISvgImageSource_Impl::RemoveOpened(this, token).into()
+                                }
+                            }
+                            unsafe extern "system" fn OpenFailed<
+                                Identity: ISvgImageSource_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                handler: *mut core::ffi::c_void,
+                                result__: *mut i64,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    match ISvgImageSource_Impl::OpenFailed(
+                                        this,
+                                        core::mem::transmute_copy(&handler),
+                                    ) {
+                                        Ok(ok__) => {
+                                            result__.write(core::mem::transmute_copy(&ok__));
+                                            windows_core::HRESULT(0)
+                                        }
+                                        Err(err) => err.into(),
+                                    }
+                                }
+                            }
+                            unsafe extern "system" fn RemoveOpenFailed<
+                                Identity: ISvgImageSource_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                token: i64,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    ISvgImageSource_Impl::RemoveOpenFailed(this, token).into()
+                                }
+                            }
+                            unsafe extern "system" fn SetSourceAsync<
+                                Identity: ISvgImageSource_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                streamsource: *mut core::ffi::c_void,
+                                result__: *mut *mut core::ffi::c_void,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    match ISvgImageSource_Impl::SetSourceAsync(
+                                        this,
+                                        core::mem::transmute_copy(&streamsource),
+                                    ) {
+                                        Ok(ok__) => {
+                                            result__.write(core::mem::transmute_copy(&ok__));
+                                            core::mem::forget(ok__);
+                                            windows_core::HRESULT(0)
+                                        }
+                                        Err(err) => err.into(),
+                                    }
+                                }
+                            }
+                            Self {
+                                base__: windows_core::IInspectable_Vtbl::new::<
+                                    Identity,
+                                    ISvgImageSource,
+                                    OFFSET,
+                                >(),
+                                UriSource: UriSource::<Identity, OFFSET>,
+                                SetUriSource: SetUriSource::<Identity, OFFSET>,
+                                RasterizePixelWidth: RasterizePixelWidth::<Identity, OFFSET>,
+                                SetRasterizePixelWidth: SetRasterizePixelWidth::<Identity, OFFSET>,
+                                RasterizePixelHeight: RasterizePixelHeight::<Identity, OFFSET>,
+                                SetRasterizePixelHeight: SetRasterizePixelHeight::<Identity, OFFSET>,
+                                Opened: Opened::<Identity, OFFSET>,
+                                RemoveOpened: RemoveOpened::<Identity, OFFSET>,
+                                OpenFailed: OpenFailed::<Identity, OFFSET>,
+                                RemoveOpenFailed: RemoveOpenFailed::<Identity, OFFSET>,
+                                SetSourceAsync: SetSourceAsync::<Identity, OFFSET>,
+                            }
+                        }
+                        pub fn matches(iid: &windows_core::GUID) -> bool {
+                            iid == &<ISvgImageSource as windows_core::Interface>::IID
+                        }
+                    }
+                    #[repr(C)]
+                    #[doc(hidden)]
+                    pub struct ISvgImageSource_Vtbl {
+                        pub base__: windows_core::IInspectable_Vtbl,
+                        pub UriSource: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        )
+                            -> windows_core::HRESULT,
+                        pub SetUriSource: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        )
+                            -> windows_core::HRESULT,
+                        pub RasterizePixelWidth: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut f64,
+                        )
+                            -> windows_core::HRESULT,
+                        pub SetRasterizePixelWidth:
+                            unsafe extern "system" fn(
+                                *mut core::ffi::c_void,
+                                f64,
+                            )
+                                -> windows_core::HRESULT,
+                        pub RasterizePixelHeight:
+                            unsafe extern "system" fn(
+                                *mut core::ffi::c_void,
+                                *mut f64,
+                            )
+                                -> windows_core::HRESULT,
+                        pub SetRasterizePixelHeight:
+                            unsafe extern "system" fn(
+                                *mut core::ffi::c_void,
+                                f64,
+                            )
+                                -> windows_core::HRESULT,
+                        pub Opened: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                            *mut i64,
+                        )
+                            -> windows_core::HRESULT,
+                        pub RemoveOpened: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            i64,
+                        )
+                            -> windows_core::HRESULT,
+                        pub OpenFailed: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                            *mut i64,
+                        )
+                            -> windows_core::HRESULT,
+                        pub RemoveOpenFailed: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            i64,
+                        )
+                            -> windows_core::HRESULT,
+                        pub SetSourceAsync: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        )
+                            -> windows_core::HRESULT,
+                    }
+                    windows_core::imp::define_interface!(
+                        ISvgImageSourceFactory,
+                        ISvgImageSourceFactory_Vtbl,
+                        0x2f85673f_ac64_570d_9bda_94fa082eead9
+                    );
+                    impl windows_core::RuntimeType for ISvgImageSourceFactory {
+                        const SIGNATURE: windows_core::imp::ConstBuffer =
+                            windows_core::imp::ConstBuffer::for_interface::<Self>();
+                    }
+                    impl windows_core::RuntimeName for ISvgImageSourceFactory {
+                        const NAME: &'static str =
+                            "Microsoft.UI.Xaml.Media.Imaging.ISvgImageSourceFactory";
+                    }
+                    pub trait ISvgImageSourceFactory_Impl: windows_core::IUnknownImpl {
+                        fn CreateInstance(
+                            &self,
+                            baseInterface: windows_core::Ref<'_, windows_core::IInspectable>,
+                            innerInterface: windows_core::OutRef<'_, windows_core::IInspectable>,
+                        ) -> windows_core::Result<SvgImageSource>;
+                        fn CreateInstanceWithUriSource(
+                            &self,
+                            uriSource: windows_core::Ref<'_, windows::Foundation::Uri>,
+                            baseInterface: windows_core::Ref<'_, windows_core::IInspectable>,
+                            innerInterface: windows_core::OutRef<'_, windows_core::IInspectable>,
+                        ) -> windows_core::Result<SvgImageSource>;
+                    }
+                    impl ISvgImageSourceFactory_Vtbl {
+                        pub const fn new<
+                            Identity: ISvgImageSourceFactory_Impl,
+                            const OFFSET: isize,
+                        >() -> Self {
+                            unsafe extern "system" fn CreateInstance<
+                                Identity: ISvgImageSourceFactory_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                baseinterface: *mut core::ffi::c_void,
+                                innerinterface: *mut *mut core::ffi::c_void,
+                                result__: *mut *mut core::ffi::c_void,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    match ISvgImageSourceFactory_Impl::CreateInstance(
+                                        this,
+                                        core::mem::transmute_copy(&baseinterface),
+                                        core::mem::transmute_copy(&innerinterface),
+                                    ) {
+                                        Ok(ok__) => {
+                                            result__.write(core::mem::transmute_copy(&ok__));
+                                            core::mem::forget(ok__);
+                                            windows_core::HRESULT(0)
+                                        }
+                                        Err(err) => err.into(),
+                                    }
+                                }
+                            }
+                            unsafe extern "system" fn CreateInstanceWithUriSource<
+                                Identity: ISvgImageSourceFactory_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                urisource: *mut core::ffi::c_void,
+                                baseinterface: *mut core::ffi::c_void,
+                                innerinterface: *mut *mut core::ffi::c_void,
+                                result__: *mut *mut core::ffi::c_void,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    match ISvgImageSourceFactory_Impl::CreateInstanceWithUriSource(
+                                        this,
+                                        core::mem::transmute_copy(&urisource),
+                                        core::mem::transmute_copy(&baseinterface),
+                                        core::mem::transmute_copy(&innerinterface),
+                                    ) {
+                                        Ok(ok__) => {
+                                            result__.write(core::mem::transmute_copy(&ok__));
+                                            core::mem::forget(ok__);
+                                            windows_core::HRESULT(0)
+                                        }
+                                        Err(err) => err.into(),
+                                    }
+                                }
+                            }
+                            Self {
+                                base__: windows_core::IInspectable_Vtbl::new::<
+                                    Identity,
+                                    ISvgImageSourceFactory,
+                                    OFFSET,
+                                >(),
+                                CreateInstance: CreateInstance::<Identity, OFFSET>,
+                                CreateInstanceWithUriSource: CreateInstanceWithUriSource::<
+                                    Identity,
+                                    OFFSET,
+                                >,
+                            }
+                        }
+                        pub fn matches(iid: &windows_core::GUID) -> bool {
+                            iid == &<ISvgImageSourceFactory as windows_core::Interface>::IID
+                        }
+                    }
+                    #[repr(C)]
+                    #[doc(hidden)]
+                    pub struct ISvgImageSourceFactory_Vtbl {
+                        pub base__: windows_core::IInspectable_Vtbl,
+                        pub CreateInstance: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        )
+                            -> windows_core::HRESULT,
+                        pub CreateInstanceWithUriSource:
+                            unsafe extern "system" fn(
+                                *mut core::ffi::c_void,
+                                *mut core::ffi::c_void,
+                                *mut core::ffi::c_void,
+                                *mut *mut core::ffi::c_void,
+                                *mut *mut core::ffi::c_void,
+                            )
+                                -> windows_core::HRESULT,
+                    }
+                    windows_core::imp::define_interface!(
+                        ISvgImageSourceFailedEventArgs,
+                        ISvgImageSourceFailedEventArgs_Vtbl,
+                        0x76e66278_7804_5439_a50d_14c5ba896714
+                    );
+                    impl windows_core::RuntimeType for ISvgImageSourceFailedEventArgs {
+                        const SIGNATURE: windows_core::imp::ConstBuffer =
+                            windows_core::imp::ConstBuffer::for_interface::<Self>();
+                    }
+                    impl windows_core::RuntimeName for ISvgImageSourceFailedEventArgs {
+                        const NAME: &'static str =
+                            "Microsoft.UI.Xaml.Media.Imaging.ISvgImageSourceFailedEventArgs";
+                    }
+                    pub trait ISvgImageSourceFailedEventArgs_Impl:
+                        windows_core::IUnknownImpl
+                    {
+                        fn Status(&self) -> windows_core::Result<SvgImageSourceLoadStatus>;
+                    }
+                    impl ISvgImageSourceFailedEventArgs_Vtbl {
+                        pub const fn new<
+                            Identity: ISvgImageSourceFailedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >() -> Self {
+                            unsafe extern "system" fn Status<
+                                Identity: ISvgImageSourceFailedEventArgs_Impl,
+                                const OFFSET: isize,
+                            >(
+                                this: *mut core::ffi::c_void,
+                                result__: *mut SvgImageSourceLoadStatus,
+                            ) -> windows_core::HRESULT {
+                                unsafe {
+                                    let this: &Identity = &*((this as *const *const ())
+                                        .offset(OFFSET)
+                                        as *const Identity);
+                                    match ISvgImageSourceFailedEventArgs_Impl::Status(this) {
+                                        Ok(ok__) => {
+                                            result__.write(core::mem::transmute_copy(&ok__));
+                                            windows_core::HRESULT(0)
+                                        }
+                                        Err(err) => err.into(),
+                                    }
+                                }
+                            }
+                            Self {
+                                base__: windows_core::IInspectable_Vtbl::new::<
+                                    Identity,
+                                    ISvgImageSourceFailedEventArgs,
+                                    OFFSET,
+                                >(),
+                                Status: Status::<Identity, OFFSET>,
+                            }
+                        }
+                        pub fn matches(iid: &windows_core::GUID) -> bool {
+                            iid == &<ISvgImageSourceFailedEventArgs as windows_core::Interface>::IID
+                        }
+                    }
+                    #[repr(C)]
+                    #[doc(hidden)]
+                    pub struct ISvgImageSourceFailedEventArgs_Vtbl {
+                        pub base__: windows_core::IInspectable_Vtbl,
+                        pub Status: unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut SvgImageSourceLoadStatus,
+                        )
+                            -> windows_core::HRESULT,
+                    }
+                    windows_core::imp::define_interface!(
+                        ISvgImageSourceOpenedEventArgs,
+                        ISvgImageSourceOpenedEventArgs_Vtbl,
+                        0x1c9860d5_38d0_5b21_8d48_072f1e254e39
+                    );
+                    impl windows_core::RuntimeType for ISvgImageSourceOpenedEventArgs {
+                        const SIGNATURE: windows_core::imp::ConstBuffer =
+                            windows_core::imp::ConstBuffer::for_interface::<Self>();
+                    }
+                    impl windows_core::RuntimeName for ISvgImageSourceOpenedEventArgs {
+                        const NAME: &'static str =
+                            "Microsoft.UI.Xaml.Media.Imaging.ISvgImageSourceOpenedEventArgs";
+                    }
+                    pub trait ISvgImageSourceOpenedEventArgs_Impl:
+                        windows_core::IUnknownImpl
+                    {
+                    }
+                    impl ISvgImageSourceOpenedEventArgs_Vtbl {
+                        pub const fn new<
+                            Identity: ISvgImageSourceOpenedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >() -> Self {
+                            Self {
+                                base__: windows_core::IInspectable_Vtbl::new::<
+                                    Identity,
+                                    ISvgImageSourceOpenedEventArgs,
+                                    OFFSET,
+                                >(),
+                            }
+                        }
+                        pub fn matches(iid: &windows_core::GUID) -> bool {
+                            iid == &<ISvgImageSourceOpenedEventArgs as windows_core::Interface>::IID
+                        }
+                    }
+                    #[repr(C)]
+                    #[doc(hidden)]
+                    pub struct ISvgImageSourceOpenedEventArgs_Vtbl {
+                        pub base__: windows_core::IInspectable_Vtbl,
+                    }
+                    windows_core::imp::define_interface!(
+                        ISvgImageSourceStatics,
+                        ISvgImageSourceStatics_Vtbl,
+                        0xe3ad1068_f4c6_5513_a777_2980f0ba41bd
+                    );
+                    impl windows_core::RuntimeType for ISvgImageSourceStatics {
+                        const SIGNATURE: windows_core::imp::ConstBuffer =
+                            windows_core::imp::ConstBuffer::for_interface::<Self>();
+                    }
+                    impl windows_core::RuntimeName for ISvgImageSourceStatics {
+                        const NAME: &'static str =
+                            "Microsoft.UI.Xaml.Media.Imaging.ISvgImageSourceStatics";
+                    }
+                    pub trait ISvgImageSourceStatics_Impl: windows_core::IUnknownImpl {}
+                    impl ISvgImageSourceStatics_Vtbl {
+                        pub const fn new<
+                            Identity: ISvgImageSourceStatics_Impl,
+                            const OFFSET: isize,
+                        >() -> Self {
+                            Self {
+                                base__: windows_core::IInspectable_Vtbl::new::<
+                                    Identity,
+                                    ISvgImageSourceStatics,
+                                    OFFSET,
+                                >(),
+                                UriSourceProperty: 0,
+                                RasterizePixelWidthProperty: 0,
+                                RasterizePixelHeightProperty: 0,
+                            }
+                        }
+                        pub fn matches(iid: &windows_core::GUID) -> bool {
+                            iid == &<ISvgImageSourceStatics as windows_core::Interface>::IID
+                        }
+                    }
+                    #[repr(C)]
+                    #[doc(hidden)]
+                    pub struct ISvgImageSourceStatics_Vtbl {
+                        pub base__: windows_core::IInspectable_Vtbl,
+                        UriSourceProperty: usize,
+                        RasterizePixelWidthProperty: usize,
+                        RasterizePixelHeightProperty: usize,
+                    }
+                    #[repr(transparent)]
+                    #[derive(Clone, Debug, Eq, PartialEq)]
+                    pub struct SvgImageSource(windows_core::IUnknown);
+                    windows_core::imp::interface_hierarchy!(
+                        SvgImageSource,
+                        windows_core::IUnknown,
+                        windows_core::IInspectable
+                    );
+                    windows_core::imp::required_hierarchy!(
+                        SvgImageSource,
+                        super::ImageSource,
+                        super::super::DependencyObject
+                    );
+                    impl SvgImageSource {
+                        pub fn Dispatcher(
+                            &self,
+                        ) -> windows_core::Result<windows::UI::Core::CoreDispatcher>
+                        {
+                            let this = &windows_core::Interface::cast::<
+                                super::super::IDependencyObject,
+                            >(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).Dispatcher)(
+                                    windows_core::Interface::as_raw(this),
+                                    &mut result__,
+                                )
+                                .and_then(|| windows_core::Type::from_abi(result__))
+                            }
+                        }
+                        pub fn DispatcherQueue(
+                            &self,
+                        ) -> windows_core::Result<super::super::super::Dispatching::DispatcherQueue>
+                        {
+                            let this = &windows_core::Interface::cast::<
+                                super::super::IDependencyObject,
+                            >(self)?;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).DispatcherQueue)(
+                                    windows_core::Interface::as_raw(this),
+                                    &mut result__,
+                                )
+                                .and_then(|| windows_core::Type::from_abi(result__))
+                            }
+                        }
+                        pub fn UriSource(&self) -> windows_core::Result<windows::Foundation::Uri> {
+                            let this = self;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).UriSource)(
+                                    windows_core::Interface::as_raw(this),
+                                    &mut result__,
+                                )
+                                .and_then(|| windows_core::Type::from_abi(result__))
+                            }
+                        }
+                        pub fn SetUriSource<P0>(&self, value: P0) -> windows_core::Result<()>
+                        where
+                            P0: windows_core::Param<windows::Foundation::Uri>,
+                        {
+                            let this = self;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).SetUriSource)(
+                                    windows_core::Interface::as_raw(this),
+                                    value.param().abi(),
+                                )
+                                .ok()
+                            }
+                        }
+                        pub fn RasterizePixelWidth(&self) -> windows_core::Result<f64> {
+                            let this = self;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).RasterizePixelWidth)(
+                                    windows_core::Interface::as_raw(this),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
+                            }
+                        }
+                        pub fn SetRasterizePixelWidth(
+                            &self,
+                            value: f64,
+                        ) -> windows_core::Result<()> {
+                            let this = self;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).SetRasterizePixelWidth)(
+                                    windows_core::Interface::as_raw(this),
+                                    value,
+                                )
+                                .ok()
+                            }
+                        }
+                        pub fn RasterizePixelHeight(&self) -> windows_core::Result<f64> {
+                            let this = self;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).RasterizePixelHeight)(
+                                    windows_core::Interface::as_raw(this),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
+                            }
+                        }
+                        pub fn SetRasterizePixelHeight(
+                            &self,
+                            value: f64,
+                        ) -> windows_core::Result<()> {
+                            let this = self;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).SetRasterizePixelHeight)(
+                                    windows_core::Interface::as_raw(this),
+                                    value,
+                                )
+                                .ok()
+                            }
+                        }
+                        pub fn Opened<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                        where
+                            P0: windows_core::Param<
+                                windows::Foundation::TypedEventHandler<
+                                    SvgImageSource,
+                                    SvgImageSourceOpenedEventArgs,
+                                >,
+                            >,
+                        {
+                            let this = self;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).Opened)(
+                                    windows_core::Interface::as_raw(this),
+                                    handler.param().abi(),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
+                            }
+                        }
+                        pub fn RemoveOpened(&self, token: i64) -> windows_core::Result<()> {
+                            let this = self;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).RemoveOpened)(
+                                    windows_core::Interface::as_raw(this),
+                                    token,
+                                )
+                                .ok()
+                            }
+                        }
+                        pub fn OpenFailed<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                        where
+                            P0: windows_core::Param<
+                                windows::Foundation::TypedEventHandler<
+                                    SvgImageSource,
+                                    SvgImageSourceFailedEventArgs,
+                                >,
+                            >,
+                        {
+                            let this = self;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).OpenFailed)(
+                                    windows_core::Interface::as_raw(this),
+                                    handler.param().abi(),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
+                            }
+                        }
+                        pub fn RemoveOpenFailed(&self, token: i64) -> windows_core::Result<()> {
+                            let this = self;
+                            unsafe {
+                                (windows_core::Interface::vtable(this).RemoveOpenFailed)(
+                                    windows_core::Interface::as_raw(this),
+                                    token,
+                                )
+                                .ok()
+                            }
+                        }
+                        pub fn SetSourceAsync<P0>(
+                            &self,
+                            streamsource: P0,
+                        ) -> windows_core::Result<
+                            windows_future::IAsyncOperation<SvgImageSourceLoadStatus>,
+                        >
+                        where
+                            P0: windows_core::Param<windows::Storage::Streams::IRandomAccessStream>,
+                        {
+                            let this = self;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).SetSourceAsync)(
+                                    windows_core::Interface::as_raw(this),
+                                    streamsource.param().abi(),
+                                    &mut result__,
+                                )
+                                .and_then(|| windows_core::Type::from_abi(result__))
+                            }
+                        }
+                        pub fn new() -> windows_core::Result<SvgImageSource> {
+                            Self::ISvgImageSourceFactory(|this| unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).CreateInstance)(
+                                    windows_core::Interface::as_raw(this),
+                                    core::ptr::null_mut(),
+                                    &mut core::ptr::null_mut(),
+                                    &mut result__,
+                                )
+                                .and_then(|| windows_core::Type::from_abi(result__))
+                            })
+                        }
+                        pub fn CreateInstanceWithUriSource<P0>(
+                            urisource: P0,
+                        ) -> windows_core::Result<SvgImageSource>
+                        where
+                            P0: windows_core::Param<windows::Foundation::Uri>,
+                        {
+                            Self::ISvgImageSourceFactory(|this| unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).CreateInstanceWithUriSource)(
+                                    windows_core::Interface::as_raw(this),
+                                    urisource.param().abi(),
+                                    core::ptr::null_mut(),
+                                    &mut core::ptr::null_mut(),
+                                    &mut result__,
+                                )
+                                .and_then(|| windows_core::Type::from_abi(result__))
+                            })
+                        }
+                        fn ISvgImageSourceFactory<
+                            R,
+                            F: FnOnce(&ISvgImageSourceFactory) -> windows_core::Result<R>,
+                        >(
+                            callback: F,
+                        ) -> windows_core::Result<R> {
+                            static SHARED: windows_core::imp::FactoryCache<
+                                SvgImageSource,
+                                ISvgImageSourceFactory,
+                            > = windows_core::imp::FactoryCache::new();
+                            SHARED.call(callback)
+                        }
+                        fn ISvgImageSourceStatics<
+                            R,
+                            F: FnOnce(&ISvgImageSourceStatics) -> windows_core::Result<R>,
+                        >(
+                            callback: F,
+                        ) -> windows_core::Result<R> {
+                            static SHARED: windows_core::imp::FactoryCache<
+                                SvgImageSource,
+                                ISvgImageSourceStatics,
+                            > = windows_core::imp::FactoryCache::new();
+                            SHARED.call(callback)
+                        }
+                    }
+                    impl windows_core::RuntimeType for SvgImageSource {
+                        const SIGNATURE: windows_core::imp::ConstBuffer =
+                            windows_core::imp::ConstBuffer::for_class::<Self, ISvgImageSource>();
+                    }
+                    unsafe impl windows_core::Interface for SvgImageSource {
+                        type Vtable = <ISvgImageSource as windows_core::Interface>::Vtable;
+                        const IID: windows_core::GUID =
+                            <ISvgImageSource as windows_core::Interface>::IID;
+                    }
+                    impl windows_core::RuntimeName for SvgImageSource {
+                        const NAME: &'static str = "Microsoft.UI.Xaml.Media.Imaging.SvgImageSource";
+                    }
+                    unsafe impl Send for SvgImageSource {}
+                    unsafe impl Sync for SvgImageSource {}
+                    #[repr(transparent)]
+                    #[derive(Clone, Debug, Eq, PartialEq)]
+                    pub struct SvgImageSourceFailedEventArgs(windows_core::IUnknown);
+                    windows_core::imp::interface_hierarchy!(
+                        SvgImageSourceFailedEventArgs,
+                        windows_core::IUnknown,
+                        windows_core::IInspectable
+                    );
+                    impl SvgImageSourceFailedEventArgs {
+                        pub fn Status(&self) -> windows_core::Result<SvgImageSourceLoadStatus> {
+                            let this = self;
+                            unsafe {
+                                let mut result__ = core::mem::zeroed();
+                                (windows_core::Interface::vtable(this).Status)(
+                                    windows_core::Interface::as_raw(this),
+                                    &mut result__,
+                                )
+                                .map(|| result__)
+                            }
+                        }
+                    }
+                    impl windows_core::RuntimeType for SvgImageSourceFailedEventArgs {
+                        const SIGNATURE: windows_core::imp::ConstBuffer =
+                            windows_core::imp::ConstBuffer::for_class::<
+                                Self,
+                                ISvgImageSourceFailedEventArgs,
+                            >();
+                    }
+                    unsafe impl windows_core::Interface for SvgImageSourceFailedEventArgs {
+                        type Vtable =
+                            <ISvgImageSourceFailedEventArgs as windows_core::Interface>::Vtable;
+                        const IID: windows_core::GUID =
+                            <ISvgImageSourceFailedEventArgs as windows_core::Interface>::IID;
+                    }
+                    impl windows_core::RuntimeName for SvgImageSourceFailedEventArgs {
+                        const NAME: &'static str =
+                            "Microsoft.UI.Xaml.Media.Imaging.SvgImageSourceFailedEventArgs";
+                    }
+                    unsafe impl Send for SvgImageSourceFailedEventArgs {}
+                    unsafe impl Sync for SvgImageSourceFailedEventArgs {}
+                    #[repr(transparent)]
+                    #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+                    pub struct SvgImageSourceLoadStatus(pub i32);
+                    impl SvgImageSourceLoadStatus {
+                        pub const Success: Self = Self(0i32);
+                        pub const NetworkError: Self = Self(1i32);
+                        pub const InvalidFormat: Self = Self(2i32);
+                        pub const Other: Self = Self(3i32);
+                    }
+                    impl windows_core::TypeKind for SvgImageSourceLoadStatus {
+                        type TypeKind = windows_core::CopyType;
+                    }
+                    impl windows_core::RuntimeType for SvgImageSourceLoadStatus {
+                        const SIGNATURE :windows_core::imp::ConstBuffer = windows_core::imp::ConstBuffer::from_slice ( b"enum(Microsoft.UI.Xaml.Media.Imaging.SvgImageSourceLoadStatus;i4)" ) ;
+                    }
+                    #[repr(transparent)]
+                    #[derive(Clone, Debug, Eq, PartialEq)]
+                    pub struct SvgImageSourceOpenedEventArgs(windows_core::IUnknown);
+                    windows_core::imp::interface_hierarchy!(
+                        SvgImageSourceOpenedEventArgs,
+                        windows_core::IUnknown,
+                        windows_core::IInspectable
+                    );
+                    impl SvgImageSourceOpenedEventArgs {}
+                    impl windows_core::RuntimeType for SvgImageSourceOpenedEventArgs {
+                        const SIGNATURE: windows_core::imp::ConstBuffer =
+                            windows_core::imp::ConstBuffer::for_class::<
+                                Self,
+                                ISvgImageSourceOpenedEventArgs,
+                            >();
+                    }
+                    unsafe impl windows_core::Interface for SvgImageSourceOpenedEventArgs {
+                        type Vtable =
+                            <ISvgImageSourceOpenedEventArgs as windows_core::Interface>::Vtable;
+                        const IID: windows_core::GUID =
+                            <ISvgImageSourceOpenedEventArgs as windows_core::Interface>::IID;
+                    }
+                    impl windows_core::RuntimeName for SvgImageSourceOpenedEventArgs {
+                        const NAME: &'static str =
+                            "Microsoft.UI.Xaml.Media.Imaging.SvgImageSourceOpenedEventArgs";
+                    }
+                    unsafe impl Send for SvgImageSourceOpenedEventArgs {}
+                    unsafe impl Sync for SvgImageSourceOpenedEventArgs {}
                 }
             }
             pub mod XamlTypeInfo {

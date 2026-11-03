@@ -2499,6 +2499,47 @@ does not disappear when scrolling.
 [`Table::set_sort`] moves only the indicator without notifying (use it to show the
 default order at startup). [`Table::sort`] reads the current setting.
 
+## Images from memory and SVG
+
+Besides a file path or URL, an [`Image`] can show the contents of an image file
+held in memory, and pixels the app makes itself. Embedding an icon with
+`include_bytes!` needs no file next to the executable.
+
+```no_run
+# use naui::{Result, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let icon = ui.image("")?;
+icon.set_bytes(br#"<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24">
+  <circle cx="12" cy="12" r="10" fill="teal"/></svg>"#);
+
+// A 2 × 1 image: opaque red, then half-transparent blue.
+let swatch = ui.image("")?;
+swatch.set_pixels(2, 1, &[255, 0, 0, 255, 0, 0, 255, 128])?;
+# Ok(())
+# }
+```
+
+[`Image::set_bytes`] takes the bytes of a PNG, JPEG, GIF or SVG file (and whatever
+else the platform decodes). [`Image::set_pixels`] takes rows from top to bottom,
+4 bytes per pixel in the order red, green, blue, alpha, with straight alpha; it
+returns `Err` when the length does not match the size. In both cases
+[`Image::source`] becomes empty.
+
+naui still decodes nothing. Where the platform's image control takes only encoded
+images, naui packs the pixels into an uncompressed PNG, which costs about as much
+memory as the pixels themselves.
+
+| | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| Bytes | `BitmapImage` read from an in-memory stream | `NSImage` (`initWithData:`) | `gdk_texture_new_from_bytes` | A `blob:` URL |
+| Pixels | An uncompressed PNG, as bytes | An uncompressed PNG, as bytes | `GdkMemoryTexture` | An uncompressed PNG in a `blob:` URL |
+| SVG | `SvgImageSource` | `NSImage` | librsvg's gdk-pixbuf loader | `<img>` |
+
+An SVG is drawn at the size its `width` and `height` give it. On Windows, the
+natural size of an SVG loaded from a remote URL is not known (`SvgImageSource`
+does not report one, and naui reads it from the document only for bytes and local
+files), so give such an image a size with `set_sizing`.
+
 ## Choosing files and folders
 
 A [`FilePicker`] is a single button that, when pressed, opens the platform's

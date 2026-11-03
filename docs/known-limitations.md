@@ -301,6 +301,14 @@ that shape are covered in
 - `Table` row height is a fixed value derived from the system font. Rows do not
   grow individually to fit their content.
 - `Image` loads remote URLs synchronously, so local files are recommended.
+- `Image::set_pixels` hands Windows, macOS and the Web an uncompressed PNG, about
+  as large as the pixels, rather than the pixels themselves. Linux takes them as
+  they are (`GdkMemoryTexture`).
+- On Windows an SVG loaded from a remote URL has no natural size (an `Auto` axis
+  gets 0), because `SvgImageSource` does not report one. Give it a size with
+  `set_sizing`, or load it with `set_bytes`.
+- On Linux, SVG is read by librsvg's gdk-pixbuf loader (`librsvg2-common` on
+  Debian and Ubuntu), which desktops install with GTK.
 - `Expander` has no expand/collapse animation.
 - `Dialog::open` and `PopupMenu::open_at` do not return until closed.
 - A `Toast` appears in the frontmost window (or the most recently created window

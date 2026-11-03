@@ -35,8 +35,19 @@ struct ImageInner {
     /// Exactly the string that was passed, since `src` gets resolved to an absolute
     /// URL.
     source: RefCell<String>,
+    /// The `blob:` URL made for [`Image::set_bytes`] / [`Image::set_pixels`].
+    /// Revoked when replaced and when the image is dropped.
+    object_url: RefCell<Option<String>>,
     /// `on_file_drop`.
     file_drop: crate::file_drop::FileDrop,
+}
+
+impl Drop for ImageInner {
+    fn drop(&mut self) {
+        if let Some(url) = self.object_url.get_mut().take() {
+            let _ = web_sys::Url::revoke_object_url(&url);
+        }
+    }
 }
 
 /// Image display (`<img>`).
@@ -53,6 +64,7 @@ impl Image {
         let this = Self(Rc::new(ImageInner {
             element,
             source: RefCell::new(String::new()),
+            object_url: RefCell::new(None),
             file_drop: Default::default(),
         }));
         this.set_fit(Fit::default());
@@ -75,6 +87,66 @@ impl Image {
             let _ = self.0.element.remove_attribute("src");
         } else {
             self.0.element.set_src(source);
+        }
+        self.revoke_object_url();
+    }
+
+    /// Shows an image from the contents of an image file held in memory.
+    /// [`source`](Self::source) becomes empty.
+    ///
+    /// The bytes become a `Blob` shown through a `blob:` URL, so the browser decodes
+    /// them as it would a file. SVG is given the type `image/svg+xml`, which the
+    /// browser needs to read it as an image; raster formats are recognized by their
+    /// signature. Loading is asynchronous, as with [`set_source`](Self::set_source).
+    pub fn set_bytes(&self, bytes: &[u8]) {
+        let kind = if naui_core::media::is_svg(bytes) {
+            "image/svg+xml"
+        } else {
+            ""
+        };
+        self.show_blob(bytes, kind);
+    }
+
+    /// Shows pixels the app made itself: `width` × `height` pixels, rows from top to
+    /// bottom, each pixel 4 bytes of red, green, blue and alpha (straight alpha).
+    /// [`source`](Self::source) becomes empty.
+    ///
+    /// The pixels are packed into an uncompressed PNG and shown like
+    /// [`set_bytes`](Self::set_bytes). Returns `Err` without changing the image when
+    /// `rgba` is not exactly `width * height * 4` bytes.
+    pub fn set_pixels(&self, width: u32, height: u32, rgba: &[u8]) -> Result<()> {
+        let png = naui_core::media::encode_png(width, height, rgba)?;
+        self.show_blob(&png, "image/png");
+        Ok(())
+    }
+
+    fn show_blob(&self, bytes: &[u8], kind: &str) {
+        self.0.source.borrow_mut().clear();
+        let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(bytes));
+        let options = web_sys::BlobPropertyBag::new();
+        options.set_type(kind);
+        let url = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &options)
+            .and_then(|blob| web_sys::Url::create_object_url_with_blob(&blob));
+        match url {
+            Ok(url) => {
+                self.0.element.set_src(&url);
+                self.revoke_object_url();
+                *self.0.object_url.borrow_mut() = Some(url);
+            }
+            Err(error) => {
+                web_sys::console::error_2(&"naui-web: could not show the image:".into(), &error);
+                let _ = self.0.element.remove_attribute("src");
+                self.revoke_object_url();
+            }
+        }
+    }
+
+    /// Lets the browser free the `blob:` URL that was shown before.
+    ///
+    /// Revoking does not affect an image that has already started loading from it.
+    fn revoke_object_url(&self) {
+        if let Some(url) = self.0.object_url.borrow_mut().take() {
+            let _ = web_sys::Url::revoke_object_url(&url);
         }
     }
 

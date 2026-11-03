@@ -764,6 +764,11 @@ fn main() {
             image_loads_a_local_file,
         ),
         (
+            "画像がメモリ上のバイト列と画素から読み込まれる",
+            image_loads_bytes_and_pixels,
+        ),
+        ("SVG の画像が NSImage で読み込まれる", image_loads_svg),
+        (
             "Fill の画像は大きくても縦の Scroll を押し広げない",
             fill_image_does_not_push_a_scroll,
         ),
@@ -6593,6 +6598,58 @@ fn record_states(seen: &Rc<RefCell<Vec<PlaybackState>>>) -> impl FnMut(PlaybackS
 }
 
 /// An image is loaded from a local file as an NSImage.
+fn image_loads_bytes_and_pixels(ui: &Ui) -> Result<()> {
+    let image = ui.image("")?;
+    let view = image.native_view();
+    let native = view
+        .downcast_ref::<NSImageView>()
+        .expect("実体が NSImageView であること");
+
+    image.set_bytes(PNG_2X2);
+    assert!(image.is_loaded(), "PNG のバイト列が読み込まれること");
+    assert_eq!(image.source(), "", "バイト列のときは場所を持たない");
+    let size = native.image().expect("NSImage").size();
+    assert_eq!((size.width, size.height), (2.0, 2.0));
+
+    image.set_pixels(3, 2, &[10, 20, 30, 255].repeat(6))?;
+    assert!(image.is_loaded(), "画素が読み込まれること");
+    let size = native.image().expect("NSImage").size();
+    assert_eq!((size.width, size.height), (3.0, 2.0));
+    assert!(
+        image.set_pixels(3, 3, &[0; 4]).is_err(),
+        "大きさと合わない画素は受け取らない"
+    );
+    assert!(image.is_loaded(), "受け取らなかったときは前の画像のまま");
+
+    image.set_bytes(b"not an image");
+    assert!(!image.is_loaded(), "読めないバイト列は何も出さない");
+    Ok(())
+}
+
+/// A 24 × 16 red rectangle.
+const RED_SVG: &str = r##"<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16" viewBox="0 0 24 16">
+  <rect width="24" height="16" fill="#ff0000"/>
+</svg>"##;
+
+fn image_loads_svg(ui: &Ui) -> Result<()> {
+    let image = ui.image("")?;
+    image.set_bytes(RED_SVG.as_bytes());
+    assert!(image.is_loaded(), "SVG のバイト列を NSImage が読めること");
+    let view = image.native_view();
+    let native = view
+        .downcast_ref::<NSImageView>()
+        .expect("実体が NSImageView であること");
+    let size = native.image().expect("NSImage").size();
+    assert_eq!((size.width, size.height), (24.0, 16.0));
+
+    let fixture = Fixture::new("svg");
+    let path = fixture.write("a.svg", RED_SVG.as_bytes());
+    image.set_source(&path);
+    assert!(image.is_loaded(), "SVG ファイルを NSImage が読めること");
+    Ok(())
+}
+
 fn image_loads_a_local_file(ui: &Ui) -> Result<()> {
     let fixture = Fixture::new("image");
     let path = fixture.write("a.png", PNG_2X2);

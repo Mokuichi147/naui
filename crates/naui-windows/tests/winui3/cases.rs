@@ -21,7 +21,7 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
     ComboBox as XamlComboBox, Grid, Image as XamlImage, MenuFlyoutItem, ProgressRing, ScrollViewer,
     Slider as XamlSlider, StackPanel, TextBlock, TextBox, ToggleSwitch,
 };
-use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::BitmapImage;
+use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::{BitmapImage, SvgImageSource};
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
 use naui_winui3::Microsoft::UI::Xaml::{
     Application, FrameworkElement, GridUnitType, HorizontalAlignment, RoutedEventHandler, Style,
@@ -367,6 +367,15 @@ const CASES: &[Case] = &[
     (
         "画像の自然な大きさは画素の大きさで、Scroll の中でも幅に合わせて大きくならない",
         image_natural_size_is_its_pixels,
+    ),
+    (
+        "画像がメモリ上のバイト列・画素・SVG を WinUI に読ませる",
+        image_takes_bytes_pixels_and_svg,
+    ),
+    ("UTF-16 の SVG も SvgImageSource が開く", svg_opens_in_utf16),
+    (
+        "ネットワーク上の SVG・SVGZ を取ってきて出し、文書から大きさを求める",
+        network_svg_takes_its_size,
     ),
     (
         "Fill の動画は Scroll の中でも表示領域の余りに収まり、縮めると付いていく",
@@ -4591,6 +4600,280 @@ fn image_loads_from_japanese_path(ui: &Ui) -> Result<()> {
         Ok(result) => result,
         Err(panic) => std::panic::resume_unwind(panic),
     }
+}
+
+const RED_SVG: &str = r##"<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16" viewBox="0 0 24 16">
+  <rect width="24" height="16" fill="#ff0000"/>
+</svg>"##;
+
+/// The empty `Border` in an image's host whose size is the natural size asked for.
+fn natural_size(image: &naui_windows::Image) -> (f64, f64) {
+    let children = native::<Grid>(image).Children().expect("ホストの子");
+    let natural = (0..children.Size().expect("ホストの子の数"))
+        .filter_map(|index| children.GetAt(index).ok())
+        .find_map(|element| {
+            element
+                .cast::<naui_winui3::Microsoft::UI::Xaml::Controls::Border>()
+                .ok()
+        })
+        .expect("大きさを求める Border");
+    (
+        natural.Width().unwrap_or(f64::NAN),
+        natural.Height().unwrap_or(f64::NAN),
+    )
+}
+
+/// An SVG on the network (served over HTTP on the loopback here) is fetched and shown
+/// like bytes: it gets its natural size from its document, and an SVGZ served
+/// without `Content-Encoding` is unpacked. A document arriving after the image has
+/// been replaced is not shown.
+fn network_svg_takes_its_size(ui: &Ui) -> Result<()> {
+    use std::io::{Read, Write};
+
+    const BODY: &str =
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect/></svg>"#;
+    let svgz = {
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(BODY.as_bytes()).expect("gzip に書けない");
+        encoder.finish().expect("gzip を閉じられない")
+    };
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("待ち受けられない");
+    let base = format!("http://{}", listener.local_addr().expect("待ち受けの番地"));
+    // .svgz には gzip のまま (Content-Encoding を付けずに) 返す。
+    // プロセスが終わるまで応え続ける。
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                match stream.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => request.extend_from_slice(&buffer[..read]),
+                }
+            }
+            let line = request.split(|&byte| byte == b'\r').next().unwrap_or(&[]);
+            let body: &[u8] = if line.windows(5).any(|window| window == b".svgz") {
+                &svgz
+            } else {
+                BODY.as_bytes()
+            };
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: image/svg+xml\r\nContent-Length: {}\r\n\
+                 Connection: close\r\n\r\n",
+                body.len()
+            );
+            let _ = stream.write_all(body);
+        }
+    });
+
+    for path in ["icon.svg", "icon.svgz"] {
+        let url = format!("{base}/{path}");
+        let image = ui.image(&url)?;
+        pump_until(IMAGE_LOAD_TIMEOUT, || natural_size(&image) == (40.0, 20.0));
+        assert_eq!(
+            natural_size(&image),
+            (40.0, 20.0),
+            "文書から大きさを求める ({path})"
+        );
+        assert!(
+            xaml_image(&image)
+                .Source()
+                .and_then(|source| source.cast::<SvgImageSource>())
+                .is_ok(),
+            "取ってきた SVG を SvgImageSource で読む ({path})"
+        );
+        assert_eq!(image.source(), url, "取ってきても場所はそのまま");
+    }
+
+    // 取りに行っているあいだに別の画像へ替えたら、届いた文書は出さない。
+    let image = ui.image(&format!("{base}/icon.svg"))?;
+    image.set_bytes(RED_SVG.as_bytes());
+    pump_until(Duration::from_secs(2), || false);
+    assert_eq!(
+        natural_size(&image),
+        (24.0, 16.0),
+        "前の SVG で上書きしない"
+    );
+    Ok(())
+}
+
+/// An SVG written in UTF-16 (either byte order, with its mark) is recognized as SVG
+/// and actually opened by `SvgImageSource`, as UTF-8 is.
+///
+/// The load status `SetSourceAsync` ends with is read directly: a broken document
+/// ends in `InvalidFormat`, which tells that the check can fail.
+fn svg_opens_in_utf16(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::SvgImageSourceLoadStatus;
+    use windows::Storage::Streams::{DataWriter, InMemoryRandomAccessStream};
+
+    let utf16 = |little: bool| -> Vec<u8> {
+        let doc = RED_SVG.replace("UTF-8", "UTF-16");
+        let bom: &[u8] = if little { b"\xFF\xFE" } else { b"\xFE\xFF" };
+        bom.iter()
+            .copied()
+            .chain(doc.encode_utf16().flat_map(move |unit| {
+                if little {
+                    unit.to_le_bytes()
+                } else {
+                    unit.to_be_bytes()
+                }
+            }))
+            .collect()
+    };
+    let cases: [(&str, Vec<u8>, bool); 4] = [
+        ("UTF-8", RED_SVG.as_bytes().to_vec(), true),
+        ("UTF-16LE", utf16(true), true),
+        ("UTF-16BE", utf16(false), true),
+        (
+            "壊れた SVG",
+            b"<svg width='24' height='16'><rect".to_vec(),
+            false,
+        ),
+    ];
+
+    // 画面のツリーに入っていない画像は読み込みを始めないので、ウィンドウに載せて出す。
+    let window = ui.window("SVG", 160.0, 120.0)?;
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        for (name, bytes, expect_open) in &cases {
+            let image = ui.image("")?;
+            window.set_child(&image);
+            window.show();
+            image.set_bytes(bytes);
+            let svg = xaml_image(&image)
+                .Source()
+                .and_then(|source| source.cast::<SvgImageSource>())
+                .unwrap_or_else(|_| panic!("{name} を SvgImageSource で読まない"));
+            assert_eq!(natural_size(&image), (24.0, 16.0), "{name} の大きさ");
+
+            // naui が渡したのと同じバイト列を、結果を受け取れる形でもう一度読ませる。
+            let stream = InMemoryRandomAccessStream::new().expect("ストリームを作れない");
+            let writer = DataWriter::CreateDataWriter(&stream).expect("DataWriter を作れない");
+            writer.WriteBytes(bytes).expect("書けない");
+            writer
+                .StoreAsync()
+                .and_then(|store| store.join())
+                .expect("書き込みが終わらない");
+            writer.DetachStream().expect("ストリームを外せない");
+            stream.Seek(0).expect("先頭へ戻れない");
+            let load = svg
+                .SetSourceAsync(&stream)
+                .expect("SetSourceAsync を呼べない");
+            // AsyncStatus (windows-future) の 0 が Started。それ以外になれば終わっている。
+            pump_until(IMAGE_LOAD_TIMEOUT, || {
+                load.Status().is_ok_and(|status| status.0 != 0)
+            });
+            let status = load.GetResults().expect("読み込みの結果が届かない");
+            assert_eq!(
+                status == SvgImageSourceLoadStatus::Success,
+                *expect_open,
+                "{name} の読み込みの結果: {status:?}"
+            );
+        }
+        Ok(())
+    }));
+    window.close();
+    match outcome {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+/// Bytes become a `BitmapImage` read from a stream, SVG an `SvgImageSource` whose
+/// natural size comes from the document, and pixels are checked against their size.
+fn image_takes_bytes_pixels_and_svg(ui: &Ui) -> Result<()> {
+    let image = ui.image("")?;
+    image.set_bytes(&bmp_solid(4, 2));
+    assert!(image.is_loaded(), "バイト列の画像が置かれる");
+    assert_eq!(image.source(), "");
+    assert!(
+        xaml_image(&image)
+            .Source()
+            .and_then(|source| source.cast::<BitmapImage>())
+            .is_ok(),
+        "ラスター画像は BitmapImage で読む"
+    );
+
+    image.set_bytes(RED_SVG.as_bytes());
+    assert!(
+        xaml_image(&image)
+            .Source()
+            .and_then(|source| source.cast::<SvgImageSource>())
+            .is_ok(),
+        "SVG は SvgImageSource で読む"
+    );
+    assert_eq!(natural_size(&image), (24.0, 16.0), "SVG の大きさを求める");
+    // 寸法も viewBox も持たない SVG は、ブラウザと同じ 300×150 で出す (Auto が 0 にならない)。
+    image.set_bytes(
+        br#"<svg xmlns="http://www.w3.org/2000/svg"><rect width="10" height="10"/></svg>"#,
+    );
+    assert_eq!(
+        natural_size(&image),
+        (300.0, 150.0),
+        "寸法の無い SVG の大きさ"
+    );
+
+    image.set_pixels(3, 2, &[0, 0, 255, 255].repeat(6))?;
+    assert!(
+        xaml_image(&image)
+            .Source()
+            .and_then(|source| source.cast::<BitmapImage>())
+            .is_ok(),
+        "画素は PNG にして BitmapImage で読む"
+    );
+    assert!(image.set_pixels(3, 3, &[0; 4]).is_err());
+
+    // 名前の # は URL のフラグメントではない。パスでも file: の URL でも SVG として読む。
+    let path = std::env::temp_dir().join(format!("naui-svg#{}.svg", std::process::id()));
+    std::fs::write(&path, RED_SVG).expect("SVG を書き出せない");
+    image.set_source(path.to_str().expect("UTF-8 のパス"));
+    assert!(
+        xaml_image(&image)
+            .Source()
+            .and_then(|source| source.cast::<SvgImageSource>())
+            .is_ok(),
+        "SVG ファイルも SvgImageSource で読む"
+    );
+    assert_eq!(natural_size(&image), (24.0, 16.0));
+
+    // file: の URL で渡しても、手元のファイルとして大きさを求める。
+    image.set_source("");
+    image.set_source(&naui_core::media::file_url(
+        path.to_str().expect("UTF-8 のパス"),
+    ));
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(
+        natural_size(&image),
+        (24.0, 16.0),
+        "file: の SVG の大きさを求める"
+    );
+
+    // gzip で包んだ .svgz は展開してから SvgImageSource に渡す。
+    let svgz = {
+        use std::io::Write;
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder
+            .write_all(RED_SVG.as_bytes())
+            .expect("gzip に書けない");
+        encoder.finish().expect("gzip を閉じられない")
+    };
+    let path = std::env::temp_dir().join(format!("naui-svg-{}.svgz", std::process::id()));
+    std::fs::write(&path, &svgz).expect("SVGZ を書き出せない");
+    image.set_source(path.to_str().expect("UTF-8 のパス"));
+    let _ = std::fs::remove_file(&path);
+    assert!(
+        xaml_image(&image)
+            .Source()
+            .and_then(|source| source.cast::<SvgImageSource>())
+            .is_ok(),
+        "SVGZ ファイルも SvgImageSource で読む"
+    );
+    assert_eq!(natural_size(&image), (24.0, 16.0), "SVGZ の大きさを求める");
+
+    image.set_bytes(&svgz);
+    assert_eq!(natural_size(&image), (24.0, 16.0), "SVGZ のバイト列も読む");
+    Ok(())
 }
 
 /// The WinUI `Image` inside naui's `Image`. It sits on a `Canvas` in the host `Grid`.

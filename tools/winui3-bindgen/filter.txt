@@ -189,6 +189,10 @@ Microsoft.UI.Xaml.Media.GeneralTransform
 Microsoft.UI.Xaml.Media.ImageSource
 Microsoft.UI.Xaml.Media.Imaging.BitmapImage
 Microsoft.UI.Xaml.Media.Imaging.BitmapSource
+Microsoft.UI.Xaml.Media.Imaging.SvgImageSource
+Microsoft.UI.Xaml.Media.Imaging.SvgImageSourceFailedEventArgs
+Microsoft.UI.Xaml.Media.Imaging.SvgImageSourceLoadStatus
+Microsoft.UI.Xaml.Media.Imaging.SvgImageSourceOpenedEventArgs
 Microsoft.UI.Xaml.Media.MicaBackdrop
 Microsoft.UI.Xaml.Media.SolidColorBrush
 Microsoft.UI.Xaml.Media.Stretch

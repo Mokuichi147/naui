@@ -802,6 +802,15 @@ fn main() {
             image_loads_a_local_file,
         ),
         (
+            "画像がメモリ上のバイト列 (PNG と SVG) から読み込まれる",
+            image_loads_bytes,
+        ),
+        (
+            "画像がアプリの作った画素をそのまま出す",
+            image_shows_pixels,
+        ),
+        ("SVG ファイルの画像が読み込まれる", image_loads_an_svg_file),
+        (
             "Fill の画像はその軸で画素の大きさを求めない",
             fill_image_does_not_ask_for_its_size,
         ),
@@ -6937,6 +6946,75 @@ fn image_loads_a_local_file(ui: &Ui) -> Result<()> {
 
     image.set_source("");
     assert!(!image.is_loaded());
+    Ok(())
+}
+
+/// A small SVG used by the image tests: a 24 × 16 red rectangle.
+const RED_SVG: &str = r##"<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16" viewBox="0 0 24 16">
+  <rect width="24" height="16" fill="#ff0000"/>
+</svg>"##;
+
+fn image_loads_bytes(ui: &Ui) -> Result<()> {
+    let image = ui.image("")?;
+    let native: gtk::Picture = image.native_widget().downcast().expect("GtkPicture");
+
+    let png = naui_core::media::encode_png(3, 2, &[200; 3 * 2 * 4])?;
+    image.set_bytes(&png);
+    assert!(image.is_loaded(), "PNG のバイト列が読み込まれる");
+    assert_eq!(image.source(), "", "バイト列のときは場所を持たない");
+    let paintable = native.paintable().expect("paintable");
+    assert_eq!(
+        (paintable.intrinsic_width(), paintable.intrinsic_height()),
+        (3, 2)
+    );
+
+    image.set_bytes(RED_SVG.as_bytes());
+    assert!(image.is_loaded(), "SVG のバイト列が読み込まれる");
+    let paintable = native.paintable().expect("paintable");
+    assert_eq!(
+        (paintable.intrinsic_width(), paintable.intrinsic_height()),
+        (24, 16),
+        "SVG は自分の大きさで描かれる"
+    );
+
+    image.set_bytes(b"not an image");
+    assert!(!image.is_loaded(), "読めないバイト列は何も出さない");
+    Ok(())
+}
+
+fn image_shows_pixels(ui: &Ui) -> Result<()> {
+    let image = ui.image("")?;
+    let native: gtk::Picture = image.native_widget().downcast().expect("GtkPicture");
+    // 左が不透明な赤、右が半透明の青。
+    let pixels = [255, 0, 0, 255, 0, 0, 255, 128];
+    image.set_pixels(2, 1, &pixels)?;
+    assert!(image.is_loaded());
+    let texture: gtk::gdk::Texture = native.paintable().and_downcast().expect("GdkTexture");
+    assert_eq!((texture.width(), texture.height()), (2, 1));
+    let mut downloader = gtk::gdk::TextureDownloader::new(&texture);
+    downloader.set_format(gtk::gdk::MemoryFormat::R8g8b8a8);
+    let (bytes, _) = downloader.download_bytes();
+    assert_eq!(
+        &bytes[..8],
+        &pixels[..],
+        "画素がそのまま渡る (アルファも乗算されない)"
+    );
+
+    assert!(
+        image.set_pixels(2, 2, &pixels).is_err(),
+        "大きさと合わない画素は受け取らない"
+    );
+    assert!(image.is_loaded(), "受け取らなかったときは前の画像のまま");
+    Ok(())
+}
+
+fn image_loads_an_svg_file(ui: &Ui) -> Result<()> {
+    let path = std::env::temp_dir().join(format!("naui-gtk-test-{}.svg", std::process::id()));
+    std::fs::write(&path, RED_SVG).expect("SVG を書く");
+    let image = ui.image(path.to_str().expect("パス"))?;
+    assert!(image.is_loaded(), "SVG ファイルが読み込まれる");
+    let _ = std::fs::remove_file(&path);
     Ok(())
 }
 

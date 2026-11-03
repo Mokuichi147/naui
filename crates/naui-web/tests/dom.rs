@@ -5900,6 +5900,89 @@ async fn fill_image_does_not_push_a_scroll() {
     assert_eq!(computed(element.as_ref(), "contain"), "none");
 }
 
+/// Waits until the `<img>` has finished loading (successfully or not).
+async fn wait_for_image(element: &web_sys::HtmlImageElement) {
+    for _ in 0..40 {
+        if element.complete() {
+            break;
+        }
+        wait_millis(50).await;
+    }
+}
+
+const RED_SVG: &str = r##"<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="24" height="16" viewBox="0 0 24 16">
+  <rect width="24" height="16" fill="#ff0000"/>
+</svg>"##;
+
+/// Bytes and pixels are shown through `blob:` URLs, decoded by the browser, and the
+/// URL shown before is let go.
+#[wasm_bindgen_test]
+async fn image_shows_bytes_and_pixels() {
+    let mut kept = None;
+    with_ui(|ui| {
+        kept = Some(ui.image("")?);
+        Ok(())
+    });
+    let image = kept.expect("組み立て");
+    let _mounted = Mounted::new(&image);
+    let element: web_sys::HtmlImageElement = image.native_element().unchecked_into();
+
+    image.set_bytes(RED_SVG.as_bytes());
+    assert!(element.src().starts_with("blob:"), "blob: の URL で出す");
+    assert_eq!(image.source(), "");
+    wait_for_image(&element).await;
+    assert!(image.is_loaded(), "SVG のバイト列が読み込まれる");
+    assert_eq!(
+        (element.natural_width(), element.natural_height()),
+        (24, 16)
+    );
+    let first = element.src();
+
+    image
+        .set_pixels(3, 2, &[0, 128, 255, 255].repeat(6))
+        .expect("画素");
+    assert_ne!(element.src(), first, "新しい URL に替わる");
+    wait_for_image(&element).await;
+    assert!(image.is_loaded(), "画素が PNG として読み込まれる");
+    assert_eq!((element.natural_width(), element.natural_height()), (3, 2));
+
+    // 読み込んだ画素を描き戻して、色とアルファがそのまま渡ったかを見る。
+    image.set_pixels(1, 1, &[255, 0, 0, 128]).expect("画素");
+    wait_for_image(&element).await;
+    let canvas: web_sys::HtmlCanvasElement = web_sys::window()
+        .and_then(|w| w.document())
+        .expect("document")
+        .create_element("canvas")
+        .expect("canvas")
+        .unchecked_into();
+    canvas.set_width(1);
+    canvas.set_height(1);
+    let context: CanvasRenderingContext2d = canvas
+        .get_context("2d")
+        .expect("2d")
+        .expect("2d")
+        .unchecked_into();
+    context
+        .draw_image_with_html_image_element(&element, 0.0, 0.0)
+        .expect("drawImage");
+    let data = context
+        .get_image_data(0.0, 0.0, 1.0, 1.0)
+        .expect("画素")
+        .data();
+    assert_eq!(data.0[3], 128, "アルファがそのまま渡る");
+    assert!(data.0[0] >= 250 && data.0[1] == 0, "赤のまま: {:?}", data.0);
+
+    assert!(image.set_pixels(2, 2, &[0; 4]).is_err(), "大きさと合わない");
+
+    image.set_bytes(b"not an image");
+    wait_for_image(&element).await;
+    assert!(!image.is_loaded(), "読めないバイト列は読み込まれない");
+
+    image.set_source("");
+    assert!(element.get_attribute("src").is_none());
+}
+
 /// A `Fill` video does not ask for the height its width and aspect ratio give,
 /// the same as an image, so it fits into the leftover space of a vertical `Scroll`.
 #[wasm_bindgen_test]
