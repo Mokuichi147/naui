@@ -146,6 +146,68 @@ fn unescape_non_ascii(url: &str) -> String {
     out
 }
 
+/// The local path a `file:` URL names, or `None` for other URLs and for
+/// percent-encoding that is not UTF-8.
+///
+/// The query and fragment are dropped, `%XX` is decoded as UTF-8, a drive letter
+/// loses the `/` before it (`file:///C:/a.svg` → `C:\a.svg`) and a host other than
+/// `localhost` becomes a UNC path (`file://server/share/a.svg` → `\\server\share\a.svg`).
+fn file_path(url: &str) -> Option<String> {
+    let rest = url
+        .get(..5)
+        .filter(|scheme| scheme.eq_ignore_ascii_case("file:"))
+        .map(|_| &url[5..])?;
+    let rest = rest.split(['?', '#']).next().unwrap_or(rest);
+    let path = match rest.strip_prefix("//") {
+        Some(authority) => {
+            let (host, path) = authority.split_at(authority.find('/').unwrap_or(authority.len()));
+            if host.is_empty() || host.eq_ignore_ascii_case("localhost") {
+                path.to_string()
+            } else {
+                format!("//{host}{path}")
+            }
+        }
+        None => rest.to_string(),
+    };
+    let path = percent_decode(&path)?;
+    // `/C:/...` の先頭の `/` はドライブ名の前に付いた区切りで、パスには要らない。
+    let bytes = path.as_bytes();
+    let path = if bytes.len() >= 3
+        && bytes[0] == b'/'
+        && bytes[1].is_ascii_alphabetic()
+        && bytes[2] == b':'
+    {
+        &path[1..]
+    } else {
+        &path[..]
+    };
+    Some(path.replace('/', "\\"))
+}
+
+/// Decodes every `%XX`, and `None` if the result is not UTF-8.
+fn percent_decode(text: &str) -> Option<String> {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let escaped = text
+            .get(i + 1..i + 3)
+            .filter(|hex| bytes[i] == b'%' && hex.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .and_then(|hex| u8::from_str_radix(hex, 16).ok());
+        match escaped {
+            Some(byte) => {
+                out.push(byte);
+                i += 3;
+            }
+            None => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
+}
+
 /// Turns a local file path into a `file://` that `Windows.Foundation.Uri` can read.
 ///
 /// Unlike [`naui_core::media::file_url`], **non-ASCII is placed raw, not
@@ -458,11 +520,16 @@ impl Image {
         }
 
         let svg = naui_core::media::is_svg_source(&source);
-        if svg && !is_url(&source) {
-            // 手元の SVG は読み込んでバイト列と同じ経路で出す。SvgImageSource は
-            // 自分の大きさを教えないので、文書から読む必要がある。.svgz もここで
-            // 展開する (SvgImageSource は gzip を解かない)。
-            match std::fs::read(&*source) {
+        let local = if is_url(&source) {
+            file_path(&source)
+        } else {
+            Some(source.clone())
+        };
+        if let Some(path) = local.filter(|_| svg) {
+            // 手元の SVG は (file: の URL で渡されても) 読み込んでバイト列と同じ経路で
+            // 出す。SvgImageSource は自分の大きさを教えないので、文書から読む必要が
+            // ある。.svgz もここで展開する (SvgImageSource は gzip を解かない)。
+            match std::fs::read(&path) {
                 Ok(bytes) => {
                     drop(source);
                     self.show_bytes(&bytes);
@@ -1259,6 +1326,34 @@ mod tests {
             "file://server/share/a.png"
         );
         assert_eq!(file_uri("/tmp/a.png"), "file:///tmp/a.png");
+    }
+
+    #[test]
+    fn file_path_reads_file_urls() {
+        assert_eq!(
+            file_path("file:///C:/Users/me/icon.svg").as_deref(),
+            Some(r"C:\Users\me\icon.svg")
+        );
+        assert_eq!(
+            file_path("FILE://localhost/C:/a%20b/%E5%86%99.svg?v=1#x").as_deref(),
+            Some(r"C:\a b\写.svg")
+        );
+        assert_eq!(
+            file_path("file://server/share/a.svg").as_deref(),
+            Some(r"\\server\share\a.svg")
+        );
+        // core の file_url で作った URL は元のパスに戻る。
+        let url = naui_core::media::file_url("C:/Users/太郎/写真 #1.svg");
+        assert_eq!(
+            file_path(&url).as_deref(),
+            Some(r"C:\Users\太郎\写真 #1.svg")
+        );
+        assert_eq!(file_path("https://example.com/a.svg"), None);
+        assert_eq!(file_path("file:///C:/%FF.svg"), None);
+        assert_eq!(
+            file_path("file:///C:/%+1.svg").as_deref(),
+            Some(r"C:\%+1.svg")
+        );
     }
 
     #[test]

@@ -4491,7 +4491,6 @@ fn image_takes_bytes_pixels_and_svg(ui: &Ui) -> Result<()> {
     let path = std::env::temp_dir().join(format!("naui-svg-{}.svg", std::process::id()));
     std::fs::write(&path, RED_SVG).expect("SVG を書き出せない");
     image.set_source(path.to_str().expect("UTF-8 のパス"));
-    let _ = std::fs::remove_file(&path);
     assert!(
         xaml_image(&image)
             .Source()
@@ -4500,6 +4499,18 @@ fn image_takes_bytes_pixels_and_svg(ui: &Ui) -> Result<()> {
         "SVG ファイルも SvgImageSource で読む"
     );
     assert_eq!(natural_size(&image), (24.0, 16.0));
+
+    // file: の URL で渡しても、手元のファイルとして大きさを求める。
+    image.set_source("");
+    image.set_source(&naui_core::media::file_url(
+        path.to_str().expect("UTF-8 のパス"),
+    ));
+    let _ = std::fs::remove_file(&path);
+    assert_eq!(
+        natural_size(&image),
+        (24.0, 16.0),
+        "file: の SVG の大きさを求める"
+    );
 
     // gzip で包んだ .svgz は展開してから SvgImageSource に渡す。
     let svgz = {

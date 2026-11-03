@@ -208,12 +208,17 @@ fn svg_root(bytes: &[u8]) -> Option<&[u8]> {
 /// ```
 pub fn svg_size(bytes: &[u8]) -> Option<(f64, f64)> {
     // 先頭のコメントの中の `<svg` ではなく、根の要素の開始タグを読む。
-    let rest = svg_root(bytes)?;
-    let end = rest.iter().position(|&byte| byte == b'>')?;
-    let tag = std::str::from_utf8(&rest[..end]).ok()?;
+    let attributes = start_tag_attributes(svg_root(bytes)?)?;
+    let attribute = |name: &str| {
+        attributes
+            .iter()
+            .find(|(key, _)| *key == name.as_bytes())
+            .and_then(|(_, value)| std::str::from_utf8(value).ok())
+            .map(str::trim)
+    };
 
     let pixels = |name: &str| {
-        let value = attribute(tag, name)?;
+        let value = attribute(name)?;
         let unit_at = value
             .rfind(|c: char| !c.is_ascii_alphabetic())
             .map_or(0, |at| at + 1);
@@ -236,7 +241,7 @@ pub fn svg_size(bytes: &[u8]) -> Option<(f64, f64)> {
             .map(|v| v * scale)
             .filter(|v| v.is_finite() && *v > 0.0)
     };
-    let view_box = attribute(tag, "viewBox").and_then(|value| {
+    let view_box = attribute("viewBox").and_then(|value| {
         let numbers: Vec<f64> = value
             .split(|c: char| c.is_ascii_whitespace() || c == ',')
             .filter(|part| !part.is_empty())
@@ -257,28 +262,40 @@ pub fn svg_size(bytes: &[u8]) -> Option<(f64, f64)> {
     }
 }
 
-/// The value of `name="..."` (or `'...'`) in a start tag.
-fn attribute<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
-    let mut search = tag;
-    while let Some(at) = search.find(name) {
-        let before = search[..at].chars().next_back();
-        let after = &search[at + name.len()..];
-        search = after;
-        if !before.is_some_and(|c| c.is_ascii_whitespace()) {
-            continue;
+/// The `name="value"` (or `'value'`) pairs of the start tag `tag` begins with, read
+/// in order up to its closing `>` or `/>`. `None` if the tag does not close.
+///
+/// Read pair by pair, so a `>` or another attribute's name inside a quoted value
+/// is taken as part of that value.
+fn start_tag_attributes(tag: &[u8]) -> Option<Vec<(&[u8], &[u8])>> {
+    // 要素名を飛ばす。
+    let name_end = tag
+        .iter()
+        .position(|byte| byte.is_ascii_whitespace() || matches!(byte, b'>' | b'/'))?;
+    let mut rest = &tag[name_end..];
+    let mut pairs = Vec::new();
+    loop {
+        rest = trim_ascii_start(rest);
+        if matches!(rest.first()?, b'>' | b'/') {
+            return Some(pairs);
         }
-        let Some(value) = after.trim_start().strip_prefix('=') else {
-            continue;
+        let key_end = rest
+            .iter()
+            .position(|byte| byte.is_ascii_whitespace() || matches!(byte, b'=' | b'>' | b'/'))?;
+        let key = &rest[..key_end];
+        // XML の属性は必ず `="..."` か `='...'` を持つ。崩れていたらそこで読むのをやめる。
+        let after = trim_ascii_start(&rest[key_end..]);
+        let Some(after) = after.strip_prefix(b"=").map(trim_ascii_start) else {
+            return Some(pairs);
         };
-        let value = value.trim_start();
-        let quote = value.chars().next()?;
-        if quote != '"' && quote != '\'' {
-            continue;
+        let quote = *after.first()?;
+        if !matches!(quote, b'"' | b'\'') {
+            return Some(pairs);
         }
-        let value = &value[1..];
-        return value.find(quote).map(|end| value[..end].trim());
+        let value_end = after[1..].iter().position(|&byte| byte == quote)?;
+        pairs.push((key, &after[1..1 + value_end]));
+        rest = &after[2 + value_end..];
     }
-    None
 }
 
 fn trim_ascii_start(bytes: &[u8]) -> &[u8] {
@@ -465,6 +482,16 @@ mod tests {
             Some((20.0, 40.0))
         );
         assert_eq!(svg_size(br#"<svg width="2em">"#), None);
+        // 引用符の中の > や属性名らしき文字列は値の一部として読む。
+        assert_eq!(
+            svg_size(br#"<svg aria-label="A > B" width="24" height="16">"#),
+            Some((24.0, 16.0))
+        );
+        assert_eq!(
+            svg_size(br#"<svg data-x='w width="1"' width="24" height="16"/>"#),
+            Some((24.0, 16.0))
+        );
+        assert_eq!(svg_size(br#"<svg width="24" height="16""#), None);
         // 物理単位は 1in = 96px で換算する。
         assert_eq!(
             svg_size(br#"<svg width="1in" height="1in" viewBox="0 0 10 10">"#),
