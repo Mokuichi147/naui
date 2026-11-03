@@ -207,7 +207,8 @@ internationalization and application layer tracks.
       Pango have it only per run of text or for the whole app. So naui takes one
       language for the whole app at startup: `lang` on `<html>`, `Language` on
       each window's content, `AppleLanguages` in the arguments domain (the per-app
-      language of System Settings), and `PANGO_LANGUAGE` before GTK starts.
+      language of System Settings), and `PANGO_LANGUAGE` before GTK starts (only
+      while no other thread runs).
 - [x] **Separators and framed groups** (`Separator`, `Group`). `NSBox`,
       `GtkSeparator` / `GtkFrame`, `<hr>` / `<fieldset>`. WinUI has neither a
       standalone separator nor a group box, so Windows draws a 1 px `Border` edge

@@ -57,7 +57,12 @@ that shape are covered in
   is not given it. On macOS it is listed first by `Ui::preferred_languages`, but
   the native controls' own strings are not switched by it: AppKit chooses them
   itself, and the file dialog stayed in Japanese for `ja-JP`, `en-US` and `zh-CN`
-  alike in an app bundle whose development region is Japanese.
+  alike in an app bundle whose development region is Japanese. On Linux it is
+  put into `PANGO_LANGUAGE` only when `run` finds no other thread in the process
+  (counted from `/proc/self/task`), since changing the environment while another
+  thread reads it is undefined behavior. An app that starts threads (an async
+  runtime, say) before `run` keeps the OS's glyph choice; naui's own strings still
+  follow the language, and setting `PANGO_LANGUAGE` before launch works.
 - `Ui::on_preferred_languages_change` is never called on Linux, which decides the
   languages from environment variables at startup. Elsewhere it is called only
   when the list itself changes: a change of region or format alone does not call
