@@ -16,14 +16,22 @@
 //! insets a layout guide by its physical sides (`left` / `right`), the same as on
 //! Windows and the Web, and the content is tied to the guide's leading and trailing
 //! edges, so that in right-to-left text it still starts on the leading side.
+//!
+//! A group's box has no natural size of its own; its size comes from the content
+//! through those constraints. On recent macOS, where `NSBox` is drawn by SwiftUI,
+//! the box reports the heading's size as its intrinsic size. A `Stack` holds `Auto`
+//! children to their intrinsic size at 999, which beat the content's compression
+//! resistance and squashed the content into the heading's height.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use objc2::rc::Retained;
-use objc2::{MainThreadMarker, Message};
+use objc2::runtime::NSObjectProtocol;
+use objc2::{define_class, msg_send, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
     NSBox, NSBoxType, NSLayoutConstraint, NSLayoutGuide, NSLayoutPriority, NSTitlePosition, NSView,
+    NSViewNoIntrinsicMetric,
 };
 use objc2_foundation::{NSArray, NSSize, NSString};
 
@@ -73,6 +81,33 @@ impl Separator {
 
 // ------------------------------------------------------------------ Group
 
+// 大きさは中身との制約だけで決める `NSBox`。
+define_class!(
+    #[unsafe(super(NSBox))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiGroupBox"]
+    struct NauiGroupBox;
+
+    unsafe impl NSObjectProtocol for NauiGroupBox {}
+
+    impl NauiGroupBox {
+        // SwiftUI で描く `NSBox` は見出しの大きさを自然な大きさとして返す。
+        // 中身を含まない値なので、Stack が Auto の子をこれへ縮めると中身がつぶれる。
+        #[unsafe(method(intrinsicContentSize))]
+        fn intrinsic_content_size(&self) -> NSSize {
+            let none = unsafe { NSViewNoIntrinsicMetric };
+            NSSize::new(none, none)
+        }
+    }
+);
+
+impl NauiGroupBox {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(());
+        unsafe { msg_send![super(this), init] }
+    }
+}
+
 struct GroupInner {
     native: Retained<NSBox>,
     /// The inside of the box less the padding, on the box's `contentView`.
@@ -99,7 +134,7 @@ impl_widget!(Group);
 
 impl Group {
     pub(crate) fn new(mtm: MainThreadMarker, text: &str) -> Self {
-        let native = NSBox::new(mtm);
+        let native = Retained::into_super(NauiGroupBox::new(mtm));
         native.setBoxType(NSBoxType::Primary);
         native.setContentViewMargins(NSSize::new(0.0, 0.0));
         let inset = NSLayoutGuide::new();

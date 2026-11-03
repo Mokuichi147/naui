@@ -388,6 +388,10 @@ fn main() {
             "右から左の文字でも、グループの余白の左右は物理的な左右のまま",
             group_padding_stays_physical_right_to_left,
         ),
+        (
+            "Stack に入れたグループが見出しの高さへ縮まず、中身の高さになる",
+            group_in_stack_fits_its_content,
+        ),
         ("グリッドが行と列を広げて子を置く", grid_places_children),
         (
             "グリッドの Auto の子が再レイアウトで横に広がらない",
@@ -3781,6 +3785,42 @@ fn group_padding_stays_physical_right_to_left(ui: &Ui) -> Result<()> {
         (inside.size.width - frame.size.width - 24.0).abs() < 0.5,
         "右の余白は right のまま: {inside:?} / {frame:?}"
     );
+    Ok(())
+}
+
+/// A group in a `Stack` is as large as its content along the `Stack`.
+///
+/// A `Stack` holds `Auto` children to their natural size at 999. On macOS where
+/// `NSBox` is drawn by SwiftUI, the box reports the heading's size as that, which
+/// squashed two checkboxes into one line.
+fn group_in_stack_fits_its_content(ui: &Ui) -> Result<()> {
+    for orientation in [Orientation::Vertical, Orientation::Horizontal] {
+        let pane = ui.stack(orientation)?;
+        let body = ui.stack(Orientation::Vertical)?;
+        body.set_spacing(8.0);
+        body.append(&ui.checkbox("Show the status bar")?);
+        body.append(&ui.checkbox("Wrap long lines")?);
+        let group = ui.group("表示")?;
+        group.set_child(&body);
+        pane.append(&group);
+        pane.append(&ui.label("次")?);
+
+        let root = pane.native_view();
+        root.setFrameSize(NSSize::new(600.0, 400.0));
+        root.layoutSubtreeIfNeeded();
+        // 交差軸は Stack の既定どおり伸びるので、主軸の大きさだけを見る。
+        let natural = body.native_view().fittingSize();
+        let frame = body.native_view().frame();
+        let (size, expected) = if orientation.is_vertical() {
+            (frame.size.height, natural.height)
+        } else {
+            (frame.size.width, natural.width)
+        };
+        assert!(
+            (size - expected).abs() < 0.5,
+            "{orientation:?}: 中身はつぶれず自然な大きさになること: {frame:?} / {natural:?}"
+        );
+    }
     Ok(())
 }
 
