@@ -201,12 +201,14 @@ internationalization and application layer tracks.
       `StackArrangement`. Both native controls are two-pane, so three panes are
       a `Sidebar` beside the panes or another `AdaptivePanes` in the detail,
       each deciding by its own width.
-- [ ] *(i18n)* **Telling the native side the app's language.** The language
-      affects which glyphs are chosen for CJK text and how screen readers
-      pronounce it (`lang` on the Web, `FrameworkElement.Language` on WinUI).
-      Without it, an app showing Japanese on an OS set to another language can
-      get Chinese glyph forms. Which platforms can take it per window or per widget is
-      investigated first.
+- [x] *(i18n)* **Telling the native side the app's language**
+      (`Settings::language`). Only the Web (`lang`) and Windows
+      (`FrameworkElement.Language`) can take a language per element; AppKit and
+      Pango have it only per run of text or for the whole app. So naui takes one
+      language for the whole app at startup: `lang` on `<html>`, `Language` on
+      each window's content, `AppleLanguages` in the arguments domain (the per-app
+      language of System Settings), and `PANGO_LANGUAGE` before GTK starts (only
+      while no other thread runs).
 - [x] **Separators and framed groups** (`Separator`, `Group`). `NSBox`,
       `GtkSeparator` / `GtkFrame`, `<hr>` / `<fieldset>`. WinUI has neither a
       standalone separator nor a group box, so Windows draws a 1 px `Border` edge

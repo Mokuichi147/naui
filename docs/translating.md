@@ -363,6 +363,11 @@ native controls carry themselves (file dialogs, date pickers, text field context
 menus) and the few strings naui shows itself stay in the OS language. See
 [known limitations](known-limitations.md).
 
+To make the native side choose glyphs and voices for the chosen language as well,
+pass the saved tag to `Settings::language` when the app starts (it is read only
+then): `Settings::new("app").language(tag)`. naui's own strings then follow it;
+the native controls' strings do not, even on macOS.
+
 ## Trying other languages
 
 The OS language can be changed for a single run:

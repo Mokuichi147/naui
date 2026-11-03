@@ -153,3 +153,19 @@ pub(crate) fn display_languages() -> Vec<String> {
 pub fn override_preferred_languages_for_test(languages: Option<Vec<String>>) {
     OVERRIDE.with(|o| *o.borrow_mut() = languages);
 }
+
+/// Gives a window's content the app's language (`FrameworkElement.Language`), which
+/// every element inside inherits: it decides the glyphs XAML chooses for text and
+/// the language Narrator reads in. Without an app language, the content keeps
+/// WinUI's default (the user's display language).
+pub(crate) fn apply_app_language(root: &naui_winui3::Microsoft::UI::Xaml::UIElement) {
+    use naui_winui3::Microsoft::UI::Xaml::FrameworkElement;
+    use windows_core::Interface;
+
+    let Some(tag) = naui_core::app_language() else {
+        return;
+    };
+    if let Ok(element) = root.cast::<FrameworkElement>() {
+        let _ = element.SetLanguage(&windows_core::HSTRING::from(tag));
+    }
+}

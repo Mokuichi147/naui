@@ -605,6 +605,8 @@ where
     let document = document()?;
     document.set_title(&settings.name);
     apply_theme(&document, settings.theme)?;
+    naui_core::set_app_language(settings.language.as_deref());
+    apply_language(settings.language.as_deref());
     let ui = Ui::new(document, settings.theme);
     build(&ui)?;
     // ウィンドウ (と、そこにぶら下がるクロージャ) をページの寿命まで保持する。
@@ -614,6 +616,19 @@ where
 
 thread_local! {
     static KEEP: RefCell<Vec<Ui>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Writes the app's language to `lang` on `<html>`, which the browser uses to choose
+/// glyphs and screen readers to choose a voice. `None` leaves the page's own `lang`
+/// alone. Public for tests.
+#[doc(hidden)]
+pub fn apply_language(tag: Option<&str>) {
+    let (Some(tag), Ok(document)) = (tag, document()) else {
+        return;
+    };
+    if let Some(root) = document.document_element() {
+        let _ = root.set_attribute("lang", tag);
+    }
 }
 
 /// The browser's preferred languages, most preferred first (`navigator.languages`).

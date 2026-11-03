@@ -75,6 +75,7 @@ pub use expander::Expander;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
 pub use group::{Group, Separator};
+pub use languages::apply_app_language;
 #[doc(hidden)]
 pub use languages::override_preferred_languages_for_test;
 pub use layout::{Grid, Scroll, Spacer};
@@ -605,6 +606,11 @@ where
 {
     let mtm = MainThreadMarker::new()
         .ok_or_else(|| Error::new("start naui", "call it from the main thread"))?;
+    // アプリの言語は、NSApplication とロケールが最初に使われる前に置く。
+    naui_core::set_app_language(settings.language.as_deref());
+    if let Some(tag) = settings.language.as_deref() {
+        languages::apply_app_language(Some(tag));
+    }
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
     let appearance = appearance_for_theme(settings.theme);

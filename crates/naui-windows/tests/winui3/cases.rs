@@ -233,6 +233,10 @@ const CASES: &[Case] = &[
         scroll_to_row_keeps_the_selection,
     ),
     (
+        "アプリの言語がウィンドウの中身に付き、中の要素が継ぐ",
+        app_language_is_set_on_the_window_content,
+    ),
+    (
         "ウィンドウの大きさはタイトルバーとメニューバーを除いた中身の行",
         window_size_is_the_content_row,
     ),
@@ -2594,6 +2598,35 @@ fn window_lifecycle(ui: &Ui) -> Result<Deferred> {
 ///
 /// Messages are pumped until the row has an actual size. In environments where it
 /// never gets one (CI), it passes without checking.
+/// The app's language is set on the window's content, which every element inside
+/// inherits (`FrameworkElement.Language`).
+fn app_language_is_set_on_the_window_content(ui: &Ui) -> Result<()> {
+    naui_core::set_app_language(Some("ja-JP"));
+    let window = ui.window("言語", 200.0, 120.0)?;
+    let stack = ui.stack(Orientation::Vertical)?;
+    let label = ui.label("今日は")?;
+    stack.append(&label);
+    window.set_child(&stack);
+    naui_core::set_app_language(None);
+    let root = window
+        .native_window()
+        .Content()
+        .expect("ウィンドウの中身")
+        .cast::<FrameworkElement>()
+        .expect("根は FrameworkElement");
+    assert_eq!(root.Language().expect("Language").to_string(), "ja-JP");
+    assert_eq!(
+        native::<FrameworkElement>(&label)
+            .Language()
+            .expect("Language")
+            .to_string(),
+        "ja-JP",
+        "中の要素は根の言語を継ぐこと"
+    );
+    window.close();
+    Ok(())
+}
+
 fn window_size_is_the_content_row(ui: &Ui) -> Result<()> {
     let window = ui.window("大きさ", 420.0, 300.0)?;
     let reported = Rc::new(Cell::new(None));

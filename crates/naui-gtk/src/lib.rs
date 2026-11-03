@@ -252,6 +252,33 @@ fn preferred_languages() -> Vec<String> {
     languages_for_locale(&locale, glib::language_names().iter().map(|n| n.as_str()))
 }
 
+/// The value of `PANGO_LANGUAGE` with the app's language first: the tag, then the
+/// languages already listed (`PANGO_LANGUAGE`, or else `LANGUAGE`), without
+/// repeating the tag.
+fn pango_languages(tag: &str, existing: Option<&str>) -> String {
+    let mut languages = vec![tag.to_owned()];
+    for language in existing
+        .unwrap_or_default()
+        .split([':', ';', ',', ' '])
+        .filter(|language| !language.is_empty())
+    {
+        if !languages
+            .iter()
+            .any(|known| known.eq_ignore_ascii_case(language))
+        {
+            languages.push(language.to_owned());
+        }
+    }
+    languages.join(":")
+}
+
+/// Whether the calling thread is the only one in the process, so that changing the
+/// environment cannot race another thread reading it. False when it cannot be told.
+fn is_single_threaded() -> bool {
+    // Linux ではスレッドごとに /proc/self/task/<tid> がある。
+    std::fs::read_dir("/proc/self/task").is_ok_and(|tasks| tasks.count() == 1)
+}
+
 /// `language_names` (glib's "ja_JP.UTF-8", "ja_JP", "ja", "C" and so on) unless
 /// the message locale `locale` is C, in which case only "C".
 fn languages_for_locale<'a>(
@@ -785,6 +812,23 @@ where
         ));
     }
 
+    naui_core::set_app_language(settings.language.as_deref());
+    if let Some(tag) = settings.language.as_deref() {
+        // Pango は、文字の言語が書体から決まらないとき (漢字など) に、優先言語の
+        // 字形を選ぶ。優先言語は PANGO_LANGUAGE (無ければ LANGUAGE) を最初に
+        // 使うときに一度だけ読むので、GTK を始める前に入れておく。
+        // 環境変数の書き換えは、C の getenv を呼ぶ他のスレッドと競合すると未定義
+        // 動作になる (Rust 2024 で set_var が unsafe になった理由)。他のスレッドが
+        // 無いと確かめられたときだけ書き換える。ここから set_var までに新しい
+        // スレッドを作る者はいないので、確かめた結果は書き換えの時点でも正しい。
+        if is_single_threaded() {
+            let existing = std::env::var("PANGO_LANGUAGE")
+                .or_else(|_| std::env::var("LANGUAGE"))
+                .ok();
+            std::env::set_var("PANGO_LANGUAGE", pango_languages(tag, existing.as_deref()));
+        }
+    }
+
     let app = adw::Application::builder()
         .application_id(&settings.app_id)
         .build();
@@ -837,6 +881,25 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pango_languages_put_the_app_language_first() {
+        assert_eq!(pango_languages("ja", None), "ja");
+        assert_eq!(pango_languages("ja", Some("en_US:de")), "ja:en_US:de");
+        // 既にあれば重ねない。
+        assert_eq!(pango_languages("ja", Some("en:JA")), "ja:en");
+        assert_eq!(pango_languages("zh-Hant", Some("")), "zh-Hant");
+    }
+
+    #[test]
+    fn other_threads_are_seen() {
+        // テストはハーネスが別スレッドで走らせるうえ、ここでも 1 本足す。
+        let (done, wait) = std::sync::mpsc::channel::<()>();
+        let other = std::thread::spawn(move || wait.recv());
+        assert!(!is_single_threaded());
+        drop(done);
+        let _ = other.join();
+    }
 
     #[test]
     fn c_locale_ignores_language() {
