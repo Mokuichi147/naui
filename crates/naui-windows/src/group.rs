@@ -10,6 +10,9 @@
 //! - `Group` is a heading (`BodyStrongTextBlockStyle`) above a card (a `Border` with
 //!   `CardBackgroundFillColorDefaultBrush`, `CardStrokeColorDefaultBrush` and
 //!   `OverlayCornerRadius`), the way the Settings app groups its controls.
+//!   Assistive technology sees it as a group named by its heading
+//!   (`AutomationControlType` and `LabeledBy`), so the heading gives the controls
+//!   inside their context.
 //!
 //! The brushes are `{ThemeResource}`s, so they follow the window's theme.
 
@@ -17,12 +20,11 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use naui_core::{Orientation, Padding, Result, Sizing, TextColor, TextStyle};
-use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Border, Grid as XamlGrid, RowDefinition, TextBlock,
-};
+use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+use naui_winui3::Microsoft::UI::Xaml::Controls::{Border, Grid as XamlGrid, TextBlock};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, GridLength, GridUnitType, TextTrimming, TextWrapping, Thickness, UIElement,
+    DependencyObject, FrameworkElement, TextTrimming, TextWrapping, Thickness, UIElement,
     Visibility,
 };
 use windows_core::{Interface, HSTRING};
@@ -49,6 +51,20 @@ const CARD_XAML: &str = r##"<Border
     BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
     BorderThickness="1"
     CornerRadius="{ThemeResource OverlayCornerRadius}"/>"##;
+
+/// The group itself: the heading's row (`Auto`) above the card's (the rest).
+///
+/// A `Grid` does not appear to assistive technology on its own, so it declares
+/// itself a group (`AutomationControlType`, which the projection does not carry, so
+/// it is set here).
+const GROUP_XAML: &str = r##"<Grid
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    AutomationProperties.AutomationControlType="Group">
+    <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+    </Grid.RowDefinitions>
+</Grid>"##;
 
 /// The gap between a group's heading and its card.
 const HEADING_GAP: f64 = 8.0;
@@ -124,22 +140,9 @@ impl_widget!(Group, native);
 
 impl Group {
     pub(crate) fn new(text: &str) -> Result<Self> {
-        let native = XamlGrid::new().map_err(|e| to_error("create the Group", e))?;
-        for length in [
-            GridLength {
-                Value: 0.0,
-                GridUnitType: GridUnitType::Auto,
-            },
-            GridLength {
-                Value: 1.0,
-                GridUnitType: GridUnitType::Star,
-            },
-        ] {
-            let row = RowDefinition::new().map_err(|e| to_error("create the Group row", e))?;
-            row.SetHeight(length)
-                .and_then(|()| native.RowDefinitions()?.Append(&row))
-                .map_err(|e| to_error("add the Group row", e))?;
-        }
+        let native = XamlReader::Load(&HSTRING::from(GROUP_XAML))
+            .and_then(|element| element.cast::<XamlGrid>())
+            .map_err(|e| to_error("create the Group", e))?;
 
         let heading = TextBlock::new().map_err(|e| to_error("create the Group heading", e))?;
         if let Some(style) = crate::widgets::label_style(TextStyle::Heading, TextColor::Default) {
@@ -166,6 +169,12 @@ impl Group {
                 .and_then(|children| children.Append(&part))
                 .map_err(|e| to_error("add to the Group", e))?;
         }
+        // 見出しをグループの名前にする。`AutomationProperties.Name` は利用者の
+        // `set_accessible_label` のために空けておき、それが無いときに読まれる
+        // `LabeledBy` で結ぶ。
+        let _ = native
+            .cast::<DependencyObject>()
+            .and_then(|object| AutomationProperties::SetLabeledBy(&object, &heading));
 
         let this = Self(Rc::new(GroupInner {
             native,

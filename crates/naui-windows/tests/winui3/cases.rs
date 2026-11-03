@@ -1731,6 +1731,45 @@ fn group_puts_a_heading_above_a_card(ui: &Ui) -> Result<()> {
         heading.Visibility().expect("見出しの表示"),
         Visibility::Visible
     );
+    // 支援技術には、見出しを名前に持つグループとして見える。
+    assert_eq!(
+        automation::control_type(&group.native_element()),
+        Some(automation::CONTROL_TYPE_GROUP),
+        "グループとして支援技術に見えること"
+    );
+    assert_eq!(
+        accessible_name(&group),
+        "表示",
+        "見出しがグループの名前になること"
+    );
+    {
+        use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+        use naui_winui3::Microsoft::UI::Xaml::DependencyObject;
+        let object = group
+            .native_element()
+            .cast::<DependencyObject>()
+            .expect("DependencyObject");
+        assert!(
+            AutomationProperties::GetLabeledBy(&object).expect("LabeledBy")
+                == heading.cast::<UIElement>().expect("UIElement"),
+            "見出しがグループのラベルとして関連付けられること"
+        );
+    }
+    group.set_text("詳細");
+    assert_eq!(
+        accessible_name(&group),
+        "詳細",
+        "見出しを変えると名前も変わること"
+    );
+    group.set_accessible_label(Some("表示の設定"));
+    group.set_text("表示");
+    assert_eq!(
+        accessible_name(&group),
+        "表示の設定",
+        "指定した読み上げ名は見出しより優先されること"
+    );
+    group.set_accessible_label(None);
+    assert_eq!(accessible_name(&group), "表示");
 
     let content = ui.stack(Orientation::Vertical)?;
     group.set_child(&content);
