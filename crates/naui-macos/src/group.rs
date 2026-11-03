@@ -16,16 +16,26 @@
 //! insets a layout guide by its physical sides (`left` / `right`), the same as on
 //! Windows and the Web, and the content is tied to the guide's leading and trailing
 //! edges, so that in right-to-left text it still starts on the leading side.
+//!
+//! A group's box has no natural size of its own; its size comes from the content
+//! through those constraints. On recent macOS, where `NSBox` is drawn by SwiftUI,
+//! the box reports the heading's size as its intrinsic size. A `Stack` holds `Auto`
+//! children to their intrinsic size at 999, which beat the content's compression
+//! resistance and squashed the content into the heading's height. The heading's
+//! width is kept instead by a separate minimum width, which only keeps the box from
+//! becoming narrower than the heading.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use objc2::rc::Retained;
-use objc2::{MainThreadMarker, Message};
+use objc2::runtime::{AnyObject, NSObjectProtocol};
+use objc2::{define_class, msg_send, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
-    NSBox, NSBoxType, NSLayoutConstraint, NSLayoutGuide, NSLayoutPriority, NSTitlePosition, NSView,
+    NSBox, NSBoxType, NSFontAttributeName, NSLayoutConstraint, NSLayoutGuide, NSLayoutPriority,
+    NSStringDrawing, NSTitlePosition, NSView, NSViewNoIntrinsicMetric,
 };
-use objc2_foundation::{NSArray, NSSize, NSString};
+use objc2_foundation::{NSArray, NSDictionary, NSSize, NSString};
 
 use naui_core::{Orientation, Padding, Sizing};
 
@@ -34,6 +44,12 @@ use crate::widgets::{impl_widget, Widget};
 /// How strongly a separator keeps its 1 pt thickness. Above the default compression
 /// resistance (750), below required, so that a size the app specifies wins.
 const THICKNESS_PRIORITY: NSLayoutPriority = 999.0;
+
+/// How strongly a group keeps the heading's width. Above the content's wish to fill
+/// the inside ([`CROSS_FILL_PRIORITY`](crate::layout::CROSS_FILL_PRIORITY)), so that
+/// content narrower than the heading stretches instead of the heading being cut
+/// off. Below required, so that a fixed or maximum width the app specifies wins.
+const TITLE_WIDTH_PRIORITY: NSLayoutPriority = crate::layout::CROSS_FILL_PRIORITY + 0.5;
 
 // -------------------------------------------------------------- Separator
 
@@ -73,8 +89,65 @@ impl Separator {
 
 // ------------------------------------------------------------------ Group
 
+// 大きさは中身との制約だけで決める `NSBox`。
+define_class!(
+    #[unsafe(super(NSBox))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiGroupBox"]
+    struct NauiGroupBox;
+
+    unsafe impl NSObjectProtocol for NauiGroupBox {}
+
+    impl NauiGroupBox {
+        // SwiftUI で描く `NSBox` は見出しの大きさを自然な大きさとして返す。
+        // 中身を含まない値なので、Stack が Auto の子をこれへ縮めると中身がつぶれる。
+        #[unsafe(method(intrinsicContentSize))]
+        fn intrinsic_content_size(&self) -> NSSize {
+            let none = unsafe { NSViewNoIntrinsicMetric };
+            NSSize::new(none, none)
+        }
+    }
+);
+
+// `define_class!` は親の `NSBox` までしか `AsRef` を作らない。
+impl AsRef<NSView> for NauiGroupBox {
+    fn as_ref(&self) -> &NSView {
+        let native: &NSBox = self;
+        native.as_ref()
+    }
+}
+
+impl NauiGroupBox {
+    fn new(mtm: MainThreadMarker) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(());
+        unsafe { msg_send![super(this), init] }
+    }
+
+    /// The width the heading needs, including its inset from the frame's edge. 0
+    /// without a heading.
+    fn title_width(&self) -> f64 {
+        if self.titlePosition() == NSTitlePosition::NoTitle {
+            return 0.0;
+        }
+        // SwiftUI で描く `NSBox` は見出しの幅を自然な大きさとして返す。
+        let size: NSSize = unsafe { msg_send![super(self), intrinsicContentSize] };
+        if size.width > 0.0 {
+            return size.width;
+        }
+        // 返さない `NSBox` では、見出しの文字を測って左右に同じ字下げを足す。
+        let font = self.titleFont();
+        let font_object: &AnyObject = font.as_ref();
+        let attributes =
+            NSDictionary::from_slices(&[unsafe { NSFontAttributeName }], &[font_object]);
+        let text = unsafe { self.title().sizeWithAttributes(Some(&attributes)) };
+        text.width.ceil() + 2.0 * self.titleRect().origin.x.max(0.0)
+    }
+}
+
 struct GroupInner {
-    native: Retained<NSBox>,
+    native: Retained<NauiGroupBox>,
+    /// Keeps the box at least as wide as the heading. Its constant follows the text.
+    title_width: Retained<NSLayoutConstraint>,
     /// The inside of the box less the padding, on the box's `contentView`.
     inset: Retained<NSLayoutGuide>,
     /// The content's handle. Held to keep it alive along with its trampolines.
@@ -99,15 +172,21 @@ impl_widget!(Group);
 
 impl Group {
     pub(crate) fn new(mtm: MainThreadMarker, text: &str) -> Self {
-        let native = NSBox::new(mtm);
+        let native = NauiGroupBox::new(mtm);
         native.setBoxType(NSBoxType::Primary);
         native.setContentViewMargins(NSSize::new(0.0, 0.0));
         let inset = NSLayoutGuide::new();
         if let Some(content) = native.contentView() {
             content.addLayoutGuide(&inset);
         }
+        let title_width = native
+            .widthAnchor()
+            .constraintGreaterThanOrEqualToConstant(0.0);
+        title_width.setPriority(TITLE_WIDTH_PRIORITY);
+        title_width.setActive(true);
         let this = Self(Rc::new(GroupInner {
             native,
+            title_width,
             inset,
             child: RefCell::new(None),
             constraints: RefCell::new(Vec::new()),
@@ -145,6 +224,7 @@ impl Group {
         } else {
             NSTitlePosition::AtTop
         });
+        self.0.title_width.setConstant(self.0.native.title_width());
         crate::layout::invalidate_ancestors(&self.0.native);
     }
 
