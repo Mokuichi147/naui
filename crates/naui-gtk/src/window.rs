@@ -564,17 +564,17 @@ impl Window {
     ///
     /// The size is that of the normal state. GTK4 keeps the size from before
     /// maximizing, going fullscreen or tiling as the window's default size, so while
-    /// in one of those it is converted from there. A minimized window reports the
-    /// state it returns to (maximized if it was maximized, as far as X11 tells).
+    /// in one of those it is converted from there. The size given to `set_size` there
+    /// (or while waiting for the compositor to respond to maximizing or fullscreen)
+    /// is reported as is. A minimized window reports the state it returns to
+    /// (maximized if it was maximized, as far as X11 tells).
     pub fn placement(&self) -> WindowPlacement {
-        let size = match self.0.initial_size.get() {
-            Some(size) => size,
-            None if self.out_of_normal_frame() => self
-                .0
-                .restore_size
-                .get()
-                .unwrap_or_else(|| self.content_for_default_size(self.normal_frame_size())),
-            None => self.size(),
+        let size = match (self.0.initial_size.get(), self.0.restore_size.get()) {
+            (Some(size), _) | (None, Some(size)) => size,
+            (None, None) if self.out_of_normal_frame() => {
+                self.content_for_default_size(self.normal_frame_size())
+            }
+            (None, None) => self.size(),
         };
         WindowPlacement {
             size,
@@ -749,10 +749,13 @@ impl Window {
         self.apply_restore_size();
     }
 
-    /// If the compositor has not responded to the maximize or fullscreen request just
-    /// made within [`STATE_RESPONSE_LIMIT_MS`], takes it as ignored: it stops waiting
-    /// for it and applies the size given to `set_size` meanwhile. Otherwise that size
-    /// would be kept for a later restore and undo the user's resizing in between.
+    /// Stops waiting for the maximize or fullscreen request just made after
+    /// [`STATE_RESPONSE_LIMIT_MS`]: by then the compositor has responded, or it is
+    /// taken as ignored. A request for the state it is already in gets no response
+    /// either. If it is in the normal frame by then, the size given to `set_size`
+    /// meanwhile is applied; otherwise it is applied once back there. Waiting on would
+    /// keep that size for a later restore, undoing the user's resizing in between, or
+    /// never apply it.
     fn await_state_response(&self) {
         let request = self.0.state_requests.get().wrapping_add(1);
         self.0.state_requests.set(request);
@@ -764,7 +767,7 @@ impl Window {
                     return;
                 };
                 let window = Window(inner);
-                if window.0.state_requests.get() != request || window.out_of_normal_frame() {
+                if window.0.state_requests.get() != request {
                     return;
                 }
                 window.0.maximize_requested.set(false);
