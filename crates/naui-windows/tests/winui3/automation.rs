@@ -55,7 +55,7 @@ pub struct IAutomationPeer_Vtbl {
     RaisePropertyChangedEvent: usize,
     GetAcceleratorKey: usize,
     GetAccessKey: usize,
-    GetAutomationControlType: usize,
+    pub GetAutomationControlType: unsafe extern "system" fn(*mut c_void, *mut i32) -> HRESULT,
     GetAutomationId: usize,
     GetBoundingRectangle: usize,
     GetChildren: usize,
@@ -89,6 +89,16 @@ impl IAutomationPeer {
             // 受け取る (`Type::from_abi` は HSTRING には使えない)。
             (Interface::vtable(self).GetName)(Interface::as_raw(self), &mut result)
                 .map(|| std::mem::transmute::<*mut c_void, HSTRING>(result))
+        }
+    }
+
+    /// The kind of control passed to assistive technology
+    /// (`Microsoft.UI.Xaml.Automation.Peers.AutomationControlType`).
+    fn control_type(&self) -> Result<i32> {
+        unsafe {
+            let mut result = 0;
+            (Interface::vtable(self).GetAutomationControlType)(Interface::as_raw(self), &mut result)
+                .map(|| result)
         }
     }
 }
@@ -218,6 +228,16 @@ pub(crate) fn accessible_name(element: &UIElement) -> String {
         .name()
         .map(|name| name.to_string())
         .unwrap_or_default()
+}
+
+/// `AutomationControlType.Group`.
+pub(crate) const CONTROL_TYPE_GROUP: i32 = 26;
+
+/// The kind of control passed to assistive technology. `None` when the element has
+/// no peer and so does not appear to assistive technology at all.
+pub(crate) fn control_type(element: &UIElement) -> Option<i32> {
+    let peer = peer(element).ok()?;
+    Some(peer.control_type().expect("GetAutomationControlType"))
 }
 
 /// Takes a pattern out of the peer. Fails the test for controls that do not respond

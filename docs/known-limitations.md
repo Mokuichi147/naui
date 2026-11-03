@@ -9,7 +9,7 @@ that shape are covered in
 
 | Item | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| Weights of `Grid`'s `Track::Fill` | Works | Distributed evenly | Distributed evenly | Works |
+| Weights of `Grid`'s `Track::Fill` | Works | Works (with one exception, see [macOS](#macos)) | Works | Works |
 | Stacking in the same `Grid` cell | Possible | Only the last placed one remains | Possible | Possible |
 | Dragging `Table` column widths | Not possible | Possible | Not possible | Not possible |
 | `EditableComboBox` narrowing options by typed text | No | No (only prefix completion) | No | The browser narrows |
@@ -25,13 +25,14 @@ that shape are covered in
 | What a dropped file carries (`on_file_drop`) | The absolute path | The absolute path | The absolute path (local files only) | A `blob:` URL, no path |
 | Looks of `ButtonRole` | Only `Primary` (accent) | `Primary` (accent), `Destructive` (red text, macOS 26 and later) | Both (`suggested-action` / `destructive-action`) | Neither (only `data-naui-role` is written) |
 | `AdaptivePanes` switching to one pane | `TwoPaneView` decides, below the breakpoint, with no slack | naui decides, with 8 px of slack | naui decides, with 8 px of slack (slides between the panes) | naui decides, with 8 px of slack |
+| Where `Group`'s heading goes | Above the card | On the frame's top edge | On the frame's top edge | On the frame's top edge (`<legend>`) |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
 
 ## Common
 
 ### Scope
 
-- The supported components are the 49 in the table in the
+- The supported components are the 52 in the table in the
   [README](../README.md#widgets).
 - There is no absolute positioning. Layout uses `Stack`, `Grid` and `Spacer`.
 - Supported media formats depend on each OS, browser, and the GStreamer setup on
@@ -177,6 +178,12 @@ that shape are covered in
   same size (`Grid`'s `Star` tracks share out the whole leftover area). Linux and
   the Web instead give each its content size plus an equal share of what is left,
   and macOS does not define how the space is split.
+- A `Grid`'s `Fill` track gets its weighted share even when that is narrower than
+  its content, which is then cut off (a `Fill` child does not claim its content's
+  minimum, so it never pushes the window wider). The Web does the same
+  (`min-width: 0` under `fr`). macOS and Linux keep a `Fill` track at what its
+  content needs while there is room and share the rest by weight. Give the child
+  a `min_width` to get that everywhere.
 
 ### Widgets
 
@@ -248,7 +255,11 @@ that shape are covered in
 
 ### Layout
 
-- `Grid`'s `Track::Fill` does not reflect differences in weight.
+- `Grid`'s `Fill` tracks split the room by weight through the `Fill` children
+  (without a maximum) in them: each wishes for its track's share, and a `Fill`
+  track without such a child takes what is left. **When two or more `Fill`
+  tracks hold no such child, how the room is split between them is left to
+  `NSGridView`**, which has no weights.
 - **Children cannot be stacked in the same `Grid` cell.** The one placed later
   removes the earlier one (because `NSGridCell` can hold only one view).
 - **Removing a merged cell (a child with a span) from a `Grid` leaves the merge
@@ -257,7 +268,7 @@ that shape are covered in
   position and size as in a normal cell. There are two differences: a `Fill` child
   extends over the merged range, and placing a child at another position within the
   range removes the previous child because it is the same cell.
-- The height of `Grid`'s `Auto` rows, the share of `Fill` children, and the widths
+- The height of `Grid`'s `Auto` rows, the share of `Fill` tracks, and the widths
   of `Table` columns without a specified width are calculated by naui (an
   **exception** to "no layout calculation on the Rust side"), because `NSGridView`
   and `NSTableView` do not decide where leftover space goes. Auto Layout makes the
@@ -271,6 +282,11 @@ that shape are covered in
   buttons in alerts). Before that it looks like an ordinary button.
   `ButtonRole::Primary` draws the accent color like the window's default button,
   but is not given the Return key equivalent, so Return does not activate it.
+- `Group` holds one widget; to group several, put them in a `Stack`. It has no
+  `set_enabled`: disabling every control inside is up to the app (only the Web's
+  `<fieldset disabled>` could do it natively). Windows has no group box, so the
+  heading sits above a card instead of on the frame (see
+  [Widget implementations](widgets.md#windows-construction)).
 - `Toggle` switches **only when the switch is pressed**; pressing the label text
   does not switch it.
 - `EditableComboBox` completes the rest when you type characters matching the start
@@ -316,7 +332,6 @@ that shape are covered in
 
 ### Layout
 
-- `Grid`'s `Track::Fill` does not reflect differences in weight.
 - `SplitView` panes cannot be made smaller than the minimum size their content
   reports (because `GtkPaned` does not move the divider past a child's minimum).
 

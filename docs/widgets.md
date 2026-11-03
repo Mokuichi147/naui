@@ -18,9 +18,11 @@ Legend:
 | --- | --- | --- | --- | --- |
 | `Window` | ✅ `Microsoft.UI.Xaml.Window` | ✅ `NSWindow` | ✅ `AdwApplicationWindow` | 🔴 `<div>` + `document.title` |
 | `Stack` | 🟡 `Grid` (a track per child) | ✅ `NSStackView` | ✅ `GtkBox` | 🟡 `<div>` + CSS Flexbox |
-| `Grid` | ✅ `Grid` | ✅ `NSGridView` | 🟡 `GtkGrid` | 🟡 `<div>` + CSS Grid |
+| `Grid` | ✅ `Grid` | ✅ `NSGridView` | 🔴 naui's own container, laid out like `GtkGrid` | 🟡 `<div>` + CSS Grid |
 | `Scroll` | ✅ `ScrollViewer` | ✅ `NSScrollView` | ✅ `GtkScrolledWindow` | 🟡 `<div>` + `overflow` |
 | `Spacer` | 🟡 An empty `Grid` | 🟡 An empty `NSView` | 🟡 An empty `GtkBox` | 🟡 `<div>` + `flex-grow` |
+| `Separator` | 🔴 `Border` (one edge, `DividerStrokeColorDefaultBrush`) | ✅ `NSBox` (`NSBoxSeparator`) | ✅ `GtkSeparator` | ✅ `<hr>` |
+| `Group` | 🔴 `TextBlock` (heading) + `Border` (card) in a `Grid` | ✅ `NSBox` (`NSBoxPrimary`) | ✅ `GtkFrame` | ✅ `<fieldset>` + `<legend>` |
 | `Expander` | ✅ `Expander` | 🟡 `NSButton` (disclosure) + `NSStackView` | ✅ `GtkExpander` | ✅ `<details>` + `<summary>` |
 | `SplitView` | 🔴 `Grid` + a divider `Grid` | ✅ `NSSplitView` | ✅ `GtkPaned` | 🔴 `<div>` + `<div role="separator">` |
 | `AdaptivePanes` | ✅ `TwoPaneView` + a back `Button` | 🔴 `NSView` + `NSBox` (separator) + a back `NSButton` | ✅ `AdwNavigationSplitView` + a back `GtkButton` | 🔴 `<div>` + a back `<button>` |
@@ -113,6 +115,16 @@ collected in [Known limitations](known-limitations.md).
   `RowSpacing` falls between tracks, so an empty track would still leave a gap on
   each side. The tracks are redone when a child is added, removed, shown or hidden,
   or given a new `Sizing`.
+- **`Separator` / `Group`**: WinUI 3 has neither a standalone separator nor a
+  group box (`MenuFlyoutSeparator` and `AppBarSeparator` work only inside menus and
+  command bars). A separator is a `Border` that draws only one 1 px edge in
+  `DividerStrokeColorDefaultBrush`; the edge is part of the `Border`'s desired
+  size, so the line keeps its thickness whatever size is given along it. A group is
+  what the Settings app uses to group controls: a heading
+  (`BodyStrongTextBlockStyle`) above a card (a `Border` with
+  `CardBackgroundFillColorDefaultBrush`, `CardStrokeColorDefaultBrush` and
+  `OverlayCornerRadius`). The brushes are `{ThemeResource}`s, so they follow the
+  window's theme.
 - **`MenuBar`**: Rather than WinUI 3's `MenuBar`, it is a row of `Button`s with
   their background removed, each holding a `MenuFlyout`. This is because
   `MenuBar` / `MenuBarItem` / `KeyboardAccelerator` are not in `naui-winui3`'s
@@ -297,8 +309,17 @@ collected in [Known limitations](known-limitations.md).
   `fittingSize` of their cell content as the row height, and `Fill` children get a
   weak preference to grow up to "the grid size − the width the other columns need"
   (fixed-width columns are estimated by their specified width, the rest by their
-  cell content's `fittingSize`). **Auto Layout decides the positions and sizes
-  themselves**; naui does not set frames. Rows and columns that cross a merge cannot
+  cell content's `fittingSize`). `NSGridView` has no weights either, so when two or
+  more `Fill` tracks share the room, that preference is replaced: naui decides
+  which tracks take a share and which stay at what they need (naui-core's
+  `distribute_fill`, the rule of CSS's `fr`), and each `Fill` child wishes for its
+  cell's share written as a proportion of the grid (`width = k × grid + c`). Two
+  children each wishing for "everything the others do not need" cannot both be
+  satisfied, and the solver would settle it by shrinking the grid and the window;
+  proportions hold together at any size, so resizing keeps the weights by itself.
+  They stay below a window keeping its size (priority 490), so they never resize a
+  window. **Auto Layout decides the positions and sizes themselves**; naui does not
+  set frames. Rows and columns that cross a merge cannot
   be removed because AppKit throws an exception when you try.
 - **`SplitView`**: `NSSplitView` itself. However, **naui replaces only how the
   panes are sized** (`splitView:resizeSubviewsWithOldSize:`). `NSSplitView`'s
@@ -317,6 +338,13 @@ collected in [Known limitations](known-limitations.md).
   `chevron.backward` symbol.
 - **`Expander`**: AppKit has no collapsible control, so it is built from a
   disclosure `NSButton` (the chevron is an SF Symbol) and an `NSStackView`.
+- **`Separator` / `Group`**: Both are `NSBox`. A separator box takes its direction
+  from its frame, so its thickness is held at 1 pt by a constraint below required
+  (a size the app specifies wins). A group's padding insets a layout guide in the
+  box's `contentView` by its physical left and right, because
+  `contentViewMargins` can only be the same on both sides; the content is tied to
+  the guide's leading and trailing edges. An empty heading sets
+  `NSNoTitle`, since `NSBox` keeps the title's height even for an empty title.
 - **`Toolbar`**: Since items are identified by index, "Customize Toolbar"
   (rearranging by the user) is turned off. Separators follow macOS conventions with
   `NSToolbarSpaceItem` (a fixed-width gap). The title text is hidden because, if
@@ -390,6 +418,27 @@ collected in [Known limitations](known-limitations.md).
 
 ### Linux construction
 
+- **`Grid`**: Not a `GtkGrid` but naui's own container (`NauiGrid`). `GtkGrid`
+  gives each column its natural width and splits what is left **evenly** among the
+  growing columns, so `Track::Fill` weights could not work, and two `Fill` columns
+  differed by their content. The container measures the children as `GtkGrid` does
+  (lines without a shown child take no room or spacing, a spanning child spreads
+  what it lacks over the lines it crosses, over `Fill` lines by their weights,
+  heights are measured for the widths the columns get, columns mirror in
+  right-to-left text) and splits the room with
+  naui-core's `allocate_tracks`: `Fill` tracks share the leftover by weight, never
+  below what their content needs, and without a `Fill` track the leftover goes to
+  the lines whose children grow, as before. A `Fill` child reports a minimum of 0
+  so that it never pushes the window wider, so the grid asks `SizeBin` separately
+  for the size below which the content is cut off (`content_minimum`). While the
+  room allows, a `Fill` track is held at that size and the others share the rest;
+  when it does not, every track shrinks towards its minimum the way a GTK box
+  does. The grid's own minimum leaves that size out. GTK4 still places each child inside its
+  cell (margins, `halign` / `valign`).
+- **`Group`**: A `GtkFrame`, whose child is an `AdwBin` holding the padding as its
+  margins, so that moving the content elsewhere does not carry the padding with
+  it. The padding's `left` and `right` stay physical: in right-to-left text the
+  start and end margins are swapped.
 - **`SplitView`**: A `GtkPaned`. The panes' minimum sizes are held by a container
   wrapped around each pane, so they do not conflict with the `size_request` the app
   specifies with `Sizing`.
@@ -479,6 +528,15 @@ collected in [Known limitations](known-limitations.md).
   in the normal state, which can differ while maximized).
 
 ### Web construction
+
+- **`Separator` / `Group`**: `<hr>` and `<fieldset>` + `<legend>`, so they are
+  reported as a separator and as a group named by its heading. Only the browser's
+  dated defaults (an inset double line, a grooved border, margins, and
+  `min-inline-size: min-content`, which would keep a group from shrinking) are
+  replaced, with a 1 px `GrayText` line like `SplitView`'s divider. A vertical
+  `<hr>` gets `aria-orientation="vertical"`. The `<fieldset>` lays out its content
+  as a one-cell CSS Grid, so the content fills the inside, and the `<legend>` is
+  removed while the heading is empty so the border has no gap.
 
 - **`Label`**: **`<span>` wraps by default**, so naui sets `white-space: nowrap` and
   `text-overflow: ellipsis` to match the other three platforms' default (one line +

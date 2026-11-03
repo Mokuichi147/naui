@@ -269,7 +269,7 @@ lists it first; elsewhere they stay in the OS language.
 
 ## Layout and size
 
-Layout uses these seven:
+Layout uses these nine:
 
 | API | Purpose |
 | --- | --- |
@@ -277,6 +277,8 @@ Layout uses these seven:
 | [`Grid`] | Places children by row and column |
 | [`Scroll`] | Scrolls content that overflows |
 | [`Spacer`] | Takes the parent's leftover space |
+| [`Separator`] | Draws a thin line between controls |
+| [`Group`] | Puts a frame with a heading around related controls |
 | [`Expander`] | Shows its content only when the heading is clicked |
 | [`SplitView`] | Divides two panes with a movable divider |
 | [`AdaptivePanes`] | A list and its detail, side by side when wide and one at a time when narrow |
@@ -381,6 +383,50 @@ so naui decides on every platform. It compares the width once layout is done and
 switches on the next main loop iteration on macOS, Linux and Windows, and before
 the page is painted on the Web (`ResizeObserver`). Before the first layout, and
 while the stack is hidden, it keeps its own orientation.
+
+## Separators and groups
+
+A settings screen, or the content of a [`Popover`] or [`Sheet`], often needs to
+divide its controls or gather related ones. [`Separator`] draws a thin line, and
+[`Group`] puts a frame with a heading around one widget (a [`Stack`] holding the
+controls, usually).
+
+```no_run
+# use naui::{Orientation, Result, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let page = ui.stack(Orientation::Vertical)?;
+page.set_spacing(12.0);
+
+let display = ui.group("Display")?;
+let options = ui.stack(Orientation::Vertical)?;
+options.append(&ui.checkbox("Show the status bar")?);
+options.append(&ui.checkbox("Wrap long lines")?);
+display.set_child(&options);
+page.append(&display);
+
+page.append(&ui.separator(Orientation::Horizontal)?);
+page.append(&ui.button("Reset to defaults")?);
+# Ok(())
+# }
+```
+
+A separator is a `Horizontal` line for a vertical stack, or a `Vertical` one for
+a horizontal stack. It stretches along its direction by default (`Fill` width for a
+horizontal line, `Fill` height for a vertical one), and `set_sizing` replaces that
+like any other widget's default. Its color and thickness come from the platform.
+
+A group's content fills the inside of the frame, and [`Group::set_padding`]
+changes the space around it (the default, [`DEFAULT_GROUP_PADDING`], is the same
+everywhere). An empty heading leaves only the frame.
+
+| | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| `Separator` | A 1 px line in the theme's divider color | `NSBox` separator | `GtkSeparator` | `<hr>` |
+| `Group` | A heading above a Fluent card | `NSBox` with a title | `GtkFrame` | `<fieldset>` + `<legend>` |
+
+WinUI 3 has no separator or group box outside menus and command bars, so on
+Windows the group looks like the Settings app's: **the heading sits above the
+card, not on its border**.
 
 ## Scroll position
 

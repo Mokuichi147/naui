@@ -14,11 +14,13 @@
 //! | `run` | `AdwApplication` + `connect_activate` (the UI is built in the callback) |
 //! | `Window` | `AdwApplicationWindow` + `AdwToolbarView` + `AdwHeaderBar` |
 //! | `Stack` | `GtkBox` |
-//! | `Grid` | `GtkGrid` |
+//! | `Grid` | naui's own container (`NauiGrid`), laid out like `GtkGrid` but with weights |
 //! | `Scroll` | `GtkScrolledWindow` |
 //! | `Expander` | `GtkExpander` |
 //! | `SplitView` | `GtkPaned` |
 //! | `Spacer` | An empty `GtkBox` (`hexpand` / `vexpand`) |
+//! | `Separator` | `GtkSeparator` |
+//! | `Group` | `GtkFrame` (the content in an `AdwBin` holding the padding) |
 //! | Size specification | `size_request` / `hexpand` / `halign` + the maximum of [`SizeBin`] |
 //! | `Label` | `GtkLabel` |
 //! | `Button` | `GtkButton` |
@@ -60,10 +62,11 @@
 //! - GTK4 has no equivalent of [`Fit::None`](naui_core::Fit::None) (actual size),
 //!   so it maps to `GTK_CONTENT_FIT_SCALE_DOWN`, which **does not scale up but does
 //!   scale down**.
-//! - **Weights of [`Track::Fill`](naui_core::Track::Fill) in a `Grid` have no
-//!   effect.** `GtkGrid` cannot give columns or rows a width of their own, and
-//!   leftover space is split evenly among the growing columns (the same limitation
-//!   as macOS).
+//! - **`Grid` is not a `GtkGrid`.** `GtkGrid` has no weights for
+//!   [`Track::Fill`](naui_core::Track::Fill) (it splits leftover space evenly among
+//!   the growing columns), so naui measures the children and places them itself
+//!   (`crate::grid`). The native widget is a `gtk::Widget` named `NauiGrid` with
+//!   the CSS name `grid`.
 //! - `AdwStyleManager` holds the color theme for the whole app, so
 //!   [`Window::set_theme`] also applies to the whole app.
 //! - Unlike `GtkApplicationWindow`, `AdwApplicationWindow` **has no default title
@@ -150,6 +153,8 @@ mod file_drop;
 mod file_picker;
 mod file_saver;
 mod focus;
+mod grid;
+mod group;
 mod indicator;
 mod interaction;
 mod keys;
@@ -196,6 +201,7 @@ pub use editable_combo_box::EditableComboBox;
 pub use expander::Expander;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
+pub use group::{Group, Separator};
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::{List, ListRow};
 pub use media::{Audio, Image, Video};
@@ -395,6 +401,18 @@ impl Ui {
     /// pushes the others away.
     pub fn spacer(&self) -> Result<Spacer> {
         Ok(Spacer::new())
+    }
+
+    /// A thin line that divides controls. `Horizontal` is a horizontal line (for
+    /// dividing a vertical stack), `Vertical` a vertical one.
+    pub fn separator(&self, orientation: Orientation) -> Result<Separator> {
+        Ok(Separator::new(orientation))
+    }
+
+    /// A frame with a heading around related controls. `text` is the heading; an empty
+    /// string leaves only the frame.
+    pub fn group(&self, text: &str) -> Result<Group> {
+        Ok(Group::new(text))
     }
 
     pub fn label(&self, text: &str) -> Result<Label> {

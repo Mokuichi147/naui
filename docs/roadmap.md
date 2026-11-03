@@ -208,17 +208,25 @@ internationalization and application layer tracks.
       language for the whole app at startup: `lang` on `<html>`, `Language` on
       each window's content, `AppleLanguages` in the arguments domain (the per-app
       language of System Settings), and `PANGO_LANGUAGE` before GTK starts.
-- [ ] **Separators and framed groups.** Settings screens, and now the content of
-      `Popover` and `Sheet`, need a way to divide and group controls. `NSBox`,
-      `GtkSeparator` / `GtkFrame`, `<hr>` / `<fieldset>`. WinUI has no standalone
-      separator, so what to substitute is investigated first.
+- [x] **Separators and framed groups** (`Separator`, `Group`). `NSBox`,
+      `GtkSeparator` / `GtkFrame`, `<hr>` / `<fieldset>`. WinUI has neither a
+      standalone separator nor a group box, so Windows draws a 1 px `Border` edge
+      in `DividerStrokeColorDefaultBrush`, and puts a heading above a Fluent card,
+      the way the Settings app groups its controls.
 - [ ] **More image sources** (bytes in memory, SVG, pixel buffers). For now only
       paths and URLs, so an app cannot show an icon embedded with `include_bytes!`
       without writing it to a file. The Web can use Blob URLs.
-- [ ] **Make `Track::Fill` weights work in `Grid` on macOS and Linux.** Today they
-      are distributed evenly there, so the same code lays out differently than on
-      Windows and the Web. `NSGridView` and `GtkGrid` have no weights, so naui
-      distributes the space itself.
+- [x] **Make `Track::Fill` weights work in `Grid` on macOS and Linux.** naui-core
+      now splits the room with the rule of CSS's `fr` (by weight, never below what a
+      track's content needs, the rest split again among the others), and both
+      backends use it. Linux replaces `GtkGrid` with naui's own container, since
+      `GtkGrid` gave each column its natural width plus an even share, so `Fill`
+      columns of the same weight also differed by their content. macOS keeps
+      `NSGridView` and has each `Fill` child wish for its cell's share as a
+      proportion of the grid's size; when two or more
+      `Fill` tracks hold no `Fill` child, their split is still left to
+      `NSGridView`. A `Fill` track beside one with a capped child now gets its
+      share instead of everything but the cap, as on Windows and the Web.
 - [ ] *(app)* **Message queue and the split of `update` and `render`.** Create the
       crate with the model, message, `update` and `render`, and the queue that runs
       them as described in [Application layer](#application-layer). Since `render` sets every
