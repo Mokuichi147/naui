@@ -736,6 +736,7 @@ impl Window {
                 native.fullscreen();
             }
         }
+        self.apply_restore_size();
     }
 
     /// Notified when the display state changes. Receives the new
@@ -781,11 +782,20 @@ impl Window {
                 self.apply_state(next);
             }
         }
-        if !self.leaving_normal_frame() {
-            if let Some(size) = self.0.restore_size.take() {
-                self.apply_default_size(size);
-                self.fit_after_layout(size);
-            }
+        self.apply_restore_size();
+    }
+
+    /// Requests the size given to `set_size` out of the normal frame again, once in
+    /// the normal frame and not waiting for maximizing or fullscreen. Also called when
+    /// such a request is withdrawn before the compositor responds (no state change
+    /// may arrive then), so the size is not carried over to a later restore.
+    fn apply_restore_size(&self) {
+        if self.leaving_normal_frame() {
+            return;
+        }
+        if let Some(size) = self.0.restore_size.take() {
+            self.apply_default_size(size);
+            self.fit_after_layout(size);
         }
     }
 
