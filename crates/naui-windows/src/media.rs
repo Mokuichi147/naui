@@ -619,7 +619,14 @@ impl Image {
             return;
         };
         self.forget_natural_size();
-        let unzipped = gunzip_svg(bytes);
+        let unzipped = match gunzip_svg(bytes) {
+            Ok(unzipped) => unzipped,
+            Err(error) => {
+                eprintln!("naui-windows: refused the image: {error}");
+                self.take_down(&children);
+                return;
+            }
+        };
         let bytes = unzipped.as_deref().unwrap_or(bytes);
         let svg = naui_core::media::svg_size(bytes);
         let image_source = stream_from(bytes).and_then(|stream| {
@@ -676,8 +683,9 @@ fn svg_pixels((width, height): (f64, f64)) -> (u32, u32) {
     (width.ceil() as u32, height.ceil() as u32)
 }
 
-/// The most of an SVG on the network that is fetched. Larger documents are refused
-/// rather than held in memory whole.
+/// The most bytes an SVG may take in memory, both as fetched from the network and
+/// as unpacked from gzip (see [`gunzip_svg`]). Larger documents are refused rather
+/// than held in memory whole.
 const SVG_MAX: usize = 64 * 1024 * 1024;
 
 /// Reads a stream to its end, up to [`SVG_MAX`] bytes. Blocks, so it is called off
@@ -739,21 +747,35 @@ fn stream_from(bytes: &[u8]) -> windows_core::Result<InMemoryRandomAccessStream>
     Ok(stream)
 }
 
-/// The SVG inside gzip-compressed bytes (an SVGZ file), or `None` if they are not
-/// gzip or what they hold is not SVG.
+/// The SVG inside gzip-compressed bytes (an SVGZ file), or `Ok(None)` if they are
+/// not gzip or what they hold is not SVG. `Err` if it unpacks to more than
+/// [`SVG_MAX`] bytes: a small file can unpack to far more, so the unpacked size is
+/// limited too, not only what is fetched.
 ///
 /// `SvgImageSource` reads only plain SVG, and `BitmapImage` no SVG at all.
-fn gunzip_svg(bytes: &[u8]) -> Option<Vec<u8>> {
+fn gunzip_svg(bytes: &[u8]) -> std::result::Result<Option<Vec<u8>>, String> {
+    gunzip_svg_within(bytes, SVG_MAX)
+}
+
+/// [`gunzip_svg`] with the limit on the unpacked size given.
+fn gunzip_svg_within(bytes: &[u8], limit: usize) -> std::result::Result<Option<Vec<u8>>, String> {
     use std::io::Read;
 
     if !bytes.starts_with(&[0x1F, 0x8B]) {
-        return None;
+        return Ok(None);
     }
     let mut svg = Vec::new();
-    flate2::read::GzDecoder::new(bytes)
-        .read_to_end(&mut svg)
-        .ok()?;
-    naui_core::media::is_svg(&svg).then_some(svg)
+    // 上限より 1 バイトだけ多く読めば、超えたかどうかが分かる。
+    let read = flate2::read::GzDecoder::new(bytes)
+        .take(limit as u64 + 1)
+        .read_to_end(&mut svg);
+    if read.is_err() {
+        return Ok(None);
+    }
+    if svg.len() > limit {
+        return Err(format!("the SVGZ unpacks to more than {limit} bytes"));
+    }
+    Ok(naui_core::media::is_svg(&svg).then_some(svg))
 }
 
 // --------------------------------------------------------------- 再生の中身
@@ -1467,14 +1489,38 @@ mod tests {
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(svg).unwrap();
         let svgz = encoder.finish().unwrap();
-        assert_eq!(gunzip_svg(&svgz).as_deref(), Some(&svg[..]));
+        assert_eq!(gunzip_svg(&svgz), Ok(Some(svg.to_vec())));
         // 平文の SVG と gzip でないものはそのまま通す。
-        assert_eq!(gunzip_svg(svg), None);
-        assert_eq!(gunzip_svg(b"\x89PNG\r\n\x1a\n"), None);
+        assert_eq!(gunzip_svg(svg), Ok(None));
+        assert_eq!(gunzip_svg(b"\x89PNG\r\n\x1a\n"), Ok(None));
         // gzip でも中身が SVG でなければ取らない。
         let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
         encoder.write_all(b"plain text").unwrap();
-        assert_eq!(gunzip_svg(&encoder.finish().unwrap()), None);
+        assert_eq!(gunzip_svg(&encoder.finish().unwrap()), Ok(None));
+        // 展開した大きさが上限ちょうどなら通し、1 バイトでも超えたら拒む。
+        assert_eq!(gunzip_svg_within(&svgz, svg.len()), Ok(Some(svg.to_vec())));
+        assert!(gunzip_svg_within(&svgz, svg.len() - 1).is_err());
+    }
+
+    /// A small SVGZ that unpacks past the limit (a gzip bomb) is refused without
+    /// unpacking all of it.
+    #[test]
+    fn gunzip_svg_refuses_a_bomb() {
+        use std::io::Write;
+
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+        encoder.write_all(b"<svg>").unwrap();
+        let zeros = vec![b' '; 1024 * 1024];
+        for _ in 0..(SVG_MAX / zeros.len() + 1) {
+            encoder.write_all(&zeros).unwrap();
+        }
+        let bomb = encoder.finish().unwrap();
+        assert!(
+            bomb.len() < 1024 * 1024,
+            "圧縮後は小さい ({} バイト)",
+            bomb.len()
+        );
+        assert!(gunzip_svg(&bomb).is_err());
     }
 
     #[test]
