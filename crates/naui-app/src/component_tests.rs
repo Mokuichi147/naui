@@ -424,30 +424,83 @@ fn a_keyed_childs_message_carries_its_key() {
     );
 }
 
+impl Fixture {
+    /// Syncs like `sync`, except that mounting the keys in `failing` fails.
+    fn sync_failing(&mut self, rows: &[Row], failing: &[u32]) -> Result<(), String> {
+        let log = self.log.clone();
+        let mounted = &mut self.mounted;
+        let container = &mut self.container;
+        // mount はキーを受け取らないので、作る順に並べたキーから引く。
+        let mut new_keys = rows
+            .iter()
+            .map(|row| row.id)
+            .filter(|id| self.keyed.view(id).is_none())
+            .collect::<Vec<_>>()
+            .into_iter();
+        self.keyed.sync_with(
+            rows.iter().map(|row| (row.id, row)),
+            |dispatch| {
+                let key = new_keys.next().expect("a key for each mount");
+                if failing.contains(&key) {
+                    return Err(format!("no widgets for {key}"));
+                }
+                *mounted += 1;
+                mount_row(&log, format!("v{mounted}"))(dispatch).map_err(|never| match never {})
+            },
+            |_| {},
+            |step| container.apply(step),
+        )
+    }
+}
+
 #[test]
-fn sync_stops_at_a_failing_mount_and_carries_on_next_time() {
+fn a_failing_mount_leaves_that_child_out_and_places_the_rest() {
     let mut fixture = Fixture::new();
     let log = fixture.log.clone();
     let rows = [row(1, "a", &log), row(2, "b", &log), row(3, "c", &log)];
-    let container = &mut fixture.container;
-    let mut count = 0;
-    let result = fixture.keyed.sync_with(
-        rows.iter().map(|row| (row.id, row)),
-        |dispatch| {
-            count += 1;
-            if count == 2 {
-                return Err("no widgets");
-            }
-            mount_row(&log, format!("w{count}"))(dispatch).map_err(|never| match never {})
-        },
-        |_| {},
-        |step| container.apply(step),
+    let result = fixture.sync_failing(&rows, &[2]);
+    // 作れなかった子だけ外れ、その後ろの子は置かれて描かれる。
+    assert_eq!(result, Err("no widgets for 2".to_owned()));
+    assert_eq!(fixture.container.names, ["v1", "v2"]);
+    assert_eq!(
+        fixture.take_log(),
+        [
+            "mount v1",
+            "insert 0 v1",
+            "mount v2",
+            "insert 1 v2",
+            "render 1 a",
+            "render 3 c"
+        ]
     );
-    assert_eq!(result.err(), Some("no widgets"));
-    assert_eq!(fixture.container.names, ["w1"]);
+    // 次の呼び出しで、外れた子をまた作ってみる。
     fixture.sync(&rows);
-    assert_eq!(fixture.container.names, ["w1", "v1", "v2"]);
+    assert_eq!(fixture.container.names, ["v1", "v3", "v2"]);
     assert_eq!(fixture.keyed.len(), 3);
+}
+
+#[test]
+fn a_failing_mount_does_not_leave_the_other_children_stale() {
+    let mut fixture = Fixture::new();
+    let log = fixture.log.clone();
+    fixture.sync(&[row(1, "a", &log)]);
+    fixture.take_log();
+    // 既存の子のモデルが変わったのと同じ回に、新しい子を作れなかった。
+    let result = fixture.sync_failing(&[row(1, "a2", &log), row(2, "b", &log)], &[2]);
+    assert!(result.is_err());
+    assert_eq!(fixture.take_log(), ["render 1 a2"]);
+    assert_eq!(*fixture.keyed.view(&1).expect("row 1").shown.borrow(), "a2");
+}
+
+#[test]
+fn every_failing_mount_is_tried_and_the_first_error_returned() {
+    let mut fixture = Fixture::new();
+    let log = fixture.log.clone();
+    let rows = [row(1, "a", &log), row(2, "b", &log), row(3, "c", &log)];
+    let result = fixture.sync_failing(&rows, &[1, 3]);
+    assert_eq!(result, Err("no widgets for 1".to_owned()));
+    assert_eq!(fixture.container.names, ["v1"]);
+    assert_eq!(*fixture.keyed.view(&2).expect("row 2").shown.borrow(), "b");
 }
 
 #[test]

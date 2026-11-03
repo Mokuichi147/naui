@@ -342,9 +342,14 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
         }
 
         // 2. 先頭から順に、求める並びへそろえる。index より前はそろっている。
+        // 作れなかった子は飛ばすので、index は wanted の位置ではなく容器の位置。
         let mut present: HashSet<K> = entries.iter().map(|entry| entry.key.clone()).collect();
-        for (index, (key, _)) in wanted.iter().enumerate() {
+        let mut placed: Vec<&C> = Vec::with_capacity(wanted.len());
+        let mut failure = None;
+        for (key, model) in &wanted {
+            let index = placed.len();
             if entries.get(index).is_some_and(|entry| entry.key == *key) {
+                placed.push(model);
                 continue;
             }
             if present.contains(key) {
@@ -366,7 +371,15 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
                 entries.insert(index, entry);
             } else {
                 let link = Rc::new(());
-                let view = mount(&(self.dispatch)(key, Rc::downgrade(&link)))?;
+                let view = match mount(&(self.dispatch)(key, Rc::downgrade(&link))) {
+                    Ok(view) => view,
+                    Err(error) => {
+                        // この子だけ外したまま続け、ほかの子は置いて描く。
+                        // 次の呼び出しでまた作ってみる。
+                        failure.get_or_insert(error);
+                        continue;
+                    }
+                };
                 place(Step::Insert { index, view: &view });
                 entries.insert(
                     index,
@@ -378,14 +391,15 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
                 );
                 present.insert(key.clone());
             }
+            placed.push(model);
         }
-        debug_assert_eq!(entries.len(), wanted.len());
+        debug_assert_eq!(entries.len(), placed.len());
 
         // 3. それぞれを描く。
-        for (entry, (_, model)) in entries.iter().zip(&wanted) {
+        for (entry, model) in entries.iter().zip(placed) {
             model.render(&entry.view);
         }
-        Ok(())
+        failure.map_or(Ok(()), Err)
     }
 }
 
@@ -463,8 +477,9 @@ impl<K: Clone + Eq + Hash + 'static, C: Component> Children<K, C> {
     /// 3. Every child is rendered with its model.
     ///
     /// When a key appears more than once, the later ones are ignored. If a mount
-    /// fails, it stops there and returns the error, leaving what it did so far in
-    /// place; the next call carries on from there.
+    /// fails, that child is left out and the rest are still placed and rendered, so
+    /// the other children do not stay stale; the first error is returned, and the
+    /// next call tries to mount the missing child again.
     pub fn sync<'a>(
         &self,
         models: impl IntoIterator<Item = (K, &'a C)>,
