@@ -67,10 +67,16 @@ pub(crate) struct WindowInner {
     normal_frame: Cell<Option<(f64, f64)>>,
     /// The content size given to [`Window::set_size`] while out of the normal frame
     /// (or waiting for the compositor to respond to maximizing or fullscreen),
-    /// requested again once back in it. X11 window managers return to the size they
-    /// remembered from before maximizing and ignore the default size changed
-    /// meanwhile.
+    /// requested again when coming back from out of it. X11 window managers return to
+    /// the size they remembered from before maximizing and ignore the default size
+    /// changed meanwhile. Kept while in the normal frame (a response may still come
+    /// late), and dropped once the size there changes from it (the user resized).
     restore_size: Cell<Option<(f64, f64)>>,
+    /// It came back to the normal frame while waiting for another maximize or
+    /// fullscreen request, so `restore_size` is applied once that wait ends.
+    restore_due: Cell<bool>,
+    /// Whether [`Window::report_state`] last saw it out of the normal frame.
+    was_out_of_frame: Cell<bool>,
     /// The content size being refitted ([`Window::fit_after_layout`]).
     fit: Cell<Option<Fit>>,
     /// A per-frame callback for refitting is attached.
@@ -197,6 +203,8 @@ impl Window {
             initial_size: Cell::new(None),
             normal_frame: Cell::new(None),
             restore_size: Cell::new(None),
+            restore_due: Cell::new(false),
+            was_out_of_frame: Cell::new(false),
             fit: Cell::new(None),
             fitting: Cell::new(false),
             on_state_change: StateHandler::default(),
@@ -493,6 +501,19 @@ impl Window {
             self.0.normal_frame.set(Some(self.frame_size()));
         }
         let size = self.size();
+        // 通常の枠で (返事待ちでも合わせ直し中でもなく) 覚えた大きさから
+        // 変わったなら、利用者が変えたので、後の復元へ持ち越さない。
+        if let Some(restore) = self.0.restore_size.get() {
+            let restore = (f64::from(to_px(restore.0)), f64::from(to_px(restore.1)));
+            if self.0.overlay.height() > 0
+                && size != restore
+                && !self.leaving_normal_frame()
+                && !self.0.restore_due.get()
+                && !self.0.fitting.get()
+            {
+                self.0.restore_size.set(None);
+            }
+        }
         if self.0.last_size.replace(size) != size {
             self.0.on_resize.emit(size);
         }
@@ -569,7 +590,12 @@ impl Window {
     /// is reported as is. A minimized window reports the state it returns to
     /// (maximized if it was maximized, as far as X11 tells).
     pub fn placement(&self) -> WindowPlacement {
-        let size = match (self.0.initial_size.get(), self.0.restore_size.get()) {
+        let restore = self
+            .0
+            .restore_size
+            .get()
+            .filter(|_| self.leaving_normal_frame() || self.0.restore_due.get());
+        let size = match (self.0.initial_size.get(), restore) {
             (Some(size), _) | (None, Some(size)) => size,
             (None, None) if self.out_of_normal_frame() => {
                 self.content_for_default_size(self.normal_frame_size())
@@ -746,16 +772,19 @@ impl Window {
                 self.await_state_response();
             }
         }
-        self.apply_restore_size();
+        // 返事待ちを取り消して通常の枠のままなら、待っていた大きさを当てる。
+        if self.0.restore_due.get() {
+            self.apply_restore_size();
+        }
     }
 
     /// Stops waiting for the maximize or fullscreen request just made after
     /// [`STATE_RESPONSE_LIMIT_MS`]: by then the compositor has responded, or it is
-    /// taken as ignored. A request for the state it is already in gets no response
-    /// either. If it is in the normal frame by then, the size given to `set_size`
-    /// meanwhile is applied; otherwise it is applied once back there. Waiting on would
-    /// keep that size for a later restore, undoing the user's resizing in between, or
-    /// never apply it.
+    /// taken as ignored (window managers that refuse it never respond, and a request
+    /// for the state it is already in gets no response either). A `restore_size` that
+    /// was waiting on it is applied then. Otherwise `restore_size` is left as is: the
+    /// size is already applied by `set_size`'s refit, and if the response comes late,
+    /// coming back from it still returns to that size.
     fn await_state_response(&self) {
         let request = self.0.state_requests.get().wrapping_add(1);
         self.0.state_requests.set(request);
@@ -772,7 +801,9 @@ impl Window {
                 }
                 window.0.maximize_requested.set(false);
                 window.0.fullscreen_requested.set(false);
-                window.apply_restore_size();
+                if window.0.restore_due.get() {
+                    window.apply_restore_size();
+                }
             },
         );
     }
@@ -820,17 +851,24 @@ impl Window {
                 self.apply_state(next);
             }
         }
-        self.apply_restore_size();
+        // 通常の枠の外から戻ったときだけ、その間に頼まれた大きさを頼み直す。
+        let out = self.out_of_normal_frame();
+        if self.0.was_out_of_frame.replace(out) && !out {
+            self.apply_restore_size();
+        }
     }
 
-    /// Requests the size given to `set_size` out of the normal frame again, once in
-    /// the normal frame and not waiting for maximizing or fullscreen. Also called when
-    /// such a request is withdrawn before the compositor responds (no state change
-    /// may arrive then), so the size is not carried over to a later restore.
+    /// Requests `restore_size` again, back in the normal frame. While still waiting
+    /// for another maximize or fullscreen request, it is applied once that wait ends.
     fn apply_restore_size(&self) {
-        if self.leaving_normal_frame() {
+        if self.out_of_normal_frame() {
             return;
         }
+        if self.leaving_normal_frame() {
+            self.0.restore_due.set(true);
+            return;
+        }
+        self.0.restore_due.set(false);
         if let Some(size) = self.0.restore_size.take() {
             self.apply_default_size(size);
             self.fit_after_layout(size);
@@ -949,6 +987,9 @@ impl Window {
             // 戻ったときに `report_state` が頼み直す。
             let leaving = self.leaving_normal_frame();
             self.0.restore_size.set(leaving.then_some(size));
+            if !leaving {
+                self.0.restore_due.set(false);
+            }
             // 帯を付け外した直後は、足した帯の高さが前のままなので、
             // 並び直した後の実寸で確かめる。最大化などが当たればそこで止まり、
             // コンポジタが頼みに応えなければこちらで合う。

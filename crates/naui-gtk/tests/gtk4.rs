@@ -443,6 +443,10 @@ fn main() {
             window_size_applies_after_repeated_maximize,
         ),
         (
+            "最大化の返事が遅れて届いても set_size の大きさへ戻る",
+            window_size_applies_after_late_maximize,
+        ),
+        (
             "最小化して元に戻せる (X11)",
             window_minimize_round_trips,
         ),
@@ -10283,6 +10287,52 @@ fn window_size_applies_after_repeated_maximize(ui: &Ui) -> Result<()> {
     spin_until(Duration::from_millis(1200), || false);
 
     window.native_window().unmaximize();
+    spin_until(Duration::from_secs(3), || {
+        window.state() == WindowState::Normal && window.size() == (400.0, 280.0)
+    });
+    if window.state() != WindowState::Normal {
+        skip("ウィンドウマネージャが最大化の解除に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    assert_eq!(window.size(), (400.0, 280.0), "戻ると決めた大きさ");
+    window.close();
+    Ok(())
+}
+
+/// Even when the compositor's response to maximizing arrives after the wait for it
+/// has ended, un-maximizing returns to the size given to `set_size` while waiting.
+///
+/// A late response is stood in for by not running the main loop for longer than
+/// the wait right after the request, so the wait ends before the request reaches
+/// the window manager. SKIPped where the window manager does not respond to
+/// maximizing or un-maximizing (CI's Xvfb).
+fn window_size_applies_after_late_maximize(ui: &Ui) -> Result<()> {
+    use std::time::Duration;
+    let window = ui.window("遅れた最大化", 380.0, 260.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.show();
+    // 並べ終わり、コンポジタから最初の状態が届くまで待つ。
+    spin_until(Duration::from_secs(2), || {
+        !toplevel_state(&window).is_empty() && window.size() == (380.0, 260.0)
+    });
+    tick(&window.native_window());
+
+    window.set_state(WindowState::Maximized);
+    window.set_size(400.0, 280.0);
+    std::thread::sleep(Duration::from_millis(1300));
+    spin_until(Duration::from_secs(2), || {
+        toplevel_state(&window).contains(gtk::gdk::ToplevelState::MAXIMIZED)
+    });
+    if window.state() != WindowState::Maximized {
+        skip("ウィンドウマネージャが最大化に応えない環境 (CI の Xvfb)");
+        window.close();
+        return Ok(());
+    }
+    tick(&window.native_window());
+    assert_eq!(window.placement().size, (400.0, 280.0), "最大化の間");
+
+    window.set_state(WindowState::Normal);
     spin_until(Duration::from_secs(3), || {
         window.state() == WindowState::Normal && window.size() == (400.0, 280.0)
     });
