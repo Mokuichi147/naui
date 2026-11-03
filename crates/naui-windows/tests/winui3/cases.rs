@@ -370,7 +370,7 @@ const CASES: &[Case] = &[
     ),
     ("UTF-16 の SVG も SvgImageSource が開く", svg_opens_in_utf16),
     (
-        "ネットワーク上の SVG も文書から大きさを求める",
+        "ネットワーク上の SVG・SVGZ を取ってきて出し、文書から大きさを求める",
         network_svg_takes_its_size,
     ),
     (
@@ -4581,20 +4581,24 @@ fn natural_size(image: &naui_windows::Image) -> (f64, f64) {
     )
 }
 
-/// An SVG on the network (served over HTTP on the loopback here) gets its natural
-/// size from its document, which is fetched apart from `SvgImageSource`'s own load.
-/// A size arriving after the image has been replaced is not used.
+/// An SVG on the network (served over HTTP on the loopback here) is fetched and shown
+/// like bytes: it gets its natural size from its document, and an SVGZ served
+/// without `Content-Encoding` is unpacked. A document arriving after the image has
+/// been replaced is not shown.
 fn network_svg_takes_its_size(ui: &Ui) -> Result<()> {
     use std::io::{Read, Write};
 
     const BODY: &str =
         r#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect/></svg>"#;
+    let svgz = {
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        encoder.write_all(BODY.as_bytes()).expect("gzip に書けない");
+        encoder.finish().expect("gzip を閉じられない")
+    };
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("待ち受けられない");
-    let url = format!(
-        "http://{}/icon.svg",
-        listener.local_addr().expect("待ち受けの番地")
-    );
-    // SvgImageSource と naui の 2 本が取りに来る。プロセスが終わるまで応え続ける。
+    let base = format!("http://{}", listener.local_addr().expect("待ち受けの番地"));
+    // .svgz には gzip のまま (Content-Encoding を付けずに) 返す。
+    // プロセスが終わるまで応え続ける。
     std::thread::spawn(move || {
         for mut stream in listener.incoming().flatten() {
             let mut request = Vec::new();
@@ -4605,34 +4609,49 @@ fn network_svg_takes_its_size(ui: &Ui) -> Result<()> {
                     Ok(read) => request.extend_from_slice(&buffer[..read]),
                 }
             }
+            let line = request.split(|&byte| byte == b'\r').next().unwrap_or(&[]);
+            let body: &[u8] = if line.windows(5).any(|window| window == b".svgz") {
+                &svgz
+            } else {
+                BODY.as_bytes()
+            };
             let _ = write!(
                 stream,
                 "HTTP/1.1 200 OK\r\nContent-Type: image/svg+xml\r\nContent-Length: {}\r\n\
-                 Connection: close\r\n\r\n{BODY}",
-                BODY.len()
+                 Connection: close\r\n\r\n",
+                body.len()
             );
+            let _ = stream.write_all(body);
         }
     });
 
-    let image = ui.image(&url)?;
-    assert!(
-        xaml_image(&image)
-            .Source()
-            .and_then(|source| source.cast::<SvgImageSource>())
-            .is_ok(),
-        "ネットワーク上の SVG は SvgImageSource で読む"
-    );
-    pump_until(IMAGE_LOAD_TIMEOUT, || natural_size(&image) == (40.0, 20.0));
-    assert_eq!(natural_size(&image), (40.0, 20.0), "文書から大きさを求める");
+    for path in ["icon.svg", "icon.svgz"] {
+        let url = format!("{base}/{path}");
+        let image = ui.image(&url)?;
+        pump_until(IMAGE_LOAD_TIMEOUT, || natural_size(&image) == (40.0, 20.0));
+        assert_eq!(
+            natural_size(&image),
+            (40.0, 20.0),
+            "文書から大きさを求める ({path})"
+        );
+        assert!(
+            xaml_image(&image)
+                .Source()
+                .and_then(|source| source.cast::<SvgImageSource>())
+                .is_ok(),
+            "取ってきた SVG を SvgImageSource で読む ({path})"
+        );
+        assert_eq!(image.source(), url, "取ってきても場所はそのまま");
+    }
 
-    // 取りに行っているあいだに別の画像へ替えたら、届いた大きさは使わない。
-    image.set_source(&url);
+    // 取りに行っているあいだに別の画像へ替えたら、届いた文書は出さない。
+    let image = ui.image(&format!("{base}/icon.svg"))?;
     image.set_bytes(RED_SVG.as_bytes());
     pump_until(Duration::from_secs(2), || false);
     assert_eq!(
         natural_size(&image),
         (24.0, 16.0),
-        "前の SVG の大きさで上書きしない"
+        "前の SVG で上書きしない"
     );
     Ok(())
 }

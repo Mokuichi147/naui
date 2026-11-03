@@ -48,6 +48,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::ops::Deref;
 use std::rc::{Rc, Weak};
+use std::sync::Mutex;
 
 use naui_core::media::is_url;
 use naui_core::{Fit, PlaybackState, Result};
@@ -325,8 +326,8 @@ struct ImageInner {
     /// The size an SVG shown now gives itself (see [`naui_core::media::svg_size`]).
     /// `SvgImageSource` has no pixel size to read, unlike `BitmapImage`.
     svg_size: Cell<Option<(u32, u32)>>,
-    /// The number of the fetch reading the size of the SVG on the network shown now
-    /// (see [`Image::fetch_svg_size`]), or 0.
+    /// The number of the fetch bringing the SVG on the network to show next (see
+    /// [`Image::fetch_svg`]), or 0.
     svg_fetch: Cell<u64>,
     fit: Cell<Fit>,
     alt: RefCell<String>,
@@ -432,44 +433,43 @@ impl Image {
     fn forget_natural_size(&self) {
         self.0.opened.set(false);
         self.0.svg_size.set(None);
-        // 前の SVG について取りに行った大きさは、届いても使わない。
+        // 前に取りに行った SVG は、届いても出さない。
         self.0.svg_fetch.set(0);
         self.take_natural_size();
     }
 
-    /// Reads the size of an SVG on the network from its document, off the UI thread.
+    /// Fetches an SVG on the network off the UI thread, then shows it like
+    /// [`set_bytes`](Self::set_bytes).
     ///
-    /// `SvgImageSource` loads the URI by itself and reports no size, so the head of
-    /// the document is fetched once more here and read with
-    /// [`naui_core::media::svg_size`]. Until it arrives (or if it cannot be fetched)
-    /// no natural size is asked for. A size that arrives after another image has been
-    /// set is dropped.
-    fn fetch_svg_size(&self, uri: &Uri) {
-        let Ok(queue) = DispatcherQueue::GetForCurrentThread() else {
-            return;
-        };
-        let Ok(load) =
-            RandomAccessStreamReference::CreateFromUri(uri).and_then(|file| file.OpenReadAsync())
-        else {
-            return;
-        };
+    /// Handing the URI to `SvgImageSource` would leave the image without a size
+    /// (`SvgImageSource` reports none) and an SVGZ served without
+    /// `Content-Encoding: gzip` unreadable (it does not unpack gzip). With the document
+    /// in hand, both go through [`show_bytes`](Self::show_bytes). A document that
+    /// arrives after another image has been set is dropped.
+    fn fetch_svg(&self, uri: &Uri) -> windows_core::Result<()> {
+        let queue = DispatcherQueue::GetForCurrentThread()?;
+        let load = RandomAccessStreamReference::CreateFromUri(uri)?.OpenReadAsync()?;
         let id = next_id();
         self.0.svg_fetch.set(id);
         SVG_FETCHES.with(|map| map.borrow_mut().insert(id, Rc::downgrade(&self.0)));
-        // 読み込みが終わるとスレッドプールで呼ばれる。大きさだけを UI スレッドへ渡す。
+        // 読み込みが終わるとスレッドプールで呼ばれる。中身を読み切って UI スレッドへ渡す。
         let started = load.when(move |stream| {
-            let size = stream
-                .and_then(|stream| read_head(&stream))
-                .ok()
-                .and_then(|head| naui_core::media::svg_size(&head));
+            let document = stream.and_then(|stream| read_all(&stream));
+            // DispatcherQueueHandler は何度も呼べる形なので、一度きりの中身はセルに預ける。
+            let slot = Mutex::new(Some(document));
             let _ = queue.TryEnqueue(&DispatcherQueueHandler::new(move || {
-                deliver_svg_size(id, size);
+                if let Some(document) = slot.lock().ok().and_then(|mut slot| slot.take()) {
+                    deliver_svg(id, document);
+                }
                 Ok(())
             }));
         });
-        if started.is_err() {
+        if let Err(error) = started {
             SVG_FETCHES.with(|map| map.borrow_mut().remove(&id));
+            self.0.svg_fetch.set(0);
+            return Err(error);
         }
+        Ok(())
     }
 
     /// The location currently specified (exactly the string that was passed).
@@ -596,18 +596,16 @@ impl Image {
             }
         };
         drop(source);
-        let image_source = if svg {
-            SvgImageSource::CreateInstanceWithUriSource(&uri).and_then(|svg| svg.cast())
-        } else {
-            BitmapImage::CreateInstanceWithUriSource(&uri).and_then(|bitmap| bitmap.cast())
-        };
-        match image_source {
-            Ok(image_source) => {
-                self.put(&children, &image_source);
-                if svg {
-                    self.fetch_svg_size(&uri);
-                }
+        if svg {
+            // ネットワーク上の SVG は取ってきてから出す。それまでは前の画像も出さない。
+            self.take_down(&children);
+            if let Err(error) = self.fetch_svg(&uri) {
+                eprintln!("naui-windows: failed to start fetching the SVG: {error}");
             }
+            return;
+        }
+        match BitmapImage::CreateInstanceWithUriSource(&uri).and_then(|bitmap| bitmap.cast()) {
+            Ok(image_source) => self.put(&children, &image_source),
             Err(error) => {
                 eprintln!("naui-windows: failed to start loading the Image: {error}");
                 self.take_down(&children);
@@ -678,23 +676,36 @@ fn svg_pixels((width, height): (f64, f64)) -> (u32, u32) {
     (width.ceil() as u32, height.ceil() as u32)
 }
 
-/// How much of an SVG on the network is fetched to read its size. The root start
-/// tag sits near the top.
-const SVG_HEAD: u32 = 64 * 1024;
+/// The most of an SVG on the network that is fetched. Larger documents are refused
+/// rather than held in memory whole.
+const SVG_MAX: usize = 64 * 1024 * 1024;
 
-/// Reads up to [`SVG_HEAD`] bytes from the start of a stream. Blocks, so it is called
-/// off the UI thread.
-fn read_head(stream: &IRandomAccessStreamWithContentType) -> windows_core::Result<Vec<u8>> {
+/// Reads a stream to its end, up to [`SVG_MAX`] bytes. Blocks, so it is called off
+/// the UI thread.
+fn read_all(stream: &IRandomAccessStreamWithContentType) -> windows_core::Result<Vec<u8>> {
+    const CHUNK: u32 = 64 * 1024;
     let reader = DataReader::CreateDataReader(stream)?;
-    let loaded = reader.LoadAsync(SVG_HEAD)?.join()?;
-    let mut head = vec![0; loaded as usize];
-    reader.ReadBytes(&mut head)?;
-    Ok(head)
+    let mut document = Vec::new();
+    loop {
+        let loaded = reader.LoadAsync(CHUNK)?.join()? as usize;
+        if loaded == 0 {
+            return Ok(document);
+        }
+        if document.len() + loaded > SVG_MAX {
+            return Err(windows_core::Error::new(
+                windows::Win32::Foundation::E_OUTOFMEMORY,
+                format!("the SVG is larger than {SVG_MAX} bytes"),
+            ));
+        }
+        let start = document.len();
+        document.resize(start + loaded, 0);
+        reader.ReadBytes(&mut document[start..])?;
+    }
 }
 
-/// Hands the size read by [`Image::fetch_svg_size`] number `id` to its image, on the
-/// UI thread, if that image still shows the same SVG.
-fn deliver_svg_size(id: u64, size: Option<(f64, f64)>) {
+/// Shows the SVG fetched by [`Image::fetch_svg`] number `id`, on the UI thread, if
+/// its image still waits for it.
+fn deliver_svg(id: u64, document: windows_core::Result<Vec<u8>>) {
     let Some(inner) = SVG_FETCHES
         .with(|map| map.borrow_mut().remove(&id))
         .and_then(|weak| weak.upgrade())
@@ -705,8 +716,13 @@ fn deliver_svg_size(id: u64, size: Option<(f64, f64)>) {
         return;
     }
     inner.svg_fetch.set(0);
-    inner.svg_size.set(size.map(svg_pixels));
-    Image(inner).take_natural_size();
+    match document {
+        Ok(document) => Image(inner).show_bytes(&document),
+        Err(error) => {
+            let source = inner.source.borrow().clone();
+            eprintln!("naui-windows: could not fetch the SVG ({source}): {error}");
+        }
+    }
 }
 
 /// Writes bytes into an in-memory stream positioned at its start.
