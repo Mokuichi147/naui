@@ -1885,11 +1885,14 @@ fn number_input_skips_values_equal_after_rounding(ui: &Ui) -> Result<()> {
 
     // 書き直されたかどうかを見分けるため、値の変わらない表示へ変えておく。
     // `GtkSpinButton` は同じ値の `set_value` でも表示を整え直す。
+    // 数字だけを受け付ける欄は小数桁を超える打鍵を丸ごと拒むので、
+    // 桁数はそのままで頭に 0 を足す。
     let native: gtk::SpinButton = number.native_widget().downcast().expect("GtkSpinButton");
-    native.set_text("12.30");
+    native.set_text("012.3");
+    assert_eq!(native.text(), "012.3");
     assert_eq!(number.value(), 12.3);
     number.set_value(12.34);
-    assert_eq!(native.text(), "12.30", "丸めた値が同じなら書き直さないこと");
+    assert_eq!(native.text(), "012.3", "丸めた値が同じなら書き直さないこと");
     number.set_value(12.36);
     assert_eq!(number.value(), 12.4);
     assert_eq!(native.value(), 12.4);
