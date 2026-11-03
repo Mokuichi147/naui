@@ -65,6 +65,11 @@ pub(crate) struct WindowInner {
     /// (window style classes change), so converting the default size (the normal size)
     /// back to content uses this one.
     normal_frame: Cell<Option<(f64, f64)>>,
+    /// The content size given to [`Window::set_size`] while out of the normal frame,
+    /// requested again once back in it. X11 window managers return to the size they
+    /// remembered from before maximizing and ignore the default size changed
+    /// meanwhile.
+    restore_size: Cell<Option<(f64, f64)>>,
     /// The content size being refitted ([`Window::fit_after_layout`]).
     fit: Cell<Option<Fit>>,
     /// A per-frame callback for refitting is attached.
@@ -183,6 +188,7 @@ impl Window {
             closing: Cell::new(false),
             initial_size: Cell::new(None),
             normal_frame: Cell::new(None),
+            restore_size: Cell::new(None),
             fit: Cell::new(None),
             fitting: Cell::new(false),
             on_state_change: StateHandler::default(),
@@ -751,6 +757,12 @@ impl Window {
                 self.0.fullscreen_requested.set(false);
             }
         }
+        if !self.out_of_normal_frame() {
+            if let Some(size) = self.0.restore_size.take() {
+                self.apply_default_size(size);
+                self.fit_after_layout(size);
+            }
+        }
         let state = self.state();
         self.0.on_state_change.update(state);
         if state != WindowState::Fullscreen {
@@ -859,14 +871,19 @@ impl Window {
     /// the header bar and menu bar strips are added. When called before it is on
     /// screen, it is shown at this size. While maximized, in fullscreen or tiled, the
     /// window keeps its frame and this becomes the size it returns to (GTK4 uses the
-    /// default size when it leaves those states).
+    /// default size when it leaves those states; X11 window managers return to the
+    /// size from before, so it is requested again once back in the normal frame).
     pub fn set_size(&self, width: f64, height: f64) {
         let size = (width.max(0.0), height.max(0.0));
         self.apply_default_size(size);
         if self.0.initial_size.get().is_some() {
             // 表示するときに `show` が合わせる。
             self.0.initial_size.set(Some(size));
+        } else if self.out_of_normal_frame() {
+            // 通常の枠へ戻ったときに `report_state` が頼み直す。
+            self.0.restore_size.set(Some(size));
         } else {
+            self.0.restore_size.set(None);
             // 帯を付け外した直後は、足した帯の高さが前のままなので、
             // 並び直した後の実寸で確かめる。
             self.fit_after_layout(size);
