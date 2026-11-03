@@ -2,7 +2,8 @@
 //!
 //! `<img>` / `<video>` / `<audio>` are used as they are. Decoding, playback and
 //! drawing the playback bar are the browser's job; naui only writes `src` and
-//! attributes.
+//! attributes. `<img>` and `<video>` sit in a frame `<div>`, which is the widget's
+//! element ([`frame`]).
 //!
 //! The playback state is notified by subscribing to HTMLMediaElement's events
 //! (`playing` / `waiting` / `pause` / `ended`). It arrives through the same path
@@ -16,6 +17,7 @@ use naui_core::{Fit, PlaybackState, Result};
 use wasm_bindgen::JsCast;
 use web_sys::{Document, Element, HtmlElement, HtmlImageElement, HtmlMediaElement};
 
+use crate::to_error;
 use crate::widgets::{create, impl_widget, Listener, Widget};
 
 /// Turns the fitting into a CSS `object-fit` value.
@@ -28,9 +30,41 @@ fn object_fit(fit: Fit) -> &'static str {
     }
 }
 
+/// Puts an image or a video into the frame `<div>` that is the widget's element.
+///
+/// A `Fill` picture does not ask its parent for its natural size: the frame gets
+/// size containment ([`apply_sizing`](crate::layout::apply_sizing)). Containing the
+/// `<img>` / `<video>` itself would be enough for the layout, but WebKit then takes
+/// the contained size (zero) as the picture's natural size, and `object-fit`
+/// distorts it (https://bugs.webkit.org/show_bug.cgi?id=276681).
+///
+/// The frame is a grid of one cell, stretched over by the picture. Without
+/// containment the frame is as large as the picture would be (its pixel size, or the
+/// height its width and aspect ratio give); with it, the picture fills what the
+/// parent gives. Stretching in a grid needs no percentage, which WebKit resolves
+/// against the wrong box when the frame is in a grid whose height comes from its
+/// content.
+fn frame(doc: &Document, picture: &HtmlElement) -> Result<HtmlElement> {
+    let frame: HtmlElement = create(doc, "div")?.unchecked_into();
+    let _ = frame.set_attribute(crate::layout::PICTURE_FRAME_ATTR, "");
+    let style = frame.style();
+    let _ = style.set_property("display", "inline-grid");
+    let _ = style.set_property("grid-template", "minmax(0, 1fr) / minmax(0, 1fr)");
+    let style = picture.style();
+    let _ = style.set_property("place-self", "stretch");
+    let _ = style.set_property("min-width", "0");
+    let _ = style.set_property("min-height", "0");
+    frame
+        .append_child(picture)
+        .map_err(|e| to_error("put the picture into its frame", e))?;
+    Ok(frame)
+}
+
 // ------------------------------------------------------------------ Image
 
 struct ImageInner {
+    /// The frame placed into the parent ([`frame`]).
+    frame: HtmlElement,
     element: HtmlImageElement,
     /// Exactly the string that was passed, since `src` gets resolved to an absolute
     /// URL.
@@ -50,18 +84,19 @@ impl Drop for ImageInner {
     }
 }
 
-/// Image display (`<img>`).
+/// Image display (`<img>` in a frame `<div>`).
 ///
 /// The browser loads it asynchronously. **Right after it is set,
 /// [`is_loaded`](Self::is_loaded) is still false.**
 #[derive(Clone)]
 pub struct Image(Rc<ImageInner>);
-impl_widget!(Image, element);
+impl_widget!(Image, frame);
 
 impl Image {
     pub(crate) fn new(doc: &Document, source: &str) -> Result<Self> {
         let element: HtmlImageElement = create(doc, "img")?.unchecked_into();
         let this = Self(Rc::new(ImageInner {
+            frame: frame(doc, &element)?,
             element,
             source: RefCell::new(String::new()),
             object_url: RefCell::new(None),
@@ -244,6 +279,9 @@ impl PositionHandler {
 /// `<video>` and `<audio>` are both HTMLMediaElements, so apart from whether they
 /// have a picture, every operation is exactly the same.
 struct MediaInner {
+    /// The element placed into the parent: the frame around a video ([`frame`]), or
+    /// the `<audio>` itself.
+    frame: HtmlElement,
     element: HtmlMediaElement,
     source: RefCell<String>,
     handler: StateHandler,
@@ -260,7 +298,13 @@ impl MediaInner {
         let element: HtmlMediaElement = create(doc, tag)?.unchecked_into();
         // ブラウザ標準の再生バーを出す。
         element.set_controls(true);
+        let frame = if tag == "video" {
+            frame(doc, &element)?
+        } else {
+            element.clone().unchecked_into()
+        };
         let this = Rc::new(Self {
+            frame,
             element,
             source: RefCell::new(String::new()),
             handler: StateHandler::default(),
@@ -471,10 +515,10 @@ macro_rules! impl_playback {
 
 // ------------------------------------------------------------------ Video
 
-/// Video (`<video>`).
+/// Video (`<video>` in a frame `<div>`).
 #[derive(Clone)]
 pub struct Video(Rc<MediaInner>);
-impl_widget!(Video, element);
+impl_widget!(Video, frame);
 impl_playback!(Video);
 
 impl Video {
@@ -497,7 +541,7 @@ impl Video {
 /// Audio (`<audio>`). It has no picture, so only the playback bar is visible.
 #[derive(Clone)]
 pub struct Audio(Rc<MediaInner>);
-impl_widget!(Audio, element);
+impl_widget!(Audio, frame);
 impl_playback!(Audio);
 
 impl Audio {

@@ -92,6 +92,8 @@ pub(crate) fn apply_sizing(element: &Element, sizing: Sizing) {
     // 求めたままだと、縦の Scroll の中のように親が伸びられる所では、余りを受け取る
     // どころか画素の高さ (動画は幅と縦横比から決まる高さ) まで親を押し広げる。
     // 大きさの封じ込め (`contain: size`) で自然な大きさを 0 として扱わせる。
+    // 封じ込めるのは画像を包む枠で、`<img>` / `<video>` そのものではない
+    // ([`crate::media`])。
     // ただし縦横比も一緒に消えるので、`Auto` の軸 (画素の大きさや縦横比から
     // 決まる軸) が残るときは封じ込めない。
     // 上限付きの `Fill` の軸があるときも封じ込めない。上限が自然な大きさを抑える
@@ -294,11 +296,13 @@ pub(crate) fn layout_for_parent(element: &Element, parent: ParentLayout) {
     }
 }
 
-/// Whether it is an image or a video (`<img>` / `<video>`), a replaced element whose
-/// natural size comes from its pixels.
-fn is_picture(element: &HtmlElement) -> bool {
-    let tag = element.tag_name();
-    tag.eq_ignore_ascii_case("img") || tag.eq_ignore_ascii_case("video")
+/// The attribute marking the frame around an image or a video (`<img>` /
+/// `<video>`), a replaced element whose natural size comes from its pixels.
+pub(crate) const PICTURE_FRAME_ATTR: &str = "data-naui-picture";
+
+/// Whether it is the frame around an image or a video.
+pub(crate) fn is_picture(element: &Element) -> bool {
+    element.has_attribute(PICTURE_FRAME_ATTR)
 }
 
 /// Stretches the element to the parent's size on one axis (`stretch`).
