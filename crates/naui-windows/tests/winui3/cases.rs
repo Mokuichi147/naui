@@ -17,15 +17,15 @@ use naui_windows::{run_for_test, MenuEntry, Ui, Widget};
 
 use crate::automation;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Button as XamlButton, Canvas as XamlCanvas, CheckBox as XamlCheckBox, ComboBox as XamlComboBox,
-    Grid, Image as XamlImage, MenuFlyoutItem, ProgressRing, ScrollViewer, Slider as XamlSlider,
-    StackPanel, TextBlock, TextBox, ToggleSwitch,
+    Border, Button as XamlButton, Canvas as XamlCanvas, CheckBox as XamlCheckBox,
+    ComboBox as XamlComboBox, Grid, Image as XamlImage, MenuFlyoutItem, ProgressRing, ScrollViewer,
+    Slider as XamlSlider, StackPanel, TextBlock, TextBox, ToggleSwitch,
 };
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::BitmapImage;
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
 use naui_winui3::Microsoft::UI::Xaml::{
     Application, FrameworkElement, GridUnitType, HorizontalAlignment, RoutedEventHandler, Style,
-    UIElement, VerticalAlignment,
+    UIElement, VerticalAlignment, Visibility,
 };
 use windows::Foundation::{IPropertyValue, PropertyValue};
 use windows_core::{Interface, HSTRING};
@@ -89,6 +89,14 @@ const CASES: &[Case] = &[
     (
         "スクロール内容の Stretch がサイズ変更で維持される",
         scroll_stretch_survives_sizing,
+    ),
+    (
+        "区切り線がテーマの線色の Border になり、引いた向きいっぱいに伸びる",
+        separator_is_a_themed_border_line,
+    ),
+    (
+        "グループが見出しとカードになり、カードの中に中身を広げる",
+        group_puts_a_heading_above_a_card,
     ),
     (
         "親への追加失敗がレイアウト状態を汚さない",
@@ -1677,6 +1685,121 @@ fn scroll_stretches_non_scrolling_content(ui: &Ui) -> Result<()> {
             .expect("スクロール内容の横配置"),
         HorizontalAlignment::Stretch,
         "中身自身も横へ広がること"
+    );
+    Ok(())
+}
+
+/// A separator is a `Border` drawing one 1 px edge in the theme's divider color, and
+/// it stretches along its direction.
+fn separator_is_a_themed_border_line(ui: &Ui) -> Result<()> {
+    let line = ui.separator(Orientation::Horizontal)?;
+    let border = native::<Border>(&line);
+    let edge = border.BorderThickness().expect("BorderThickness");
+    assert_eq!(
+        (edge.Left, edge.Top, edge.Right, edge.Bottom),
+        (0.0, 1.0, 0.0, 0.0)
+    );
+    assert!(border.BorderBrush().is_ok(), "線の色があること");
+    assert_eq!(
+        border.HorizontalAlignment().expect("横配置"),
+        HorizontalAlignment::Stretch,
+        "横線は幅いっぱいに伸びること"
+    );
+
+    let upright = ui.separator(Orientation::Vertical)?;
+    let border = native::<Border>(&upright);
+    let edge = border.BorderThickness().expect("BorderThickness");
+    assert_eq!(
+        (edge.Left, edge.Top, edge.Right, edge.Bottom),
+        (1.0, 0.0, 0.0, 0.0)
+    );
+    assert_eq!(
+        border.VerticalAlignment().expect("縦配置"),
+        VerticalAlignment::Stretch,
+        "縦線は高さいっぱいに伸びること"
+    );
+    Ok(())
+}
+
+/// A group is a heading above a card, and its content stretches inside the card.
+fn group_puts_a_heading_above_a_card(ui: &Ui) -> Result<()> {
+    let group = ui.group("表示")?;
+    assert_eq!(group.text(), "表示");
+    let heading = group.native_heading();
+    assert_eq!(heading.Text().expect("見出し").to_string(), "表示");
+    assert_eq!(
+        heading.Visibility().expect("見出しの表示"),
+        Visibility::Visible
+    );
+    // 支援技術には、見出しを名前に持つグループとして見える。
+    assert_eq!(
+        automation::control_type(&group.native_element()),
+        Some(automation::CONTROL_TYPE_GROUP),
+        "グループとして支援技術に見えること"
+    );
+    assert_eq!(
+        accessible_name(&group),
+        "表示",
+        "見出しがグループの名前になること"
+    );
+    {
+        use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+        use naui_winui3::Microsoft::UI::Xaml::DependencyObject;
+        let object = group
+            .native_element()
+            .cast::<DependencyObject>()
+            .expect("DependencyObject");
+        assert!(
+            AutomationProperties::GetLabeledBy(&object).expect("LabeledBy")
+                == heading.cast::<UIElement>().expect("UIElement"),
+            "見出しがグループのラベルとして関連付けられること"
+        );
+    }
+    group.set_text("詳細");
+    assert_eq!(
+        accessible_name(&group),
+        "詳細",
+        "見出しを変えると名前も変わること"
+    );
+    group.set_accessible_label(Some("表示の設定"));
+    group.set_text("表示");
+    assert_eq!(
+        accessible_name(&group),
+        "表示の設定",
+        "指定した読み上げ名は見出しより優先されること"
+    );
+    group.set_accessible_label(None);
+    assert_eq!(accessible_name(&group), "表示");
+
+    let content = ui.stack(Orientation::Vertical)?;
+    group.set_child(&content);
+    let card = group.native_card();
+    let child = card.Child().expect("カードの中身");
+    assert!(
+        child
+            == native::<Grid>(&content)
+                .cast::<UIElement>()
+                .expect("UIElement"),
+        "中身がカードに入ること"
+    );
+    assert_eq!(
+        native::<Grid>(&content)
+            .HorizontalAlignment()
+            .expect("中身の横配置"),
+        HorizontalAlignment::Stretch,
+        "中身はカードの幅いっぱいに広がること"
+    );
+    let padding = card.Padding().expect("Padding");
+    assert_eq!(padding.Left, naui_core::DEFAULT_GROUP_PADDING.left);
+
+    group.set_padding(naui_core::Padding::all(4.0));
+    assert_eq!(card.Padding().expect("Padding").Top, 4.0);
+
+    group.set_text("");
+    assert_eq!(group.text(), "");
+    assert_eq!(
+        heading.Visibility().expect("見出しの表示"),
+        Visibility::Collapsed
     );
     Ok(())
 }

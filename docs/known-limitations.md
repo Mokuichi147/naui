@@ -25,13 +25,14 @@ that shape are covered in
 | What a dropped file carries (`on_file_drop`) | The absolute path | The absolute path | The absolute path (local files only) | A `blob:` URL, no path |
 | Looks of `ButtonRole` | Only `Primary` (accent) | `Primary` (accent), `Destructive` (red text, macOS 26 and later) | Both (`suggested-action` / `destructive-action`) | Neither (only `data-naui-role` is written) |
 | `AdaptivePanes` switching to one pane | `TwoPaneView` decides, below the breakpoint, with no slack | naui decides, with 8 px of slack | naui decides, with 8 px of slack (slides between the panes) | naui decides, with 8 px of slack |
+| Where `Group`'s heading goes | Above the card | On the frame's top edge | On the frame's top edge | On the frame's top edge (`<legend>`) |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
 
 ## Common
 
 ### Scope
 
-- The supported components are the 49 in the table in the
+- The supported components are the 52 in the table in the
   [README](../README.md#widgets).
 - There is no absolute positioning. Layout uses `Stack`, `Grid` and `Spacer`.
 - Supported media formats depend on each OS, browser, and the GStreamer setup on
@@ -274,6 +275,11 @@ that shape are covered in
   buttons in alerts). Before that it looks like an ordinary button.
   `ButtonRole::Primary` draws the accent color like the window's default button,
   but is not given the Return key equivalent, so Return does not activate it.
+- `Group` holds one widget; to group several, put them in a `Stack`. It has no
+  `set_enabled`: disabling every control inside is up to the app (only the Web's
+  `<fieldset disabled>` could do it natively). Windows has no group box, so the
+  heading sits above a card instead of on the frame (see
+  [Widget implementations](widgets.md#windows-construction)).
 - `Toggle` switches **only when the switch is pressed**; pressing the label text
   does not switch it.
 - `EditableComboBox` completes the rest when you type characters matching the start

@@ -21,6 +21,8 @@ Legend:
 | `Grid` | ✅ `Grid` | ✅ `NSGridView` | 🔴 naui's own container, laid out like `GtkGrid` | 🟡 `<div>` + CSS Grid |
 | `Scroll` | ✅ `ScrollViewer` | ✅ `NSScrollView` | ✅ `GtkScrolledWindow` | 🟡 `<div>` + `overflow` |
 | `Spacer` | 🟡 An empty `Grid` | 🟡 An empty `NSView` | 🟡 An empty `GtkBox` | 🟡 `<div>` + `flex-grow` |
+| `Separator` | 🔴 `Border` (one edge, `DividerStrokeColorDefaultBrush`) | ✅ `NSBox` (`NSBoxSeparator`) | ✅ `GtkSeparator` | ✅ `<hr>` |
+| `Group` | 🔴 `TextBlock` (heading) + `Border` (card) in a `Grid` | ✅ `NSBox` (`NSBoxPrimary`) | ✅ `GtkFrame` | ✅ `<fieldset>` + `<legend>` |
 | `Expander` | ✅ `Expander` | 🟡 `NSButton` (disclosure) + `NSStackView` | ✅ `GtkExpander` | ✅ `<details>` + `<summary>` |
 | `SplitView` | 🔴 `Grid` + a divider `Grid` | ✅ `NSSplitView` | ✅ `GtkPaned` | 🔴 `<div>` + `<div role="separator">` |
 | `AdaptivePanes` | ✅ `TwoPaneView` + a back `Button` | 🔴 `NSView` + `NSBox` (separator) + a back `NSButton` | ✅ `AdwNavigationSplitView` + a back `GtkButton` | 🔴 `<div>` + a back `<button>` |
@@ -113,6 +115,16 @@ collected in [Known limitations](known-limitations.md).
   `RowSpacing` falls between tracks, so an empty track would still leave a gap on
   each side. The tracks are redone when a child is added, removed, shown or hidden,
   or given a new `Sizing`.
+- **`Separator` / `Group`**: WinUI 3 has neither a standalone separator nor a
+  group box (`MenuFlyoutSeparator` and `AppBarSeparator` work only inside menus and
+  command bars). A separator is a `Border` that draws only one 1 px edge in
+  `DividerStrokeColorDefaultBrush`; the edge is part of the `Border`'s desired
+  size, so the line keeps its thickness whatever size is given along it. A group is
+  what the Settings app uses to group controls: a heading
+  (`BodyStrongTextBlockStyle`) above a card (a `Border` with
+  `CardBackgroundFillColorDefaultBrush`, `CardStrokeColorDefaultBrush` and
+  `OverlayCornerRadius`). The brushes are `{ThemeResource}`s, so they follow the
+  window's theme.
 - **`MenuBar`**: Rather than WinUI 3's `MenuBar`, it is a row of `Button`s with
   their background removed, each holding a `MenuFlyout`. This is because
   `MenuBar` / `MenuBarItem` / `KeyboardAccelerator` are not in `naui-winui3`'s
@@ -326,6 +338,13 @@ collected in [Known limitations](known-limitations.md).
   `chevron.backward` symbol.
 - **`Expander`**: AppKit has no collapsible control, so it is built from a
   disclosure `NSButton` (the chevron is an SF Symbol) and an `NSStackView`.
+- **`Separator` / `Group`**: Both are `NSBox`. A separator box takes its direction
+  from its frame, so its thickness is held at 1 pt by a constraint below required
+  (a size the app specifies wins). A group's padding insets a layout guide in the
+  box's `contentView` by its physical left and right, because
+  `contentViewMargins` can only be the same on both sides; the content is tied to
+  the guide's leading and trailing edges. An empty heading sets
+  `NSNoTitle`, since `NSBox` keeps the title's height even for an empty title.
 - **`Toolbar`**: Since items are identified by index, "Customize Toolbar"
   (rearranging by the user) is turned off. Separators follow macOS conventions with
   `NSToolbarSpaceItem` (a fixed-width gap). The title text is hidden because, if
@@ -416,6 +435,10 @@ collected in [Known limitations](known-limitations.md).
   when it does not, every track shrinks towards its minimum the way a GTK box
   does. The grid's own minimum leaves that size out. GTK4 still places each child inside its
   cell (margins, `halign` / `valign`).
+- **`Group`**: A `GtkFrame`, whose child is an `AdwBin` holding the padding as its
+  margins, so that moving the content elsewhere does not carry the padding with
+  it. The padding's `left` and `right` stay physical: in right-to-left text the
+  start and end margins are swapped.
 - **`SplitView`**: A `GtkPaned`. The panes' minimum sizes are held by a container
   wrapped around each pane, so they do not conflict with the `size_request` the app
   specifies with `Sizing`.
@@ -505,6 +528,15 @@ collected in [Known limitations](known-limitations.md).
   in the normal state, which can differ while maximized).
 
 ### Web construction
+
+- **`Separator` / `Group`**: `<hr>` and `<fieldset>` + `<legend>`, so they are
+  reported as a separator and as a group named by its heading. Only the browser's
+  dated defaults (an inset double line, a grooved border, margins, and
+  `min-inline-size: min-content`, which would keep a group from shrinking) are
+  replaced, with a 1 px `GrayText` line like `SplitView`'s divider. A vertical
+  `<hr>` gets `aria-orientation="vertical"`. The `<fieldset>` lays out its content
+  as a one-cell CSS Grid, so the content fills the inside, and the `<legend>` is
+  removed while the heading is empty so the border has no gap.
 
 - **`Label`**: **`<span>` wraps by default**, so naui sets `white-space: nowrap` and
   `text-overflow: ellipsis` to match the other three platforms' default (one line +

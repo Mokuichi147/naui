@@ -236,6 +236,22 @@ fn main() {
         ("大きさを指定し直すと以前の指定が消える", sizing_is_replaced),
         ("スペーサーが両方向に広がる", spacer_expands),
         (
+            "区切り線が GtkSeparator になり、引いた向きいっぱいに伸びる",
+            separator_fills_its_direction,
+        ),
+        (
+            "グループが GtkFrame になり、見出しと中身を持つ",
+            group_frames_its_child,
+        ),
+        (
+            "グループの余白が枠と中身の間を空ける",
+            group_padding_spaces_the_child,
+        ),
+        (
+            "右から左の文字でも、グループの余白の左右は物理的な左右のまま",
+            group_padding_stays_physical_right_to_left,
+        ),
+        (
             "スタックの余白が中身を狭める",
             stack_padding_shrinks_content,
         ),
@@ -2548,6 +2564,109 @@ fn spacer_expands(ui: &Ui) -> Result<()> {
     assert!(bin.vexpands());
     // 中身が無いので自然な大きさは 0。
     assert_eq!(measure_width(&bin), (0, 0));
+    Ok(())
+}
+
+fn separator_fills_its_direction(ui: &Ui) -> Result<()> {
+    let horizontal = ui.separator(Orientation::Horizontal)?;
+    let native: gtk::Separator = horizontal.native_widget().downcast().expect("GtkSeparator");
+    assert_eq!(native.orientation(), gtk::Orientation::Horizontal);
+    let bin = bin_of(&horizontal);
+    assert!(bin.hexpands(), "横線は幅いっぱいに伸びること");
+    assert!(!bin.vexpands(), "横線は縦に伸びないこと");
+    let (_, thickness) = measure_height(&bin);
+    assert!(
+        (1..=4).contains(&thickness),
+        "太さはテーマの細い線のままであること: {thickness}"
+    );
+
+    let vertical = ui.separator(Orientation::Vertical)?;
+    let native: gtk::Separator = vertical.native_widget().downcast().expect("GtkSeparator");
+    assert_eq!(native.orientation(), gtk::Orientation::Vertical);
+    let bin = bin_of(&vertical);
+    assert!(bin.vexpands(), "縦線は高さいっぱいに伸びること");
+    assert!(!bin.hexpands(), "縦線は横に伸びないこと");
+
+    // 指定し直すと既定の伸び方は消える。
+    vertical.set_sizing(Sizing::fixed(1.0, 40.0));
+    assert!(!bin.vexpands());
+    Ok(())
+}
+
+fn group_frames_its_child(ui: &Ui) -> Result<()> {
+    let group = ui.group("表示")?;
+    let native: gtk::Frame = group.native_widget().downcast().expect("GtkFrame");
+    assert_eq!(group.text(), "表示");
+    assert_eq!(native.label().as_deref(), Some("表示"));
+
+    let first = ui.label("一つめ")?;
+    group.set_child(&first);
+    assert!(
+        bin_of(&first).is_ancestor(&native),
+        "中身が枠の中に入ること"
+    );
+    let second = ui.stack(Orientation::Vertical)?;
+    group.set_child(&second);
+    assert!(bin_of(&second).is_ancestor(&native));
+    assert!(bin_of(&first).parent().is_none(), "前の中身は外れること");
+
+    // 空の見出しは見出しを消し、枠だけを残す。
+    group.set_text("");
+    assert_eq!(group.text(), "");
+    assert!(native.label().is_none());
+    assert!(native.label_widget().is_none());
+    Ok(())
+}
+
+fn group_padding_spaces_the_child(ui: &Ui) -> Result<()> {
+    let group = ui.group("")?;
+    let label = ui.label("あ")?;
+    group.set_child(&label);
+
+    let bin = bin_of(&group);
+    let (_, padded) = measure_width(&bin);
+    group.set_padding(Padding::ZERO);
+    let (_, bare) = measure_width(&bin);
+    let expected =
+        (naui_core::DEFAULT_GROUP_PADDING.left + naui_core::DEFAULT_GROUP_PADDING.right) as i32;
+    assert_eq!(padded - bare, expected, "既定の左右の余白ぶんだけ広いこと");
+
+    group.set_padding(Padding::symmetric(4.0, 20.0));
+    let (_, custom) = measure_width(&bin);
+    assert_eq!(custom - bare, 40);
+    Ok(())
+}
+
+/// The padding's `left` and `right` are the physical sides, also in right-to-left
+/// text, where GTK puts the start margin on the right.
+fn group_padding_stays_physical_right_to_left(ui: &Ui) -> Result<()> {
+    let group = ui.group("")?;
+    let label = ui.label("あ")?;
+    group.set_child(&label);
+    group.set_padding(Padding {
+        top: 2.0,
+        right: 20.0,
+        bottom: 2.0,
+        left: 4.0,
+    });
+    let frame = bin_of(&group)
+        .first_child()
+        .and_downcast::<gtk::Frame>()
+        .expect("GtkFrame");
+    let holder = frame.child().expect("余白を持つ AdwBin");
+    assert_eq!((holder.margin_start(), holder.margin_end()), (4, 20));
+
+    // 向きが変わったら start と end を入れ替える。GTK4 の向きは親から継がれず、
+    // 余白は AdwBin 自身の向きで start と end が決まるので、AdwBin の向きを変える。
+    holder.set_direction(gtk::TextDirection::Rtl);
+    assert_eq!((holder.margin_start(), holder.margin_end()), (20, 4));
+    group.set_padding(Padding {
+        left: 1.0,
+        ..Padding::symmetric(0.0, 8.0)
+    });
+    assert_eq!((holder.margin_start(), holder.margin_end()), (8, 1));
+    holder.set_direction(gtk::TextDirection::Ltr);
+    assert_eq!((holder.margin_start(), holder.margin_end()), (1, 8));
     Ok(())
 }
 

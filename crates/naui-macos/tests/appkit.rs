@@ -31,13 +31,14 @@ use objc2::{
     define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message,
 };
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSButton, NSColor, NSColorSpace, NSComboBox,
-    NSControlStateValueOff, NSControlStateValueOn, NSDatePicker, NSDatePickerElementFlags, NSEvent,
-    NSEventMask, NSEventModifierFlags, NSEventType, NSImage, NSImageScaling, NSImageView,
-    NSLayoutConstraint, NSLayoutConstraintOrientation, NSOutlineViewDelegate, NSResponder,
-    NSScrollView, NSScrollerStyle, NSSearchField, NSSecureTextField, NSSegmentedControl,
-    NSStandardKeyBindingResponding, NSStepper, NSSwitch, NSTableViewDelegate, NSTextField,
-    NSTextInputClient, NSTextView, NSTintProminence, NSUserInterfaceItemIdentification, NSView,
+    NSApplication, NSApplicationActivationPolicy, NSBox, NSBoxType, NSButton, NSColor,
+    NSColorSpace, NSComboBox, NSControlStateValueOff, NSControlStateValueOn, NSDatePicker,
+    NSDatePickerElementFlags, NSEvent, NSEventMask, NSEventModifierFlags, NSEventType, NSImage,
+    NSImageScaling, NSImageView, NSLayoutConstraint, NSLayoutConstraintOrientation,
+    NSOutlineViewDelegate, NSResponder, NSScrollView, NSScrollerStyle, NSSearchField,
+    NSSecureTextField, NSSegmentedControl, NSStandardKeyBindingResponding, NSStepper, NSSwitch,
+    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSTintProminence,
+    NSTitlePosition, NSUserInterfaceItemIdentification, NSUserInterfaceLayoutDirection, NSView,
     NSWindow, NSWindowStyleMask, NSWindowTitleVisibility,
 };
 use objc2_foundation::{
@@ -364,6 +365,18 @@ fn main() {
             stack_fill_cross_respects_max,
         ),
         ("スペーサーが余りを吸って後続を端へ寄せる", spacer_pushes),
+        (
+            "区切り線が NSBox の区切りになり、引いた向きいっぱいに伸びる",
+            separator_spans_the_stack,
+        ),
+        (
+            "グループが NSBox の枠になり、見出しと余白の内側に中身を置く",
+            group_frames_its_child,
+        ),
+        (
+            "右から左の文字でも、グループの余白の左右は物理的な左右のまま",
+            group_padding_stays_physical_right_to_left,
+        ),
         ("グリッドが行と列を広げて子を置く", grid_places_children),
         (
             "グリッドの Auto の子が再レイアウトで横に広がらない",
@@ -3479,6 +3492,136 @@ fn spacer_pushes(ui: &Ui) -> Result<()> {
     assert!(
         top_frame.origin.y > 380.0,
         "先頭の子は上端に残ること: {top_frame:?}"
+    );
+    Ok(())
+}
+
+/// A separator is a 1 pt `NSBoxSeparator` that runs the length of the stack.
+fn separator_spans_the_stack(ui: &Ui) -> Result<()> {
+    let stack = ui.stack(Orientation::Vertical)?;
+    let line = ui.separator(Orientation::Horizontal)?;
+    stack.append(&ui.label("上")?);
+    stack.append(&line);
+    stack.append(&ui.label("下")?);
+
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(240.0, 200.0));
+    root.layoutSubtreeIfNeeded();
+
+    let view = line.native_view();
+    let native = view.downcast_ref::<NSBox>().expect("NSBox であること");
+    assert_eq!(native.boxType(), NSBoxType::Separator);
+    // NSBox の区切りはフレームが線より少し大きく、制約は整列矩形に効く。
+    let frame = view.alignmentRectForFrame(view.frame());
+    assert!(
+        (frame.size.width - 240.0).abs() < 0.5,
+        "横線はスタックの幅いっぱいに伸びること: {frame:?}"
+    );
+    assert!(
+        (frame.size.height - 1.0).abs() < 0.5,
+        "太さは 1pt: {frame:?}"
+    );
+
+    let row = ui.stack(Orientation::Horizontal)?;
+    let upright = ui.separator(Orientation::Vertical)?;
+    row.append(&ui.label("左")?);
+    row.append(&upright);
+    row.append(&ui.label("右")?);
+    let root = row.native_view();
+    root.setFrameSize(NSSize::new(240.0, 60.0));
+    root.layoutSubtreeIfNeeded();
+    let view = upright.native_view();
+    let frame = view.alignmentRectForFrame(view.frame());
+    assert!(
+        (frame.size.height - 60.0).abs() < 0.5,
+        "縦線は行の高さいっぱいに伸びること: {frame:?}"
+    );
+    assert!((frame.size.width - 1.0).abs() < 0.5, "幅は 1pt: {frame:?}");
+    Ok(())
+}
+
+/// A group is an `NSBoxPrimary` with the heading as its title, and its content sits
+/// inside the box, the padding away from the edges.
+fn group_frames_its_child(ui: &Ui) -> Result<()> {
+    let group = ui.group("表示")?;
+    // ラベルはフレームが整列矩形より左右 2pt 広いので、余白を測るには
+    // 整列矩形とフレームの一致する NSStackView を中身にする。
+    let body = ui.stack(Orientation::Vertical)?;
+    body.append(&ui.label("中身")?);
+    group.set_child(&body);
+
+    let view = group.native_view();
+    let native = view.downcast_ref::<NSBox>().expect("NSBox であること");
+    assert_eq!(native.boxType(), NSBoxType::Primary);
+    assert_eq!(native.title().to_string(), "表示");
+    assert_eq!(group.text(), "表示");
+    let content = native.contentView().expect("contentView");
+    assert!(
+        unsafe { body.native_view().superview() }.is_some_and(|parent| parent == content),
+        "中身が NSBox の contentView に入ること"
+    );
+
+    view.setFrameSize(NSSize::new(300.0, 200.0));
+    view.layoutSubtreeIfNeeded();
+    let inside = content.frame();
+    let frame = body.native_view().frame();
+    let padding = naui_core::DEFAULT_GROUP_PADDING;
+    assert!(
+        (frame.origin.x - padding.left).abs() < 0.5,
+        "左に余白が入ること: {frame:?}"
+    );
+    assert!(
+        (inside.size.width - frame.size.width - padding.left - padding.right).abs() < 0.5,
+        "中身は右の余白まで伸びること: {inside:?} / {frame:?}"
+    );
+
+    group.set_padding(Padding::all(4.0));
+    view.layoutSubtreeIfNeeded();
+    assert!((body.native_view().frame().origin.x - 4.0).abs() < 0.5);
+
+    // 空の見出しは見出しごと消す。
+    group.set_text("");
+    assert_eq!(group.text(), "");
+    assert_eq!(native.titlePosition(), NSTitlePosition::NoTitle);
+
+    // 差し替えると前の中身は外れる。
+    let next = ui.label("次")?;
+    group.set_child(&next);
+    assert!(unsafe { body.native_view().superview() }.is_none());
+    Ok(())
+}
+
+/// The padding's `left` and `right` are the physical sides, also in right-to-left
+/// text, the same as on Windows and the Web.
+fn group_padding_stays_physical_right_to_left(ui: &Ui) -> Result<()> {
+    let group = ui.group("")?;
+    let body = ui.stack(Orientation::Vertical)?;
+    body.append(&ui.label("中身")?);
+    group.set_child(&body);
+    group.set_padding(Padding {
+        top: 2.0,
+        right: 20.0,
+        bottom: 2.0,
+        left: 4.0,
+    });
+
+    let view = group.native_view();
+    let native = view.downcast_ref::<NSBox>().expect("NSBox であること");
+    let content = native.contentView().expect("contentView");
+    for view in [view.as_ref(), &*content, &*body.native_view()] {
+        view.setUserInterfaceLayoutDirection(NSUserInterfaceLayoutDirection::RightToLeft);
+    }
+    view.setFrameSize(NSSize::new(300.0, 200.0));
+    view.layoutSubtreeIfNeeded();
+    let inside = content.frame();
+    let frame = body.native_view().frame();
+    assert!(
+        (frame.origin.x - 4.0).abs() < 0.5,
+        "左の余白は left のまま: {frame:?}"
+    );
+    assert!(
+        (inside.size.width - frame.size.width - 24.0).abs() < 0.5,
+        "右の余白は right のまま: {inside:?} / {frame:?}"
     );
     Ok(())
 }

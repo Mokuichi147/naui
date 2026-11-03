@@ -11,9 +11,10 @@ pub use naui_core::{
     PopoverPosition, PopupItem, Rect, Result, ScrollMetrics, ScrollPolicy, SelectionMode, Sender,
     Settings, SidebarItem, SidebarSection, Sizing, Sleep, SortOrder, TableColumn, TableRow, Task,
     Tasks, TextColor, TextStyle, Theme, Time, Timer, ToastSpec, ToolbarIcon, ToolbarItem, Track,
-    TreeItem, WeakWidget, WindowPlacement, WindowState, DEFAULT_LIST_PANE_WIDTH,
-    DEFAULT_PANES_BREAKPOINT, DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD,
-    SHEET_MIN_WIDTH, SIDEBAR_COLLAPSE_CONTENT_WIDTH, SIDEBAR_MIN_WIDTH, WHEEL_STEP,
+    TreeItem, WeakWidget, WindowPlacement, WindowState, DEFAULT_GROUP_PADDING,
+    DEFAULT_LIST_PANE_WIDTH, DEFAULT_PANES_BREAKPOINT, DEFAULT_SIDEBAR_WIDTH,
+    DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD, SHEET_MIN_WIDTH, SIDEBAR_COLLAPSE_CONTENT_WIDTH,
+    SIDEBAR_MIN_WIDTH, WHEEL_STEP,
 };
 
 // ビルド対象のバックエンド。naui の型はこれの型を包む。
@@ -62,6 +63,7 @@ mod editable_combo_box;
 mod expander;
 mod file_picker;
 mod file_saver;
+mod group;
 mod layout;
 mod list;
 mod media_widgets;
@@ -95,6 +97,7 @@ pub use editable_combo_box::EditableComboBox;
 pub use expander::Expander;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
+pub use group::{Group, Separator};
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::{List, ListRow};
 pub use media_widgets::{Audio, Image, Video};
