@@ -68,7 +68,10 @@ use windows::Media::Playback::{
     MediaPlayerFailedEventArgs,
 };
 use windows::Storage::StorageFile;
-use windows::Storage::Streams::{DataWriter, InMemoryRandomAccessStream};
+use windows::Storage::Streams::{
+    DataReader, DataWriter, IRandomAccessStreamWithContentType, InMemoryRandomAccessStream,
+    RandomAccessStreamReference,
+};
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::to_error;
@@ -322,6 +325,9 @@ struct ImageInner {
     /// The size an SVG shown now gives itself (see [`naui_core::media::svg_size`]).
     /// `SvgImageSource` has no pixel size to read, unlike `BitmapImage`.
     svg_size: Cell<Option<(u32, u32)>>,
+    /// The number of the fetch reading the size of the SVG on the network shown now
+    /// (see [`Image::fetch_svg_size`]), or 0.
+    svg_fetch: Cell<u64>,
     fit: Cell<Fit>,
     alt: RefCell<String>,
 }
@@ -349,6 +355,7 @@ impl Image {
             image,
             source: RefCell::new(String::new()),
             svg_size: Cell::new(None),
+            svg_fetch: Cell::new(0),
             fit: Cell::new(Fit::default()),
             alt: RefCell::new(String::new()),
         }));
@@ -425,7 +432,44 @@ impl Image {
     fn forget_natural_size(&self) {
         self.0.opened.set(false);
         self.0.svg_size.set(None);
+        // 前の SVG について取りに行った大きさは、届いても使わない。
+        self.0.svg_fetch.set(0);
         self.take_natural_size();
+    }
+
+    /// Reads the size of an SVG on the network from its document, off the UI thread.
+    ///
+    /// `SvgImageSource` loads the URI by itself and reports no size, so the head of
+    /// the document is fetched once more here and read with
+    /// [`naui_core::media::svg_size`]. Until it arrives (or if it cannot be fetched)
+    /// no natural size is asked for. A size that arrives after another image has been
+    /// set is dropped.
+    fn fetch_svg_size(&self, uri: &Uri) {
+        let Ok(queue) = DispatcherQueue::GetForCurrentThread() else {
+            return;
+        };
+        let Ok(load) =
+            RandomAccessStreamReference::CreateFromUri(uri).and_then(|file| file.OpenReadAsync())
+        else {
+            return;
+        };
+        let id = next_id();
+        self.0.svg_fetch.set(id);
+        SVG_FETCHES.with(|map| map.borrow_mut().insert(id, Rc::downgrade(&self.0)));
+        // 読み込みが終わるとスレッドプールで呼ばれる。大きさだけを UI スレッドへ渡す。
+        let started = load.when(move |stream| {
+            let size = stream
+                .and_then(|stream| read_head(&stream))
+                .ok()
+                .and_then(|head| naui_core::media::svg_size(&head));
+            let _ = queue.TryEnqueue(&DispatcherQueueHandler::new(move || {
+                deliver_svg_size(id, size);
+                Ok(())
+            }));
+        });
+        if started.is_err() {
+            SVG_FETCHES.with(|map| map.borrow_mut().remove(&id));
+        }
     }
 
     /// The location currently specified (exactly the string that was passed).
@@ -552,14 +596,18 @@ impl Image {
             }
         };
         drop(source);
-        // ネットワーク上の SVG は文書を読めないので、自分の大きさを持たない。
         let image_source = if svg {
             SvgImageSource::CreateInstanceWithUriSource(&uri).and_then(|svg| svg.cast())
         } else {
             BitmapImage::CreateInstanceWithUriSource(&uri).and_then(|bitmap| bitmap.cast())
         };
         match image_source {
-            Ok(image_source) => self.put(&children, &image_source),
+            Ok(image_source) => {
+                self.put(&children, &image_source);
+                if svg {
+                    self.fetch_svg_size(&uri);
+                }
+            }
             Err(error) => {
                 eprintln!("naui-windows: failed to start loading the Image: {error}");
                 self.take_down(&children);
@@ -590,9 +638,7 @@ impl Image {
         });
         match image_source {
             Ok(image_source) => {
-                self.0
-                    .svg_size
-                    .set(svg.map(|(width, height)| (width.ceil() as u32, height.ceil() as u32)));
+                self.0.svg_size.set(svg.map(svg_pixels));
                 self.put(&children, &image_source);
                 self.take_natural_size();
             }
@@ -625,6 +671,42 @@ impl Image {
         // ここで合わせる。
         self.fit_to_host();
     }
+}
+
+/// An SVG's size in CSS pixels, rounded up to whole pixels for the natural size.
+fn svg_pixels((width, height): (f64, f64)) -> (u32, u32) {
+    (width.ceil() as u32, height.ceil() as u32)
+}
+
+/// How much of an SVG on the network is fetched to read its size. The root start
+/// tag sits near the top.
+const SVG_HEAD: u32 = 64 * 1024;
+
+/// Reads up to [`SVG_HEAD`] bytes from the start of a stream. Blocks, so it is called
+/// off the UI thread.
+fn read_head(stream: &IRandomAccessStreamWithContentType) -> windows_core::Result<Vec<u8>> {
+    let reader = DataReader::CreateDataReader(stream)?;
+    let loaded = reader.LoadAsync(SVG_HEAD)?.join()?;
+    let mut head = vec![0; loaded as usize];
+    reader.ReadBytes(&mut head)?;
+    Ok(head)
+}
+
+/// Hands the size read by [`Image::fetch_svg_size`] number `id` to its image, on the
+/// UI thread, if that image still shows the same SVG.
+fn deliver_svg_size(id: u64, size: Option<(f64, f64)>) {
+    let Some(inner) = SVG_FETCHES
+        .with(|map| map.borrow_mut().remove(&id))
+        .and_then(|weak| weak.upgrade())
+    else {
+        return;
+    };
+    if inner.svg_fetch.get() != id {
+        return;
+    }
+    inner.svg_fetch.set(0);
+    inner.svg_size.set(size.map(svg_pixels));
+    Image(inner).take_natural_size();
 }
 
 /// Writes bytes into an in-memory stream positioned at its start.
@@ -688,6 +770,11 @@ thread_local! {
 
     /// The next number to hand out.
     static NEXT_ID: Cell<u64> = const { Cell::new(0) };
+
+    /// The images waiting for the size of an SVG on the network, by fetch number
+    /// (see [`Image::fetch_svg_size`]). Weak references, as with [`PLAYBACKS`].
+    static SVG_FETCHES: RefCell<HashMap<u64, Weak<ImageInner>>> =
+        RefCell::new(HashMap::new());
 }
 
 fn next_id() -> u64 {

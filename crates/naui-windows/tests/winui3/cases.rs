@@ -370,6 +370,10 @@ const CASES: &[Case] = &[
     ),
     ("UTF-16 の SVG も SvgImageSource が開く", svg_opens_in_utf16),
     (
+        "ネットワーク上の SVG も文書から大きさを求める",
+        network_svg_takes_its_size,
+    ),
+    (
         "Fill の動画は Scroll の中でも表示領域の余りに収まり、縮めると付いていく",
         video_fits_the_leftover_and_follows_it,
     ),
@@ -4575,6 +4579,62 @@ fn natural_size(image: &naui_windows::Image) -> (f64, f64) {
         natural.Width().unwrap_or(f64::NAN),
         natural.Height().unwrap_or(f64::NAN),
     )
+}
+
+/// An SVG on the network (served over HTTP on the loopback here) gets its natural
+/// size from its document, which is fetched apart from `SvgImageSource`'s own load.
+/// A size arriving after the image has been replaced is not used.
+fn network_svg_takes_its_size(ui: &Ui) -> Result<()> {
+    use std::io::{Read, Write};
+
+    const BODY: &str =
+        r#"<svg xmlns="http://www.w3.org/2000/svg" width="40" height="20"><rect/></svg>"#;
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("待ち受けられない");
+    let url = format!(
+        "http://{}/icon.svg",
+        listener.local_addr().expect("待ち受けの番地")
+    );
+    // SvgImageSource と naui の 2 本が取りに来る。プロセスが終わるまで応え続ける。
+    std::thread::spawn(move || {
+        for mut stream in listener.incoming().flatten() {
+            let mut request = Vec::new();
+            let mut buffer = [0; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                match stream.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(read) => request.extend_from_slice(&buffer[..read]),
+                }
+            }
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: image/svg+xml\r\nContent-Length: {}\r\n\
+                 Connection: close\r\n\r\n{BODY}",
+                BODY.len()
+            );
+        }
+    });
+
+    let image = ui.image(&url)?;
+    assert!(
+        xaml_image(&image)
+            .Source()
+            .and_then(|source| source.cast::<SvgImageSource>())
+            .is_ok(),
+        "ネットワーク上の SVG は SvgImageSource で読む"
+    );
+    pump_until(IMAGE_LOAD_TIMEOUT, || natural_size(&image) == (40.0, 20.0));
+    assert_eq!(natural_size(&image), (40.0, 20.0), "文書から大きさを求める");
+
+    // 取りに行っているあいだに別の画像へ替えたら、届いた大きさは使わない。
+    image.set_source(&url);
+    image.set_bytes(RED_SVG.as_bytes());
+    pump_until(Duration::from_secs(2), || false);
+    assert_eq!(
+        natural_size(&image),
+        (24.0, 16.0),
+        "前の SVG の大きさで上書きしない"
+    );
+    Ok(())
 }
 
 /// An SVG written in UTF-16 (either byte order, with its mark) is recognized as SVG
