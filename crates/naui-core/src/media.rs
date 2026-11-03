@@ -151,22 +151,55 @@ pub fn source_url(source: &str) -> String {
 /// recognizes by itself, but SVG is text, and some decoders (WinUI's `BitmapImage`,
 /// a browser loading a `Blob` without a type) need to be told. This looks past a
 /// byte order mark, whitespace, an XML declaration, comments and a `DOCTYPE` for an
-/// `<svg` start tag within the first few kilobytes.
+/// `<svg` start tag within the first few kilobytes. UTF-8 and, with a byte order
+/// mark (which XML requires of it), UTF-16 in either byte order are read.
 ///
 /// ```
 /// # use naui_core::media::is_svg;
 /// assert!(is_svg(br#"<svg xmlns="http://www.w3.org/2000/svg"/>"#));
 /// assert!(is_svg(b"<?xml version=\"1.0\"?>\n<!-- icon -->\n<svg/>"));
+/// assert!(is_svg(b"\xFF\xFE<\0s\0v\0g\0/\0>\0"));
 /// assert!(!is_svg(b"\x89PNG\r\n\x1a\n"));
 /// ```
 pub fn is_svg(bytes: &[u8]) -> bool {
-    svg_root(bytes).is_some()
+    // UTF-16 は UTF-8 の倍ほどの長さになるので、倍まで読んで同じだけの文字を見る。
+    match decode_utf16(&bytes[..bytes.len().min(SVG_LOOK * 2)]) {
+        Some(text) => svg_root(&text).is_some(),
+        None => svg_root(bytes).is_some(),
+    }
+}
+
+/// How many bytes from the start [`is_svg`] looks through for the root element.
+const SVG_LOOK: usize = 4096;
+
+/// UTF-16 text with a byte order mark, as UTF-8. `None` without one of the marks.
+///
+/// SVG is looked into as UTF-8 bytes; the few documents written in UTF-16 are
+/// turned into it first. A unit cut off at the end is dropped, and unpaired
+/// surrogates become U+FFFD.
+fn decode_utf16(bytes: &[u8]) -> Option<Vec<u8>> {
+    let (little, body) = match bytes {
+        [0xFF, 0xFE, body @ ..] => (true, body),
+        [0xFE, 0xFF, body @ ..] => (false, body),
+        _ => return None,
+    };
+    let units = body.as_chunks::<2>().0.iter().map(|&pair| {
+        if little {
+            u16::from_le_bytes(pair)
+        } else {
+            u16::from_be_bytes(pair)
+        }
+    });
+    let text: String = char::decode_utf16(units)
+        .map(|c| c.unwrap_or(char::REPLACEMENT_CHARACTER))
+        .collect();
+    Some(text.into_bytes())
 }
 
 /// `bytes` from the root `<svg` start tag on, found the way [`is_svg`] describes.
+/// `bytes` must be UTF-8 (or ASCII-compatible); see [`decode_utf16`].
 fn svg_root(bytes: &[u8]) -> Option<&[u8]> {
-    const LOOK: usize = 4096;
-    let head = &bytes[..bytes.len().min(LOOK)];
+    let head = &bytes[..bytes.len().min(SVG_LOOK)];
     let mut rest = head.strip_prefix(b"\xEF\xBB\xBF").unwrap_or(head);
     loop {
         rest = trim_ascii_start(rest);
@@ -245,6 +278,8 @@ fn doctype_len(bytes: &[u8]) -> Option<usize> {
 /// assert_eq!(svg_size(b"<svg/>"), None);
 /// ```
 pub fn svg_size(bytes: &[u8]) -> Option<(f64, f64)> {
+    let decoded = decode_utf16(bytes);
+    let bytes = decoded.as_deref().unwrap_or(bytes);
     // 先頭のコメントの中の `<svg` ではなく、根の要素の開始タグを読む。
     let attributes = start_tag_attributes(svg_root(bytes)?)?;
     let attribute = |name: &str| {
@@ -493,6 +528,25 @@ mod tests {
         assert!(is_svg(
             b"<?xml version='1.0'?><!DOCTYPE svg PUBLIC '-//W3C//DTD SVG 1.1//EN' 'x'><svg>"
         ));
+        // UTF-16 は BOM でバイト順を見分けて読む。
+        let doc = "<?xml version=\"1.0\" encoding=\"UTF-16\"?>\n<svg width=\"24\" height=\"16\"/>";
+        let le: Vec<u8> = b"\xFF\xFE"
+            .iter()
+            .copied()
+            .chain(doc.encode_utf16().flat_map(u16::to_le_bytes))
+            .collect();
+        let be: Vec<u8> = b"\xFE\xFF"
+            .iter()
+            .copied()
+            .chain(doc.encode_utf16().flat_map(u16::to_be_bytes))
+            .collect();
+        assert!(is_svg(&le));
+        assert!(is_svg(&be));
+        assert_eq!(svg_size(&le), Some((24.0, 16.0)));
+        assert_eq!(svg_size(&be), Some((24.0, 16.0)));
+        // BOM の無い UTF-16 と、BOM の後ろが SVG でないものは認めない。
+        assert!(!is_svg(&le[2..]));
+        assert!(!is_svg(b"\xFF\xFE\x89\0P\0N\0G\0"));
         // 内部サブセットの中の > や引用符・コメントで DOCTYPE を終えない。
         assert!(is_svg(
             br#"<!DOCTYPE svg [<!ENTITY unused "x">]><svg width="24" height="16"/>"#

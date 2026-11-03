@@ -368,6 +368,7 @@ const CASES: &[Case] = &[
         "画像がメモリ上のバイト列・画素・SVG を WinUI に読ませる",
         image_takes_bytes_pixels_and_svg,
     ),
+    ("UTF-16 の SVG も SvgImageSource が開く", svg_opens_in_utf16),
     (
         "Fill の動画は Scroll の中でも表示領域の余りに収まり、縮めると付いていく",
         video_fits_the_leftover_and_follows_it,
@@ -4574,6 +4575,87 @@ fn natural_size(image: &naui_windows::Image) -> (f64, f64) {
         natural.Width().unwrap_or(f64::NAN),
         natural.Height().unwrap_or(f64::NAN),
     )
+}
+
+/// An SVG written in UTF-16 (either byte order, with its mark) is recognized as SVG
+/// and actually opened by `SvgImageSource`, as UTF-8 is.
+///
+/// The load status `SetSourceAsync` ends with is read directly: a broken document
+/// ends in `InvalidFormat`, which tells that the check can fail.
+fn svg_opens_in_utf16(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::SvgImageSourceLoadStatus;
+    use windows::Storage::Streams::{DataWriter, InMemoryRandomAccessStream};
+
+    let utf16 = |little: bool| -> Vec<u8> {
+        let doc = RED_SVG.replace("UTF-8", "UTF-16");
+        let bom: &[u8] = if little { b"\xFF\xFE" } else { b"\xFE\xFF" };
+        bom.iter()
+            .copied()
+            .chain(doc.encode_utf16().flat_map(move |unit| {
+                if little {
+                    unit.to_le_bytes()
+                } else {
+                    unit.to_be_bytes()
+                }
+            }))
+            .collect()
+    };
+    let cases: [(&str, Vec<u8>, bool); 4] = [
+        ("UTF-8", RED_SVG.as_bytes().to_vec(), true),
+        ("UTF-16LE", utf16(true), true),
+        ("UTF-16BE", utf16(false), true),
+        (
+            "壊れた SVG",
+            b"<svg width='24' height='16'><rect".to_vec(),
+            false,
+        ),
+    ];
+
+    // 画面のツリーに入っていない画像は読み込みを始めないので、ウィンドウに載せて出す。
+    let window = ui.window("SVG", 160.0, 120.0)?;
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        for (name, bytes, expect_open) in &cases {
+            let image = ui.image("")?;
+            window.set_child(&image);
+            window.show();
+            image.set_bytes(bytes);
+            let svg = xaml_image(&image)
+                .Source()
+                .and_then(|source| source.cast::<SvgImageSource>())
+                .unwrap_or_else(|_| panic!("{name} を SvgImageSource で読まない"));
+            assert_eq!(natural_size(&image), (24.0, 16.0), "{name} の大きさ");
+
+            // naui が渡したのと同じバイト列を、結果を受け取れる形でもう一度読ませる。
+            let stream = InMemoryRandomAccessStream::new().expect("ストリームを作れない");
+            let writer = DataWriter::CreateDataWriter(&stream).expect("DataWriter を作れない");
+            writer.WriteBytes(bytes).expect("書けない");
+            writer
+                .StoreAsync()
+                .and_then(|store| store.join())
+                .expect("書き込みが終わらない");
+            writer.DetachStream().expect("ストリームを外せない");
+            stream.Seek(0).expect("先頭へ戻れない");
+            let load = svg
+                .SetSourceAsync(&stream)
+                .expect("SetSourceAsync を呼べない");
+            // AsyncStatus (windows-future) の 0 が Started。それ以外になれば終わっている。
+            pump_until(IMAGE_LOAD_TIMEOUT, || {
+                load.Status().is_ok_and(|status| status.0 != 0)
+            });
+            let status = load.GetResults().expect("読み込みの結果が届かない");
+            assert_eq!(
+                status == SvgImageSourceLoadStatus::Success,
+                *expect_open,
+                "{name} の読み込みの結果: {status:?}"
+            );
+        }
+        Ok(())
+    }));
+    window.close();
+    match outcome {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
 }
 
 /// Bytes become a `BitmapImage` read from a stream, SVG an `SvgImageSource` whose
