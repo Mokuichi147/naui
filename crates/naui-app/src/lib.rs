@@ -73,8 +73,9 @@
 //!   `Dialog::open`, or from a value arriving from another thread) waits in the
 //!   queue instead of re-entering `update`, so the model needs no
 //!   `Rc<RefCell<_>>`.
-//! - **Testable logic.** `update` is plain Rust; it can be called without a window.
-//!   [`App::new`] runs the queue without a window too, with any type as the view.
+//! - **Testable logic.** `update` is plain Rust; it can be called without a window,
+//!   children included. [`App::new`] runs the queue without a window too, with any
+//!   type as the view.
 //!
 //! ## Building once, updating with setters
 //!
@@ -87,13 +88,27 @@
 //! `render` runs once after the queue empties, not once per message: several
 //! messages sent together are all handed to `update` first.
 //!
+//! ## Splitting into components
+//!
+//! A screen, a panel or a row can be a [`Component`]: its own model, messages,
+//! `update` and widgets. Its model lives in the parent's model, and its messages
+//! are wrapped into the parent's (`Message::Editor(editor::Message)`), so they go
+//! through the same queue and the parent's `update` hands them on to the child's.
+//! The parent's view keeps its widgets: a [`Mounted`] for one that is always
+//! there, [`Children`] for ones that come and go with a collection in the model.
+//! Taking a child down ([`Mounted::unmount`], or [`Children::sync`] once its key is
+//! gone) disconnects its dispatch, calls [`Component::unmount`], has the parent
+//! remove its root widget, and drops the widgets, in that order. Components nested
+//! in its view are taken down with it, when those widgets are dropped. See
+//! [`examples/checklist`](https://github.com/mokuichi147/naui/tree/main/examples/checklist).
+//!
 //! ## Not yet here
 //!
-//! Splitting an app into components, effects (asynchronous work whose results come
-//! back as messages, cancelled with their component), and one handler for panics
-//! and errors are the next steps on naui's roadmap. Until then, start work with
-//! [`naui::Tasks`] and send its result with a [`Dispatch`] (or the [`Sender`] from
-//! [`Dispatch::sender`] on other threads).
+//! Effects (asynchronous work whose results come back as messages, cancelled when
+//! the model that started them is dropped) and one handler for panics and errors
+//! are the next steps on naui's roadmap. Until then, start work with [`naui::Tasks`] and send its result
+//! with a [`Dispatch`] (or the [`Sender`] from [`Dispatch::sender`] on other
+//! threads).
 
 #![forbid(unsafe_code)]
 
@@ -132,6 +147,56 @@ pub trait Program: 'static {
 /// What a [`Dispatch`] sends into.
 trait Mailbox<M> {
     fn post(&self, message: M);
+    fn is_connected(&self) -> bool;
+    /// Whether the app is still there, whether or not a component in between is
+    /// still mounted.
+    fn app_is_there(&self) -> bool;
+}
+
+/// An app's own mailbox. It refers to the app weakly.
+struct ToApp<P: Program>(Weak<Inner<P>>);
+
+impl<P: Program> Mailbox<P::Message> for ToApp<P> {
+    fn post(&self, message: P::Message) {
+        if let Some(inner) = self.0.upgrade() {
+            inner.post(message);
+        }
+    }
+
+    fn is_connected(&self) -> bool {
+        self.app_is_there()
+    }
+
+    fn app_is_there(&self) -> bool {
+        self.0.strong_count() > 0
+    }
+}
+
+/// Wraps a child's messages into its parent's. With a link, it sends only while the
+/// link is alive (while the child is mounted).
+struct Wrapped<M: 'static, F> {
+    parent: Dispatch<M>,
+    wrap: F,
+    link: Option<Weak<()>>,
+}
+
+impl<M: 'static, C, F: Fn(C) -> M> Mailbox<C> for Wrapped<M, F> {
+    fn post(&self, message: C) {
+        if self.is_connected() {
+            self.parent.send((self.wrap)(message));
+        }
+    }
+
+    fn is_connected(&self) -> bool {
+        self.link
+            .as_ref()
+            .is_none_or(|link| link.strong_count() > 0)
+            && self.parent.is_connected()
+    }
+
+    fn app_is_there(&self) -> bool {
+        self.parent.mailbox.app_is_there()
+    }
 }
 
 /// Sends messages to an [`App`]. Clone it into callbacks.
@@ -139,10 +204,14 @@ trait Mailbox<M> {
 /// It refers to the app weakly, so the widgets holding it (in their callbacks) do
 /// not keep the app alive; once the app is gone, sending does nothing.
 ///
+/// A component's dispatch, made with [`wrap`](Self::wrap) or given to its
+/// [`mount`](Component::mount), sends into the same queue: what it sends is wrapped
+/// into the parent's message and handed to the parent's `update`.
+///
 /// It is not `Send`. To send from another thread, make a [`Sender`] with
 /// [`sender`](Self::sender).
 pub struct Dispatch<M: 'static> {
-    mailbox: Weak<dyn Mailbox<M>>,
+    mailbox: Rc<dyn Mailbox<M>>,
 }
 
 impl<M: 'static> Clone for Dispatch<M> {
@@ -165,16 +234,45 @@ impl<M: 'static> Dispatch<M> {
     /// Puts a message in the queue, and handles the queue unless it is already being
     /// handled (then the message waits its turn).
     ///
-    /// Does nothing once the app is gone.
+    /// Does nothing once the app is gone, or once the component this dispatch was made
+    /// for is unmounted.
     pub fn send(&self, message: M) {
-        if let Some(mailbox) = self.mailbox.upgrade() {
-            mailbox.post(message);
-        }
+        self.mailbox.post(message);
     }
 
-    /// Whether the app is still there to receive messages.
+    /// Whether the app is still there to receive messages (and, for a component's
+    /// dispatch, whether the component is still mounted).
     pub fn is_connected(&self) -> bool {
-        self.mailbox.strong_count() > 0
+        self.mailbox.is_connected()
+    }
+
+    /// A dispatch for a child, whose messages are wrapped with `wrap` into this
+    /// one's. For example `dispatch.wrap(Message::Editor)` when the parent's message
+    /// has a variant `Editor(editor::Message)`.
+    ///
+    /// The parent's `update` receives the wrapped message and hands it on to the
+    /// child's `update` (or acts on it itself first). Everything still goes through
+    /// one queue, so the guarantee against re-entry covers the children too.
+    ///
+    /// The dispatch made here stays connected as long as the app is there. One that
+    /// stops with its child is made by [`Mounted`] and [`Children`].
+    pub fn wrap<C: 'static>(&self, wrap: impl Fn(C) -> M + 'static) -> Dispatch<C> {
+        self.wrapped(wrap, None)
+    }
+
+    /// Like [`wrap`](Self::wrap), sending only while `link` is alive.
+    fn wrapped<C: 'static>(
+        &self,
+        wrap: impl Fn(C) -> M + 'static,
+        link: Option<Weak<()>>,
+    ) -> Dispatch<C> {
+        Dispatch {
+            mailbox: Rc::new(Wrapped {
+                parent: self.clone(),
+                wrap,
+                link,
+            }),
+        }
     }
 
     /// A closure that sends the message `make` returns. For callbacks without a
@@ -237,13 +335,6 @@ struct Inner<P: Program> {
     dirty: Cell<bool>,
 }
 
-impl<P: Program> Mailbox<P::Message> for Inner<P> {
-    fn post(&self, message: P::Message) {
-        self.queue.borrow_mut().push_back(message);
-        self.run();
-    }
-}
-
 /// Clears the running flag even when `update` or `render` panics, so the messages
 /// sent after that are handled.
 struct Running<'a>(&'a Cell<bool>);
@@ -255,6 +346,11 @@ impl Drop for Running<'_> {
 }
 
 impl<P: Program> Inner<P> {
+    fn post(&self, message: P::Message) {
+        self.queue.borrow_mut().push_back(message);
+        self.run();
+    }
+
     /// Hands every queued message to `update`, then renders, until the queue stays
     /// empty. Does nothing if already running (the caller up the stack carries on)
     /// or before the view is built.
@@ -327,9 +423,8 @@ impl<P: Program> App<P> {
 
     /// A [`Dispatch`] for sending messages to this app.
     pub fn dispatch(&self) -> Dispatch<P::Message> {
-        let mailbox: Rc<dyn Mailbox<P::Message>> = self.inner.clone();
         Dispatch {
-            mailbox: Rc::downgrade(&mailbox),
+            mailbox: Rc::new(ToApp(Rc::downgrade(&self.inner))),
         }
     }
 
@@ -385,5 +480,12 @@ where
     result
 }
 
+mod component;
+
+pub use component::{Change, Children, Component, Mounted};
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod component_tests;
