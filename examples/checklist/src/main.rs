@@ -93,13 +93,10 @@ impl Program for Checklist {
     fn render(&self, view: &View) {
         view.entry.render(&self.entry);
         let items = self.items.iter().map(|item| (item.id, item));
-        let synced = view.items.sync(items, |change| match change {
+        view.items.sync(items, |change| match change {
             Change::Insert { index, root } => view.list.insert(index, root),
             Change::Remove { index, .. } => view.list.remove(index),
         });
-        if let Err(error) = synced {
-            eprintln!("could not show an item: {error}");
-        }
         let done = self.items.iter().filter(|item| item.done).count();
         view.summary.set_text(&match self.items.len() {
             0 => "Nothing to do".to_owned(),

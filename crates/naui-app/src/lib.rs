@@ -121,16 +121,85 @@
 //! search overtaken by further typing). See
 //! [`examples/search`](https://github.com/mokuichi147/naui/tree/main/examples/search).
 //!
-//! ## Not yet here
+//! ## When something goes wrong
 //!
-//! One handler for panics and errors is the next step on naui's roadmap. Until then,
-//! a failure goes to standard error.
+//! One handler, set with [`run_with_handler`] or [`App::set_error_handler`], receives a
+//! [`Report`] of each of these on the UI thread:
+//!
+//! - panics in `update`, `render` and effects starting, and in any other naui callback,
+//! - failures: [`Effect::fail`], and an effect's thread that panicked or did not start,
+//! - children [`Children::sync`] could not mount, and keys it was given twice.
+//!
+//! Without a handler the failures, the mounts and the keys go to standard error, and a
+//! panic goes where the previous panic hook sends it.
+//!
+//! A report from inside the queue says which message was being handled
+//! ([`Report::message`]), which is why the handler needs the message type to be
+//! [`Debug`]. The text is recorded before `update` (which takes the message away), cut
+//! to 1024 bytes, and only while a handler is set, so large messages cost little.
+//!
+//! ### Panics
+//!
+//! On the desktop platforms with `panic = "unwind"`, a panic is caught per message, per
+//! `render` and per effect started. naui-app cannot tell whether the model is still
+//! whole, so the handler decides: [`Decision::GoOn`] carries on with the model as the
+//! panic left it (then `render` runs, as after any message), and [`Decision::Stop`]
+//! stops the app. Without a handler the queue goes on.
+//!
+//! On the Web (wasm aborts on a panic) and with `panic = "abort"` nothing can be caught.
+//! The handler is told from inside the panic hook and the app stops, whatever it answers.
+//!
+//! A panic outside the queue (in a callback that is not a [`Dispatch`], say) reaches the
+//! handler through the panic hook as well, without a message. naui-app installs that
+//! hook when a handler is first set, in front of the one already there, which still
+//! runs. An app that sets a panic hook of its own afterwards replaces both.
+//!
+//! ### Writing a handler
+//!
+//! It gets a [`Dispatch`], and showing a failure is best done with a message: `update`
+//! changes the model, and `render` shows it. Messages it sends wait in the queue. A
+//! report from outside the queue comes while the panic is still going, so there the
+//! handler must not panic (that aborts the process) and is better off not touching
+//! widgets, whose state the panic may have left half changed.
+//!
+//! A panic that a message of the handler's brings back (a `render` that panics every
+//! time, with a handler that always sends something) goes round forever. Return
+//! [`Decision::Stop`] for panics, or send only once.
+//!
+//! ```no_run
+//! # use naui::{Settings, Ui};
+//! # use naui_app::{Decision, Dispatch, Effect, Program, Report, ReportKind};
+//! # #[derive(Default)] struct Model { problem: String }
+//! # #[derive(Debug)] enum Message { Problem(String) }
+//! # impl Program for Model {
+//! #     type Message = Message;
+//! #     type View = ();
+//! #     fn update(&mut self, _: Message) -> Effect<Message> { Effect::none() }
+//! #     fn render(&self, _: &()) {}
+//! # }
+//! # fn build(_: &Ui, _: &Dispatch<Message>) -> naui::Result<()> { Ok(()) }
+//! fn on_error(report: &Report, dispatch: &Dispatch<Message>) -> Decision {
+//!     eprintln!("{report}");
+//!     if report.kind() == ReportKind::Panic {
+//!         // The model may be half changed. Do not go on with it.
+//!         return Decision::Stop;
+//!     }
+//!     dispatch.send(Message::Problem(report.text().to_owned()));
+//!     Decision::GoOn
+//! }
+//!
+//! fn main() -> naui::Result<()> {
+//!     naui_app::run_with_handler(Settings::new("app"), Model::default(), build, on_error)
+//! }
+//! ```
 
 #![forbid(unsafe_code)]
 
 use std::cell::{Cell, OnceCell, Ref, RefCell};
 use std::collections::VecDeque;
+use std::fmt::Debug;
 use std::rc::{Rc, Weak};
+use std::time::Duration;
 
 use naui::{Sender, Settings, Tasks, Ui};
 
@@ -344,12 +413,18 @@ impl<M: 'static> Dispatch<M> {
     }
 }
 
+/// An effect waiting to start, with the text of the message it was returned for.
+type Waiting<M> = (Option<Rc<str>>, Effect<M>);
+
+/// Makes the text of a message.
+type Describe<M> = fn(&M) -> Rc<str>;
+
 struct Inner<P: Program> {
     model: RefCell<P>,
     view: OnceCell<P::View>,
     queue: RefCell<VecDeque<P::Message>>,
     /// What `update` returned, waiting for the next `render` to be over.
-    effects: RefCell<VecDeque<Effect<P::Message>>>,
+    effects: RefCell<VecDeque<Waiting<P::Message>>>,
     /// What the effects run on. `None` when the app was made without it.
     tasks: Option<Tasks>,
     /// Owns the effects that belong to the app's own model. A child's belong to its
@@ -357,14 +432,26 @@ struct Inner<P: Program> {
     owner: Owner,
     /// A dispatch to this app, for what effects send.
     dispatch: Dispatch<P::Message>,
+    /// This app, for what runs later.
+    me: Weak<Inner<P>>,
+    /// The handler, when this app set one. Only a weak reference is kept elsewhere, so it
+    /// goes with the app.
+    handler: RefCell<Option<Rc<error::Slot>>>,
+    /// Makes the text of a message. Set together with the handler, since that is what
+    /// asks for `Debug`.
+    describe: Cell<Option<Describe<P::Message>>>,
+    /// Quits the UI when the app stops, if the app knows the UI.
+    quit: RefCell<Option<Box<dyn FnOnce()>>>,
+    /// Whether the handler stopped the app. No message is handled from then on.
+    stopped: Cell<bool>,
     /// Whether the queue is being handled. A message posted meanwhile waits.
     running: Cell<bool>,
     /// Whether the model may have changed since the last render.
     dirty: Cell<bool>,
 }
 
-/// Clears the running flag even when `update` or `render` panics, so the messages
-/// sent after that are handled.
+/// Clears a flag when dropped, even during a panic that something outside the queue
+/// catches.
 struct Running<'a>(&'a Cell<bool>);
 
 impl Drop for Running<'_> {
@@ -375,43 +462,144 @@ impl Drop for Running<'_> {
 
 impl<P: Program> Inner<P> {
     fn post(&self, message: P::Message) {
+        if self.stopped.get() {
+            return;
+        }
         self.queue.borrow_mut().push_back(message);
         self.run();
     }
 
     /// Hands every queued message to `update`, renders, and then starts the effects
     /// `update` returned, until nothing is left to do. Does nothing if already running
-    /// (the caller up the stack carries on) or before the view is built.
+    /// (the caller up the stack carries on), before the view is built, or once stopped.
+    ///
+    /// A panic in any of these is caught and reported, and the handler decides what
+    /// happens next. Nothing unwinds out of here, so nothing unwinds into the native
+    /// code that called the callback.
     fn run(&self) {
         let Some(view) = self.view.get() else {
             return;
         };
-        if self.running.replace(true) {
+        if self.stopped.get() || self.running.get() {
             return;
         }
+        // panic の最中に update を走らせると、次の panic でプロセスが落ちる。
+        if error::must_wait() {
+            self.run_later();
+            return;
+        }
+        self.running.set(true);
         let _running = Running(&self.running);
+        let _message = error::MessageScope::enter();
         loop {
+            if self.stopped.get() {
+                self.abandon();
+                break;
+            }
             // 取り出す間だけキューを借りる。update の中から送られたものは、
             // 借りていないキューへ積まれて、この同じループで処理される。
-            while let Some(message) = self.pop() {
-                let effect = self.model.borrow_mut().update(message);
-                self.effects.borrow_mut().push_back(effect);
+            if let Some(message) = self.pop() {
+                error::catch(|| {
+                    // update がメッセージを持っていくので、文字列は先に作っておく。
+                    let text = self.describe.get().map(|describe| describe(&message));
+                    error::set_current_message(text.clone());
+                    let effect = self.model.borrow_mut().update(message);
+                    self.effects.borrow_mut().push_back((text, effect));
+                });
                 self.dirty.set(true);
+                continue;
             }
             if self.dirty.replace(false) {
                 // render が値を変えて通知を起こし、メッセージが積まれることがある。
                 // それはもう一周して update へ渡す。効果を始めるのは落ち着いてから。
-                self.model.borrow().render(view);
+                error::catch(|| self.model.borrow().render(view));
                 continue;
             }
-            // モデルを借りていないところで、ひとつずつ始める。panic しても残りは
-            // effects に残り、次に動くときに始まる。
-            let effect = self.effects.borrow_mut().pop_front();
-            let Some(effect) = effect else {
+            // モデルを借りていないところで、ひとつずつ始める。
+            let next = self.effects.borrow_mut().pop_front();
+            let Some((text, effect)) = next else {
                 break;
             };
-            effect.start(self.tasks.as_ref(), &self.dispatch, &self.owner);
+            error::set_current_message(text);
+            error::catch(|| {
+                effect.start(self.tasks.as_ref(), &self.dispatch, &self.owner);
+            });
         }
+    }
+
+    /// Runs the queue from the event loop. Without [`Tasks`], the next message does.
+    fn run_later(&self) {
+        if let Some(tasks) = &self.tasks {
+            let me = self.me.clone();
+            tasks.after(Duration::ZERO, move || {
+                if let Some(inner) = me.upgrade() {
+                    inner.run();
+                }
+            });
+        }
+    }
+
+    /// Stops handling messages. This can come from inside the panic hook, so the rest
+    /// waits for the event loop, where widgets and the app's code can run.
+    fn stop(&self) {
+        if self.stopped.replace(true) {
+            return;
+        }
+        if let Some(tasks) = &self.tasks {
+            let me = self.me.clone();
+            tasks.after(Duration::ZERO, move || {
+                if let Some(inner) = me.upgrade() {
+                    inner.wind_down();
+                }
+            });
+        }
+    }
+
+    fn wind_down(&self) {
+        self.abandon();
+        self.owner.cancel_all();
+        let quit = self.quit.borrow_mut().take();
+        if let Some(quit) = quit {
+            quit();
+        }
+    }
+
+    /// Drops what is waiting. A failure among the effects has happened all the same, so
+    /// it is still reported.
+    fn abandon(&self) {
+        let messages = std::mem::take(&mut *self.queue.borrow_mut());
+        drop(messages);
+        let effects = std::mem::take(&mut *self.effects.borrow_mut());
+        let _message = error::MessageScope::enter();
+        for (text, effect) in effects {
+            error::set_current_message(text);
+            for failure in effect.failures() {
+                report(ReportKind::Failure, failure);
+            }
+        }
+    }
+
+    /// Sets the handler, and starts recording the text of each message.
+    fn set_error_handler(
+        &self,
+        mut handler: impl FnMut(&Report, &Dispatch<P::Message>) -> Decision + 'static,
+    ) where
+        P::Message: Debug,
+    {
+        let dispatch = self.dispatch.clone();
+        let me = self.me.clone();
+        let slot = error::Slot::new(
+            Box::new(move |report| handler(report, &dispatch)),
+            Box::new(move || {
+                if let Some(inner) = me.upgrade() {
+                    inner.stop();
+                }
+            }),
+        );
+        error::set_slot(&slot);
+        self.describe.set(Some(error::describe::<P::Message>));
+        let previous = self.handler.borrow_mut().replace(slot);
+        drop(previous);
     }
 
     fn pop(&self) -> Option<P::Message> {
@@ -443,20 +631,25 @@ impl<P: Program> App<P> {
         model: P,
         build: impl FnOnce(&Dispatch<P::Message>) -> Result<P::View, E>,
     ) -> Result<Self, E> {
-        Self::start(None, model, build)
+        Self::start(None, None, |_| {}, model, build)
     }
 
     /// Like [`new`](Self::new), running effects on `tasks` ([`Ui::tasks`]).
+    ///
+    /// When the handler stops this app its queue stops, but the UI stays: it is the
+    /// caller's. Only [`run`] and [`run_with_handler`] quit it as well.
     pub fn with_tasks<E>(
         tasks: &Tasks,
         model: P,
         build: impl FnOnce(&Dispatch<P::Message>) -> Result<P::View, E>,
     ) -> Result<Self, E> {
-        Self::start(Some(tasks.clone()), model, build)
+        Self::start(Some(tasks.clone()), None, |_| {}, model, build)
     }
 
     fn start<E>(
         tasks: Option<Tasks>,
+        quit: Option<Box<dyn FnOnce()>>,
+        set_up: impl FnOnce(&Inner<P>),
         model: P,
         build: impl FnOnce(&Dispatch<P::Message>) -> Result<P::View, E>,
     ) -> Result<Self, E> {
@@ -470,9 +663,16 @@ impl<P: Program> App<P> {
             dispatch: Dispatch {
                 mailbox: Rc::new(ToApp(me.clone())),
             },
+            me: me.clone(),
+            handler: RefCell::new(None),
+            describe: Cell::new(None),
+            quit: RefCell::new(quit),
+            stopped: Cell::new(false),
             running: Cell::new(false),
             dirty: Cell::new(true),
         });
+        // build の panic もハンドラへ届くよう、先に設定する。
+        set_up(&inner);
         let app = Self { inner };
         let view = build(&app.dispatch())?;
         if app.inner.view.set(view).is_err() {
@@ -481,6 +681,30 @@ impl<P: Program> App<P> {
         // 最初の render も、処理中の印を立ててから行う (`dirty` は立っている)。
         app.inner.run();
         Ok(app)
+    }
+
+    /// Sets the one handler for what goes wrong, replacing the one set before. See
+    /// [When something goes wrong](crate#when-something-goes-wrong).
+    ///
+    /// The handler belongs to this app and goes when the app is dropped, but there is
+    /// one per thread: with two apps on a thread, the one set last hears about both, and
+    /// [`Decision::Stop`] stops the app that set it.
+    ///
+    /// It takes effect from here on. To hear about `build` and the first `render` as
+    /// well, use [`run_with_handler`].
+    pub fn set_error_handler(
+        &self,
+        handler: impl FnMut(&Report, &Dispatch<P::Message>) -> Decision + 'static,
+    ) where
+        P::Message: Debug,
+    {
+        self.inner.set_error_handler(handler);
+    }
+
+    /// Whether the handler stopped this app ([`Decision::Stop`]). Messages sent from then
+    /// on are dropped.
+    pub fn is_stopped(&self) -> bool {
+        self.inner.stopped.get()
     }
 
     /// A [`Dispatch`] for sending messages to this app.
@@ -533,8 +757,50 @@ where
     P: Program,
     F: FnOnce(&Ui, &Dispatch<P::Message>) -> naui::Result<P::View> + 'static,
 {
+    run_app(settings, model, build, |_| {})
+}
+
+/// Like [`run`], with a handler for what goes wrong from the start, `build` included.
+/// See [When something goes wrong](crate#when-something-goes-wrong).
+///
+/// When it answers [`Decision::Stop`], the queue stops and the UI quits. On the Web a page
+/// cannot quit, so it stays as it is with nothing handling its messages.
+pub fn run_with_handler<P, F, H>(
+    settings: Settings,
+    model: P,
+    build: F,
+    handler: H,
+) -> naui::Result<()>
+where
+    P: Program,
+    P::Message: Debug,
+    F: FnOnce(&Ui, &Dispatch<P::Message>) -> naui::Result<P::View> + 'static,
+    H: FnMut(&Report, &Dispatch<P::Message>) -> Decision + 'static,
+{
+    run_app(settings, model, build, move |inner: &Inner<P>| {
+        inner.set_error_handler(handler);
+    })
+}
+
+fn run_app<P, F>(
+    settings: Settings,
+    model: P,
+    build: F,
+    set_up: impl FnOnce(&Inner<P>) + 'static,
+) -> naui::Result<()>
+where
+    P: Program,
+    F: FnOnce(&Ui, &Dispatch<P::Message>) -> naui::Result<P::View> + 'static,
+{
     let result = naui::run(settings, move |ui| {
-        let app = App::with_tasks(&ui.tasks(), model, |dispatch| build(ui, dispatch))?;
+        let quitting = ui.clone();
+        let app = App::start(
+            Some(ui.tasks()),
+            Some(Box::new(move || quitting.quit())),
+            set_up,
+            model,
+            |dispatch| build(ui, dispatch),
+        )?;
         RUNNING.with(|apps| apps.borrow_mut().push(Box::new(app)));
         Ok(())
     });
@@ -548,11 +814,14 @@ where
 
 mod component;
 mod effect;
+mod error;
 
 pub use component::{Change, Children, Component, Mounted};
 pub use effect::{Effect, Scoped};
+pub use error::{Decision, Report, ReportKind};
 
 use effect::Owner;
+use error::report;
 
 #[cfg(test)]
 mod tests;
@@ -562,3 +831,6 @@ mod component_tests;
 
 #[cfg(test)]
 mod effect_tests;
+
+#[cfg(test)]
+mod error_tests;

@@ -6,7 +6,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::future::{pending, Future};
-use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex};
@@ -16,7 +15,7 @@ use std::time::{Duration, Instant};
 use naui::Tasks;
 use naui_core::{MainThread, Work};
 
-use super::effect::tests_support::REPORTED;
+use super::error::tests_support::REPORTED;
 use super::{App, Effect, Program, Scoped};
 
 const SECOND: Duration = Duration::from_secs(1);
@@ -31,7 +30,7 @@ struct LoopState {
 
 /// The event loop's waiting room. Other threads post into it, as they do for real.
 #[derive(Clone, Default)]
-struct Loop(Arc<Mutex<LoopState>>);
+pub(super) struct Loop(Arc<Mutex<LoopState>>);
 
 impl MainThread for Loop {
     fn post(&self, work: Work) -> bool {
@@ -48,7 +47,7 @@ impl MainThread for Loop {
 }
 
 impl Loop {
-    fn new() -> (Self, Tasks) {
+    pub(super) fn new() -> (Self, Tasks) {
         let event_loop = Self::default();
         let tasks = Tasks::from_main_thread(Arc::new(event_loop.clone()));
         (event_loop, tasks)
@@ -70,7 +69,7 @@ impl Loop {
     }
 
     /// Runs all that is due, including what that makes due.
-    fn run(&self) {
+    pub(super) fn run(&self) {
         while let Some(work) = self.take_due() {
             work();
         }
@@ -279,7 +278,7 @@ fn messages_sent_while_building_can_start_work() {
 }
 
 #[test]
-fn a_panic_in_update_leaves_earlier_effects_for_the_next_turn() {
+fn a_panic_in_update_does_not_stop_earlier_effects() {
     let (event_loop, tasks) = Loop::new();
     let log = Log::default();
     let app = app(&tasks, &log, |message| match message {
@@ -287,20 +286,10 @@ fn a_panic_in_update_leaves_earlier_effects_for_the_next_turn() {
         Msg::Number(_) => panic!("update panicked (intended)"),
         _ => Effect::none(),
     });
-    let dispatch = app.dispatch();
     // Go と Number を同じ周回で処理する。Number の update が panic する。
-    let sent = dispatch.clone();
-    let outcome = catch_unwind(AssertUnwindSafe(|| {
-        app.inner.queue.borrow_mut().push_back(Msg::Go);
-        sent.send(Msg::Number(1));
-    }));
-    assert!(outcome.is_err());
-    event_loop.run();
-    assert!(
-        !log.borrow().iter().any(|line| line.contains("kept")),
-        "まだ始まっていない"
-    );
-    dispatch.send(Msg::Done("next"));
+    app.inner.queue.borrow_mut().push_back(Msg::Go);
+    app.send(Msg::Number(1));
+    assert_eq!(app.running(), 1);
     event_loop.run();
     assert!(log.borrow().iter().any(|line| line.contains("kept")));
 }
@@ -316,8 +305,7 @@ fn a_panic_while_starting_does_not_stop_the_rest() {
         }
         _ => Effect::none(),
     });
-    let outcome = catch_unwind(AssertUnwindSafe(|| app.send(Msg::Go)));
-    assert!(outcome.is_err());
+    app.send(Msg::Go);
     assert_eq!(app.running(), 1);
     event_loop.run();
     assert!(log.borrow().iter().any(|line| line.contains("rest")));

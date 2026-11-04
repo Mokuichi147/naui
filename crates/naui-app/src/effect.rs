@@ -12,25 +12,8 @@ use std::time::Duration;
 use naui::{Sender, Task, Tasks, Timer};
 
 use crate::component::attempt;
-use crate::{Dispatch, Program};
-
-/// Where a failure goes. Everything reported passes through here.
-pub(crate) fn report(failure: &str) {
-    #[cfg(test)]
-    tests_support::REPORTED.with(|reported| reported.borrow_mut().push(failure.to_owned()));
-    #[cfg(not(test))]
-    eprintln!("naui-app: {failure}");
-}
-
-#[cfg(test)]
-pub(crate) mod tests_support {
-    use std::cell::RefCell;
-
-    thread_local! {
-        /// What [`report`](super::report) received on this thread.
-        pub(crate) static REPORTED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    }
-}
+use crate::error::{panic_text, report};
+use crate::{Dispatch, Program, ReportKind};
 
 /// What an [`Effect`] uses to hand back what it produced.
 struct Deliver<M> {
@@ -48,7 +31,7 @@ impl<M> Deliver<M> {
 
     fn fail(&self, failure: &str) {
         if self.open.get() {
-            report(failure);
+            report(ReportKind::Failure, failure);
         }
     }
 }
@@ -146,6 +129,10 @@ impl Owner {
         self.0.running()
     }
 
+    pub(crate) fn cancel_all(&self) {
+        self.0.cancel(|_| true);
+    }
+
     /// How many entries the ledger holds, finished ones included.
     #[cfg(test)]
     pub(crate) fn entries(&self) -> usize {
@@ -155,7 +142,7 @@ impl Owner {
 
 impl Drop for Owner {
     fn drop(&mut self) {
-        self.0.cancel(|_| true);
+        self.cancel_all();
     }
 }
 
@@ -233,7 +220,7 @@ impl<M: 'static> Node<M> {
                 }
             }
             // 持ち主がいなくなっていても、起きた失敗はなかったことにしない。
-            Node::Fail(failure) => report(&failure),
+            Node::Fail(failure) => report(ReportKind::Failure, &failure),
             Node::Owned(owner, node) => node.start(cx, owner.upgrade(), keys),
             Node::Keyed(key, node) => {
                 let Some(owner) = &ledger else {
@@ -252,6 +239,7 @@ impl<M: 'static> Node<M> {
                 };
                 let Some(tasks) = cx.tasks else {
                     report(
+                        ReportKind::Failure,
                         "an effect needs naui's Tasks to run, and this App has none: \
                          make it with App::with_tasks",
                     );
@@ -417,7 +405,10 @@ impl<M: 'static> Effect<M> {
                     let _ = sender.send(catch_unwind(AssertUnwindSafe(work)));
                 });
             if let Err(error) = started {
-                report(&format!("could not start an effect's thread: {error}"));
+                report(
+                    ReportKind::Failure,
+                    &format!("could not start an effect's thread: {error}"),
+                );
             }
             Handle::Channel(closed)
         })
@@ -463,11 +454,13 @@ impl<M: 'static> Effect<M> {
         })
     }
 
-    /// Reports a failure, which for now goes to standard error.
+    /// Reports a failure to the app's handler
+    /// ([`App::set_error_handler`](crate::App::set_error_handler)), or without one to
+    /// standard error.
     ///
     /// It is reported when the effect would start, after the next `render`. For an
     /// error inside `update`, and for a failed effect, whose result comes back to
-    /// `update` as a message.
+    /// `update` as a message. The report carries the message `update` was given.
     pub fn fail(failure: impl std::fmt::Display) -> Self {
         Self {
             node: Node::Fail(failure.to_string()),
@@ -610,17 +603,6 @@ impl<M: 'static> Default for Effect<M> {
 impl<M: 'static> std::fmt::Debug for Effect<M> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.node.fmt(f)
-    }
-}
-
-/// The text of a panic's payload, for the usual `panic!` forms.
-fn panic_text(panic: &(dyn Any + Send)) -> &str {
-    if let Some(text) = panic.downcast_ref::<&str>() {
-        text
-    } else if let Some(text) = panic.downcast_ref::<String>() {
-        text
-    } else {
-        "(not a string)"
     }
 }
 

@@ -29,6 +29,13 @@ come back as messages. An effect belongs to the model that asked for it: droppin
 child's `Scoped` wrapper cancels what it started, and effects under the same key in
 one model replace each other (a search overtaken by further typing).
 
+One handler, set with `run_with_handler` or `App::set_error_handler`, hears about
+what goes wrong on the UI thread: panics, failures from `update` and effects, children
+that could not be mounted. A report from the queue says which message was being
+handled. On the desktop platforms a panic is caught per message and per `render`, and
+the handler decides whether the queue goes on or the app stops. On the Web and with
+`panic = "abort"` a panic cannot be caught: the handler is told and the app stops.
+
 See [`examples/todo`](https://github.com/mokuichi147/naui/tree/main/examples/todo)
 for a complete app,
 [`examples/checklist`](https://github.com/mokuichi147/naui/tree/main/examples/checklist)

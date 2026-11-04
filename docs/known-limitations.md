@@ -156,6 +156,33 @@ that shape are covered in
   fullscreen is refused outside a user action). naui does not store the placement
   itself: the app writes its text form to its own settings.
 
+### naui-app
+
+- A panic can be caught only with `panic = "unwind"` on a desktop platform. **On the
+  Web (wasm aborts on a panic) and with `panic = "abort"`, the handler is told from
+  inside the panic hook and the app stops, whatever the handler answers.** A process
+  built with `panic = "abort"` ends there. A page on the Web stays as it was, with
+  nothing handling its messages (a page cannot quit), and the browser's console shows
+  the trap. Callbacks that do not go through the queue, such as a plain `Tasks::after`,
+  can still be called there.
+- There is no way to tell whether a model is still whole after a panic in `update`.
+  That is why the handler decides, and `Decision::GoOn` carries on with the model as
+  the panic left it.
+- The handler is called from inside the panic hook when a panic is outside the queue,
+  and for every panic where nothing can be caught. A panic in the handler there aborts
+  the process, and it is better off not touching widgets. A panic in the handler at any
+  other time is caught, and the app goes on.
+- There is one handler per thread, and the panic hook is the process's. An app that
+  sets a panic hook of its own after the handler replaces naui-app's. The hook then
+  sees nothing, but panics caught in the queue are still reported, without a location.
+- A handler that sends a message about a panic can go round forever when handling it
+  panics again (a `render` that always panics). naui-app reports a failed mount and a
+  repeated key once until they are put right for this reason, but cannot tell one
+  panic from the next.
+- `Report::message` is the `Debug` text of the message, cut to 1024 bytes, and `render`
+  sees the last message handled before it, not all that led to it. A failure from an
+  effect's thread or a panic in a callback that ran later carries no message.
+
 ### Other threads and async
 
 - When handing values over from other threads, order is preserved **only within
@@ -498,8 +525,9 @@ that shape are covered in
   **code that includes `std::thread::spawn` does not run on the Web as is**.
 - For the same reason, naui-app's `Effect::thread` cannot start on the Web and is
   reported as a failure. Use `Effect::spawn`, or `Effect::channel` with a sending side
-  of your own. A failure goes to standard error, which wasm does not show anywhere, so
-  until naui-app has its error handler one is not visible on the Web.
+  of your own. Without a handler, a failure goes to standard error, which wasm does
+  not show anywhere, so an app for the Web should set one
+  (`naui_app::run_with_handler`).
 - A Web Worker is a separate JavaScript runtime, so even though `Sender` is `Send` as
   a Rust type, it cannot be passed there (bridge with `postMessage` and call `send`
   on the receiving side).
