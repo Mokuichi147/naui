@@ -352,6 +352,91 @@ fn 終了で受信側が解放される() {
 }
 
 #[test]
+fn 閉じると届く前の値は捨てられ以後は送れない() {
+    let (fake, tasks) = setup();
+    let got = Rc::new(RefCell::new(Vec::new()));
+    let sink = got.clone();
+    let tx = tasks.channel(move |v: i32| sink.borrow_mut().push(v));
+    let other = tx.clone();
+    let closer = tx.closer();
+    tx.send(1).unwrap();
+    assert!(tx.is_open());
+    closer.close();
+    closer.close();
+    assert!(!tx.is_open());
+    assert!(!other.is_open());
+    assert!(tx.send(2).is_err());
+    assert!(other.send(3).is_err());
+    fake.drain_all();
+    assert!(got.borrow().is_empty());
+}
+
+#[test]
+fn 閉じると送り手が残っていても受信側が解放される() {
+    let (fake, tasks) = setup();
+    let (tracer, dropped) = Tracer::new();
+    let tx = tasks.channel(move |_: i32| {
+        let _ = &tracer;
+    });
+    tx.closer().close();
+    assert!(!dropped.get(), "受信側を外すのは UI スレッドが空いたとき");
+    fake.drain_all();
+    assert!(dropped.get());
+    assert!(tx.send(1).is_err());
+    fake.drain_all();
+}
+
+#[test]
+fn 閉じる手段は送り手に数えない() {
+    let (fake, tasks) = setup();
+    let (tracer, dropped) = Tracer::new();
+    let tx = tasks.channel(move |_: i32| {
+        let _ = &tracer;
+    });
+    let closer = tx.closer();
+    drop(tx);
+    fake.drain_all();
+    assert!(dropped.get(), "closer を持っていてもチャネルは閉じる");
+    closer.close();
+    fake.drain_all();
+}
+
+#[test]
+fn 受信の途中で閉じると残りは渡さない() {
+    let (fake, tasks) = setup();
+    let got = Rc::new(RefCell::new(Vec::new()));
+    let sink = got.clone();
+    let closer: Rc<RefCell<Option<naui_core::ChannelCloser>>> = Rc::new(RefCell::new(None));
+    let inner = closer.clone();
+    let tx = tasks.channel(move |v: i32| {
+        sink.borrow_mut().push(v);
+        if let Some(closer) = inner.borrow_mut().take() {
+            closer.close();
+        }
+    });
+    *closer.borrow_mut() = Some(tx.closer());
+    tx.send(1).unwrap();
+    tx.send(2).unwrap();
+    fake.drain_all();
+    assert_eq!(*got.borrow(), [1]);
+    assert!(tx.send(3).is_err());
+}
+
+#[test]
+fn 別スレッドから閉じられる() {
+    let (fake, tasks) = setup();
+    let (tracer, dropped) = Tracer::new();
+    let tx = tasks.channel(move |_: i32| {
+        let _ = &tracer;
+    });
+    let closer = tx.closer();
+    std::thread::spawn(move || closer.close()).join().unwrap();
+    assert!(!tx.is_open());
+    fake.drain_all();
+    assert!(dropped.get());
+}
+
+#[test]
 fn チャネルは互いに独立している() {
     let (fake, tasks) = setup();
     let a = Rc::new(RefCell::new(Vec::new()));

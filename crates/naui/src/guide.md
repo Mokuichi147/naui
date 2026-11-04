@@ -2831,7 +2831,9 @@ receiver. Values sent to the same channel arrive **in the order they were sent**
 UI thread is free. The returned `Ok` means "the value was accepted and its
 delivery to the UI was scheduled", not a guarantee that it was delivered. After
 naui's UI runtime has ended it returns `Err` (browsers have no app termination,
-so there it is always `Ok`).
+so there that does not happen). To stop receiving while the UI is running, close
+the channel with the [`ChannelCloser`] from [`Sender::closer`]: what is waiting is
+dropped and `send` returns `Err` from then on, so the sending side can tell.
 
 To start asynchronous work from inside a handler, run a future with
 [`Tasks::spawn`]. **The future does not need to be `Send`**, so widget handles can

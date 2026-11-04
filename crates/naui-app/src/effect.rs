@@ -9,7 +9,7 @@ use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::rc::{Rc, Weak};
 use std::time::Duration;
 
-use naui::{Sender, Task, Tasks, Timer};
+use naui::{ChannelCloser, Sender, Task, Tasks, Timer};
 
 use crate::component::attempt;
 use crate::{Dispatch, Program};
@@ -57,10 +57,11 @@ impl<M> Deliver<M> {
 enum Handle {
     Task(Task),
     Timer(Timer),
-    /// A channel's receiving side, which goes away once every [`Sender`] has been
-    /// dropped and what they sent has arrived. Work on another thread cannot be
-    /// stopped, so nothing is done to it; its result is discarded by [`Deliver`].
-    Channel(Weak<()>),
+    /// A channel. The receiving side goes away once every [`Sender`] has been dropped
+    /// and what they sent has arrived, which is what the `Weak` tells. Work on another
+    /// thread cannot be stopped, so stopping closes the channel: what is waiting is
+    /// dropped, and from then on sending fails, which the work can notice.
+    Channel(Weak<()>, ChannelCloser),
 }
 
 /// An effect that has started. The model that owns it holds it, and so does each key
@@ -76,7 +77,7 @@ impl Running {
             || match &*self.handle.borrow() {
                 Some(Handle::Task(task)) => task.is_finished(),
                 Some(Handle::Timer(timer)) => !timer.is_active(),
-                Some(Handle::Channel(open)) => open.strong_count() == 0,
+                Some(Handle::Channel(alive, _)) => alive.strong_count() == 0,
                 None => false,
             }
     }
@@ -88,7 +89,8 @@ impl Running {
         match handle {
             Some(Handle::Task(task)) => task.cancel(),
             Some(Handle::Timer(timer)) => timer.cancel(),
-            Some(Handle::Channel(_)) | None => {}
+            Some(Handle::Channel(_, closer)) => closer.close(),
+            None => {}
         }
     }
 }
@@ -392,8 +394,11 @@ impl<M: 'static> Effect<M> {
     /// Runs `work` on a new thread, and sends the message it returns.
     ///
     /// The work cannot be stopped: when the effect is cancelled, it runs to its end
-    /// and its message is discarded. If it panics, or a thread cannot be started, that
+    /// and its message is dropped. If it panics, or a thread cannot be started, that
     /// is reported as a failure. On the Web there are no threads, so it always is.
+    ///
+    /// In those two cases no message arrives, so a model waiting for one stays as it
+    /// was. An error the work can expect belongs in its message instead, as a `Result`.
     pub fn thread(work: impl FnOnce() -> M + Send + 'static) -> Self
     where
         M: Send,
@@ -411,6 +416,7 @@ impl<M: 'static> Effect<M> {
                     )),
                 }
             });
+            let closer = sender.closer();
             let started = std::thread::Builder::new()
                 .name("naui-app effect".to_owned())
                 .spawn(move || {
@@ -419,7 +425,7 @@ impl<M: 'static> Effect<M> {
             if let Err(error) = started {
                 report(&format!("could not start an effect's thread: {error}"));
             }
-            Handle::Channel(closed)
+            Handle::Channel(closed, closer)
         })
     }
 
@@ -430,8 +436,11 @@ impl<M: 'static> Effect<M> {
     /// This is for work that sends more than once (progress), and for work an app runs
     /// itself, such as in a tokio runtime or a thread pool.
     ///
-    /// What is sent after the effect is cancelled is discarded. The channel closes
-    /// once every `Sender` has been dropped.
+    /// When the effect is cancelled the channel is closed: what is waiting is dropped,
+    /// and from then on [`Sender::send`] returns `Err` and [`Sender::is_open`] returns
+    /// `false`, so work that keeps sending can tell, and stop. The same goes if `start`
+    /// panics, since nothing could cancel the effect after that. Otherwise the channel
+    /// closes once every `Sender` has been dropped.
     pub fn channel(start: impl FnOnce(Sender<M>) + 'static) -> Self
     where
         M: Send,
@@ -439,11 +448,18 @@ impl<M: 'static> Effect<M> {
         Self::work(Kind::Channel, move |tasks, deliver| {
             let alive = Rc::new(());
             let closed = Rc::downgrade(&alive);
-            start(tasks.channel(move |message| {
+            let sender = tasks.channel(move |message| {
                 let _ = &alive;
                 deliver.send(message);
-            }));
-            Handle::Channel(closed)
+            });
+            let closer = sender.closer();
+            // start が Sender をよそへ渡してから panic しても、そこから届かないように閉じる。
+            // 帳簿に載らないので、あとから止める手段がない。
+            if let Err(panic) = catch_unwind(AssertUnwindSafe(|| start(sender))) {
+                closer.close();
+                resume_unwind(panic);
+            }
+            Handle::Channel(closed, closer)
         })
     }
 
