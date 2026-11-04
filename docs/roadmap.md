@@ -259,10 +259,11 @@ Model–View–Update structure is complete in v0.16.0 (the guide stays in P2).
       A parent hands a child's effects on with `.map`. Each child model is kept in a
       `Scoped` wrapper that owns the tasks and timers its `update` started, and
       dropping the wrapper cancels them (dropping a `Task` or `Timer` does not stop
-      it; the result of work on another thread, which cannot be stopped, is
-      discarded), and an effect that has not started does not start. Effects under
-      the same key in one model replace each other: the earlier one is cancelled, or
-      its result discarded (a search overtaken by further typing). `Effect::cancel`
+      it; work on another thread cannot be stopped, so its channel is closed with
+      `ChannelCloser`, which drops the result and makes further sending fail), and an
+      effect that has not started does not start. Effects under the same key in one
+      model replace each other: the earlier one is cancelled, or its result discarded
+      (a search overtaken by further typing). `Effect::cancel`
       stops what runs under a key with nothing to replace it.
 - [x] *(app)* **Unified error handling** (`run_with_handler`,
       `App::set_error_handler`, `Report`, `Decision`). One handler, set by the app, receives

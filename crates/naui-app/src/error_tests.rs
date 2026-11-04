@@ -378,6 +378,27 @@ fn stopping_cancels_the_apps_effects() {
 }
 
 #[test]
+fn stopping_closes_the_channels_of_the_apps_effects() {
+    let (event_loop, tasks) = Loop::new();
+    let saved = Rc::new(RefCell::new(None));
+    let slot = saved.clone();
+    let (app, _, _) = app_answering(Some(&tasks), Decision::Stop, move |message| match message {
+        Msg::Plain => {
+            let slot = slot.clone();
+            Effect::channel(move |sender| *slot.borrow_mut() = Some(sender))
+        }
+        Msg::Named(_) => panic!("update panicked (intended)"),
+        Msg::FromHandler => Effect::none(),
+    });
+    app.send(Msg::Plain);
+    let sender: naui::Sender<Msg> = saved.borrow_mut().take().expect("started");
+    assert!(sender.is_open());
+    app.send(Msg::Named("save"));
+    event_loop.run();
+    assert!(!sender.is_open(), "別スレッドの処理が止まったと分かる");
+}
+
+#[test]
 fn a_failure_can_stop_the_app_too() {
     let (app, _, seen) = app_answering(None, Decision::Stop, |_| Effect::fail("fatal"));
     app.send(Msg::Plain);

@@ -311,6 +311,47 @@ fn a_panic_while_starting_does_not_stop_the_rest() {
     assert!(log.borrow().iter().any(|line| line.contains("rest")));
 }
 
+#[test]
+fn a_channel_whose_start_panicked_delivers_nothing() {
+    let (event_loop, tasks) = Loop::new();
+    let log = Log::default();
+    let saved = Rc::new(RefCell::new(None));
+    let slot = saved.clone();
+    let app = app(&tasks, &log, move |message| match message {
+        // Sender をよそへ渡してから panic する。渡した先はそのあとも送れる。
+        Msg::Go => {
+            let slot = slot.clone();
+            Effect::channel(move |sender| {
+                *slot.borrow_mut() = Some(sender);
+                panic!("start panicked (intended)");
+            })
+            .key("feed")
+        }
+        // 同じキーで始め直す。
+        Msg::Number(0) => Effect::after(SECOND, Msg::Done("new")).key("feed"),
+        _ => Effect::none(),
+    });
+    // panic はキューの中で受け止められ、ここまで巻き戻ってこない。
+    app.send(Msg::Go);
+    assert_eq!(app.running(), 0, "始まらなかった効果は動いていない");
+    taken(&log);
+
+    let sender: naui::Sender<Msg> = saved.borrow_mut().take().expect("handed over");
+    assert!(!sender.is_open());
+    assert!(sender.send(Msg::Done("from the failed start")).is_err());
+    event_loop.run();
+    assert!(log.borrow().is_empty(), "{:?}", log.borrow());
+
+    // 同じキーの新しい効果を始めたあとも、古い Sender からは届かない。
+    app.send(Msg::Number(0));
+    taken(&log);
+    assert!(sender.send(Msg::Done("from the failed start")).is_err());
+    event_loop.run();
+    assert!(log.borrow().is_empty(), "{:?}", log.borrow());
+    event_loop.advance(SECOND);
+    assert_eq!(taken(&log), [r#"update Done("new")"#, "render"]);
+}
+
 // 結果の戻り方
 
 #[test]
@@ -361,6 +402,62 @@ fn timers_send_their_messages_when_due() {
         "{log:?}"
     );
     assert_eq!(app.running(), 1, "繰り返しのものだけが残る");
+}
+
+#[test]
+fn cancelling_a_channel_closes_it_for_the_sending_side() {
+    let (event_loop, tasks) = Loop::new();
+    let log = Log::default();
+    let saved = Rc::new(RefCell::new(None));
+    let slot = saved.clone();
+    let app = app(&tasks, &log, move |message| match message {
+        Msg::Go => {
+            let slot = slot.clone();
+            Effect::channel(move |sender| *slot.borrow_mut() = Some(sender)).key("feed")
+        }
+        Msg::Number(0) => Effect::cancel("feed"),
+        _ => Effect::none(),
+    });
+    app.send(Msg::Go);
+    let sender: naui::Sender<Msg> = saved.borrow_mut().take().expect("handed over");
+    assert!(sender.is_open());
+    sender.send(Msg::Done("delivered")).expect("send");
+    event_loop.run();
+    assert!(log.borrow().iter().any(|line| line.contains("delivered")));
+
+    // 届く前の値は捨てられ、以後は送れない。送り手を持ち続けていても同じ。
+    sender.send(Msg::Done("waiting")).expect("send");
+    app.send(Msg::Number(0));
+    taken(&log);
+    assert!(!sender.is_open());
+    assert!(sender.send(Msg::Done("too late")).is_err());
+    event_loop.run();
+    assert!(log.borrow().is_empty(), "{:?}", log.borrow());
+    assert_eq!(app.running(), 0);
+}
+
+#[test]
+fn dropping_a_wrapper_closes_a_childs_channel() {
+    let (event_loop, tasks) = Loop::new();
+    let log = Log::default();
+    let saved = Rc::new(RefCell::new(None));
+    let slot = saved.clone();
+    let app = parent(&tasks, &log, move |message| match message {
+        Msg::Go => {
+            let slot = slot.clone();
+            Effect::channel(move |sender| *slot.borrow_mut() = Some(sender))
+        }
+        _ => Effect::none(),
+    });
+    app.send(ParentMsg::Child(1, Msg::Go));
+    let sender: naui::Sender<Msg> = saved.borrow_mut().take().expect("handed over");
+    assert!(sender.is_open());
+    app.send(ParentMsg::Remove(1));
+    assert!(!sender.is_open());
+    assert!(sender.send(Msg::Done("too late")).is_err());
+    taken(&log);
+    event_loop.run();
+    assert!(log.borrow().is_empty(), "{:?}", log.borrow());
 }
 
 #[test]

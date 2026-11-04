@@ -58,7 +58,7 @@ pub use canvas::{
     DrawCommand, Painter, Path, PathSegment, Point, PointerButton, PointerEvent, PointerPhase,
     Rect, WheelHandler, WHEEL_STEP,
 };
-pub use channel::Sender;
+pub use channel::{ChannelCloser, Sender};
 pub use color::Color;
 pub use datetime::{days_in_month, is_leap_year, DatePickerMode, DateTime, Time};
 pub use dialog::{

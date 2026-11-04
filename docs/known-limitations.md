@@ -533,5 +533,5 @@ that shape are covered in
   on the receiving side).
 - `Tasks::spawn` advances on the microtask queue. Running a future that never
   yields, or one that keeps waking itself, starves drawing.
-- Browsers have no app termination, so `Sender::send` never fails because the
-  channel is closed.
+- Browsers have no app termination, so `Sender::send` never fails because the UI has
+  finished. It does fail once the channel is closed with a `ChannelCloser`.
