@@ -1,7 +1,7 @@
 //! One item of the list: a component mounted and unmounted as items come and go.
 
 use naui::{Orientation, Sizing, Ui};
-use naui_app::{Component, Dispatch, Program};
+use naui_app::{Component, Dispatch, Effect, Program};
 
 pub struct Item {
     /// What identifies it among the mounted items. Not its position, which changes
@@ -37,11 +37,12 @@ impl Program for Item {
     type Message = Message;
     type View = View;
 
-    fn update(&mut self, message: Message) {
+    fn update(&mut self, message: Message) -> Effect<Message> {
         match message {
             Message::Toggled(done) => self.done = done,
             Message::Remove => {}
         }
+        Effect::none()
     }
 
     fn render(&self, view: &View) {

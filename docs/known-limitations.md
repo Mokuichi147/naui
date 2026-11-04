@@ -496,6 +496,10 @@ that shape are covered in
   that sends to a `Sender` inside a future run with `Tasks::spawn`. The `Tasks` API
   itself is the same on all four platforms, so no `cfg` branching is needed, but
   **code that includes `std::thread::spawn` does not run on the Web as is**.
+- For the same reason, naui-app's `Effect::thread` cannot start on the Web and is
+  reported as a failure. Use `Effect::spawn`, or `Effect::channel` with a sending side
+  of your own. A failure goes to standard error, which wasm does not show anywhere, so
+  until naui-app has its error handler one is not visible on the Web.
 - A Web Worker is a separate JavaScript runtime, so even though `Sender` is `Send` as
   a Rust type, it cannot be passed there (bridge with `postMessage` and call `send`
   on the receiving side).

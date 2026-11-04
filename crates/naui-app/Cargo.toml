@@ -12,3 +12,6 @@ readme = "README.md"
 
 [dependencies]
 naui.workspace = true
+
+[dev-dependencies]
+naui-core.workspace = true

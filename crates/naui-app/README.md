@@ -23,9 +23,17 @@ messages, `update` and widgets. A child's messages are wrapped into its parent's
 and go through the same queue; `Mounted` keeps one child's widgets, and `Children`
 mounts and unmounts children as a collection in the model changes.
 
+`update` does not start work: it returns an `Effect` asking for a task, work on
+another thread, a timer or a failure to report, which starts after `render`. Results
+come back as messages. An effect belongs to the model that asked for it: dropping a
+child's `Scoped` wrapper cancels what it started, and effects under the same key in
+one model replace each other (a search overtaken by further typing).
+
 See [`examples/todo`](https://github.com/mokuichi147/naui/tree/main/examples/todo)
-for a complete app, and
+for a complete app,
 [`examples/checklist`](https://github.com/mokuichi147/naui/tree/main/examples/checklist)
-for one split into components.
+for one split into components, and
+[`examples/search`](https://github.com/mokuichi147/naui/tree/main/examples/search)
+for one with effects.
 
 It is `#![forbid(unsafe_code)]`.

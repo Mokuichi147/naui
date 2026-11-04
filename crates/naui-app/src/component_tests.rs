@@ -8,7 +8,7 @@ use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::rc::{Rc, Weak};
 
 use super::component::{Keyed, Mounted, Step};
-use super::{App, Dispatch, Program};
+use super::{App, Dispatch, Effect, Program};
 
 /// What happened, in order.
 type Log = Rc<RefCell<Vec<String>>>;
@@ -62,10 +62,11 @@ impl Program for Row {
     type Message = RowMsg;
     type View = RowView;
 
-    fn update(&mut self, message: RowMsg) {
+    fn update(&mut self, message: RowMsg) -> Effect<RowMsg> {
         match message {
             RowMsg::Rename(text) => self.text = text,
         }
+        Effect::none()
     }
 
     fn render(&self, view: &RowView) {
@@ -135,11 +136,12 @@ impl Program for Parent {
     type Message = ParentMsg;
     type View = RefCell<Option<Mounted<Row>>>;
 
-    fn update(&mut self, message: ParentMsg) {
+    fn update(&mut self, message: ParentMsg) -> Effect<ParentMsg> {
         self.log.borrow_mut().push(format!("parent {message:?}"));
         self.got.push(message.clone());
-        if let ParentMsg::Row(message) = message {
-            self.row.update(message);
+        match message {
+            ParentMsg::Row(message) => self.row.update(message).map(ParentMsg::Row),
+            ParentMsg::Keyed(..) => Effect::none(),
         }
     }
 
@@ -282,7 +284,9 @@ impl Program for Outer {
     type Message = OuterMsg;
     type View = OuterView;
 
-    fn update(&mut self, _: OuterMsg) {}
+    fn update(&mut self, _: OuterMsg) -> Effect<OuterMsg> {
+        Effect::none()
+    }
 
     fn render(&self, _: &OuterView) {}
 }

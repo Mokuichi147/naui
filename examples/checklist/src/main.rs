@@ -16,7 +16,7 @@ mod item;
 use entry::Entry;
 use item::Item;
 use naui::{Orientation, Padding, Settings, Sizing, Ui};
-use naui_app::{Change, Children, Dispatch, Mounted, Program};
+use naui_app::{Change, Children, Dispatch, Effect, Mounted, Program};
 
 struct Checklist {
     entry: Entry,
@@ -62,23 +62,31 @@ impl Program for Checklist {
     type Message = Message;
     type View = View;
 
-    fn update(&mut self, message: Message) {
+    fn update(&mut self, message: Message) -> Effect<Message> {
         match message {
             Message::Entry(entry::Message::Submit) => {
                 if let Some(text) = self.entry.take() {
                     self.add(&text);
                 }
+                Effect::none()
             }
-            Message::Entry(message) => self.entry.update(message),
-            Message::Item(id, item::Message::Remove) => self.items.retain(|item| item.id != id),
+            Message::Entry(message) => self.entry.update(message).map(Message::Entry),
+            Message::Item(id, item::Message::Remove) => {
+                self.items.retain(|item| item.id != id);
+                Effect::none()
+            }
             // An item removed a moment ago can still have a message in the queue, so
             // a missing id is not an error.
-            Message::Item(id, message) => {
-                if let Some(item) = self.items.iter_mut().find(|item| item.id == id) {
-                    item.update(message);
-                }
+            Message::Item(id, message) => match self.items.iter_mut().find(|item| item.id == id) {
+                Some(item) => item
+                    .update(message)
+                    .map(move |message| Message::Item(id, message)),
+                None => Effect::none(),
+            },
+            Message::ClearDone => {
+                self.items.retain(|item| !item.done);
+                Effect::none()
             }
-            Message::ClearDone => self.items.retain(|item| !item.done),
         }
     }
 
@@ -161,32 +169,32 @@ mod tests {
     #[test]
     fn submitting_the_entry_adds_an_item() {
         let mut checklist = Checklist::new(&[]);
-        checklist.update(Message::Entry(entry::Message::DraftChanged(
+        let _ = checklist.update(Message::Entry(entry::Message::DraftChanged(
             "  Buy milk ".into(),
         )));
-        checklist.update(Message::Entry(entry::Message::Submit));
+        let _ = checklist.update(Message::Entry(entry::Message::Submit));
         assert_eq!(texts(&checklist), ["Buy milk"]);
         // 空の入力では増えない。
-        checklist.update(Message::Entry(entry::Message::Submit));
+        let _ = checklist.update(Message::Entry(entry::Message::Submit));
         assert_eq!(checklist.items.len(), 1);
     }
 
     #[test]
     fn an_items_messages_reach_that_item() {
         let mut checklist = Checklist::new(&["a", "b", "c"]);
-        checklist.update(Message::Item(1, item::Message::Toggled(true)));
-        checklist.update(Message::Item(0, item::Message::Remove));
+        let _ = checklist.update(Message::Item(1, item::Message::Toggled(true)));
+        let _ = checklist.update(Message::Item(0, item::Message::Remove));
         assert_eq!(texts(&checklist), ["b", "c"]);
         assert!(checklist.items[0].done);
-        checklist.update(Message::ClearDone);
+        let _ = checklist.update(Message::ClearDone);
         assert_eq!(texts(&checklist), ["c"]);
     }
 
     #[test]
     fn a_message_for_a_removed_item_is_ignored() {
         let mut checklist = Checklist::new(&["a"]);
-        checklist.update(Message::Item(0, item::Message::Remove));
-        checklist.update(Message::Item(0, item::Message::Toggled(true)));
+        let _ = checklist.update(Message::Item(0, item::Message::Remove));
+        let _ = checklist.update(Message::Item(0, item::Message::Toggled(true)));
         assert!(checklist.items.is_empty());
     }
 }

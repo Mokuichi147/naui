@@ -4,12 +4,13 @@
 //!
 //! The app's state lives in one model. Callbacks do not change it; they only
 //! **send a typed message**. Messages are handled one at a time, in the order they
-//! were sent: [`Program::update`] changes the model, the borrow of the model ends,
-//! and only then does [`Program::render`] set the widgets to match it.
+//! were sent: [`Program::update`] changes the model and may ask for an [`Effect`], the
+//! borrow of the model ends, [`Program::render`] sets the widgets to match it, and only
+//! then does the effect start.
 //!
 //! ```no_run
 //! use naui::{Orientation, Settings, Ui};
-//! use naui_app::{Dispatch, Program};
+//! use naui_app::{Dispatch, Effect, Program};
 //!
 //! #[derive(Default)]
 //! struct Counter {
@@ -30,11 +31,12 @@
 //!     type Message = Message;
 //!     type View = View;
 //!
-//!     fn update(&mut self, message: Message) {
+//!     fn update(&mut self, message: Message) -> Effect<Message> {
 //!         match message {
 //!             Message::Increment => self.count += 1,
 //!             Message::Reset => self.count = 0,
 //!         }
+//!         Effect::none()
 //!     }
 //!
 //!     fn render(&self, view: &View) {
@@ -74,8 +76,8 @@
 //!   queue instead of re-entering `update`, so the model needs no
 //!   `Rc<RefCell<_>>`.
 //! - **Testable logic.** `update` is plain Rust; it can be called without a window,
-//!   children included. [`App::new`] runs the queue without a window too, with any
-//!   type as the view.
+//!   children included, and the effects it returns are values a test can look at.
+//!   [`App::new`] runs the queue without a window too, with any type as the view.
 //!
 //! ## Building once, updating with setters
 //!
@@ -102,13 +104,27 @@
 //! in its view are taken down with it, when those widgets are dropped. See
 //! [`examples/checklist`](https://github.com/mokuichi147/naui/tree/main/examples/checklist).
 //!
+//! ## Effects
+//!
+//! `update` does not start work. It returns an [`Effect`] that asks for it: a task
+//! ([`Effect::spawn`]), work on other threads ([`Effect::thread`],
+//! [`Effect::channel`]), a timer ([`Effect::after`], [`Effect::every`]) or a failure to
+//! report ([`Effect::fail`]). Results come back as messages, through the same queue.
+//! Work to do when the app or a component starts is asked for in the same way: send a
+//! message from `build` or [`Component::mount`], and return the effect from its
+//! `update`.
+//!
+//! A parent hands a child's effect on with [`Effect::map`], as it wraps the child's
+//! messages. An effect belongs to the model that asked for it: a child's model is kept
+//! in a [`Scoped`] wrapper, and dropping the wrapper cancels what the child started.
+//! Effects under the same [`key`](Effect::key) in one model replace each other (a
+//! search overtaken by further typing). See
+//! [`examples/search`](https://github.com/mokuichi147/naui/tree/main/examples/search).
+//!
 //! ## Not yet here
 //!
-//! Effects (asynchronous work whose results come back as messages, cancelled when
-//! the model that started them is dropped) and one handler for panics and errors
-//! are the next steps on naui's roadmap. Until then, start work with [`naui::Tasks`] and send its result
-//! with a [`Dispatch`] (or the [`Sender`] from [`Dispatch::sender`] on other
-//! threads).
+//! One handler for panics and errors is the next step on naui's roadmap. Until then,
+//! a failure goes to standard error.
 
 #![forbid(unsafe_code)]
 
@@ -131,15 +147,18 @@ pub trait Program: 'static {
 
     /// Changes the model for one message.
     ///
-    /// It does not touch widgets; that is `render`'s job, after the change. Messages
-    /// sent from here (through a [`Dispatch`] the model holds) wait in the queue and
-    /// are handled after this one.
-    fn update(&mut self, message: Self::Message);
+    /// It does not touch widgets; that is `render`'s job, after the change. Nor does it
+    /// start work: it returns an [`Effect`] asking for it ([`Effect::none`] if there is
+    /// nothing to do), which starts after the next `render`. Messages sent from here
+    /// (through a [`Dispatch`] the model holds) wait in the queue and are handled after
+    /// this one.
+    fn update(&mut self, message: Self::Message) -> Effect<Self::Message>;
 
     /// Sets the widgets to match the model.
     ///
     /// Called once after the view is built, and again whenever the queue has been
-    /// emptied by `update`. Call every setter that depends on the model every time:
+    /// emptied by `update`, before the effects `update` returned start. Call every
+    /// setter that depends on the model every time:
     /// naui's setters do nothing when the value is already shown.
     fn render(&self, view: &Self::View);
 }
@@ -329,6 +348,15 @@ struct Inner<P: Program> {
     model: RefCell<P>,
     view: OnceCell<P::View>,
     queue: RefCell<VecDeque<P::Message>>,
+    /// What `update` returned, waiting for the next `render` to be over.
+    effects: RefCell<VecDeque<Effect<P::Message>>>,
+    /// What the effects run on. `None` when the app was made without it.
+    tasks: Option<Tasks>,
+    /// Owns the effects that belong to the app's own model. A child's belong to its
+    /// [`Scoped`] wrapper, and those go first, with the model.
+    owner: Owner,
+    /// A dispatch to this app, for what effects send.
+    dispatch: Dispatch<P::Message>,
     /// Whether the queue is being handled. A message posted meanwhile waits.
     running: Cell<bool>,
     /// Whether the model may have changed since the last render.
@@ -351,9 +379,9 @@ impl<P: Program> Inner<P> {
         self.run();
     }
 
-    /// Hands every queued message to `update`, then renders, until the queue stays
-    /// empty. Does nothing if already running (the caller up the stack carries on)
-    /// or before the view is built.
+    /// Hands every queued message to `update`, renders, and then starts the effects
+    /// `update` returned, until nothing is left to do. Does nothing if already running
+    /// (the caller up the stack carries on) or before the view is built.
     fn run(&self) {
         let Some(view) = self.view.get() else {
             return;
@@ -366,15 +394,23 @@ impl<P: Program> Inner<P> {
             // 取り出す間だけキューを借りる。update の中から送られたものは、
             // 借りていないキューへ積まれて、この同じループで処理される。
             while let Some(message) = self.pop() {
-                self.model.borrow_mut().update(message);
+                let effect = self.model.borrow_mut().update(message);
+                self.effects.borrow_mut().push_back(effect);
                 self.dirty.set(true);
             }
-            if !self.dirty.replace(false) {
-                break;
+            if self.dirty.replace(false) {
+                // render が値を変えて通知を起こし、メッセージが積まれることがある。
+                // それはもう一周して update へ渡す。効果を始めるのは落ち着いてから。
+                self.model.borrow().render(view);
+                continue;
             }
-            // render が値を変えて通知を起こし、メッセージが積まれることがある。
-            // それはもう一周して update へ渡す。
-            self.model.borrow().render(view);
+            // モデルを借りていないところで、ひとつずつ始める。panic しても残りは
+            // effects に残り、次に動くときに始まる。
+            let effect = self.effects.borrow_mut().pop_front();
+            let Some(effect) = effect else {
+                break;
+            };
+            effect.start(self.tasks.as_ref(), &self.dispatch, &self.owner);
         }
     }
 
@@ -399,15 +435,41 @@ impl<P: Program> App<P> {
     /// Messages sent while `build` runs wait until the first render, and are then
     /// handled in order.
     ///
-    /// Nothing here needs a window, so tests can use any type as the view.
+    /// Nothing here needs a window, so tests can use any type as the view. Without
+    /// [`Tasks`] effects cannot run, though: a failure is still reported, and work is
+    /// reported as a failure instead of starting. An app that runs effects inside
+    /// [`naui::run`] is made with [`with_tasks`](Self::with_tasks).
     pub fn new<E>(
         model: P,
         build: impl FnOnce(&Dispatch<P::Message>) -> Result<P::View, E>,
     ) -> Result<Self, E> {
-        let inner = Rc::new(Inner {
+        Self::start(None, model, build)
+    }
+
+    /// Like [`new`](Self::new), running effects on `tasks` ([`Ui::tasks`]).
+    pub fn with_tasks<E>(
+        tasks: &Tasks,
+        model: P,
+        build: impl FnOnce(&Dispatch<P::Message>) -> Result<P::View, E>,
+    ) -> Result<Self, E> {
+        Self::start(Some(tasks.clone()), model, build)
+    }
+
+    fn start<E>(
+        tasks: Option<Tasks>,
+        model: P,
+        build: impl FnOnce(&Dispatch<P::Message>) -> Result<P::View, E>,
+    ) -> Result<Self, E> {
+        let inner = Rc::new_cyclic(|me: &Weak<Inner<P>>| Inner {
             model: RefCell::new(model),
             view: OnceCell::new(),
             queue: RefCell::new(VecDeque::new()),
+            effects: RefCell::new(VecDeque::new()),
+            tasks,
+            owner: Owner::default(),
+            dispatch: Dispatch {
+                mailbox: Rc::new(ToApp(me.clone())),
+            },
             running: Cell::new(false),
             dirty: Cell::new(true),
         });
@@ -423,9 +485,7 @@ impl<P: Program> App<P> {
 
     /// A [`Dispatch`] for sending messages to this app.
     pub fn dispatch(&self) -> Dispatch<P::Message> {
-        Dispatch {
-            mailbox: Rc::new(ToApp(Rc::downgrade(&self.inner))),
-        }
+        self.inner.dispatch.clone()
     }
 
     /// Sends a message, as [`Dispatch::send`] does.
@@ -449,6 +509,12 @@ impl<P: Program> App<P> {
     pub fn pending(&self) -> usize {
         self.inner.queue.borrow().len()
     }
+
+    /// How many effects of the app's own model have started and not finished. Those of
+    /// a child in a [`Scoped`] are counted by its [`Scoped::running`].
+    pub fn running(&self) -> usize {
+        self.inner.owner.running()
+    }
 }
 
 thread_local! {
@@ -468,7 +534,7 @@ where
     F: FnOnce(&Ui, &Dispatch<P::Message>) -> naui::Result<P::View> + 'static,
 {
     let result = naui::run(settings, move |ui| {
-        let app = App::new(model, |dispatch| build(ui, dispatch))?;
+        let app = App::with_tasks(&ui.tasks(), model, |dispatch| build(ui, dispatch))?;
         RUNNING.with(|apps| apps.borrow_mut().push(Box::new(app)));
         Ok(())
     });
@@ -481,11 +547,18 @@ where
 }
 
 mod component;
+mod effect;
 
 pub use component::{Change, Children, Component, Mounted};
+pub use effect::{Effect, Scoped};
+
+use effect::Owner;
 
 #[cfg(test)]
 mod tests;
 
 #[cfg(test)]
 mod component_tests;
+
+#[cfg(test)]
+mod effect_tests;

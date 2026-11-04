@@ -1,6 +1,7 @@
 //! Components: parts of an app with their own model, messages, `update` and widgets.
 
 use std::any::Any;
+use std::borrow::Borrow;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
@@ -26,9 +27,12 @@ use crate::{Dispatch, Program, Running};
 ///    [`Dispatch`] it receives. What that dispatch sends is wrapped into the
 ///    parent's message (`Message::Editor(editor::Message::Saved)`), so it goes
 ///    through the same queue and reaches the parent's `update`.
-/// 2. **`update`**: the parent's `update` hands the child's messages on to it
-///    (`Message::Editor(message) => self.editor.update(message)`). It can act on
-///    some of them itself first, which is how a child tells its parent something.
+/// 2. **`update`**: the parent's `update` hands the child's messages on to it, and
+///    its effects back up
+///    (`Message::Editor(message) => self.editor.update(message).map(Message::Editor)`).
+///    It can act on some of them itself first, which is how a child tells its parent
+///    something. A child that starts work and can go away before it ends is kept in a
+///    [`Scoped`](crate::Scoped), which cancels that work when dropped.
 /// 3. **`render`**: called with the child's model through [`Mounted::render`] or
 ///    [`Children::sync`], from the parent's `render`.
 /// 4. **`unmount`**: when the parent takes it down, in this order: its dispatch is
@@ -52,7 +56,7 @@ use crate::{Dispatch, Program, Running};
 ///
 /// ```no_run
 /// use naui::{Orientation, Ui};
-/// use naui_app::{Component, Dispatch, Program};
+/// use naui_app::{Component, Dispatch, Effect, Program};
 ///
 /// #[derive(Default)]
 /// struct Search {
@@ -74,12 +78,13 @@ use crate::{Dispatch, Program, Running};
 ///     type Message = SearchMessage;
 ///     type View = SearchView;
 ///
-///     fn update(&mut self, message: SearchMessage) {
+///     fn update(&mut self, message: SearchMessage) -> Effect<SearchMessage> {
 ///         match message {
 ///             SearchMessage::Changed(text) => self.query = text,
 ///             // The parent acts on it (see below).
 ///             SearchMessage::Submit => {}
 ///         }
+///         Effect::none()
 ///     }
 ///
 ///     fn render(&self, view: &SearchView) {
@@ -116,12 +121,13 @@ use crate::{Dispatch, Program, Running};
 /// }
 ///
 /// impl App {
-///     fn update(&mut self, message: Message) {
+///     fn update(&mut self, message: Message) -> Effect<Message> {
 ///         match message {
 ///             Message::Search(SearchMessage::Submit) => {
 ///                 self.results = vec![format!("Results for {}", self.search.query)];
+///                 Effect::none()
 ///             }
-///             Message::Search(message) => self.search.update(message),
+///             Message::Search(message) => self.search.update(message).map(Message::Search),
 ///         }
 ///     }
 /// }
@@ -165,12 +171,12 @@ pub trait Component: Program {
 ///
 /// ```no_run
 /// # use naui::{Orientation, Ui};
-/// # use naui_app::{Component, Dispatch, Mounted, Program};
+/// # use naui_app::{Component, Dispatch, Effect, Mounted, Program};
 /// # struct Search;
 /// # impl Program for Search {
 /// #     type Message = ();
 /// #     type View = naui::Stack;
-/// #     fn update(&mut self, _: ()) {}
+/// #     fn update(&mut self, _: ()) -> Effect<()> { Effect::none() }
 /// #     fn render(&self, _: &naui::Stack) {}
 /// # }
 /// # impl Component for Search {
@@ -357,7 +363,10 @@ pub(crate) struct Keyed<K, C: Program> {
 
 /// Runs `f`, keeping a panic for later, so that the other children still get their
 /// turn. Without unwinding (`panic = "abort"`, wasm) the app stops here.
-fn attempt<R>(panicked: &mut Option<Box<dyn Any + Send>>, f: impl FnOnce() -> R) -> Option<R> {
+pub(crate) fn attempt<R>(
+    panicked: &mut Option<Box<dyn Any + Send>>,
+    f: impl FnOnce() -> R,
+) -> Option<R> {
     match catch_unwind(AssertUnwindSafe(f)) {
         Ok(value) => Some(value),
         Err(panic) => {
@@ -639,12 +648,12 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
 ///
 /// ```no_run
 /// # use naui::{Orientation, Ui};
-/// # use naui_app::{Change, Children, Component, Dispatch, Program};
+/// # use naui_app::{Change, Children, Component, Dispatch, Effect, Program};
 /// # struct Row { id: u64 }
 /// # impl Program for Row {
 /// #     type Message = ();
 /// #     type View = naui::Stack;
-/// #     fn update(&mut self, _: ()) {}
+/// #     fn update(&mut self, _: ()) -> Effect<()> { Effect::none() }
 /// #     fn render(&self, _: &naui::Stack) {}
 /// # }
 /// # impl Component for Row {
@@ -699,7 +708,8 @@ impl<K: Clone + Eq + Hash + 'static, C: Component> Children<K, C> {
     }
 
     /// Brings the mounted children in line with `models`, given in the order they
-    /// are shown, each with its key:
+    /// are shown, each with its key (each model as it is, or in a
+    /// [`Scoped`](crate::Scoped)):
     ///
     /// 1. A child whose key is no longer there is unmounted (as
     ///    [`Mounted::unmount`] does) and [`Change::Remove`] takes it out.
@@ -726,16 +736,16 @@ impl<K: Clone + Eq + Hash + 'static, C: Component> Children<K, C> {
     /// asking to remove every child, from the last, and to insert them again. That
     /// relies on the container holding only these children and ignoring positions
     /// out of range, as [`naui::Stack`] does.
-    pub fn sync<'a>(
+    pub fn sync<'a, T: Borrow<C> + 'a>(
         &self,
-        models: impl IntoIterator<Item = (K, &'a C)>,
+        models: impl IntoIterator<Item = (K, &'a T)>,
         mut place: impl FnMut(Change<'_>),
     ) -> naui::Result<()>
     where
         C: 'a,
     {
         self.keyed.sync_with(
-            models,
+            models.into_iter().map(|(key, model)| (key, model.borrow())),
             |dispatch| C::mount(&self.ui, dispatch),
             |step| {
                 place(match step {

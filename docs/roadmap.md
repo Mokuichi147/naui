@@ -246,18 +246,24 @@ Model–View–Update structure is complete in v0.16.0 (the guide stays in P2).
       `sync`. A reordering leaves the longest run already in order where it is, since
       a moved child loses the keyboard focus. It is meant for modest numbers of
       children: thousands of rows belong in `List` or `Table`.
-- [ ] *(app)* **Effects and lifecycles.** `Program::update` returns an
-      `Effect<Message>` (a breaking change, made while naui-app has no users),
-      which gathers asynchronous work: tasks (`Tasks::spawn`), work on other
-      threads (`Tasks::channel`) and timers (`Tasks::after`, `Tasks::every`), and
-      a failure to report (`Effect::fail`, so an error inside `update` and a
-      failed effect take the same path). A parent hands a child's effects on with
-      `.map`. Each child model is kept in a wrapper that owns the tasks and timers
-      its `update` started, and dropping the wrapper cancels them (dropping a
-      `Task` or `Timer` does not stop it; the result of work on another thread,
-      which cannot be stopped, is discarded). Effects under the same key in one
-      model replace each other: the earlier one is cancelled, or its result
-      discarded (a search overtaken by further typing). Until the next step, a
+- [x] *(app)* **Effects and lifecycles** (`Effect`, `Scoped`, `App::with_tasks`,
+      `examples/search`). `Program::update` returns an `Effect<Message>` (a breaking
+      change, made while naui-app has no users), which gathers asynchronous work:
+      tasks (`Effect::spawn`, on `Tasks::spawn`), work on other threads
+      (`Effect::thread` and `Effect::channel`, on `Tasks::channel`) and timers
+      (`Effect::after`, `Effect::every`), and a failure to report (`Effect::fail`).
+      Work that can fail hands its result to a message, so an error inside `update`
+      and a failed effect take the same path, and the model does not stay "loading".
+      Effects start after `render`, once the queue is empty, and nothing happens until
+      then, so `update` stays plain Rust and tests can look at what it returns.
+      A parent hands a child's effects on with `.map`. Each child model is kept in a
+      `Scoped` wrapper that owns the tasks and timers its `update` started, and
+      dropping the wrapper cancels them (dropping a `Task` or `Timer` does not stop
+      it; the result of work on another thread, which cannot be stopped, is
+      discarded), and an effect that has not started does not start. Effects under
+      the same key in one model replace each other: the earlier one is cancelled, or
+      its result discarded (a search overtaken by further typing). `Effect::cancel`
+      stops what runs under a key with nothing to replace it. Until the next step, a
       failure goes to standard error.
 - [ ] *(app)* **Unified error handling.** One handler, set by the app, receives
       panics on the UI thread, the failures from `update` and effects, and the

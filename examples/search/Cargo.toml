@@ -1,0 +1,12 @@
+[package]
+name = "search"
+description = "Example of a naui app that runs asynchronous work as naui-app effects"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+naui.workspace = true
+naui-app.workspace = true
