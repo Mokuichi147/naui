@@ -127,8 +127,11 @@ the UI. In return, apps get:
   error handler set by the app, together with the message being handled when it
   happens inside the queue. Where unwinding is available (the desktop platforms
   with the default `panic = "unwind"`), naui-app also catches the panic per message
-  and per `render`, and the queue goes on; the model may be left half changed. On
-  the Web, wasm aborts on a panic, so the handler is told and the app stops there.
+  and per `render`. Catching it does not mean the app can safely go on: the model may
+  be left half changed, and naui-app cannot tell. So the handler decides whether the
+  queue goes on or the app stops; without a handler it goes on, as naui's callbacks
+  do today. On the Web, wasm aborts on a panic, so the handler is told and the app
+  stops there.
   The same handler receives the failures `update` and effects report, so they can
   be logged or shown to the user.
 - **Components hold widgets rather than being widgets.** `naui::Widget` is sealed,
@@ -237,6 +240,11 @@ Model–View–Update structure is complete in v0.16.0 (the guide stays in P2).
       its widgets are still in place, the root is removed, and the widgets are
       dropped. Dropping a `Mounted` or `Children` takes its children down too, so
       components nested in a view go with it, with nothing for the parent to do.
+      `Children::sync` holds no borrow while it calls `mount`, `unmount`, `render` or
+      the parent's placement, so they can read the `Children`. A panic in one child
+      does not stop the others, and one in the placement is put right by the next
+      `sync`. It is meant for modest numbers of children: thousands of rows belong in
+      `List` or `Table`.
 - [ ] *(app)* **Effects and lifecycles.** `Program::update` returns an
       `Effect<Message>` (a breaking change, made while naui-app has no users),
       which gathers asynchronous work: tasks (`Tasks::spawn`), work on other
@@ -253,14 +261,17 @@ Model–View–Update structure is complete in v0.16.0 (the guide stays in P2).
 - [ ] *(app)* **Unified error handling.** One handler, set by the app, receives
       panics on the UI thread, the failures from `update` and effects, and the
       mount failures of `Children::sync` (which stops returning them: `render` has
-      no caller to hand them to). Reports from inside the queue carry the message
+      no caller to hand them to) along with its repeated keys, which go to standard
+      error until then. Reports from inside the queue carry the message
       being handled, so the handler needs the message type to be `Debug`; the
       text is recorded before `update`, cut to a bounded length, and only while a
       handler is set, so large messages cost little. Panics reach it through a
       panic hook naui-app installs in front of the previous one. On the desktop
       platforms with `panic = "unwind"` they are also caught per message and per
-      `render`, and the queue goes on; on the Web (wasm aborts on a panic) and
-      with `panic = "abort"`, the handler is told and the app stops, which is
+      `render`, and the handler decides whether the queue goes on or the app stops,
+      since naui-app cannot tell whether the model is still whole; without a handler
+      the queue goes on. On the Web (wasm aborts on a panic) and with
+      `panic = "abort"`, the handler is told and the app stops, which is
       written in [Known limitations](known-limitations.md). naui itself gets no
       handler: panics in ordinary naui callbacks reach naui-app's hook as well and
       are reported without a message.

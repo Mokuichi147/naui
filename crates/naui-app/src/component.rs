@@ -1,13 +1,15 @@
 //! Components: parts of an app with their own model, messages, `update` and widgets.
 
-use std::cell::{Ref, RefCell};
+use std::any::Any;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::hash::Hash;
+use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::rc::{Rc, Weak};
 
 use naui::{Ui, Widget};
 
-use crate::{Dispatch, Program};
+use crate::{Dispatch, Program, Running};
 
 /// A part of an app (a screen, a panel, a row) with its own model, messages,
 /// `update` and widgets.
@@ -147,6 +149,9 @@ pub trait Component: Program {
     /// the widgets should not be touched: when the app has already ended (the OS
     /// takes back what is left), and while a panic is unwinding. A component that has
     /// to save something when the app ends should do that from a message instead.
+    ///
+    /// If it panics, the root widget is still removed, and the panic carries on from
+    /// there.
     fn unmount(view: &Self::View) {
         let _ = view;
     }
@@ -194,7 +199,7 @@ pub struct Mounted<C: Program> {
     view: C::View,
     /// While this is alive, the component's dispatch sends. Taken when it is taken
     /// down, so that happens once.
-    link: Option<Rc<()>>,
+    link: RefCell<Option<Rc<()>>>,
     dispatch: Dispatch<C::Message>,
     unmount: fn(&C::View),
 }
@@ -254,7 +259,7 @@ impl<C: Program> Mounted<C> {
         let view = mount(&dispatch)?;
         Ok(Self {
             view,
-            link: Some(link),
+            link: RefCell::new(Some(link)),
             dispatch,
             unmount,
         })
@@ -272,27 +277,40 @@ impl<C: Program> Mounted<C> {
 
     /// Takes the component down, with `remove` taking its root out of its container.
     /// The widgets are dropped on the way out.
-    pub(crate) fn unmount_with(mut self, remove: impl FnOnce(&C::View)) {
-        self.take_down(remove);
+    pub(crate) fn unmount_with(self, remove: impl FnOnce(&C::View)) {
+        let cleaned_up = self.clean_up();
+        remove(&self.view);
+        if let Err(panic) = cleaned_up {
+            resume_unwind(panic);
+        }
     }
 
-    fn take_down(&mut self, remove: impl FnOnce(&C::View)) {
-        let Some(link) = self.link.take() else {
-            return;
+    /// Disconnects the dispatch and calls `unmount`, once. A panic in `unmount` is
+    /// handed back, so that the caller can still remove the root widget.
+    fn clean_up(&self) -> std::thread::Result<()> {
+        let Some(link) = self.link.borrow_mut().take() else {
+            return Ok(());
         };
         drop(link);
         // アプリが終わったあとはウィジェットに触らない。巻き戻しの途中で後片付けが
         // また panic すると abort になるので、そのときも呼ばない。
         if self.dispatch.mailbox.app_is_there() && !std::thread::panicking() {
-            (self.unmount)(&self.view);
+            catch_unwind(AssertUnwindSafe(|| (self.unmount)(&self.view)))
+        } else {
+            Ok(())
         }
-        remove(&self.view);
+    }
+
+    fn is_taken_down(&self) -> bool {
+        self.link.borrow().is_none()
     }
 }
 
 impl<C: Program> Drop for Mounted<C> {
     fn drop(&mut self) {
-        self.take_down(|_| {});
+        if let Err(panic) = self.clean_up() {
+            resume_unwind(panic);
+        }
     }
 }
 
@@ -319,7 +337,7 @@ pub(crate) enum Step<'a, V> {
 /// A mounted child, under its key.
 struct Entry<K, C: Program> {
     key: K,
-    mounted: Mounted<C>,
+    mounted: Rc<Mounted<C>>,
 }
 
 /// Makes the dispatch of the child under a key, sending while the link is alive.
@@ -330,6 +348,23 @@ pub(crate) struct Keyed<K, C: Program> {
     entries: RefCell<Vec<Entry<K, C>>>,
     dispatch: MakeDispatch<K, C::Message>,
     unmount: fn(&C::View),
+    /// Whether `sync_with` is running. A call made meanwhile does nothing.
+    syncing: Cell<bool>,
+    /// Whether `place` panicked, so that the container may not match `entries`.
+    /// `entries` still lists everything the container may hold.
+    broken: Cell<bool>,
+}
+
+/// Runs `f`, keeping a panic for later, so that the other children still get their
+/// turn. Without unwinding (`panic = "abort"`, wasm) the app stops here.
+fn attempt<R>(panicked: &mut Option<Box<dyn Any + Send>>, f: impl FnOnce() -> R) -> Option<R> {
+    match catch_unwind(AssertUnwindSafe(f)) {
+        Ok(value) => Some(value),
+        Err(panic) => {
+            panicked.get_or_insert(panic);
+            None
+        }
+    }
 }
 
 impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
@@ -348,6 +383,8 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
                 parent.wrapped(move |message| wrap(key.clone(), message), Some(link))
             }),
             unmount,
+            syncing: Cell::new(false),
+            broken: Cell::new(false),
         }
     }
 
@@ -355,16 +392,17 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
         self.entries.borrow().len()
     }
 
-    pub(crate) fn view(&self, key: &K) -> Option<Ref<'_, C::View>> {
-        Ref::filter_map(self.entries.borrow(), |entries| {
-            entries
-                .iter()
-                .find(|entry| entry.key == *key)
-                .map(|entry| entry.mounted.view())
-        })
-        .ok()
+    pub(crate) fn get(&self, key: &K) -> Option<Rc<Mounted<C>>> {
+        self.entries
+            .borrow()
+            .iter()
+            .find(|entry| entry.key == *key)
+            .map(|entry| entry.mounted.clone())
     }
 
+    // 外のコード (mount / unmount / render / place) を呼ぶ間は entries を借りない。
+    // 呼ばれた先から len や get を呼べるようにするため。entries を変えるのはここだけ
+    // で、入れ子の呼び出しは何もしないので、借り直しても位置はずれない。
     pub(crate) fn sync_with<'a, E>(
         &self,
         models: impl IntoIterator<Item = (K, &'a C)>,
@@ -374,86 +412,170 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
     where
         C: 'a,
     {
+        if self.syncing.replace(true) {
+            return Ok(());
+        }
+        let _syncing = Running(&self.syncing);
+
         let mut wanted_keys = HashSet::new();
+        let mut repeated = false;
         let wanted: Vec<(K, &C)> = models
             .into_iter()
-            .filter(|(key, _)| wanted_keys.insert(key.clone()))
+            .filter(|(key, _)| {
+                let new = wanted_keys.insert(key.clone());
+                repeated |= !new;
+                new
+            })
             .collect();
-        let mut entries = self.entries.borrow_mut();
+        if repeated {
+            eprintln!("naui-app: Children::sync got the same key twice; ignoring the later ones");
+        }
 
-        // 1. なくなったものを外す。位置は外した時点の並びで数える。
+        let mut apply = |step: Step<'_, C::View>| {
+            self.broken.set(true);
+            place(step);
+            self.broken.set(false);
+        };
+        let mut panicked = None;
+        let mut failure = None;
+
+        // 前回 place が panic したなら、容器に何が残っているか分からない。entries は
+        // 容器に残りうるものをすべて含むので、全部外して (範囲外は何も起きない)
+        // 入れ直せば、entries と容器がそろう。
+        if self.broken.get() {
+            let all: Vec<_> = self
+                .entries
+                .borrow()
+                .iter()
+                .map(|entry| entry.mounted.clone())
+                .collect();
+            for (index, mounted) in all.iter().enumerate().rev() {
+                apply(Step::Remove {
+                    index,
+                    view: mounted.view(),
+                });
+            }
+            for (index, mounted) in all.iter().enumerate() {
+                apply(Step::Insert {
+                    index,
+                    view: mounted.view(),
+                });
+            }
+        }
+
+        // 1. なくなったものを外す。位置は外した時点の並びで数える。place が panic
+        // したものは entries に残す。後片付けは済んでいるので、次に来ても同じ子として
+        // 使わず、外し直す。
         let mut index = 0;
-        while index < entries.len() {
-            if wanted_keys.contains(&entries[index].key) {
+        loop {
+            let (key_is_wanted, mounted) = match self.entries.borrow().get(index) {
+                Some(entry) => (wanted_keys.contains(&entry.key), entry.mounted.clone()),
+                None => break,
+            };
+            if key_is_wanted && !mounted.is_taken_down() {
                 index += 1;
                 continue;
             }
-            let entry = entries.remove(index);
-            entry
-                .mounted
-                .unmount_with(|view| place(Step::Remove { index, view }));
+            if let Err(panic) = mounted.clean_up() {
+                panicked.get_or_insert(panic);
+            }
+            apply(Step::Remove {
+                index,
+                view: mounted.view(),
+            });
+            self.entries.borrow_mut().remove(index);
         }
 
         // 2. 先頭から順に、求める並びへそろえる。index より前はそろっている。
         // 作れなかった子は飛ばすので、index は wanted の位置ではなく容器の位置。
-        let mut present: HashSet<K> = entries.iter().map(|entry| entry.key.clone()).collect();
+        let mut present: HashSet<K> = self
+            .entries
+            .borrow()
+            .iter()
+            .map(|entry| entry.key.clone())
+            .collect();
         let mut placed: Vec<&C> = Vec::with_capacity(wanted.len());
-        let mut failure = None;
         for (key, model) in &wanted {
             let index = placed.len();
-            if entries.get(index).is_some_and(|entry| entry.key == *key) {
+            let in_place = self
+                .entries
+                .borrow()
+                .get(index)
+                .is_some_and(|entry| entry.key == *key);
+            if in_place {
                 placed.push(model);
                 continue;
             }
             if present.contains(key) {
                 // 後ろにあるものを動かす。作り直さないので、中身はそのまま残る。
-                let from = index
-                    + entries[index..]
-                        .iter()
-                        .position(|entry| entry.key == *key)
-                        .expect("a present key is after the matched ones");
-                let entry = entries.remove(from);
-                place(Step::Remove {
+                let (from, mounted) = {
+                    let entries = self.entries.borrow();
+                    let from = index
+                        + entries[index..]
+                            .iter()
+                            .position(|entry| entry.key == *key)
+                            .expect("a present key is after the matched ones");
+                    (from, entries[from].mounted.clone())
+                };
+                apply(Step::Remove {
                     index: from,
-                    view: entry.mounted.view(),
+                    view: mounted.view(),
                 });
-                place(Step::Insert {
+                {
+                    let mut entries = self.entries.borrow_mut();
+                    let entry = entries.remove(from);
+                    entries.insert(index, entry);
+                }
+                apply(Step::Insert {
                     index,
-                    view: entry.mounted.view(),
+                    view: mounted.view(),
                 });
-                entries.insert(index, entry);
             } else {
                 let link = Rc::new(());
                 let dispatch = (self.dispatch)(key, Rc::downgrade(&link));
-                let mounted = match Mounted::with_link(link, dispatch, &mut mount, self.unmount) {
-                    Ok(mounted) => mounted,
-                    Err(error) => {
+                let mounted = attempt(&mut panicked, || {
+                    Mounted::with_link(link, dispatch, &mut mount, self.unmount)
+                });
+                let mounted = match mounted {
+                    Some(Ok(mounted)) => Rc::new(mounted),
+                    Some(Err(error)) => {
                         // この子だけ外したまま続け、ほかの子は置いて描く。
                         // 次の呼び出しでまた作ってみる。
                         failure.get_or_insert(error);
                         continue;
                     }
+                    None => continue,
                 };
-                place(Step::Insert {
-                    index,
-                    view: mounted.view(),
-                });
-                entries.insert(
+                self.entries.borrow_mut().insert(
                     index,
                     Entry {
                         key: key.clone(),
-                        mounted,
+                        mounted: mounted.clone(),
                     },
                 );
                 present.insert(key.clone());
+                apply(Step::Insert {
+                    index,
+                    view: mounted.view(),
+                });
             }
             placed.push(model);
         }
-        debug_assert_eq!(entries.len(), placed.len());
 
         // 3. それぞれを描く。
-        for (entry, model) in entries.iter().zip(placed) {
-            entry.mounted.render(model);
+        let all: Vec<_> = self
+            .entries
+            .borrow()
+            .iter()
+            .map(|entry| entry.mounted.clone())
+            .collect();
+        debug_assert_eq!(all.len(), placed.len());
+        for (mounted, model) in all.iter().zip(placed) {
+            attempt(&mut panicked, || mounted.render(model));
+        }
+
+        if let Some(panic) = panicked {
+            resume_unwind(panic);
         }
         failure.map_or(Ok(()), Err)
     }
@@ -504,6 +626,12 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
 /// the queue, so the parent's `update` has to expect a key that is no longer there.
 ///
 /// Dropping it takes every child down, as dropping a [`Mounted`] does.
+///
+/// It is meant for a modest number of children: the rows of a form, the documents in
+/// tabs. Each [`sync`](Self::sync) renders every child, and a reordering can take
+/// time proportional to the square of their number, with each moved child also moved
+/// in the native container. For thousands of rows use [`naui::List`] or
+/// [`naui::Table`], which build only the rows on screen.
 pub struct Children<K, C: Program> {
     keyed: Keyed<K, C>,
     ui: Ui,
@@ -534,10 +662,22 @@ impl<K: Clone + Eq + Hash + 'static, C: Component> Children<K, C> {
     ///    keyboard focus, as any moved widget does).
     /// 3. Every child is rendered with its model.
     ///
-    /// When a key appears more than once, the later ones are ignored. If a mount
-    /// fails, that child is left out and the rest are still placed and rendered, so
-    /// the other children do not stay stale; the first error is returned, and the
-    /// next call tries to mount the missing child again.
+    /// When a key appears more than once, the later ones are ignored and a line goes
+    /// to standard error, since it means the ids are not unique. If a mount fails,
+    /// that child is left out and the rest are still placed and rendered, so the
+    /// other children do not stay stale; the first error is returned, and the next
+    /// call tries to mount the missing child again.
+    ///
+    /// The code it calls can read [`len`](Self::len) and [`get`](Self::get), which
+    /// show the children as they are at that moment. A `sync` of the same `Children`
+    /// made from there does nothing and returns `Ok`: the one running decides.
+    ///
+    /// A panic in a child's `mount`, `unmount` or `render` does not stop the others.
+    /// It carries on once the rest are done. A panic in `place` stops there, since
+    /// the container is then in an unknown state. The next call puts it right by
+    /// asking to remove every child, from the last, and to insert them again. That
+    /// relies on the container holding only these children and ignoring positions
+    /// out of range, as [`naui::Stack`] does.
     pub fn sync<'a>(
         &self,
         models: impl IntoIterator<Item = (K, &'a C)>,
@@ -564,10 +704,13 @@ impl<K: Clone + Eq + Hash + 'static, C: Component> Children<K, C> {
         )
     }
 
-    /// The widgets of the child under `key`, if it is mounted. Do not hold it across
-    /// a [`sync`](Self::sync).
-    pub fn view(&self, key: &K) -> Option<Ref<'_, C::View>> {
-        self.keyed.view(key)
+    /// The child under `key`, if it is mounted.
+    ///
+    /// Holding it across a [`sync`](Self::sync) is harmless: a child unmounted
+    /// meanwhile is still taken down at that point, and only its widgets stay until
+    /// this is dropped.
+    pub fn get(&self, key: &K) -> Option<Rc<Mounted<C>>> {
+        self.keyed.get(key)
     }
 
     /// How many children are mounted.

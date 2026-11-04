@@ -1,9 +1,11 @@
 //! A component's lifecycle, without a window: messages wrapped into the parent's,
 //! the order of `unmount`, and how `Children` mounts, moves and unmounts.
 
-use std::cell::RefCell;
+use std::any::Any;
+use std::cell::{Cell, RefCell};
 use std::convert::Infallible;
-use std::rc::Rc;
+use std::panic::{catch_unwind, AssertUnwindSafe};
+use std::rc::{Rc, Weak};
 
 use super::component::{Keyed, Mounted, Step};
 use super::{App, Dispatch, Program};
@@ -31,7 +33,23 @@ struct RowView {
     /// Messages the next `render` sends, once (as a notification raised by a setter
     /// would).
     from_render: RefCell<Vec<RowMsg>>,
+    /// Which of `render` and `unmount` panics.
+    explode: Cell<Option<&'static str>>,
+    /// Called from `render` and `unmount`, to read the `Keyed` holding this row.
+    during: RefCell<Option<Box<dyn Fn()>>>,
     log: Log,
+}
+
+impl RowView {
+    /// What `render` and `unmount` share: calls `during`, and panics if told to.
+    fn step(&self, name: &'static str) {
+        if let Some(during) = &*self.during.borrow() {
+            during();
+        }
+        if self.explode.get() == Some(name) {
+            panic!("{name} panicked (intended)");
+        }
+    }
 }
 
 impl Drop for RowView {
@@ -58,6 +76,7 @@ impl Program for Row {
         for message in view.from_render.take() {
             view.dispatch.send(message);
         }
+        view.step("render");
     }
 }
 
@@ -82,6 +101,8 @@ fn mount_row(
             dispatch: dispatch.clone(),
             shown: RefCell::new(String::new()),
             from_render: RefCell::new(Vec::new()),
+            explode: Cell::new(None),
+            during: RefCell::new(None),
             log: log.clone(),
         })
     }
@@ -93,6 +114,7 @@ fn unmount_row(view: &RowView) {
     assert!(!view.dispatch.is_connected());
     view.dispatch.send(RowMsg::Rename("from unmount".into()));
     view.log.borrow_mut().push(format!("unmount {}", view.name));
+    view.step("unmount");
 }
 
 /// A parent that holds one row and forwards its messages to it.
@@ -310,7 +332,14 @@ fn unmounting_a_parent_takes_the_children_in_its_view_down() {
     let app = parent(&log);
     let outer = mount_outer(&app, &log);
     let inner = outer.view().inner.view().dispatch.clone();
-    let row = outer.view().rows.view(&1).expect("row 1").dispatch.clone();
+    let row = outer
+        .view()
+        .rows
+        .get(&1)
+        .expect("row 1")
+        .view()
+        .dispatch
+        .clone();
     log.borrow_mut().clear();
     outer.unmount_with(|view| view.log.borrow_mut().push("remove outer".into()));
     assert_eq!(
@@ -404,7 +433,7 @@ impl Container {
 struct Fixture {
     log: Log,
     app: App<Parent>,
-    keyed: Keyed<u32, Row>,
+    keyed: Rc<Keyed<u32, Row>>,
     container: Container,
     /// How many views have been mounted, to name them apart.
     mounted: usize,
@@ -414,7 +443,7 @@ impl Fixture {
     fn new() -> Self {
         let log = Log::default();
         let app = parent(&log);
-        let keyed = Keyed::new(&app.dispatch(), ParentMsg::Keyed, unmount_row);
+        let keyed = Rc::new(Keyed::new(&app.dispatch(), ParentMsg::Keyed, unmount_row));
         log.borrow_mut().clear();
         Self {
             container: Container {
@@ -450,7 +479,11 @@ impl Fixture {
     }
 
     fn dispatch(&self, id: u32) -> Dispatch<RowMsg> {
-        self.keyed.view(&id).expect("mounted").dispatch.clone()
+        self.row(id).view().dispatch.clone()
+    }
+
+    fn row(&self, id: u32) -> Rc<Mounted<Row>> {
+        self.keyed.get(&id).expect("mounted")
     }
 }
 
@@ -472,7 +505,7 @@ fn sync_mounts_new_children_in_order_and_renders_each() {
     );
     assert_eq!(fixture.container.names, ["v1", "v2"]);
     assert_eq!(fixture.keyed.len(), 2);
-    assert_eq!(*fixture.keyed.view(&2).expect("row 2").shown.borrow(), "b");
+    assert_eq!(*fixture.row(2).view().shown.borrow(), "b");
 }
 
 #[test]
@@ -557,7 +590,7 @@ fn sync_ignores_a_repeated_key() {
     let log = fixture.log.clone();
     fixture.sync(&[row(1, "a", &log), row(1, "again", &log)]);
     assert_eq!(fixture.container.names, ["v1"]);
-    assert_eq!(*fixture.keyed.view(&1).expect("row 1").shown.borrow(), "a");
+    assert_eq!(*fixture.row(1).view().shown.borrow(), "a");
 }
 
 #[test]
@@ -582,7 +615,7 @@ impl Fixture {
         let mut new_keys = rows
             .iter()
             .map(|row| row.id)
-            .filter(|id| self.keyed.view(id).is_none())
+            .filter(|id| self.keyed.get(id).is_none())
             .collect::<Vec<_>>()
             .into_iter();
         self.keyed.sync_with(
@@ -636,7 +669,7 @@ fn a_failing_mount_does_not_leave_the_other_children_stale() {
     let result = fixture.sync_failing(&[row(1, "a2", &log), row(2, "b", &log)], &[2]);
     assert!(result.is_err());
     assert_eq!(fixture.take_log(), ["render 1 a2"]);
-    assert_eq!(*fixture.keyed.view(&1).expect("row 1").shown.borrow(), "a2");
+    assert_eq!(*fixture.row(1).view().shown.borrow(), "a2");
 }
 
 #[test]
@@ -647,7 +680,7 @@ fn every_failing_mount_is_tried_and_the_first_error_returned() {
     let result = fixture.sync_failing(&rows, &[1, 3]);
     assert_eq!(result, Err("no widgets for 1".to_owned()));
     assert_eq!(fixture.container.names, ["v1"]);
-    assert_eq!(*fixture.keyed.view(&2).expect("row 2").shown.borrow(), "b");
+    assert_eq!(*fixture.row(2).view().shown.borrow(), "b");
 }
 
 #[test]
@@ -696,4 +729,339 @@ fn a_child_sending_from_its_render_waits_its_turn() {
             "render 1 from render"
         ]
     );
+}
+
+/// Runs `f`, returning what it panicked with, if anything.
+fn panic_of(f: impl FnOnce()) -> Option<String> {
+    catch_unwind(AssertUnwindSafe(f))
+        .err()
+        .map(
+            |panic: Box<dyn Any + Send>| match panic.downcast::<String>() {
+                Ok(text) => *text,
+                Err(panic) => (*panic.downcast::<&str>().expect("a text")).to_owned(),
+            },
+        )
+}
+
+/// Reads `keyed` as outside code would: its length, and whether a key is there.
+fn read(keyed: &Keyed<u32, Row>, key: u32) -> (usize, bool) {
+    (keyed.len(), keyed.get(&key).is_some())
+}
+
+#[test]
+fn children_can_be_read_from_place_and_mount() {
+    let mut fixture = Fixture::new();
+    let log = fixture.log.clone();
+    let keyed = fixture.keyed.clone();
+    let rows = [row(1, "a", &log), row(2, "b", &log)];
+    let seen = RefCell::new(Vec::new());
+    keyed
+        .sync_with(
+            rows.iter().map(|row| (row.id, row)),
+            |dispatch| {
+                seen.borrow_mut().push(("mount", read(&keyed, 1)));
+                mount_row(&log, "v")(dispatch)
+            },
+            |step| {
+                seen.borrow_mut().push(("place", read(&keyed, 1)));
+                fixture.container.apply(step);
+            },
+        )
+        .expect("sync");
+    assert_eq!(
+        *seen.borrow(),
+        [
+            ("mount", (0, false)),
+            ("place", (1, true)),
+            ("mount", (1, true)),
+            ("place", (2, true))
+        ]
+    );
+}
+
+#[test]
+fn children_can_be_read_from_render_and_unmount() {
+    let mut fixture = Fixture::new();
+    let log = fixture.log.clone();
+    fixture.sync(&[row(1, "a", &log), row(2, "b", &log)]);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    for id in [1, 2] {
+        let seen = seen.clone();
+        let keyed: Weak<Keyed<u32, Row>> = Rc::downgrade(&fixture.keyed);
+        *fixture.row(id).view().during.borrow_mut() = Some(Box::new(move || {
+            seen.borrow_mut()
+                .push(keyed.upgrade().expect("keyed").len());
+        }));
+    }
+    fixture.sync(&[row(1, "a", &log)]);
+    // 2 の後片付けはまだ 2 件の間に、1 の描画は外れて 1 件になってから。
+    assert_eq!(*seen.borrow(), [2, 1]);
+}
+
+#[test]
+fn a_sync_from_inside_a_sync_does_nothing() {
+    let mut fixture = Fixture::new();
+    let log = fixture.log.clone();
+    let keyed = fixture.keyed.clone();
+    let rows = [row(1, "a", &log), row(2, "b", &log)];
+    let other = [row(9, "other", &log)];
+    let nested = Cell::new(0);
+    keyed
+        .sync_with(
+            rows.iter().map(|row| (row.id, row)),
+            |dispatch| mount_row(&log, format!("w{}", keyed.len()))(dispatch),
+            |step| {
+                fixture.container.apply(step);
+                let result = keyed.sync_with(
+                    other.iter().map(|row| (row.id, row)),
+                    |_| Err("the nested sync must not mount"),
+                    |_| panic!("the nested sync must not place"),
+                );
+                assert_eq!(result, Ok(()));
+                nested.set(nested.get() + 1);
+            },
+        )
+        .expect("sync");
+    assert_eq!(nested.get(), 2);
+    assert_eq!(keyed.len(), 2);
+    assert!(keyed.get(&9).is_none());
+    // 終われば、また同期できる。
+    fixture.sync(&[row(1, "a", &log)]);
+    assert_eq!(keyed.len(), 1);
+}
+
+#[test]
+fn a_child_held_across_a_sync_is_taken_down_on_time() {
+    let mut fixture = Fixture::new();
+    let log = fixture.log.clone();
+    fixture.sync(&[row(1, "a", &log)]);
+    let held = fixture.row(1);
+    fixture.take_log();
+    fixture.sync(&[]);
+    // 持っていても後片付けと取り外しはその場で行い、破棄だけが手放すまで待つ。
+    assert_eq!(fixture.take_log(), ["unmount v1", "remove 0 v1"]);
+    assert!(!held.view().dispatch.is_connected());
+    drop(held);
+    assert_eq!(fixture.take_log(), ["drop v1"]);
+}
+
+#[test]
+fn a_panicking_unmount_still_removes_the_root() {
+    let log = Log::default();
+    let app = parent(&log);
+    let mounted = app.view().borrow_mut().take().expect("mounted");
+    mounted.view().explode.set(Some("unmount"));
+    log.borrow_mut().clear();
+    let panic = panic_of(|| {
+        mounted.unmount_with(|view| view.log.borrow_mut().push("remove root".into()));
+    });
+    assert_eq!(panic.as_deref(), Some("unmount panicked (intended)"));
+    assert_eq!(*log.borrow(), ["unmount row", "remove root", "drop row"]);
+}
+
+#[test]
+fn a_panicking_unmount_does_not_stop_the_other_children() {
+    let mut fixture = Fixture::new();
+    let log = fixture.log.clone();
+    fixture.sync(&[row(1, "a", &log), row(2, "b", &log), row(3, "c", &log)]);
+    fixture.row(1).view().explode.set(Some("unmount"));
+    fixture.take_log();
+    let panic = panic_of(|| fixture.sync(&[row(3, "c2", &log)]));
+    assert_eq!(panic.as_deref(), Some("unmount panicked (intended)"));
+    // panic した子も外れ、残りの後片付けと描画も済んでから panic が続く。
+    assert_eq!(
+        fixture.take_log(),
+        [
+            "unmount v1",
+            "remove 0 v1",
+            "drop v1",
+            "unmount v2",
+            "remove 0 v2",
+            "drop v2",
+            "render 3 c2"
+        ]
+    );
+    assert_eq!(fixture.container.names, ["v3"]);
+    assert_eq!(fixture.keyed.len(), 1);
+}
+
+#[test]
+fn a_panicking_render_does_not_stop_the_other_children() {
+    let mut fixture = Fixture::new();
+    let log = fixture.log.clone();
+    fixture.sync(&[row(1, "a", &log), row(2, "b", &log)]);
+    fixture.row(1).view().explode.set(Some("render"));
+    let panic = panic_of(|| fixture.sync(&[row(1, "a2", &log), row(2, "b2", &log)]));
+    assert_eq!(panic.as_deref(), Some("render panicked (intended)"));
+    assert_eq!(*fixture.row(2).view().shown.borrow(), "b2");
+}
+
+#[test]
+fn a_panicking_mount_does_not_stop_the_other_children() {
+    let mut fixture = Fixture::new();
+    let log = fixture.log.clone();
+    let keyed = fixture.keyed.clone();
+    let rows = [row(1, "a", &log), row(2, "b", &log)];
+    let mut count = 0;
+    let container = &mut fixture.container;
+    let panic = panic_of(|| {
+        let _ = keyed.sync_with(
+            rows.iter().map(|row| (row.id, row)),
+            |dispatch| {
+                count += 1;
+                if count == 1 {
+                    panic!("mount panicked (intended)");
+                }
+                mount_row(&log, "w")(dispatch)
+            },
+            |step| container.apply(step),
+        );
+    });
+    assert_eq!(panic.as_deref(), Some("mount panicked (intended)"));
+    assert_eq!(fixture.container.names, ["w"]);
+    // 次の呼び出しで、外れた子をまた作ってみる。
+    fixture.sync(&rows);
+    assert_eq!(fixture.container.names, ["v1", "w"]);
+}
+
+/// A container that behaves as `Stack` does: a position out of range does nothing
+/// for a removal, and appends for an insertion.
+#[derive(Default)]
+struct LikeStack(Vec<String>);
+
+impl LikeStack {
+    fn apply(&mut self, step: Step<'_, RowView>) {
+        match step {
+            Step::Insert { index, view } => {
+                let index = index.min(self.0.len());
+                self.0.insert(index, view.name.clone());
+            }
+            Step::Remove { index, .. } => {
+                if index < self.0.len() {
+                    self.0.remove(index);
+                }
+            }
+        }
+    }
+}
+
+/// Names the views in the order they are mounted.
+fn mount_numbered<'a>(
+    log: &'a Log,
+    count: &'a Cell<u32>,
+) -> impl FnMut(&Dispatch<RowMsg>) -> Result<RowView, Infallible> + 'a {
+    move |dispatch| {
+        count.set(count.get() + 1);
+        mount_row(log, format!("v{}", count.get()))(dispatch)
+    }
+}
+
+#[test]
+fn a_panic_in_place_is_put_right_by_the_next_sync() {
+    // 1 回の同期の中のすべての呼び出しで、容器へ反映する前と後の両方で panic させる。
+    for applied_first in [false, true] {
+        for fail_at in 0.. {
+            let log = Log::default();
+            let app = parent(&log);
+            let keyed = Keyed::<u32, Row>::new(&app.dispatch(), ParentMsg::Keyed, unmount_row);
+            let stack = RefCell::new(LikeStack::default());
+            let count = Cell::new(0);
+            let names = |ids: &[u32]| -> Vec<String> {
+                ids.iter()
+                    .map(|id| keyed.get(id).expect("mounted").view().name.clone())
+                    .collect()
+            };
+
+            let before = [1, 2, 3, 4].map(|id| row(id, "before", &log));
+            keyed
+                .sync_with(
+                    before.iter().map(|row| (row.id, row)),
+                    mount_numbered(&log, &count),
+                    |step| stack.borrow_mut().apply(step),
+                )
+                .expect("sync");
+            let kept = names(&[3, 1]);
+            let gone = names(&[2, 4]);
+
+            // 外す (2, 4)、動かす (3)、作る (5, 6) がすべて入る同期。
+            let after = [5, 3, 1, 6].map(|id| row(id, "after", &log));
+            let calls = Cell::new(0);
+            let panicked = panic_of(|| {
+                keyed
+                    .sync_with(
+                        after.iter().map(|row| (row.id, row)),
+                        mount_numbered(&log, &count),
+                        |step| {
+                            let call = calls.get();
+                            calls.set(call + 1);
+                            if call != fail_at {
+                                stack.borrow_mut().apply(step);
+                            } else {
+                                if applied_first {
+                                    stack.borrow_mut().apply(step);
+                                }
+                                panic!("place panicked (intended)");
+                            }
+                        },
+                    )
+                    .expect("sync");
+            });
+            let Some(panicked) = panicked else {
+                assert!(fail_at > 0, "少なくとも 1 回は place を呼ぶ");
+                break;
+            };
+            assert_eq!(panicked, "place panicked (intended)");
+
+            keyed
+                .sync_with(
+                    after.iter().map(|row| (row.id, row)),
+                    mount_numbered(&log, &count),
+                    |step| stack.borrow_mut().apply(step),
+                )
+                .expect("sync");
+
+            let context = format!("applied_first={applied_first} fail_at={fail_at}");
+            assert_eq!(stack.borrow().0, names(&[5, 3, 1, 6]), "{context}");
+            assert_eq!(keyed.len(), 4, "{context}");
+            assert_eq!(names(&[3, 1]), kept, "残る子は作り直さない: {context}");
+            let log = log.borrow();
+            for name in &gone {
+                let line = format!("unmount {name}");
+                let times = log.iter().filter(|entry| **entry == line).count();
+                assert_eq!(times, 1, "{name} の後片付けは 1 回: {context}");
+            }
+        }
+    }
+}
+
+#[test]
+fn a_key_coming_back_after_a_panic_in_place_is_mounted_again() {
+    let log = Log::default();
+    let app = parent(&log);
+    let keyed = Keyed::<u32, Row>::new(&app.dispatch(), ParentMsg::Keyed, unmount_row);
+    let stack = RefCell::new(LikeStack::default());
+    let count = Cell::new(0);
+    let rows = [row(1, "a", &log)];
+    let sync = |rows: &[Row]| {
+        keyed
+            .sync_with(
+                rows.iter().map(|row| (row.id, row)),
+                mount_numbered(&log, &count),
+                |step| stack.borrow_mut().apply(step),
+            )
+            .expect("sync");
+    };
+    sync(&rows);
+    let panic = panic_of(|| {
+        let _ = keyed.sync_with(std::iter::empty(), mount_numbered(&log, &count), |_| {
+            panic!("place panicked (intended)")
+        });
+    });
+    assert!(panic.is_some());
+    // 後片付けの済んだ子を同じキーで使い回すと、送り口が切れたままになる。
+    sync(&rows);
+    let mounted = keyed.get(&1).expect("mounted");
+    assert_eq!(mounted.view().name, "v2");
+    assert!(mounted.view().dispatch.is_connected());
+    assert_eq!(stack.borrow().0, ["v2"]);
 }
