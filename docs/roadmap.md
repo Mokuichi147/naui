@@ -243,8 +243,9 @@ Model–View–Update structure is complete in v0.16.0 (the guide stays in P2).
       `Children::sync` holds no borrow while it calls `mount`, `unmount`, `render` or
       the parent's placement, so they can read the `Children`. A panic in one child
       does not stop the others, and one in the placement is put right by the next
-      `sync`. It is meant for modest numbers of children: thousands of rows belong in
-      `List` or `Table`.
+      `sync`. A reordering leaves the longest run already in order where it is, since
+      a moved child loses the keyboard focus. It is meant for modest numbers of
+      children: thousands of rows belong in `List` or `Table`.
 - [ ] *(app)* **Effects and lifecycles.** `Program::update` returns an
       `Effect<Message>` (a breaking change, made while naui-app has no users),
       which gathers asynchronous work: tasks (`Tasks::spawn`), work on other

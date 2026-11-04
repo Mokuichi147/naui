@@ -1065,3 +1065,126 @@ fn a_key_coming_back_after_a_panic_in_place_is_mounted_again() {
     assert!(mounted.view().dispatch.is_connected());
     assert_eq!(stack.borrow().0, ["v2"]);
 }
+
+#[test]
+fn moving_the_first_child_to_the_end_moves_only_that_child() {
+    let mut fixture = Fixture::new();
+    let log = fixture.log.clone();
+    fixture.sync(&[row(1, "a", &log), row(2, "b", &log), row(3, "c", &log)]);
+    fixture.take_log();
+    fixture.sync(&[row(2, "b", &log), row(3, "c", &log), row(1, "a", &log)]);
+    assert_eq!(
+        fixture.take_log(),
+        [
+            "remove 0 v1",
+            "insert 2 v1",
+            "render 2 b",
+            "render 3 c",
+            "render 1 a"
+        ]
+    );
+    assert_eq!(fixture.container.names, ["v2", "v3", "v1"]);
+}
+
+/// Every order of `0..n`.
+fn permutations(n: u32) -> Vec<Vec<u32>> {
+    if n == 0 {
+        return vec![Vec::new()];
+    }
+    let mut all = Vec::new();
+    for shorter in permutations(n - 1) {
+        for at in 0..=shorter.len() {
+            let mut order = shorter.clone();
+            order.insert(at, n - 1);
+            all.push(order);
+        }
+    }
+    all
+}
+
+/// The length of a longest increasing subsequence, the slow and obvious way.
+fn longest_run(values: &[u32]) -> usize {
+    let mut lengths: Vec<usize> = Vec::new();
+    for (index, value) in values.iter().enumerate() {
+        let before = (0..index)
+            .filter(|&earlier| values[earlier] < *value)
+            .map(|earlier| lengths[earlier])
+            .max();
+        lengths.push(before.unwrap_or(0) + 1);
+    }
+    lengths.into_iter().max().unwrap_or(0)
+}
+
+#[test]
+fn every_reordering_ends_in_order_with_as_few_moves_as_possible() {
+    for n in 0..=6 {
+        for order in permutations(n) {
+            let log = Log::default();
+            let app = parent(&log);
+            let keyed = Keyed::<u32, Row>::new(&app.dispatch(), ParentMsg::Keyed, unmount_row);
+            let stack = RefCell::new(LikeStack::default());
+            let count = Cell::new(0);
+            let before: Vec<Row> = (0..n).map(|id| row(id, "before", &log)).collect();
+            keyed
+                .sync_with(
+                    before.iter().map(|row| (row.id, row)),
+                    mount_numbered(&log, &count),
+                    |step| stack.borrow_mut().apply(step),
+                )
+                .expect("sync");
+            let names = |ids: &[u32]| -> Vec<String> {
+                ids.iter()
+                    .map(|id| keyed.get(id).expect("mounted").view().name.clone())
+                    .collect()
+            };
+            let mounted = count.get();
+            let after: Vec<Row> = order.iter().map(|&id| row(id, "after", &log)).collect();
+            let changes = Cell::new(0);
+            keyed
+                .sync_with(
+                    after.iter().map(|row| (row.id, row)),
+                    mount_numbered(&log, &count),
+                    |step| {
+                        changes.set(changes.get() + 1);
+                        stack.borrow_mut().apply(step);
+                    },
+                )
+                .expect("sync");
+            assert_eq!(stack.borrow().0, names(&order), "{order:?}");
+            assert_eq!(count.get(), mounted, "作り直さない: {order:?}");
+            let moved = order.len() - longest_run(&order);
+            assert_eq!(changes.get(), 2 * moved, "{order:?}");
+            // 描くのは、それぞれ自分のモデルで。
+            for model in &after {
+                let shown = keyed.get(&model.id).expect("mounted");
+                assert_eq!(*shown.view().shown.borrow(), "after", "{order:?}");
+            }
+        }
+    }
+}
+
+#[test]
+fn moves_mounts_and_a_failing_mount_together_keep_each_child_with_its_model() {
+    let mut fixture = Fixture::new();
+    let log = fixture.log.clone();
+    fixture.sync(&[row(1, "a", &log), row(2, "b", &log), row(3, "c", &log)]);
+    let rows = [
+        row(3, "c2", &log),
+        row(9, "fails", &log),
+        row(4, "d", &log),
+        row(1, "a2", &log),
+    ];
+    let result = fixture.sync_failing(&rows, &[9]);
+    assert_eq!(result, Err("no widgets for 9".to_owned()));
+    assert_eq!(fixture.container.names.len(), 3);
+    assert_eq!(fixture.container.names[0], fixture.row(3).view().name);
+    assert_eq!(fixture.container.names[1], fixture.row(4).view().name);
+    assert_eq!(fixture.container.names[2], fixture.row(1).view().name);
+    assert_eq!(*fixture.row(3).view().shown.borrow(), "c2");
+    assert_eq!(*fixture.row(4).view().shown.borrow(), "d");
+    assert_eq!(*fixture.row(1).view().shown.borrow(), "a2");
+    // 次の呼び出しで、外れた子だけを足す。
+    fixture.sync(&rows);
+    assert_eq!(fixture.container.names.len(), 4);
+    assert_eq!(fixture.container.names[1], fixture.row(9).view().name);
+}

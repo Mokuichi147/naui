@@ -2,7 +2,7 @@
 
 use std::any::Any;
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::rc::{Rc, Weak};
@@ -367,6 +367,31 @@ fn attempt<R>(panicked: &mut Option<Box<dyn Any + Send>>, f: impl FnOnce() -> R)
     }
 }
 
+/// Marks a longest increasing subsequence of `values`, which are all different.
+fn longest_increasing(values: &[usize]) -> Vec<bool> {
+    // tails[n] は、長さ n + 1 の増加列のうち末尾が最も小さいものの末尾の位置。
+    let mut tails: Vec<usize> = Vec::new();
+    let mut previous: Vec<Option<usize>> = vec![None; values.len()];
+    for (index, value) in values.iter().enumerate() {
+        let length = tails.partition_point(|&tail| values[tail] < *value);
+        if length > 0 {
+            previous[index] = Some(tails[length - 1]);
+        }
+        if length == tails.len() {
+            tails.push(index);
+        } else {
+            tails[length] = index;
+        }
+    }
+    let mut marked = vec![false; values.len()];
+    let mut at = tails.last().copied();
+    while let Some(index) = at {
+        marked[index] = true;
+        at = previous[index];
+    }
+    marked
+}
+
 impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
     pub(crate) fn new<M: 'static>(
         dispatch: &Dispatch<M>,
@@ -486,80 +511,101 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
             self.entries.borrow_mut().remove(index);
         }
 
-        // 2. 先頭から順に、求める並びへそろえる。index より前はそろっている。
-        // 作れなかった子は飛ばすので、index は wanted の位置ではなく容器の位置。
-        let mut present: HashSet<K> = self
-            .entries
-            .borrow()
-            .iter()
-            .map(|entry| entry.key.clone())
-            .collect();
+        // 2. 求める並びへそろえる。順番がすでに合っている最長の並びは動かさず、残りだけ
+        // を動かす。動いた子はキーボードのフォーカスを失うので、巻き添えを減らすため。
+        let unchanged = {
+            let entries = self.entries.borrow();
+            entries.len() == wanted.len()
+                && entries
+                    .iter()
+                    .zip(&wanted)
+                    .all(|(entry, (key, _))| entry.key == *key)
+        };
         let mut placed: Vec<&C> = Vec::with_capacity(wanted.len());
-        for (key, model) in &wanted {
-            let index = placed.len();
-            let in_place = self
-                .entries
-                .borrow()
-                .get(index)
-                .is_some_and(|entry| entry.key == *key);
-            if in_place {
-                placed.push(model);
-                continue;
-            }
-            if present.contains(key) {
-                // 後ろにあるものを動かす。作り直さないので、中身はそのまま残る。
-                let (from, mounted) = {
-                    let entries = self.entries.borrow();
-                    let from = index
-                        + entries[index..]
+        if unchanged {
+            placed.extend(wanted.iter().map(|(_, model)| *model));
+        } else {
+            let (staying, moving) = {
+                let order: HashMap<&K, usize> = wanted
+                    .iter()
+                    .enumerate()
+                    .map(|(position, (key, _))| (key, position))
+                    .collect();
+                let entries = self.entries.borrow();
+                let positions: Vec<usize> = entries.iter().map(|entry| order[&entry.key]).collect();
+                let mut staying = HashSet::new();
+                let mut moving = HashSet::new();
+                for (entry, stays) in entries.iter().zip(longest_increasing(&positions)) {
+                    if stays { &mut staying } else { &mut moving }.insert(entry.key.clone());
+                }
+                (staying, moving)
+            };
+            // 求める順に、ひとつ前の子のすぐ後ろへ置いていく。next はその位置で、前の子
+            // と、まだ動かしていない子のあいだを指す。作れなかった子は飛ばす。
+            let mut next = 0;
+            for (key, model) in &wanted {
+                if staying.contains(key) {
+                    next += self.entries.borrow()[next..]
+                        .iter()
+                        .position(|entry| entry.key == *key)
+                        .expect("a staying key is after the ones placed")
+                        + 1;
+                } else if moving.contains(key) {
+                    // 作り直さないので、中身はそのまま残る。
+                    let (from, mounted) = {
+                        let entries = self.entries.borrow();
+                        let from = entries
                             .iter()
                             .position(|entry| entry.key == *key)
-                            .expect("a present key is after the matched ones");
-                    (from, entries[from].mounted.clone())
-                };
-                apply(Step::Remove {
-                    index: from,
-                    view: mounted.view(),
-                });
-                {
-                    let mut entries = self.entries.borrow_mut();
-                    let entry = entries.remove(from);
-                    entries.insert(index, entry);
-                }
-                apply(Step::Insert {
-                    index,
-                    view: mounted.view(),
-                });
-            } else {
-                let link = Rc::new(());
-                let dispatch = (self.dispatch)(key, Rc::downgrade(&link));
-                let mounted = attempt(&mut panicked, || {
-                    Mounted::with_link(link, dispatch, &mut mount, self.unmount)
-                });
-                let mounted = match mounted {
-                    Some(Ok(mounted)) => Rc::new(mounted),
-                    Some(Err(error)) => {
-                        // この子だけ外したまま続け、ほかの子は置いて描く。
-                        // 次の呼び出しでまた作ってみる。
-                        failure.get_or_insert(error);
-                        continue;
+                            .expect("a moving key is still listed");
+                        (from, entries[from].mounted.clone())
+                    };
+                    apply(Step::Remove {
+                        index: from,
+                        view: mounted.view(),
+                    });
+                    let index = if from < next { next - 1 } else { next };
+                    {
+                        let mut entries = self.entries.borrow_mut();
+                        let entry = entries.remove(from);
+                        entries.insert(index, entry);
                     }
-                    None => continue,
-                };
-                self.entries.borrow_mut().insert(
-                    index,
-                    Entry {
-                        key: key.clone(),
-                        mounted: mounted.clone(),
-                    },
-                );
-                present.insert(key.clone());
-                apply(Step::Insert {
-                    index,
-                    view: mounted.view(),
-                });
+                    apply(Step::Insert {
+                        index,
+                        view: mounted.view(),
+                    });
+                    next = index + 1;
+                } else {
+                    let link = Rc::new(());
+                    let dispatch = (self.dispatch)(key, Rc::downgrade(&link));
+                    let mounted = attempt(&mut panicked, || {
+                        Mounted::with_link(link, dispatch, &mut mount, self.unmount)
+                    });
+                    let mounted = match mounted {
+                        Some(Ok(mounted)) => Rc::new(mounted),
+                        Some(Err(error)) => {
+                            // この子だけ外したまま続け、ほかの子は置いて描く。
+                            // 次の呼び出しでまた作ってみる。
+                            failure.get_or_insert(error);
+                            continue;
+                        }
+                        None => continue,
+                    };
+                    self.entries.borrow_mut().insert(
+                        next,
+                        Entry {
+                            key: key.clone(),
+                            mounted: mounted.clone(),
+                        },
+                    );
+                    apply(Step::Insert {
+                        index: next,
+                        view: mounted.view(),
+                    });
+                    next += 1;
+                }
+                placed.push(model);
             }
-            placed.push(model);
         }
 
         // 3. それぞれを描く。
@@ -628,9 +674,9 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
 /// Dropping it takes every child down, as dropping a [`Mounted`] does.
 ///
 /// It is meant for a modest number of children: the rows of a form, the documents in
-/// tabs. Each [`sync`](Self::sync) renders every child, and a reordering can take
-/// time proportional to the square of their number, with each moved child also moved
-/// in the native container. For thousands of rows use [`naui::List`] or
+/// tabs. Each [`sync`](Self::sync) renders every child, and a reordering takes time
+/// proportional to the number of children for each one that moves, on top of moving
+/// it in the native container. For thousands of rows use [`naui::List`] or
 /// [`naui::Table`], which build only the rows on screen.
 pub struct Children<K, C: Program> {
     keyed: Keyed<K, C>,
@@ -657,9 +703,11 @@ impl<K: Clone + Eq + Hash + 'static, C: Component> Children<K, C> {
     ///
     /// 1. A child whose key is no longer there is unmounted (as
     ///    [`Mounted::unmount`] does) and [`Change::Remove`] takes it out.
-    /// 2. A new key is mounted and [`Change::Insert`] places it. A key that moved
-    ///    is taken out and inserted again, keeping its widgets (they lose the
-    ///    keyboard focus, as any moved widget does).
+    /// 2. A new key is mounted and [`Change::Insert`] places it. When the order has
+    ///    changed, the longest run of children already in order stays where it is,
+    ///    and each of the others is taken out and inserted again, keeping its widgets
+    ///    (they lose the keyboard focus, as any moved widget does). Moving one row
+    ///    from the top to the bottom moves only that row.
     /// 3. Every child is rendered with its model.
     ///
     /// When a key appears more than once, the later ones are ignored and a line goes
