@@ -16,6 +16,8 @@ use crate::{Dispatch, Program, ReportKind};
 /// What an [`Effect`] uses to hand back what it produced.
 struct Deliver<M> {
     send: Rc<dyn Fn(M)>,
+    /// Reports to the app that started the effect, whichever queue runs when this comes.
+    report: Rc<dyn Fn(&str)>,
     /// Closed when the effect is cancelled, so that what arrives later is discarded.
     open: Rc<Cell<bool>>,
 }
@@ -29,7 +31,7 @@ impl<M> Deliver<M> {
 
     fn fail(&self, failure: &str) {
         if self.open.get() {
-            report(ReportKind::Failure, failure);
+            (self.report)(failure);
         }
     }
 }
@@ -200,8 +202,9 @@ impl<M: 'static> Node<M> {
                     kind,
                     start: Box::new(move |tasks, deliver: Deliver<N>| {
                         let open = deliver.open.clone();
+                        let report = deliver.report.clone();
                         let send = Rc::new(move |message| (deliver.send)(wrap(message)));
-                        start(tasks, Deliver { send, open })
+                        start(tasks, Deliver { send, report, open })
                     }),
                 })
             }
@@ -213,7 +216,7 @@ impl<M: 'static> Node<M> {
 
     fn start(
         self,
-        cx: &mut Starting<'_, M>,
+        cx: &Starting<'_, M>,
         ledger: Option<Rc<Ledger>>,
         keys: &mut Vec<(Rc<Ledger>, Rc<str>)>,
     ) {
@@ -265,6 +268,7 @@ impl<M: 'static> Node<M> {
                 let dispatch = cx.dispatch.clone();
                 let deliver = Deliver {
                     send: Rc::new(move |message| dispatch.send(message)),
+                    report: cx.report.clone(),
                     open: open.clone(),
                 };
                 // ここで受け止めてハンドラへ伝えるので、次の要素の前に答えが分かる。
@@ -287,16 +291,22 @@ impl<M: 'static> Node<M> {
                 for (owner, key) in keys.iter() {
                     owner.add(Some(key.clone()), running.clone());
                 }
+                cx.started.0.add(None, running);
             }
         }
     }
 }
 
-struct Starting<'a, M: 'static> {
-    tasks: Option<&'a Tasks>,
-    dispatch: &'a Dispatch<M>,
+/// What the app gives the effects it starts.
+pub(crate) struct Starting<'a, M: 'static> {
+    pub(crate) tasks: Option<&'a Tasks>,
+    pub(crate) dispatch: &'a Dispatch<M>,
     /// Whether the handler has stopped the app, which can happen halfway through.
-    stopped: &'a Cell<bool>,
+    pub(crate) stopped: &'a Cell<bool>,
+    /// Holds everything the app starts, whichever model owns it, for stopping the app.
+    pub(crate) started: &'a Owner,
+    /// Reports a failure that comes later to the app.
+    pub(crate) report: &'a Rc<dyn Fn(&str)>,
 }
 
 impl<M> std::fmt::Debug for Node<M> {
@@ -619,22 +629,10 @@ impl<M: 'static> Effect<M> {
 
     /// Starts what is in here, as `owner`'s, one piece at a time. A panic in the code it
     /// calls is told to the handler there and then, as a failure is. Unless the answer
-    /// stops the app (`stopped`), the rest starts; once it has, a failure among the rest
+    /// stops the app, the rest starts; once it has, a failure among the rest
     /// is still reported, since it has happened all the same, and work does not start.
-    pub(crate) fn start(
-        self,
-        tasks: Option<&Tasks>,
-        dispatch: &Dispatch<M>,
-        owner: &Owner,
-        stopped: &Cell<bool>,
-    ) {
-        let mut cx = Starting {
-            tasks,
-            dispatch,
-            stopped,
-        };
-        self.node
-            .start(&mut cx, Some(owner.0.clone()), &mut Vec::new());
+    pub(crate) fn start(self, cx: &Starting<'_, M>, owner: &Owner) {
+        self.node.start(cx, Some(owner.0.clone()), &mut Vec::new());
     }
 }
 

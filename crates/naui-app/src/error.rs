@@ -93,8 +93,9 @@ pub enum Decision {
     GoOn,
     /// Stop the app: no more messages are handled, an effect that has not started does
     /// not start (the rest of the same [`batch`](crate::Effect::batch) included), the
-    /// effects of its own model are cancelled, what other effects send is dropped, and
-    /// the UI quits (only [`run`] and [`run_with_handler`] know the UI).
+    /// effects it has started are cancelled, those of children in a
+    /// [`Scoped`](crate::Scoped) too, and the UI quits (only [`run`] and
+    /// [`run_with_handler`] know the UI).
     ///
     /// [`run`]: crate::run
     /// [`run_with_handler`]: crate::run_with_handler
@@ -142,9 +143,13 @@ struct Panicked {
 }
 
 thread_local! {
-    /// The handler, owned by the app that set it. Other threads have none, so the panics
-    /// there only go on to the previous hook.
-    static SLOT: RefCell<Weak<Slot>> = const { RefCell::new(Weak::new()) };
+    /// The handlers of this thread's apps, oldest first, each owned by the app that set
+    /// it. What cannot be tied to an app goes to the last one still there. Other threads
+    /// have none, so the panics there only go on to the previous hook.
+    static SLOTS: RefCell<Vec<Weak<Slot>>> = const { RefCell::new(Vec::new()) };
+    /// The handler of the app whose queue is running, which is empty if that app has
+    /// none. `None` outside any queue.
+    static QUEUE: RefCell<Option<Weak<Slot>>> = const { RefCell::new(None) };
     /// How many of [`catch`]'s calls are running.
     static CATCHING: Cell<usize> = const { Cell::new(0) };
     /// Panics seen inside [`catch`].
@@ -155,8 +160,21 @@ thread_local! {
     static TELLING: Cell<bool> = const { Cell::new(false) };
 }
 
+/// Whom a report goes to: the app whose queue is running, or else the last app that set
+/// a handler.
 fn current_slot() -> Option<Rc<Slot>> {
-    SLOT.try_with(|slot| slot.try_borrow().ok().and_then(|slot| slot.upgrade()))
+    let queue = QUEUE
+        .try_with(|queue| queue.try_borrow().ok().and_then(|queue| queue.clone()))
+        .ok()
+        .flatten();
+    if let Some(slot) = queue {
+        return slot.upgrade();
+    }
+    SLOTS
+        .try_with(|slots| {
+            let slots = slots.try_borrow().ok()?;
+            slots.iter().rev().find_map(Weak::upgrade)
+        })
         .ok()
         .flatten()
 }
@@ -168,11 +186,20 @@ fn current_message() -> Option<Rc<str>> {
         .flatten()
 }
 
-/// Makes `slot` the handler of this thread. The caller owns it: once that lets go of
-/// it, there is no handler.
+/// Makes `slot` the handler for what cannot be tied to an app. The caller owns it: once
+/// that lets go of it, the one before takes over.
 pub(crate) fn set_slot(slot: &Rc<Slot>) {
-    SLOT.with(|current| *current.borrow_mut() = Rc::downgrade(slot));
+    SLOTS.with(|slots| {
+        let mut slots = slots.borrow_mut();
+        slots.retain(|slot| slot.strong_count() > 0);
+        slots.push(Rc::downgrade(slot));
+    });
     install_hook();
+}
+
+/// Makes `slot` the handler of the queue that is running.
+pub(crate) fn set_queue_slot(slot: &Rc<Slot>) {
+    QUEUE.with(|queue| *queue.borrow_mut() = Some(Rc::downgrade(slot)));
 }
 
 /// Puts naui-app's panic hook in front of the one there, once.
@@ -226,10 +253,12 @@ fn on_panic(info: &PanicHookInfo<'_>) {
 /// Runs a step of the queue, catching a panic and telling the handler about it (and about
 /// any other panic seen meanwhile, such as those of several children).
 pub(crate) fn catch(step: impl FnOnce()) {
+    // 外側の catch が伝える分には触らない。別のアプリのものかもしれない。
+    let waiting = PENDING.with(|pending| pending.borrow().len());
     CATCHING.with(|depth| depth.set(depth.get() + 1));
     let outcome = catch_unwind(AssertUnwindSafe(step));
     CATCHING.with(|depth| depth.set(depth.get() - 1));
-    let mut panics = PENDING.with(|pending| std::mem::take(&mut *pending.borrow_mut()));
+    let mut panics = PENDING.with(|pending| pending.borrow_mut().split_off(waiting));
     if current_slot().is_none() {
         return;
     }
@@ -303,6 +332,28 @@ impl MessageScope {
 impl Drop for MessageScope {
     fn drop(&mut self) {
         set_current_message(self.0.take());
+    }
+}
+
+/// What runs meanwhile is `slot`'s app's, with no message being handled yet. Puts back
+/// the app and the message before when dropped.
+pub(crate) struct QueueScope {
+    previous: Option<Weak<Slot>>,
+    _message: MessageScope,
+}
+
+impl QueueScope {
+    pub(crate) fn enter(slot: Weak<Slot>) -> Self {
+        Self {
+            previous: QUEUE.with(|queue| queue.borrow_mut().replace(slot)),
+            _message: MessageScope::enter(),
+        }
+    }
+}
+
+impl Drop for QueueScope {
+    fn drop(&mut self) {
+        QUEUE.with(|queue| *queue.borrow_mut() = self.previous.take());
     }
 }
 

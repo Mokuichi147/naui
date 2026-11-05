@@ -14,7 +14,7 @@ use naui::Tasks;
 use super::component::Keyed;
 use super::effect_tests::Loop;
 use super::error::tests_support::REPORTED;
-use super::{App, Decision, Dispatch, Effect, Program, Report, ReportKind};
+use super::{App, Decision, Dispatch, Effect, Program, Report, ReportKind, Scoped};
 
 #[derive(Debug, Clone, PartialEq)]
 enum Msg {
@@ -496,6 +496,199 @@ fn work_after_stopping_does_not_complain_about_missing_tasks() {
     app.send(Msg::Plain);
     let texts: Vec<_> = seen.borrow().iter().map(|r| r.text().to_owned()).collect();
     assert_eq!(texts, ["fatal"]);
+}
+
+#[test]
+fn stopping_stops_the_effects_of_children_too() {
+    let (event_loop, tasks) = Loop::new();
+    let saved = Rc::new(RefCell::new(None));
+    let slot = saved.clone();
+    let child = Rc::new(RefCell::new(Scoped::new(Script {
+        log: Log::default(),
+        on_update: Box::new(move |_| {
+            let slot = slot.clone();
+            // 時計を進めないので、取り消されなければ動き続けている。
+            Effect::after(Duration::from_secs(1), Msg::FromHandler).and(Effect::channel(
+                move |sender| *slot.borrow_mut() = Some(sender),
+            ))
+        }),
+        on_render: Rc::new(|| {}),
+    })));
+    let inner = child.clone();
+    let (app, _, _) = app_answering(Some(&tasks), Decision::Stop, move |message| match message {
+        Msg::Plain => inner.borrow_mut().update(Msg::Plain),
+        _ => panic!("update panicked (intended)"),
+    });
+    app.send(Msg::Plain);
+    assert_eq!(child.borrow().running(), 2);
+    let sender: naui::Sender<Msg> = saved.borrow_mut().take().expect("started");
+    assert!(sender.is_open());
+
+    app.send(Msg::Named("save"));
+    event_loop.run();
+    assert_eq!(
+        child.borrow().running(),
+        0,
+        "子のモデルが残っていても止まる"
+    );
+    assert!(!sender.is_open(), "別スレッドの処理が止まったと分かる");
+}
+
+// 同じスレッドの複数の App
+
+fn texts(seen: &Seen) -> Vec<String> {
+    seen.borrow().iter().map(|r| r.text().to_owned()).collect()
+}
+
+#[test]
+fn each_app_hears_about_its_own_queue() {
+    let (first, _, first_seen) = app_answering(None, Decision::Stop, panics_on_named);
+    let (second, _, second_seen) = app_answering(None, Decision::GoOn, panics_on_named);
+    first.send(Msg::Named("first"));
+    assert_eq!(texts(&first_seen), ["first panicked (intended)"]);
+    assert!(second_seen.borrow().is_empty());
+    assert!(first.is_stopped(), "panic した側が止まる");
+    assert!(!second.is_stopped());
+
+    second.send(Msg::Named("second"));
+    assert_eq!(texts(&second_seen), ["second panicked (intended)"]);
+    assert_eq!(first_seen.borrow().len(), 1);
+}
+
+#[test]
+fn an_app_without_a_handler_does_not_reach_anothers() {
+    let log = Log::default();
+    let plain = start(
+        None,
+        &log,
+        |message| match message {
+            Msg::Plain => Effect::fail("plain failed"),
+            _ => panic!("plain panicked (intended)"),
+        },
+        Rc::new(|| {}),
+    );
+    let (other, _, seen) = app_answering(None, Decision::Stop, |_| Effect::none());
+    to_standard_error();
+    plain.send(Msg::Plain);
+    assert_eq!(to_standard_error(), ["plain failed"]);
+    plain.send(Msg::Named("save"));
+    assert!(seen.borrow().is_empty());
+    assert!(!other.is_stopped());
+    assert!(!plain.is_stopped(), "ハンドラがなければキューは続く");
+}
+
+#[test]
+fn a_failure_arriving_later_reaches_the_app_that_started_it() {
+    let (event_loop, tasks) = Loop::new();
+    let (first, _, first_seen) = app_answering(Some(&tasks), Decision::GoOn, |_| {
+        // map を通っても宛先は変わらない。
+        Effect::thread(|| panic!("worker panicked (intended)")).map(|message: Msg| message)
+    });
+    let (_second, _, second_seen) = app_answering(Some(&tasks), Decision::GoOn, |_| Effect::none());
+    first.send(Msg::Plain);
+    let start = Instant::now();
+    while first_seen.borrow().is_empty() {
+        event_loop.run();
+        assert!(second_seen.borrow().is_empty());
+        assert!(start.elapsed() < Duration::from_secs(10), "timed out");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert_eq!(first_seen.borrow()[0].message(), None);
+}
+
+/// An app made first, whose `update` can reach `inner`, an app made after it.
+type Inside = Rc<RefCell<Option<App<Script>>>>;
+
+#[test]
+fn an_app_used_inside_anothers_update_keeps_the_reports_apart() {
+    let inside = Inside::default();
+    let reach = inside.clone();
+    let (outer, _, outer_seen) = app_answering(None, Decision::GoOn, move |_| {
+        reach
+            .borrow()
+            .as_ref()
+            .expect("set")
+            .send(Msg::Named("inner"));
+        Effect::fail("outer failed")
+    });
+    let (inner, _, inner_seen) = app_answering(None, Decision::GoOn, panics_on_named);
+    *inside.borrow_mut() = Some(inner);
+
+    outer.send(Msg::Plain);
+    let inner_seen = inner_seen.borrow();
+    assert_eq!(inner_seen.len(), 1);
+    assert_eq!(inner_seen[0].text(), "inner panicked (intended)");
+    assert_eq!(inner_seen[0].message(), Some(r#"Named("inner")"#));
+    let outer_seen = outer_seen.borrow();
+    assert_eq!(outer_seen.len(), 1);
+    assert_eq!(outer_seen[0].text(), "outer failed");
+    assert_eq!(
+        outer_seen[0].message(),
+        Some("Plain"),
+        "外側のメッセージへ戻る"
+    );
+}
+
+#[test]
+fn a_panic_waiting_in_one_app_is_not_told_to_the_next() {
+    let inside = Inside::default();
+    let reach = inside.clone();
+    let (outer, _, outer_seen) = app_answering(None, Decision::GoOn, move |_| {
+        // まだ伝えていない panic がある間に、別の App のキューが一周する。
+        let _ = catch_unwind(|| panic!("outer caught this (intended)"));
+        reach.borrow().as_ref().expect("set").send(Msg::Plain);
+        Effect::none()
+    });
+    let (inner, _, inner_seen) = app_answering(None, Decision::GoOn, |_| Effect::none());
+    *inside.borrow_mut() = Some(inner);
+
+    outer.send(Msg::Plain);
+    assert!(inner_seen.borrow().is_empty());
+    assert_eq!(texts(&outer_seen), ["outer caught this (intended)"]);
+}
+
+#[test]
+fn a_handler_set_during_update_hears_the_rest_of_it() {
+    let inside = Inside::default();
+    let reach = inside.clone();
+    let newer = Seen::default();
+    let recorded = newer.clone();
+    let (app, _, seen) = app_answering(None, Decision::GoOn, move |_| {
+        let recorded = recorded.clone();
+        if let Some(app) = reach.borrow().as_ref() {
+            app.set_error_handler(move |report, _| {
+                recorded.borrow_mut().push(report.clone());
+                Decision::GoOn
+            });
+        }
+        Effect::fail("after the change")
+    });
+    let shared = Rc::new(app);
+    // App は Clone できないので、同じ中身を指すものをもう 1 つ作って渡す。
+    *inside.borrow_mut() = Some(App {
+        inner: shared.inner.clone(),
+    });
+    shared.send(Msg::Plain);
+    assert!(seen.borrow().is_empty());
+    assert_eq!(texts(&newer), ["after the change"]);
+    // 自分自身を指したままにしない。
+    inside.borrow_mut().take();
+}
+
+#[test]
+fn a_panic_outside_any_queue_goes_to_the_handler_set_last() {
+    let (first, _, first_seen) = app_answering(None, Decision::GoOn, |_| Effect::none());
+    let (second, _, second_seen) = app_answering(None, Decision::Stop, |_| Effect::none());
+    let _ = catch_unwind(|| panic!("callback panicked (intended)"));
+    assert_eq!(second_seen.borrow().len(), 1);
+    assert!(first_seen.borrow().is_empty());
+    assert!(second.is_stopped(), "止まるのはハンドラを設定した App");
+    assert!(!first.is_stopped());
+
+    // いなくなれば、その前の App が聞く。
+    drop(second);
+    let _ = catch_unwind(|| panic!("callback panicked (intended)"));
+    assert_eq!(first_seen.borrow().len(), 1);
 }
 
 // キューの外の panic

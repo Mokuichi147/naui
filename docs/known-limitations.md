@@ -172,9 +172,12 @@ that shape are covered in
   and for every panic where nothing can be caught. A panic in the handler there aborts
   the process, and it is better off not touching widgets. A panic in the handler at any
   other time is caught, and the app goes on.
-- There is one handler per thread, and the panic hook is the process's. An app that
-  sets a panic hook of its own after the handler replaces naui-app's. The hook then
-  sees nothing, but panics caught in the queue are still reported, without a location.
+- With several apps on a thread, each handler hears about its own app's queue and
+  effects, but a panic outside any queue cannot be tied to an app. It goes to the
+  handler set last among those still there, and `Decision::Stop` stops that app.
+- The panic hook is the process's. An app that sets a panic hook of its own after the
+  handler replaces naui-app's. The hook then sees nothing, but panics caught in the
+  queue are still reported, without a location.
 - A handler that sends a message about a panic can go round forever when handling it
   panics again (a `render` that always panics). naui-app reports a failed mount and a
   repeated key once until they are put right for this reason, but cannot tell one

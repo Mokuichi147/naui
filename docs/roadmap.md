@@ -286,7 +286,10 @@ Model–View–Update structure is complete in v0.16.0 (the guide stays in P2).
       so the model is no longer borrowed and a panic in the handler can be caught too. A
       failed mount and a repeated key come again on every `render`, so each is reported
       once until it is put right; a handler that sends a message about them would
-      otherwise go round forever.
+      otherwise go round forever. With several apps on a thread, each handler hears
+      about its own queue and effects; a panic outside any queue goes to the handler
+      set last. Stopping an app cancels everything it started, children's effects in
+      a `Scoped` included, since an app stopped with `with_tasks` can stay around.
 
 ## P1: Do next
 

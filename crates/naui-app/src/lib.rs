@@ -150,9 +150,11 @@
 //! The handler is told from inside the panic hook and the app stops, whatever it answers.
 //!
 //! A panic outside the queue (in a callback that is not a [`Dispatch`], say) reaches the
-//! handler through the panic hook as well, without a message. naui-app installs that
-//! hook when a handler is first set, in front of the one already there, which still
-//! runs. An app that sets a panic hook of its own afterwards replaces both.
+//! handler through the panic hook as well, without a message. With several apps on a
+//! thread, each hears about its own queue and effects, and such a panic goes to the
+//! handler set last. naui-app installs that hook when a handler is first set, in front of
+//! the one already there, which still runs. An app that sets a panic hook of its own
+//! afterwards replaces both.
 //!
 //! ### Writing a handler
 //!
@@ -430,6 +432,10 @@ struct Inner<P: Program> {
     /// Owns the effects that belong to the app's own model. A child's belong to its
     /// [`Scoped`] wrapper, and those go first, with the model.
     owner: Owner,
+    /// Holds everything this app has started, children's too, for when it stops.
+    started: Owner,
+    /// Reports a failure to this app's handler, from outside its queue.
+    report: Rc<dyn Fn(&str)>,
     /// A dispatch to this app, for what effects send.
     dispatch: Dispatch<P::Message>,
     /// This app, for what runs later.
@@ -490,7 +496,7 @@ impl<P: Program> Inner<P> {
         }
         self.running.set(true);
         let _running = Running(&self.running);
-        let _message = error::MessageScope::enter();
+        let _queue = self.queue_scope();
         loop {
             if self.stopped.get() {
                 self.abandon();
@@ -522,14 +528,27 @@ impl<P: Program> Inner<P> {
             };
             error::set_current_message(text);
             error::catch(|| {
-                effect.start(
-                    self.tasks.as_ref(),
-                    &self.dispatch,
-                    &self.owner,
-                    &self.stopped,
-                );
+                let starting = Starting {
+                    tasks: self.tasks.as_ref(),
+                    dispatch: &self.dispatch,
+                    stopped: &self.stopped,
+                    started: &self.started,
+                    report: &self.report,
+                };
+                effect.start(&starting, &self.owner);
             });
         }
+    }
+
+    /// From here on, reports go to this app's handler, or without one to standard error,
+    /// and not to the handler of another app on the thread.
+    fn queue_scope(&self) -> error::QueueScope {
+        let slot = self
+            .handler
+            .borrow()
+            .as_ref()
+            .map_or_else(Weak::new, Rc::downgrade);
+        error::QueueScope::enter(slot)
     }
 
     /// Runs the queue from the event loop. Without [`Tasks`], the next message does.
@@ -561,8 +580,9 @@ impl<P: Program> Inner<P> {
     }
 
     fn wind_down(&self) {
+        let _queue = self.queue_scope();
         self.abandon();
-        self.owner.cancel_all();
+        self.started.cancel_all();
         let quit = self.quit.borrow_mut().take();
         if let Some(quit) = quit {
             quit();
@@ -602,6 +622,10 @@ impl<P: Program> Inner<P> {
             }),
         );
         error::set_slot(&slot);
+        // 動いている最中のキューは、もう古いハンドラを指している。
+        if self.running.get() {
+            error::set_queue_slot(&slot);
+        }
         self.describe.set(Some(error::describe::<P::Message>));
         let previous = self.handler.borrow_mut().replace(slot);
         drop(previous);
@@ -665,6 +689,16 @@ impl<P: Program> App<P> {
             effects: RefCell::new(VecDeque::new()),
             tasks,
             owner: Owner::default(),
+            started: Owner::default(),
+            report: {
+                let me = me.clone();
+                Rc::new(move |failure: &str| {
+                    if let Some(inner) = me.upgrade() {
+                        let _queue = inner.queue_scope();
+                        report(ReportKind::Failure, failure);
+                    }
+                })
+            },
             dispatch: Dispatch {
                 mailbox: Rc::new(ToApp(me.clone())),
             },
@@ -691,9 +725,10 @@ impl<P: Program> App<P> {
     /// Sets the one handler for what goes wrong, replacing the one set before. See
     /// [When something goes wrong](crate#when-something-goes-wrong).
     ///
-    /// The handler belongs to this app and goes when the app is dropped, but there is
-    /// one per thread: with two apps on a thread, the one set last hears about both, and
-    /// [`Decision::Stop`] stops the app that set it.
+    /// The handler belongs to this app and goes when the app is dropped. It hears about
+    /// this app's queue and effects, and no other app's, even on the same thread. A
+    /// panic outside any queue cannot be tied to an app, so it goes to the handler set
+    /// last among those still there, and [`Decision::Stop`] stops the app that set it.
     ///
     /// It takes effect from here on. To hear about `build` and the first `render` as
     /// well, use [`run_with_handler`].
@@ -825,7 +860,7 @@ pub use component::{Change, Children, Component, Mounted};
 pub use effect::{Effect, Scoped};
 pub use error::{Decision, Report, ReportKind};
 
-use effect::Owner;
+use effect::{Owner, Starting};
 use error::report;
 
 #[cfg(test)]
