@@ -476,10 +476,10 @@ impl List {
         }
         self.0.row_height_stale.set(true);
         let _ = self.build_window();
-        // 中身が変わって行の高さが動いていれば、窓を引き直す。
-        if self.settle_row_height() {
-            self.update_window();
-        }
+        // 中身や指定が変わって行の高さが動いていれば、窓の位置も変わる。測った結果が
+        // 同じでも窓を引き直す (`set_row_height` は先に高さを書き換えている)。
+        self.settle_row_height();
+        self.update_window();
     }
 
     /// Sets the row height in logical pixels. Passing 0 or less measures it from the
@@ -487,7 +487,8 @@ impl List {
     ///
     /// Every row gets at least this height. With more rows than
     /// [`ROW_WINDOW_THRESHOLD`], rows off screen are filled in as "row count × this
-    /// height", so set it when the rows' heights vary. A `<select>`'s `<option>`s cannot
+    /// height", so set it when the rows' heights vary. A row built later that needs more
+    /// raises the height for every row. A `<select>`'s `<option>`s cannot
     /// be given a height, so setting one makes the list composed.
     pub fn set_row_height(&self, height: f64) {
         let fixed = (height > 0.0).then_some(height);
@@ -1075,9 +1076,6 @@ impl List {
     /// scroll bar drift every time the window moves. A taller row appearing later grows
     /// the height once.
     fn settle_row_height(&self) -> bool {
-        if self.0.fixed_row_height.get().is_some() {
-            return false;
-        }
         let window = self.0.window.get();
         let body = self.0.body.borrow();
         let tallest = match &*body {
@@ -1095,10 +1093,12 @@ impl List {
         if tallest <= 0.0 {
             return false;
         }
+        // 指定は下限。中身がそれより高い行は伸びるので、窓の計算もそちらに合わせる。
         let measured = match self.0.row_height_stale.replace(false) {
             true => tallest,
             false => tallest.max(previous),
-        };
+        }
+        .max(self.0.fixed_row_height.get().unwrap_or(0.0));
         // 行が少なければ行ごとの高さのまま (窓の外の行が無いので、ずれない)。
         if let (Body::Listbox { options, .. }, false) = (&*body, window.is_complete()) {
             for option in options {

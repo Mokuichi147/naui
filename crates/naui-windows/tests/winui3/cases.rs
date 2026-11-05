@@ -159,6 +159,10 @@ const CASES: &[Case] = &[
         list_builder_can_replace_the_rows,
     ),
     (
+        "行の多いリストで指定より高い行があっても窓の位置がずれない",
+        list_rows_taller_than_the_height_set_keep_the_window_right,
+    ),
+    (
         "行の多いリストで画面の外の選択が残る",
         list_keeps_the_selection_outside_the_window,
     ),
@@ -6024,6 +6028,72 @@ fn list_builder_can_replace_the_rows(ui: &Ui) -> Result<()> {
         }
         keep_replacing(&list, ui);
         assert_eq!(list.len(), ROWS);
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// The height set is a minimum. A row that needs more grows, so the spacers must use the
+/// real height rather than the one set.
+fn list_rows_taller_than_the_height_set_keep_the_window_right(ui: &Ui) -> Result<()> {
+    use naui_core::ListItem;
+
+    const ROWS: usize = 1_000;
+    let window = ui.window("指定より高い行", 240.0, 160.0)?;
+    let list = ui.list()?;
+    list.set_row_height(1.0);
+    let labels: Vec<String> = (0..ROWS).map(|i| format!("行 {i}")).collect();
+    list.set_items(&ListItem::list(labels.iter().map(String::as_str)));
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        let scroll = list_scroller(&list);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && list.row_height() > 1.0
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        let height = list.row_height();
+        assert!(height > 1.0, "中身に合わせて伸びること: {height}");
+        let expected = height * ROWS as f64;
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            (scroll.ExtentHeight().unwrap_or(0.0) - expected).abs() < 2.0
+        });
+        let extent = scroll.ExtentHeight().expect("全体の高さ");
+        assert!(
+            (extent - expected).abs() < 2.0,
+            "スクロールの範囲が実際の高さの全行分であること: {extent} / {expected}"
+        );
+
+        // 送った先で高さを変えても、組み立てる範囲が表示位置へ付いてくる。
+        let body = scroll
+            .Content()
+            .and_then(|content| content.cast::<StackPanel>())
+            .expect("リストの本体");
+        let top_spacer = body
+            .Children()
+            .and_then(|children| children.GetAt(0))
+            .and_then(|spacer| spacer.cast::<FrameworkElement>())
+            .expect("先頭の詰め物");
+        let leading = || top_spacer.Height().unwrap_or(0.0);
+        list.scroll_to_row(800);
+        pump_until(Duration::from_secs(2), || leading() > 0.0);
+        list.set_row_height(height * 2.0);
+        pump_until(Duration::from_secs(2), || {
+            leading() <= scroll.VerticalOffset().unwrap_or(0.0)
+        });
+        let offset = scroll.VerticalOffset().expect("リストの位置");
+        assert!(
+            leading() <= offset,
+            "高さを変えても行が画面にあること (詰め物 {}, 位置 {offset})",
+            leading()
+        );
     }));
     window.close();
     if let Err(panic) = outcome {

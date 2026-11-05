@@ -652,10 +652,10 @@ impl List {
     pub fn refresh(&self) {
         self.0.row_height_stale.set(true);
         self.build_window();
-        // 中身が変わって行の高さが動いていれば、窓を引き直す。
-        if self.settle_row_height() {
-            self.update_window();
-        }
+        // 中身や指定が変わって行の高さが動いていれば、窓の位置も変わる。測った結果が
+        // 同じでも窓を引き直す (`set_row_height` は先に高さを書き換えている)。
+        self.settle_row_height();
+        self.update_window();
     }
 
     /// Sets the row height in logical pixels. Passing 0 or less measures it from the
@@ -663,7 +663,8 @@ impl List {
     ///
     /// Every row gets at least this height. With more rows than
     /// [`ROW_WINDOW_THRESHOLD`](naui_core::ROW_WINDOW_THRESHOLD), rows off screen are
-    /// filled in as "row count × this height", so set it when the rows' heights vary.
+    /// filled in as "row count × this height", so set it when the rows' heights vary. A
+    /// row built later that needs more raises the height for every row.
     pub fn set_row_height(&self, height: f64) {
         self.0
             .fixed_row_height
@@ -919,10 +920,6 @@ impl List {
     /// scroll bar drift every time the window moves. A taller row appearing later grows
     /// the height once.
     fn settle_row_height(&self) -> bool {
-        if self.0.fixed_row_height.get().is_some() {
-            self.0.row_height_pending.set(false);
-            return false;
-        }
         let rows = self.0.native_rows.borrow().clone();
         let tallest = rows
             .iter()
@@ -934,10 +931,12 @@ impl List {
         }
         self.0.row_height_pending.set(false);
         let previous = self.0.row_height.get();
+        // 指定は下限。中身がそれより高い行は伸びるので、窓の計算もそちらに合わせる。
         let measured = match self.0.row_height_stale.replace(false) {
             true => tallest,
             false => tallest.max(previous),
-        };
+        }
+        .max(self.0.fixed_row_height.get().unwrap_or(0.0));
         let window = self.0.window.get();
         // 行が少なければ行ごとの高さのまま (窓の外の行が無いので、ずれない)。
         if !window.is_complete() {

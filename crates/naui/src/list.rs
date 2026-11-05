@@ -89,7 +89,8 @@ impl List {
     ///
     /// Every row gets at least this height. With more rows than
     /// [`ROW_WINDOW_THRESHOLD`](crate::ROW_WINDOW_THRESHOLD), rows off screen are filled
-    /// in as "row count × this height", so set it when the rows' heights vary.
+    /// in as "row count × this height", so set it when the rows' heights vary. A row built
+    /// later that needs more raises the height for every row (on macOS, only its own).
     #[inline]
     pub fn set_row_height(&self, height: f64) {
         self.0.set_row_height(height)

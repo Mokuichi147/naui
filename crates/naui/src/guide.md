@@ -2284,7 +2284,8 @@ list.set_row_builder(names.len(), move |index| {
 For that, **all rows are treated as having the same height**. Windows, Linux and the
 Web measure the rows built, give every row the tallest height, and fill in the rows
 off screen with it, so a taller row appearing later moves the scroll position once.
-If row heights vary, deciding the height with [`List::set_row_height`] avoids this. On
+If row heights vary, setting a height that fits them with [`List::set_row_height`]
+avoids this; the height is a minimum, so a row that needs more still raises it. On
 macOS, `NSTableView` measures each row as it appears and needs none of this.
 
 The selection is remembered by index, so rows off screen can be selected too
