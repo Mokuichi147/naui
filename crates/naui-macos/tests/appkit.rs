@@ -254,8 +254,8 @@ fn main() {
             list_row_selectable_answers_without_building,
         ),
         (
-            "リストの行の高さを指定でき、0 以下で自動へ戻る",
-            list_row_height_follows_the_setting,
+            "リストの行の高さの指定は最小の高さで、中身を切らない",
+            list_row_height_is_a_minimum,
         ),
         (
             "リストの組み立ての中からリストを触れる",
@@ -8465,25 +8465,80 @@ fn list_row_selectable_answers_without_building(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// A row height can be set, and 0 or less returns to automatic heights.
-fn list_row_height_follows_the_setting(ui: &Ui) -> Result<()> {
+/// A row height is a minimum: every row is at least that tall, its content is centered,
+/// and a row whose content needs more grows instead of being cut off. Passing 0 or less
+/// returns to the rows' own heights.
+fn list_row_height_is_a_minimum(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
     assert_eq!(list.row_height(), 0.0, "行が無いうちは 0");
-    list.set_items(&ListItem::list(["東京", "大阪"]));
+    list.set_items(&[
+        ListItem::new("東京"),
+        ListItem::new("大阪").detail("8,838,000 人"),
+    ]);
+    list.set_sizing(Sizing::fill());
+    let window = ui.window("行の高さ", 400.0, 300.0)?;
+    window.set_child(&list);
+    window.show();
+    let content = window.native_window().contentView().expect("contentView");
     let native = list.native_table();
-    assert!(native.usesAutomaticRowHeights(), "既定は自動");
+    let show = || {
+        content.layoutSubtreeIfNeeded();
+        unsafe { content.display() };
+        for row in 0..native.numberOfRows() {
+            let _ = native.viewAtColumn_row_makeIfNecessary(0, row, true);
+        }
+        content.layoutSubtreeIfNeeded();
+    };
+    let height_of = |row: isize| native.rectOfRow(row).size.height;
+    show();
+    let (plain, detailed) = (height_of(0), height_of(1));
+    assert!(detailed > plain, "補助の文字がある行は高いこと");
     let estimate = native.rowHeight();
 
+    // 中身より高い指定は、どの行もその高さになる。中身は行の縦中央に来る。
     list.set_row_height(64.0);
+    show();
     assert_eq!(list.row_height(), 64.0);
-    assert!(!native.usesAutomaticRowHeights());
     assert_eq!(native.rowHeight(), 64.0);
-    list.set_items(&ListItem::list(["札幌"]));
-    assert_eq!(list.row_height(), 64.0, "行を入れ替えても指定は残る");
+    assert_eq!(height_of(0), 64.0);
+    assert_eq!(height_of(1), 64.0);
+    let cell = native
+        .viewAtColumn_row_makeIfNecessary(0, 0, true)
+        .expect("セル");
+    let inner = cell.subviews().objectAtIndex(0);
+    assert!(
+        (inner.frame().origin.y + inner.frame().size.height / 2.0 - cell.frame().size.height / 2.0)
+            .abs()
+            < 1.0,
+        "中身が縦中央にあること: {:?} / {:?}",
+        inner.frame(),
+        cell.frame()
+    );
 
+    // 中身より低い指定では、行は切れずに伸びる。
+    list.set_row_height(plain + 1.0);
+    show();
+    assert_eq!(list.row_height(), plain + 1.0);
+    assert_eq!(height_of(0), plain + 1.0);
+    assert_eq!(height_of(1), detailed, "中身の入る高さまで伸びること");
+    list.set_row_height(1.0);
+    show();
+    assert_eq!(height_of(0), plain, "切れないこと");
+    assert_eq!(height_of(1), detailed, "切れないこと");
+
+    // 行を入れ替えても指定は残る。
+    list.set_row_height(64.0);
+    list.set_items(&ListItem::list(["札幌"]));
+    show();
+    assert_eq!(height_of(0), 64.0);
+
+    // 0 以下で元へ戻す。指定を見積もりに残さない。
     list.set_row_height(0.0);
-    assert!(native.usesAutomaticRowHeights(), "0 以下は自動へ戻す");
-    assert_eq!(native.rowHeight(), estimate, "指定を見積もりに残さない");
+    show();
+    assert_eq!(native.rowHeight(), estimate);
+    assert_eq!(height_of(0), plain);
+    assert_eq!(list.row_height(), plain);
+    window.close();
     Ok(())
 }
 

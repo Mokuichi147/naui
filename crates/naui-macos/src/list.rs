@@ -167,11 +167,11 @@ impl ListRow {
         self.activation.set(f);
     }
 
-    /// The view for one row.
-    fn cell_view(&self, mtm: MainThreadMarker) -> Retained<NSView> {
+    /// The view for one row. With `min_height`, the row is at least that tall.
+    fn cell_view(&self, mtm: MainThreadMarker, min_height: Option<f64>) -> Retained<NSView> {
         match &self.content {
-            ListRowContent::Item(item) => list_item_cell_view(mtm, item),
-            ListRowContent::Custom(content) => custom_cell_view(mtm, &**content),
+            ListRowContent::Item(item) => list_item_cell_view(mtm, item, min_height),
+            ListRowContent::Custom(content) => custom_cell_view(mtm, &**content, min_height),
         }
     }
 
@@ -449,6 +449,8 @@ struct SourceState {
     /// Stops notifications only while the selection is being changed from code, since
     /// AppKit calls the delegate even for `selectRowIndexes:`.
     silent: Rc<Cell<bool>>,
+    /// The row height decided by the app ([`List::set_row_height`]).
+    fixed_row_height: Rc<Cell<Option<f64>>>,
 }
 
 define_class!(
@@ -484,7 +486,7 @@ define_class!(
             usize::try_from(row)
                 .ok()
                 .and_then(|row| self.ivars().rows.row(row))
-                .map(|row| row.cell_view(mtm))
+                .map(|row| row.cell_view(mtm, self.ivars().fixed_row_height.get()))
         }
 
         #[unsafe(method(tableView:shouldSelectRow:))]
@@ -541,8 +543,19 @@ pub(crate) fn cell_view(
     detail: Option<&str>,
     enabled: bool,
 ) -> Retained<NSView> {
+    item_cell_view(mtm, label, detail, enabled, None)
+}
+
+/// [`cell_view`] with a minimum row height.
+fn item_cell_view(
+    mtm: MainThreadMarker,
+    label: &str,
+    detail: Option<&str>,
+    enabled: bool,
+    min_height: Option<f64>,
+) -> Retained<NSView> {
     let (content, title) = item_content(mtm, label, detail, enabled);
-    let cell = cell_with_content(mtm, &content);
+    let cell = cell_with_content(mtm, &content, min_height);
     // `textField` に入れておくと、行の背景色に合わせた文字色や
     // アクセシビリティの扱いを NSTableCellView が面倒を見る。
     unsafe { cell.setTextField(Some(&title)) };
@@ -551,8 +564,18 @@ pub(crate) fn cell_view(
 }
 
 /// Puts `ListItem`s on the same cell path as `ListRow`s.
-fn list_item_cell_view(mtm: MainThreadMarker, item: &ListItem) -> Retained<NSView> {
-    cell_view(mtm, &item.label, item.detail.as_deref(), item.enabled)
+fn list_item_cell_view(
+    mtm: MainThreadMarker,
+    item: &ListItem,
+    min_height: Option<f64>,
+) -> Retained<NSView> {
+    item_cell_view(
+        mtm,
+        &item.label,
+        item.detail.as_deref(),
+        item.enabled,
+        min_height,
+    )
 }
 
 /// The content of a text-only row. The returned `NSTextField` is the first line's.
@@ -621,27 +644,53 @@ fn native_field(label: &Label) -> Retained<NSTextField> {
 /// the top and bottom margins **connected by constraints**, lets Auto Layout
 /// (`usesAutomaticRowHeights`) decide the height, so the highlight and the text line
 /// up with one line or two.
-fn cell_with_content(mtm: MainThreadMarker, content: &dyn Widget) -> Retained<NSTableCellView> {
+///
+/// With `min_height`, the row is at least that tall and the content is centered in it. A
+/// row whose content needs more grows, so nothing is cut off.
+fn cell_with_content(
+    mtm: MainThreadMarker,
+    content: &dyn Widget,
+    min_height: Option<f64>,
+) -> Retained<NSTableCellView> {
     let cell = NSTableCellView::new(mtm);
     let view = content.native_view();
     view.setTranslatesAutoresizingMaskIntoConstraints(false);
     cell.addSubview(&view);
-    NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[
+    let mut constraints = vec![
         view.leadingAnchor()
             .constraintEqualToAnchor(&cell.leadingAnchor()),
         view.trailingAnchor()
             .constraintEqualToAnchor(&cell.trailingAnchor()),
-        view.topAnchor()
-            .constraintEqualToAnchor_constant(&cell.topAnchor(), ROW_PADDING),
-        cell.bottomAnchor()
-            .constraintEqualToAnchor_constant(&view.bottomAnchor(), ROW_PADDING),
-    ]));
+    ];
+    match min_height {
+        None => constraints.extend([
+            view.topAnchor()
+                .constraintEqualToAnchor_constant(&cell.topAnchor(), ROW_PADDING),
+            cell.bottomAnchor()
+                .constraintEqualToAnchor_constant(&view.bottomAnchor(), ROW_PADDING),
+        ]),
+        Some(height) => constraints.extend([
+            view.centerYAnchor()
+                .constraintEqualToAnchor(&cell.centerYAnchor()),
+            view.topAnchor()
+                .constraintGreaterThanOrEqualToAnchor_constant(&cell.topAnchor(), ROW_PADDING),
+            cell.bottomAnchor()
+                .constraintGreaterThanOrEqualToAnchor_constant(&view.bottomAnchor(), ROW_PADDING),
+            cell.heightAnchor()
+                .constraintGreaterThanOrEqualToConstant(height),
+        ]),
+    }
+    NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&constraints));
     cell
 }
 
 /// Connects any widget to Auto Layout, including the row height.
-fn custom_cell_view(mtm: MainThreadMarker, content: &dyn Widget) -> Retained<NSView> {
-    let cell = cell_with_content(mtm, content);
+fn custom_cell_view(
+    mtm: MainThreadMarker,
+    content: &dyn Widget,
+    min_height: Option<f64>,
+) -> Retained<NSView> {
+    let cell = cell_with_content(mtm, content, min_height);
     let view: &NSView = cell.as_ref();
     view.retain()
 }
@@ -738,7 +787,7 @@ struct ListInner {
     table: Retained<ListTableView>,
     rows: Rc<ListRows>,
     /// The row height decided by the app ([`List::set_row_height`]).
-    fixed_row_height: Cell<Option<f64>>,
+    fixed_row_height: Rc<Cell<Option<f64>>>,
     /// AppKit's row height, used as its estimate while heights are automatic.
     default_row_height: f64,
     mode: Cell<SelectionMode>,
@@ -803,12 +852,14 @@ impl List {
 
         let handler = SelectionHandler::default();
         let silent = Rc::new(Cell::new(false));
+        let fixed_row_height = Rc::new(Cell::new(None));
         let source = ListSource::new(
             mtm,
             SourceState {
                 rows: rows.clone(),
                 handler: handler.clone(),
                 silent: silent.clone(),
+                fixed_row_height: fixed_row_height.clone(),
             },
         );
         unsafe {
@@ -839,7 +890,7 @@ impl List {
             scroll,
             table,
             rows,
-            fixed_row_height: Cell::new(None),
+            fixed_row_height,
             default_row_height,
             mode: Cell::new(SelectionMode::Single),
             handler,
@@ -922,12 +973,13 @@ impl List {
         });
     }
 
-    /// Sets the row height in logical pixels. Passing 0 or less returns to AppKit
-    /// working out each row's height (`usesAutomaticRowHeights`).
+    /// Sets the row height in logical pixels. Passing 0 or less measures it from the
+    /// rows.
     ///
-    /// Every row gets this height. AppKit measures rows only when they appear, so with
-    /// many rows of varying height the scroll bar shifts as it finds out their real
-    /// heights; setting a height avoids that.
+    /// Every row gets at least this height, and a row whose content needs more grows.
+    /// AppKit measures rows only when they appear, so with many rows of varying height
+    /// the scroll bar shifts as it finds out their real heights; setting a height that
+    /// fits every row avoids that.
     pub fn set_row_height(&self, height: f64) {
         self.0
             .fixed_row_height
@@ -939,13 +991,12 @@ impl List {
     ///
     /// With no height set, rows may differ in height, and this is the first row's.
     pub fn row_height(&self) -> f64 {
-        if self.0.table.usesAutomaticRowHeights() {
-            match self.len() {
-                0 => 0.0,
-                _ => self.0.table.rectOfRow(0).size.height,
-            }
-        } else {
-            self.0.table.rowHeight()
+        if let Some(height) = self.0.fixed_row_height.get() {
+            return height;
+        }
+        match self.len() {
+            0 => 0.0,
+            _ => self.0.table.rectOfRow(0).size.height,
         }
     }
 
@@ -958,20 +1009,15 @@ impl List {
         });
     }
 
-    /// Decides how row heights are found (automatic or one height for every row).
+    /// Gives AppKit its estimate for rows it has not measured.
+    ///
+    /// **Heights stay automatic even with a height set.** A fixed `rowHeight` would cut
+    /// off the rows that need more; the minimum is a constraint on each cell instead.
     fn apply_row_height(&self) {
-        let table = &self.0.table;
-        match self.0.fixed_row_height.get() {
-            Some(height) => {
-                table.setUsesAutomaticRowHeights(false);
-                table.setRowHeight(height);
-            }
-            // AppKit は自動の間、`rowHeight` を見積もりに使う。指定の値を残さない。
-            None => {
-                table.setRowHeight(self.0.default_row_height);
-                table.setUsesAutomaticRowHeights(true);
-            }
-        }
+        let estimate = self.0.fixed_row_height.get();
+        self.0
+            .table
+            .setRowHeight(estimate.unwrap_or(self.0.default_row_height));
     }
 
     /// The number of rows.
