@@ -182,9 +182,9 @@ that shape are covered in
   panics again (a `render` that always panics). naui-app reports a failed mount and a
   repeated key once until they are put right for this reason, but cannot tell one
   panic from the next.
-- `Report::message` is the `Debug` text of the message, cut to 1024 bytes, and `render`
-  sees the last message handled before it, not all that led to it. A failure from an
-  effect's thread or a panic in a callback that ran later carries no message.
+- `Report::message` is the `Debug` text of the message, cut to fit in 1024 bytes, and
+  `render` sees the last message handled before it, not all that led to it. A failure
+  from an effect's thread or a panic in a callback that ran later carries no message.
 
 ### Other threads and async
 

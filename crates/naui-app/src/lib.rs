@@ -136,7 +136,7 @@
 //! A report from inside the queue says which message was being handled
 //! ([`Report::message`]), which is why the handler needs the message type to be
 //! [`Debug`]. The text is recorded before `update` (which takes the message away), cut
-//! to 1024 bytes, and only while a handler is set, so large messages cost little.
+//! to fit in 1024 bytes, and only while a handler is set, so large messages cost little.
 //!
 //! ### Panics
 //!

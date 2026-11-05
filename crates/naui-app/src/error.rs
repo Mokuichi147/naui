@@ -8,8 +8,11 @@ use std::panic::{catch_unwind, set_hook, take_hook, AssertUnwindSafe, PanicHookI
 use std::rc::{Rc, Weak};
 use std::sync::Once;
 
-/// How long the text of a message can get, in bytes.
+/// How long the text of a message can get, in bytes, [`CUT_MARK`] included.
 const MESSAGE_TEXT_LIMIT: usize = 1024;
+
+/// What ends the text of a message that was cut.
+const CUT_MARK: char = '…';
 
 /// Whether a panic can be caught at all. On wasm and with `panic = "abort"` it cannot.
 const CAN_UNWIND: bool = cfg!(panic = "unwind");
@@ -57,7 +60,8 @@ impl Report {
         self.location.as_deref()
     }
 
-    /// The [`Debug`] text of the message the queue was handling, cut to 1024 bytes.
+    /// The [`Debug`] text of the message the queue was handling. Beyond 1024 bytes it is
+    /// cut to fit in them, with a `…` at the end.
     ///
     /// - From `update`: the message it was given.
     /// - From `render`: the last message handled before it, of the several that may
@@ -387,7 +391,13 @@ pub(crate) fn describe<M: Debug>(message: &M) -> Rc<str> {
     };
     let _ = write!(bounded, "{message:?}");
     if bounded.cut {
-        bounded.text.push('…');
+        // 上限までは入っているので、印の分を空ける。文字の途中では切らない。
+        let mut end = MESSAGE_TEXT_LIMIT - CUT_MARK.len_utf8();
+        while !bounded.text.is_char_boundary(end) {
+            end -= 1;
+        }
+        bounded.text.truncate(end);
+        bounded.text.push(CUT_MARK);
     }
     bounded.text.into()
 }

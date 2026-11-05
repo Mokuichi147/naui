@@ -1120,9 +1120,11 @@ fn a_large_message_is_cut_and_stops_being_formatted() {
     app.send(Huge(formatted.clone()));
     let seen = seen.borrow();
     let text = seen[0].message().expect("a message");
-    // é は 2 バイトなので、1024 バイト以内で切ると 512 文字。文字の途中では切らない。
-    assert_eq!(text.chars().filter(|c| *c == 'é').count(), 512);
+    // é は 2 バイトで … は 3 バイト。合わせて 1024 バイト以内なら 510 文字で、文字の途中では
+    // 切らない。
+    assert_eq!(text.chars().filter(|c| *c == 'é').count(), 510);
     assert!(text.ends_with('…'));
+    assert!(text.len() <= 1024, "{} バイト", text.len());
     assert!(formatted.get() < 600, "{} まで作った", formatted.get());
 }
 
@@ -1132,6 +1134,45 @@ fn a_message_is_not_formatted_without_a_handler() {
     let formatted = Rc::new(Cell::new(0));
     app.send(Huge(formatted.clone()));
     assert_eq!(formatted.get(), 0);
+}
+
+/// Writes each of these in one go, as a `Debug` implementation does with its pieces.
+struct Pieces(Vec<String>);
+
+impl fmt::Debug for Pieces {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.iter().try_for_each(|piece| f.write_str(piece))
+    }
+}
+
+fn described(pieces: &[String]) -> String {
+    crate::error::describe(&Pieces(pieces.to_vec())).to_string()
+}
+
+#[test]
+fn a_message_of_exactly_the_limit_is_kept_whole() {
+    let text = "a".repeat(1024);
+    assert_eq!(described(std::slice::from_ref(&text)), text);
+    // 分けて書かれても同じ。
+    let parts = ["a".repeat(1023), "a".to_owned()];
+    assert_eq!(described(&parts), text);
+}
+
+#[test]
+fn a_message_over_the_limit_makes_room_for_the_mark() {
+    let expected = format!("{}…", "a".repeat(1021));
+    assert_eq!(expected.len(), 1024);
+    assert_eq!(described(&["a".repeat(1025)]), expected);
+    // 残りの一片が入らないと分かったときには、もう印の場所まで書いてある。
+    let parts = ["a".repeat(1023), "bbbbb".to_owned()];
+    assert_eq!(described(&parts), expected);
+}
+
+#[test]
+fn the_mark_does_not_split_a_character() {
+    // 3 バイトの文字が 1021 バイト目をまたぐ。
+    let text = described(&[format!("{}{}", "a".repeat(1020), "あ".repeat(10))]);
+    assert_eq!(text, format!("{}…", "a".repeat(1020)));
 }
 
 #[test]
