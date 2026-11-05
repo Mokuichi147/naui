@@ -471,6 +471,7 @@ impl Drop for Running<'_> {
 impl<P: Program> Inner<P> {
     fn post(&self, message: P::Message) {
         if self.stopped.get() {
+            self.wind_down_without_tasks();
             return;
         }
         self.queue.borrow_mut().push_back(message);
@@ -561,7 +562,8 @@ impl<P: Program> Inner<P> {
     }
 
     /// Stops handling messages. This can come from inside the panic hook, so the rest
-    /// waits for the event loop, where widgets and the app's code can run.
+    /// waits for the event loop, where widgets and the app's code can run. Without
+    /// [`Tasks`] it waits for the app to be used next, unless it can be done here.
     fn stop(&self) {
         if self.stopped.replace(true) {
             return;
@@ -573,6 +575,18 @@ impl<P: Program> Inner<P> {
                     inner.wind_down();
                 }
             });
+        } else {
+            self.wind_down_without_tasks();
+        }
+    }
+
+    /// Does what [`Tasks`] would have done once an app has stopped, if the app's code can
+    /// run here. The queue does it itself when it notices, and during a panic it has to
+    /// wait for the next chance.
+    fn wind_down_without_tasks(&self) {
+        let can_run = !self.running.get() && !error::must_wait();
+        if self.stopped.get() && self.tasks.is_none() && can_run {
+            self.wind_down();
         }
     }
 
@@ -768,9 +782,11 @@ impl<P: Program> App<P> {
         self.inner.view.get().expect("the view is built in `new`")
     }
 
-    /// The number of messages waiting in the queue (other than while it is being
-    /// handled, always 0).
+    /// The number of messages waiting in the queue: 0, other than while it is being
+    /// handled, or while a message sent during a panic waits for the event loop (without
+    /// [`Tasks`], for the next message).
     pub fn pending(&self) -> usize {
+        self.inner.wind_down_without_tasks();
         self.inner.queue.borrow().len()
     }
 

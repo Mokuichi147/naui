@@ -703,6 +703,76 @@ fn a_panic_while_stopping_stops_the_rest_and_quits() {
     assert!(other_seen.borrow().is_empty());
 }
 
+// Tasks のないアプリの停止
+
+/// An app without `Tasks` whose handler sends a message about a panic and stops it.
+fn stopped_from_the_hook(log: &Log) -> App<Script> {
+    let app = start(None, log, |_| Effect::none(), Rc::new(|| {}));
+    app.set_error_handler(|_, dispatch| {
+        dispatch.send(Msg::FromHandler);
+        Decision::Stop
+    });
+    taken(log);
+    let _ = catch_unwind(|| panic!("callback panicked (intended)"));
+    assert!(app.is_stopped());
+    // hook の中では捨てられない。Drop の panic でプロセスが落ちる。
+    assert_eq!(app.inner.queue.borrow().len(), 1);
+    app
+}
+
+#[test]
+fn without_tasks_what_waits_after_stopping_goes_with_the_next_send() {
+    let log = Log::default();
+    let app = stopped_from_the_hook(&log);
+    app.send(Msg::Plain);
+    assert_eq!(app.inner.queue.borrow().len(), 0);
+    assert!(taken(&log).is_empty(), "処理はしない");
+}
+
+#[test]
+fn without_tasks_what_waits_after_stopping_is_not_counted_as_pending() {
+    let log = Log::default();
+    let app = stopped_from_the_hook(&log);
+    assert_eq!(app.pending(), 0);
+    assert_eq!(app.inner.queue.borrow().len(), 0);
+    assert!(taken(&log).is_empty(), "処理はしない");
+}
+
+#[test]
+fn without_tasks_a_panic_while_dropping_what_waits_is_told() {
+    let app = App::new(FusedModel, |_| Ok::<_, Infallible>(())).expect("build");
+    let seen = Seen::default();
+    let recorded = seen.clone();
+    app.set_error_handler(move |report, dispatch| {
+        recorded.borrow_mut().push(report.clone());
+        if report.text().starts_with("callback") {
+            dispatch.send(Fused::Fuse);
+        }
+        Decision::Stop
+    });
+    let _ = catch_unwind(|| panic!("callback panicked (intended)"));
+    assert_eq!(app.inner.queue.borrow().len(), 1);
+    assert_eq!(app.pending(), 0);
+    assert_eq!(
+        texts(&seen),
+        [
+            "callback panicked (intended)",
+            "dropping the message panicked (intended)",
+        ]
+    );
+}
+
+#[test]
+fn without_tasks_stopping_outside_a_panic_drops_what_waits_right_away() {
+    let log = Log::default();
+    let app = start(None, &log, |_| Effect::none(), Rc::new(|| {}));
+    app.set_error_handler(|_, _| Decision::Stop);
+    app.inner.queue.borrow_mut().push_back(Msg::Plain);
+    crate::error::report(ReportKind::Failure, "outside the queue");
+    assert!(app.is_stopped());
+    assert_eq!(app.inner.queue.borrow().len(), 0);
+}
+
 // 同じスレッドの複数の App
 
 fn texts(seen: &Seen) -> Vec<String> {
