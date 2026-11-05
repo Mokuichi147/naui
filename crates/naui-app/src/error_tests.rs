@@ -544,6 +544,102 @@ impl Drop for PanicsWhenDropped {
 }
 
 #[test]
+fn a_panic_while_dropping_a_waiting_effect_does_not_stop_the_cleaning_up() {
+    let (event_loop, tasks) = Loop::new();
+    let (app, _, seen) = app_answering(Some(&tasks), Decision::Stop, |message| match message {
+        Msg::Plain => {
+            // 始まらないまま捨てられる。
+            let guard = PanicsWhenDropped;
+            Effect::spawn(move |_| async move {
+                let _guard = guard;
+                std::future::pending::<Msg>().await
+            })
+            .and(Effect::fail("happened before"))
+        }
+        _ => panic!("update panicked (intended)"),
+    });
+    let quit = Rc::new(Cell::new(false));
+    let quitting = quit.clone();
+    *app.inner.quit.borrow_mut() = Some(Box::new(move || quitting.set(true)));
+    app.inner.queue.borrow_mut().push_back(Msg::Plain);
+    app.inner.queue.borrow_mut().push_back(Msg::Plain);
+
+    app.send(Msg::Named("save"));
+    assert!(app.is_stopped());
+    assert_eq!(
+        texts(&seen),
+        [
+            "update panicked (intended)",
+            "happened before",
+            "dropping the future panicked (intended)",
+            "happened before",
+            "dropping the future panicked (intended)",
+        ],
+        "途中で panic しても、残りの失敗を伝える"
+    );
+    event_loop.run();
+    assert!(quit.get());
+}
+
+/// A message that panics when it is dropped, unless it is the one that starts it all.
+#[derive(Debug)]
+enum Fused {
+    Go,
+    Fuse,
+}
+
+impl Drop for Fused {
+    fn drop(&mut self) {
+        if matches!(self, Fused::Fuse) {
+            panic!("dropping the message panicked (intended)");
+        }
+    }
+}
+
+struct FusedModel;
+
+impl Program for FusedModel {
+    type Message = Fused;
+    type View = ();
+
+    fn update(&mut self, _: Fused) -> Effect<Fused> {
+        panic!("update panicked (intended)");
+    }
+
+    fn render(&self, _: &()) {}
+}
+
+#[test]
+fn a_panic_while_dropping_waiting_messages_does_not_stop_the_cleaning_up() {
+    let (event_loop, tasks) = Loop::new();
+    let app = App::with_tasks(&tasks, FusedModel, |_| Ok::<_, Infallible>(())).expect("build");
+    let seen = Seen::default();
+    let recorded = seen.clone();
+    app.set_error_handler(move |report, _| {
+        recorded.borrow_mut().push(report.clone());
+        Decision::Stop
+    });
+    let quit = Rc::new(Cell::new(false));
+    let quitting = quit.clone();
+    *app.inner.quit.borrow_mut() = Some(Box::new(move || quitting.set(true)));
+    app.inner.queue.borrow_mut().push_back(Fused::Go);
+    app.inner.queue.borrow_mut().push_back(Fused::Fuse);
+
+    app.send(Fused::Fuse);
+    assert_eq!(app.pending(), 0);
+    assert_eq!(
+        texts(&seen),
+        [
+            "update panicked (intended)",
+            "dropping the message panicked (intended)",
+            "dropping the message panicked (intended)",
+        ]
+    );
+    event_loop.run();
+    assert!(quit.get());
+}
+
+#[test]
 fn stopping_on_a_panic_while_replacing_a_key_does_not_start_the_new_one() {
     let (event_loop, tasks) = Loop::new();
     let started = Log::default();

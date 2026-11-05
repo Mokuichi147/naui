@@ -587,16 +587,22 @@ impl<P: Program> Inner<P> {
 
     /// Drops what is waiting. A failure among the effects has happened all the same, so
     /// it is still reported.
+    ///
+    /// Dropping a value can run the app's code, so each is dropped on its own: a panic
+    /// must not end the rest, and a second one while the first unwinds would abort.
     fn abandon(&self) {
         let messages = std::mem::take(&mut *self.queue.borrow_mut());
-        drop(messages);
         let effects = std::mem::take(&mut *self.effects.borrow_mut());
         let _message = error::MessageScope::enter();
+        for message in messages {
+            error::catch(|| drop(message));
+        }
         for (text, effect) in effects {
             error::set_current_message(text);
             for failure in effect.failures() {
                 report(ReportKind::Failure, failure);
             }
+            error::catch(|| drop(effect));
         }
     }
 
