@@ -1344,6 +1344,71 @@ fn an_inner_wrapper_goes_with_the_outer_one() {
     assert!(log.borrow().is_empty(), "{:?}", log.borrow());
 }
 
+/// 落とされるときに、自分のチャンネルがもう閉じているかを記録するモデル。別スレッドの
+/// 処理の終わりを待つ `Drop` は、閉じていなければ戻らない。
+struct ChecksChannelOnDrop {
+    sender: Rc<RefCell<Option<naui::Sender<Msg>>>>,
+    open_on_drop: Rc<Cell<Option<bool>>>,
+}
+
+impl ChecksChannelOnDrop {
+    fn new() -> (Self, Rc<Cell<Option<bool>>>) {
+        let open_on_drop = Rc::new(Cell::new(None));
+        let model = Self {
+            sender: Rc::default(),
+            open_on_drop: open_on_drop.clone(),
+        };
+        (model, open_on_drop)
+    }
+}
+
+impl Program for ChecksChannelOnDrop {
+    type Message = Msg;
+    type View = ();
+
+    fn update(&mut self, _: Msg) -> Effect<Msg> {
+        let slot = self.sender.clone();
+        Effect::channel(move |sender| *slot.borrow_mut() = Some(sender))
+    }
+
+    fn render(&self, _: &()) {}
+}
+
+impl Drop for ChecksChannelOnDrop {
+    fn drop(&mut self) {
+        let open = self.sender.borrow().as_ref().map(naui::Sender::is_open);
+        self.open_on_drop.set(open);
+    }
+}
+
+#[test]
+fn a_wrappers_effects_stop_before_its_model_is_dropped() {
+    let (_event_loop, tasks) = Loop::new();
+    let log = Log::default();
+    let (model, open_on_drop) = ChecksChannelOnDrop::new();
+    let child = Rc::new(RefCell::new(Some(Scoped::new(model))));
+    let inner = child.clone();
+    let app = app(&tasks, &log, move |message| {
+        match inner.borrow_mut().as_mut() {
+            Some(child) => child.update(message),
+            None => Effect::none(),
+        }
+    });
+    app.send(Msg::Go);
+    child.borrow_mut().take();
+    assert_eq!(open_on_drop.get(), Some(false));
+}
+
+#[test]
+fn the_apps_effects_stop_before_its_model_is_dropped() {
+    let (_event_loop, tasks) = Loop::new();
+    let (model, open_on_drop) = ChecksChannelOnDrop::new();
+    let app = App::with_tasks(&tasks, model, |_| Ok::<_, Infallible>(())).expect("build");
+    app.send(Msg::Go);
+    drop(app);
+    assert_eq!(open_on_drop.get(), Some(false));
+}
+
 #[test]
 fn dropping_the_app_cancels_its_own_effects() {
     let (event_loop, tasks) = Loop::new();

@@ -686,6 +686,9 @@ fn panic_text(panic: &(dyn Any + Send)) -> &str {
 /// result is for, and all this needs nothing from the view, whose widgets follow in
 /// the next `render`.
 ///
+/// The effects stop before the child is dropped, so a `Drop` of its own can wait for
+/// work on another thread that watches [`Sender::is_open`].
+///
 /// ```no_run
 /// # use naui_app::{Effect, Program, Scoped};
 /// # struct Row { id: u64 }
@@ -717,8 +720,9 @@ fn panic_text(panic: &(dyn Any + Send)) -> &str {
 /// A child that lives as long as its parent, or that starts nothing, needs no wrapper:
 /// what it starts then belongs to the parent, along with its keys.
 pub struct Scoped<C: Program> {
-    model: C,
+    // 先に落とす。モデルの Drop が別スレッドの処理の終わりを待っても、止めてあるように。
     owner: Owner,
+    model: C,
 }
 
 impl<C: Program> Scoped<C> {

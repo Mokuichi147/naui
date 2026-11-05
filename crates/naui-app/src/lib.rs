@@ -345,6 +345,10 @@ impl<M: 'static> Dispatch<M> {
 }
 
 struct Inner<P: Program> {
+    /// Owns the effects that belong to the app's own model. A child's belong to its
+    /// [`Scoped`] wrapper. It goes before the model, so that a `Drop` of the model can
+    /// wait for work on another thread that watches [`Sender::is_open`].
+    owner: Owner,
     model: RefCell<P>,
     view: OnceCell<P::View>,
     queue: RefCell<VecDeque<P::Message>>,
@@ -352,9 +356,6 @@ struct Inner<P: Program> {
     effects: RefCell<VecDeque<Effect<P::Message>>>,
     /// What the effects run on. `None` when the app was made without it.
     tasks: Option<Tasks>,
-    /// Owns the effects that belong to the app's own model. A child's belong to its
-    /// [`Scoped`] wrapper, and those go first, with the model.
-    owner: Owner,
     /// A dispatch to this app, for what effects send.
     dispatch: Dispatch<P::Message>,
     /// Whether the queue is being handled. A message posted meanwhile waits.
