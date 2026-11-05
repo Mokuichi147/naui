@@ -442,7 +442,7 @@ struct Inner<P: Program> {
     me: Weak<Inner<P>>,
     /// The handler, when this app set one. Only a weak reference is kept elsewhere, so it
     /// goes with the app.
-    handler: RefCell<Option<Rc<error::Slot>>>,
+    handler: error::Handling,
     /// Makes the text of a message. Set together with the handler, since that is what
     /// asks for `Debug`.
     describe: Cell<Option<Describe<P::Message>>>,
@@ -543,12 +543,7 @@ impl<P: Program> Inner<P> {
     /// From here on, reports go to this app's handler, or without one to standard error,
     /// and not to the handler of another app on the thread.
     fn queue_scope(&self) -> error::QueueScope {
-        let slot = self
-            .handler
-            .borrow()
-            .as_ref()
-            .map_or_else(Weak::new, Rc::downgrade);
-        error::QueueScope::enter(slot)
+        error::QueueScope::enter(self.handler.clone())
     }
 
     /// Runs the queue from the event loop. Without [`Tasks`], the next message does.
@@ -622,10 +617,6 @@ impl<P: Program> Inner<P> {
             }),
         );
         error::set_slot(&slot);
-        // 動いている最中のキューは、もう古いハンドラを指している。
-        if self.running.get() {
-            error::set_queue_slot(&slot);
-        }
         self.describe.set(Some(error::describe::<P::Message>));
         let previous = self.handler.borrow_mut().replace(slot);
         drop(previous);
@@ -703,7 +694,7 @@ impl<P: Program> App<P> {
                 mailbox: Rc::new(ToApp(me.clone())),
             },
             me: me.clone(),
-            handler: RefCell::new(None),
+            handler: Default::default(),
             describe: Cell::new(None),
             quit: RefCell::new(quit),
             stopped: Cell::new(false),

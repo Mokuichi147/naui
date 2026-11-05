@@ -136,6 +136,10 @@ impl Slot {
     }
 }
 
+/// Where an app keeps its handler. A running queue points at this rather than at the
+/// handler, so replacing the handler reaches every queue on the stack, whichever is on top.
+pub(crate) type Handling = Rc<RefCell<Option<Rc<Slot>>>>;
+
 /// A panic the hook saw, waiting for the queue to catch it.
 struct Panicked {
     text: String,
@@ -147,9 +151,8 @@ thread_local! {
     /// it. What cannot be tied to an app goes to the last one still there. Other threads
     /// have none, so the panics there only go on to the previous hook.
     static SLOTS: RefCell<Vec<Weak<Slot>>> = const { RefCell::new(Vec::new()) };
-    /// The handler of the app whose queue is running, which is empty if that app has
-    /// none. `None` outside any queue.
-    static QUEUE: RefCell<Option<Weak<Slot>>> = const { RefCell::new(None) };
+    /// Where the app whose queue is running keeps its handler. `None` outside any queue.
+    static QUEUE: RefCell<Option<Handling>> = const { RefCell::new(None) };
     /// How many of [`catch`]'s calls are running.
     static CATCHING: Cell<usize> = const { Cell::new(0) };
     /// Panics seen inside [`catch`].
@@ -167,8 +170,8 @@ fn current_slot() -> Option<Rc<Slot>> {
         .try_with(|queue| queue.try_borrow().ok().and_then(|queue| queue.clone()))
         .ok()
         .flatten();
-    if let Some(slot) = queue {
-        return slot.upgrade();
+    if let Some(handling) = queue {
+        return handling.try_borrow().ok().and_then(|slot| slot.clone());
     }
     SLOTS
         .try_with(|slots| {
@@ -195,11 +198,6 @@ pub(crate) fn set_slot(slot: &Rc<Slot>) {
         slots.push(Rc::downgrade(slot));
     });
     install_hook();
-}
-
-/// Makes `slot` the handler of the queue that is running.
-pub(crate) fn set_queue_slot(slot: &Rc<Slot>) {
-    QUEUE.with(|queue| *queue.borrow_mut() = Some(Rc::downgrade(slot)));
 }
 
 /// Puts naui-app's panic hook in front of the one there, once.
@@ -335,17 +333,17 @@ impl Drop for MessageScope {
     }
 }
 
-/// What runs meanwhile is `slot`'s app's, with no message being handled yet. Puts back
-/// the app and the message before when dropped.
+/// What runs meanwhile belongs to the app with this `handling`, with no message being
+/// handled yet. Puts back the app and the message before when dropped.
 pub(crate) struct QueueScope {
-    previous: Option<Weak<Slot>>,
+    previous: Option<Handling>,
     _message: MessageScope,
 }
 
 impl QueueScope {
-    pub(crate) fn enter(slot: Weak<Slot>) -> Self {
+    pub(crate) fn enter(handling: Handling) -> Self {
         Self {
-            previous: QUEUE.with(|queue| queue.borrow_mut().replace(slot)),
+            previous: QUEUE.with(|queue| queue.borrow_mut().replace(handling)),
             _message: MessageScope::enter(),
         }
     }

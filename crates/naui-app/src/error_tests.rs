@@ -676,6 +676,52 @@ fn a_handler_set_during_update_hears_the_rest_of_it() {
 }
 
 #[test]
+fn a_handler_changed_from_inside_another_apps_queue_reaches_only_its_app() {
+    let (inside_outer, inside_inner) = (Inside::default(), Inside::default());
+    let reach_inner = inside_inner.clone();
+    let (outer, _, outer_seen) = app_answering(None, Decision::GoOn, move |_| {
+        reach_inner.borrow().as_ref().expect("set").send(Msg::Plain);
+        Effect::fail("outer failed")
+    });
+    let newer = Seen::default();
+    let (reach_outer, recorded) = (inside_outer.clone(), newer.clone());
+    let (inner, _, inner_seen) = app_answering(None, Decision::GoOn, move |_| {
+        let recorded = recorded.clone();
+        // 外側のキューが動いている間に、内側の update から外側のハンドラを替える。
+        let reach = reach_outer.borrow();
+        reach
+            .as_ref()
+            .expect("set")
+            .set_error_handler(move |report, _| {
+                recorded.borrow_mut().push(report.clone());
+                Decision::GoOn
+            });
+        drop(reach);
+        panic!("inner panicked (intended)")
+    });
+    *inside_inner.borrow_mut() = Some(inner);
+    *inside_outer.borrow_mut() = Some(App {
+        inner: outer.inner.clone(),
+    });
+
+    outer.send(Msg::Plain);
+    assert_eq!(
+        texts(&inner_seen),
+        ["inner panicked (intended)"],
+        "内側のものは内側へ"
+    );
+    assert_eq!(
+        texts(&newer),
+        ["outer failed"],
+        "戻ったあとは新しいハンドラへ"
+    );
+    assert!(outer_seen.borrow().is_empty());
+    // 互いを指したままにしない。
+    inside_inner.borrow_mut().take();
+    inside_outer.borrow_mut().take();
+}
+
+#[test]
 fn a_panic_outside_any_queue_goes_to_the_handler_set_last() {
     let (first, _, first_seen) = app_answering(None, Decision::GoOn, |_| Effect::none());
     let (second, _, second_seen) = app_answering(None, Decision::Stop, |_| Effect::none());
