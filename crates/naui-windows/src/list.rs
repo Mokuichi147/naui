@@ -270,36 +270,101 @@ pub(crate) fn item_padding(selectable: bool) -> Thickness {
 /// right-click still reaches the context menu. The row's own content is already
 /// handled the same way: buttons and fields stop the press, which is why clicking
 /// them does not select the row.
+///
+/// The held press is remembered by its pointer id, so only the release of that same
+/// pointer is taken. It is forgotten when that pointer is cancelled, loses capture or
+/// leaves the row, so a press that never gets its release cannot swallow a later one.
 pub(crate) fn hold_unselectable_press(holder: &XamlGrid) -> Result<()> {
-    let held: Arc<UiThreadCell<bool>> = Arc::new(UiThreadCell::new(false));
+    // 押下中のポインターの id。押していなければ `None`。
+    let held: Arc<UiThreadCell<Option<u32>>> = Arc::new(UiThreadCell::new(None));
+
     let on_press = held.clone();
     let pressed = PointerEventHandler::new(move |_, args| {
         let Some(args) = args.as_ref() else {
             return Ok(());
         };
         if is_primary_press(Some(args)) {
-            on_press.with_mut(|held| *held = true);
+            let id = pointer_id(args);
+            on_press.with_mut(|held| *held = Some(id));
             let _ = args.SetHandled(true);
         }
         Ok(())
     });
+
     let on_release = held.clone();
     let released = PointerEventHandler::new(move |_, args| {
         let Some(args) = args.as_ref() else {
             return Ok(());
         };
-        if on_release.with_mut(|held| std::mem::replace(held, false)) {
+        let id = pointer_id(args);
+        let ours = on_release.with_mut(|held| {
+            if *held == Some(id) {
+                *held = None;
+                true
+            } else {
+                false
+            }
+        });
+        if ours {
             let _ = args.SetHandled(true);
         }
         Ok(())
     });
+
+    // 押下が離されずに終わる経路 (キャンセル、捕捉の喪失、行からの離脱) では、
+    // 押下を覚えたままにしない。
+    let on_cancel = held.clone();
+    let canceled = PointerEventHandler::new(move |_, args| {
+        forget_press(&on_cancel, args.as_ref());
+        Ok(())
+    });
+    let on_lost = held.clone();
+    let capture_lost = PointerEventHandler::new(move |_, args| {
+        forget_press(&on_lost, args.as_ref());
+        Ok(())
+    });
+    let on_exit = held.clone();
+    let exited = PointerEventHandler::new(move |_, args| {
+        forget_press(&on_exit, args.as_ref());
+        Ok(())
+    });
+
     holder
         .PointerPressed(&pressed)
         .map_err(|e| to_error("subscribe to row presses", e))?;
     holder
         .PointerReleased(&released)
         .map_err(|e| to_error("subscribe to row releases", e))?;
+    holder
+        .PointerCanceled(&canceled)
+        .map_err(|e| to_error("subscribe to row cancels", e))?;
+    holder
+        .PointerCaptureLost(&capture_lost)
+        .map_err(|e| to_error("subscribe to row capture loss", e))?;
+    holder
+        .PointerExited(&exited)
+        .map_err(|e| to_error("subscribe to row exits", e))?;
     Ok(())
+}
+
+/// The id of the pointer that raised the event (mouse, touch or pen each has its own).
+fn pointer_id(args: &PointerRoutedEventArgs) -> u32 {
+    args.Pointer()
+        .and_then(|pointer| pointer.PointerId())
+        .unwrap_or(0)
+}
+
+/// Forgets the press held for this pointer, if there is one.
+fn forget_press(held: &UiThreadCell<Option<u32>>, args: Option<&PointerRoutedEventArgs>) {
+    let Some(args) = args else {
+        return;
+    };
+    let id = pointer_id(args);
+    held.with_mut(|held| {
+        if *held == Some(id) {
+            *held = None;
+        }
+    });
 }
 
 /// Loads the themed frame. Falls back to a plain `Border` + `ListView` if it cannot
