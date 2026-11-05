@@ -20,7 +20,11 @@
 //! assert_eq!(window.leading(20.0), 900.0);
 //! ```
 
+use std::cell::{Cell, RefCell};
 use std::ops::Range;
+use std::rc::Rc;
+
+use crate::Result;
 
 /// The row count at which rows start being limited to "just the visible ones".
 ///
@@ -268,6 +272,183 @@ pub fn keeps_hidden_selection(
     }
 }
 
+/// The selection after the user changed it in a windowed list.
+///
+/// `picked` is what the native control returned, which covers only the rows built;
+/// `previous` is the whole selection before the change. Whether the rows outside the
+/// window stay is decided by [`keeps_hidden_selection`]. The result is ascending
+/// without duplicates.
+///
+/// ```
+/// # use naui_core::{merge_hidden_selection, RowWindow, SelectionGesture};
+/// let window = RowWindow { start: 100, end: 140, count: 10_000 };
+/// // Row 5 is off screen. Adding row 120 with ⌘ / Ctrl leaves it selected.
+/// let toggled = merge_hidden_selection(window, &[5], vec![120], SelectionGesture::Toggle);
+/// assert_eq!(toggled, vec![5, 120]);
+/// // A plain click selects anew.
+/// let plain = merge_hidden_selection(window, &[5], vec![120], SelectionGesture::Plain);
+/// assert_eq!(plain, vec![120]);
+/// ```
+pub fn merge_hidden_selection(
+    window: RowWindow,
+    previous: &[usize],
+    mut picked: Vec<usize>,
+    gesture: SelectionGesture,
+) -> Vec<usize> {
+    picked.sort_unstable();
+    picked.dedup();
+    if window.is_complete() {
+        return picked;
+    }
+    let inside: Vec<usize> = previous
+        .iter()
+        .copied()
+        .filter(|&index| window.contains(index))
+        .collect();
+    if !keeps_hidden_selection(&inside, &picked, gesture) {
+        return picked;
+    }
+    picked.extend(previous.iter().copied().filter(|&i| !window.contains(i)));
+    picked.sort_unstable();
+    picked.dedup();
+    picked
+}
+
+/// The closure that builds a row when it becomes visible.
+type RowBuild<T> = Box<dyn FnMut(usize) -> Result<T>>;
+
+/// The function that answers whether a row can be selected without building it.
+type RowSelectable = Rc<dyn Fn(usize) -> bool>;
+
+/// Where the rows of a windowed list come from: either rows the app passed all at
+/// once, or a function that builds a row when it becomes visible.
+///
+/// `T` is the backend's row type. Nothing is drawn here; backends ask for the rows in
+/// their window with [`RowSource::row`].
+///
+/// ```
+/// # use naui_core::RowSource;
+/// let rows: RowSource<String> = RowSource::default();
+/// rows.set_builder(100_000, |index| Ok(format!("Row {index}")));
+/// assert_eq!(rows.len(), 100_000);
+/// assert_eq!(rows.row(42).unwrap().unwrap(), "Row 42");
+/// assert!(rows.row(100_000).is_none());
+/// ```
+pub struct RowSource<T> {
+    rows: RefCell<Vec<T>>,
+    /// Taken out only for the duration of the call, so the app can operate on the list
+    /// from inside it without a double borrow.
+    build: RefCell<Option<RowBuild<T>>>,
+    /// Whether rows come from `build`. `build` itself is empty during the call.
+    built: Cell<bool>,
+    count: Cell<usize>,
+    selectable: RefCell<Option<RowSelectable>>,
+}
+
+impl<T> Default for RowSource<T> {
+    fn default() -> Self {
+        Self {
+            rows: RefCell::new(Vec::new()),
+            build: RefCell::new(None),
+            built: Cell::new(false),
+            count: Cell::new(0),
+            selectable: RefCell::new(None),
+        }
+    }
+}
+
+impl<T: Clone> RowSource<T> {
+    /// The number of rows.
+    pub fn len(&self) -> usize {
+        self.count.get()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Whether rows are built when they become visible ([`RowSource::set_builder`]).
+    pub fn is_built(&self) -> bool {
+        self.built.get()
+    }
+
+    /// Replaces the rows with ones that already exist.
+    pub fn set_rows(&self, rows: Vec<T>) {
+        *self.build.borrow_mut() = None;
+        self.built.set(false);
+        self.count.set(rows.len());
+        *self.rows.borrow_mut() = rows;
+    }
+
+    /// Replaces the rows with `count` rows that `build` makes when they become visible.
+    pub fn set_builder(&self, count: usize, build: impl FnMut(usize) -> Result<T> + 'static) {
+        self.rows.borrow_mut().clear();
+        *self.build.borrow_mut() = Some(Box::new(build));
+        self.built.set(true);
+        self.count.set(count);
+    }
+
+    /// The contents of that row. `None` if there is no such row, or if it is asked for
+    /// from inside the builder itself.
+    pub fn row(&self, index: usize) -> Option<Result<T>> {
+        if index >= self.len() {
+            return None;
+        }
+        if !self.is_built() {
+            return self.rows.borrow().get(index).cloned().map(Ok);
+        }
+        let mut build = self.build.borrow_mut().take()?;
+        let row = build(index);
+        let mut slot = self.build.borrow_mut();
+        // 呼び出しの中で別の関数へ差し替えられていたら、そちらを残す。
+        if slot.is_none() && self.is_built() {
+            *slot = Some(build);
+        }
+        Some(row)
+    }
+
+    /// Reads a row that already exists, without building anything. `None` for rows that
+    /// come from the builder.
+    pub fn with_stored<R>(&self, index: usize, read: impl FnOnce(&T) -> R) -> Option<R> {
+        self.rows.borrow().get(index).map(read)
+    }
+
+    /// Whether any row that already exists satisfies `test`. `false` for built rows.
+    pub fn any_stored(&self, test: impl FnMut(&T) -> bool) -> bool {
+        self.rows.borrow().iter().any(test)
+    }
+
+    /// Passes a function that answers whether a row can be selected without building it.
+    pub fn set_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
+        *self.selectable.borrow_mut() = Some(Rc::new(selectable));
+    }
+
+    /// Whether the row can be selected.
+    ///
+    /// Rows that already exist answer with `of_row`. For built rows, the function from
+    /// [`RowSource::set_selectable`] answers first, then `realized` (what the row said
+    /// when it was built, if it is built now). Rows nobody can answer for are assumed
+    /// selectable. No borrow is held while the app's function runs.
+    pub fn is_selectable(
+        &self,
+        index: usize,
+        of_row: impl FnOnce(&T) -> bool,
+        realized: impl FnOnce() -> Option<bool>,
+    ) -> bool {
+        if index >= self.len() {
+            return false;
+        }
+        if !self.is_built() {
+            return self.with_stored(index, of_row).unwrap_or(false);
+        }
+        let answer = self.selectable.borrow().clone();
+        match answer {
+            Some(answer) => answer(index),
+            None => realized().unwrap_or(true),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -401,6 +582,160 @@ mod tests {
         assert!(!keeps_hidden_selection(&[1, 3], &[5], Unknown));
         assert!(!keeps_hidden_selection(&[1, 3], &[3, 5], Unknown));
         assert_eq!(SelectionGesture::default(), Unknown);
+    }
+
+    #[test]
+    fn merged_selection_keeps_hidden_rows_only_when_adding() {
+        let window = RowWindow {
+            start: 100,
+            end: 140,
+            count: 10_000,
+        };
+        use SelectionGesture::*;
+        assert_eq!(
+            merge_hidden_selection(window, &[5, 120], vec![120, 130], Toggle),
+            vec![5, 120, 130]
+        );
+        assert_eq!(
+            merge_hidden_selection(window, &[5, 120], vec![130], Plain),
+            vec![130]
+        );
+        assert_eq!(
+            merge_hidden_selection(window, &[5, 120], vec![130, 120], Extend),
+            vec![120, 130],
+            "届いた並びによらず昇順になる"
+        );
+        assert_eq!(
+            merge_hidden_selection(window, &[9_000], vec![], Unknown),
+            vec![9_000],
+            "窓の中に選択が無ければ、外すだけとみなして残す"
+        );
+    }
+
+    #[test]
+    fn merged_selection_of_a_complete_window_is_what_arrived() {
+        assert_eq!(
+            merge_hidden_selection(
+                RowWindow::all(3),
+                &[0],
+                vec![2, 1],
+                SelectionGesture::Toggle
+            ),
+            vec![1, 2]
+        );
+    }
+
+    #[test]
+    fn stored_rows_come_back_without_a_builder() {
+        let rows: RowSource<&str> = RowSource::default();
+        assert!(rows.is_empty());
+        rows.set_rows(vec!["東京", "大阪"]);
+        assert_eq!(rows.len(), 2);
+        assert!(!rows.is_built());
+        assert_eq!(rows.row(1).unwrap().unwrap(), "大阪");
+        assert!(rows.row(2).is_none());
+        assert_eq!(rows.with_stored(0, |row| row.len()), Some(6));
+        assert!(rows.any_stored(|row| *row == "大阪"));
+    }
+
+    #[test]
+    fn builder_is_asked_only_for_the_rows_requested() {
+        let asked = Rc::new(RefCell::new(Vec::new()));
+        let rows: RowSource<usize> = RowSource::default();
+        rows.set_builder(1_000_000, {
+            let asked = asked.clone();
+            move |index| {
+                asked.borrow_mut().push(index);
+                Ok(index * 2)
+            }
+        });
+        assert!(rows.is_built());
+        assert_eq!(rows.len(), 1_000_000);
+        assert!(asked.borrow().is_empty(), "渡しただけでは呼ばれない");
+        assert_eq!(rows.row(7).unwrap().unwrap(), 14);
+        assert!(rows.row(1_000_000).is_none());
+        assert_eq!(*asked.borrow(), vec![7]);
+        assert_eq!(rows.with_stored(7, |row| *row), None);
+
+        // 文字の行へ戻すと、組み立ての関数は使われなくなる。
+        rows.set_rows(vec![1]);
+        assert!(!rows.is_built());
+        assert_eq!(rows.row(0).unwrap().unwrap(), 1);
+        assert_eq!(asked.borrow().len(), 1);
+    }
+
+    #[test]
+    fn builder_failure_reaches_the_caller() {
+        let rows: RowSource<usize> = RowSource::default();
+        rows.set_builder(2, |index| match index {
+            0 => Ok(0),
+            _ => Err(crate::Error::new("build a row", "組み立てに失敗")),
+        });
+        assert!(rows.row(0).unwrap().is_ok());
+        assert!(rows.row(1).unwrap().is_err());
+        assert!(rows.row(0).unwrap().is_ok(), "失敗のあとも関数は残る");
+    }
+
+    #[test]
+    fn builder_can_touch_the_source_from_inside() {
+        let rows: Rc<RowSource<usize>> = Rc::new(RowSource::default());
+        let weak = Rc::downgrade(&rows);
+        rows.set_builder(3, move |index| {
+            let rows = weak.upgrade().expect("生きている");
+            assert_eq!(rows.len(), 3, "組み立ての中でも行数は読める");
+            assert!(rows.row(0).is_none(), "入れ子の組み立ては起きない");
+            Ok(index)
+        });
+        assert_eq!(rows.row(1).unwrap().unwrap(), 1);
+        assert_eq!(rows.row(2).unwrap().unwrap(), 2, "関数は元へ戻っている");
+    }
+
+    #[test]
+    fn builder_replaced_from_inside_stays_replaced() {
+        let rows: Rc<RowSource<usize>> = Rc::new(RowSource::default());
+        let weak = Rc::downgrade(&rows);
+        rows.set_builder(3, move |_| {
+            let rows = weak.upgrade().expect("生きている");
+            rows.set_builder(5, |_| Ok(99));
+            Ok(0)
+        });
+        assert_eq!(rows.row(0).unwrap().unwrap(), 0);
+        assert_eq!(rows.len(), 5);
+        assert_eq!(rows.row(0).unwrap().unwrap(), 99, "新しい関数が残ること");
+
+        // 文字の行へ差し替えられたときも、古い関数を戻さない。
+        let weak = Rc::downgrade(&rows);
+        rows.set_builder(3, move |_| {
+            weak.upgrade().expect("生きている").set_rows(vec![7]);
+            Ok(0)
+        });
+        assert_eq!(rows.row(0).unwrap().unwrap(), 0);
+        assert!(!rows.is_built());
+        assert_eq!(rows.row(0).unwrap().unwrap(), 7);
+    }
+
+    #[test]
+    fn selectable_is_answered_in_order() {
+        let rows: RowSource<bool> = RowSource::default();
+        rows.set_rows(vec![true, false]);
+        let of_row = |row: &bool| *row;
+        // 持っている行は、その行が答える。関数があっても優先しない。
+        rows.set_selectable(|_| false);
+        assert!(rows.is_selectable(0, of_row, || None));
+        assert!(!rows.is_selectable(1, of_row, || Some(true)));
+        assert!(!rows.is_selectable(2, of_row, || Some(true)), "範囲の外");
+
+        let rows: RowSource<bool> = RowSource::default();
+        rows.set_builder(10, |_| Ok(true));
+        // 誰も答えられない行は、選べる扱い。
+        assert!(rows.is_selectable(5, of_row, || None));
+        // 組み立て済みなら、その行の答え。
+        assert!(!rows.is_selectable(5, of_row, || Some(false)));
+        // 組み立てずに答える関数があれば、それが先。
+        rows.set_selectable(|index| index != 5);
+        assert!(!rows.is_selectable(5, of_row, || Some(true)));
+        assert!(rows.is_selectable(6, of_row, || Some(false)));
+        assert!(!rows.is_selectable(10, of_row, || None), "範囲の外");
     }
 
     #[test]

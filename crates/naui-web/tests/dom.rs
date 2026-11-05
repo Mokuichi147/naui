@@ -24,9 +24,10 @@ use std::rc::Rc;
 use naui_core::{
     Align, ButtonRole, Color, DialogButtons, DialogResponse, EventResponse, GridCell, Key,
     KeyEvent, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding,
-    Pane, Point, PointerButton, PointerPhase, PopupItem, Rect, Result, ScrollMetrics, SidebarItem,
-    SidebarSection, Sizing, TableColumn, TableRow, TextColor, TextStyle, Theme, ToolbarIcon,
-    ToolbarItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
+    Pane, Point, PointerButton, PointerPhase, PopupItem, Rect, Result, ScrollMetrics,
+    SelectionMode, SidebarItem, SidebarSection, Sizing, TableColumn, TableRow, TextColor,
+    TextStyle, Theme, ToolbarIcon, ToolbarItem, WindowPlacement, WindowState,
+    DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_THRESHOLD,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, WebWidgetExt, Widget};
 use wasm_bindgen::{JsCast, JsValue};
@@ -2478,8 +2479,9 @@ fn list_detail_makes_a_second_line() {
             .item(0)
             .expect("listbox の枠");
         assert_eq!(listbox.tag_name(), "UL");
-        let plain = listbox.children().item(0).expect("1 行目");
-        let detailed = listbox.children().item(1).expect("2 行目");
+        let rows = list_rows(&list);
+        let plain: Element = rows[0].clone().into();
+        let detailed: Element = rows[1].clone().into();
 
         let texts = |row: &Element| -> Vec<HtmlElement> {
             let found = row.get_elements_by_tag_name("span");
@@ -2669,7 +2671,7 @@ fn list_listbox_row_activate_and_context_menu() {
             .item(0)
             .expect("listbox の枠");
         assert_eq!(listbox.tag_name(), "UL");
-        let row = |index: u32| listbox.children().item(index).expect("行");
+        let row = |index: usize| -> Element { list_rows(&list)[index].clone().into() };
 
         mouse_at_center(&row(2), "dblclick", 0);
         assert_eq!(
@@ -2736,8 +2738,7 @@ fn list_long_text_stays_inside_the_row() {
         // 一覧の幅を決める。行の幅はここから決まる。
         let _ = element.style().set_property("width", "200px");
 
-        let listbox = element.children().item(0).expect("listbox の枠");
-        let row = listbox.children().item(0).expect("1 行目");
+        let row = list_rows(&list).remove(0);
         let row_width = row.get_bounding_client_rect().width();
         assert!(row_width > 0.0, "行に幅が配られていること");
 
@@ -2794,7 +2795,7 @@ fn ui_clone_builds_rows_from_a_callback() {
         let listbox = element.children().item(0).expect("listbox の枠");
         assert_eq!(listbox.tag_name(), "UL");
         assert_eq!(
-            listbox.children().length(),
+            list_rows(&list).len(),
             2,
             "後から足した行が DOM にも出ること"
         );
@@ -7344,6 +7345,401 @@ fn is_within(container: &Element, row: &Element) -> bool {
     let view = container.get_bounding_client_rect();
     let rect = row.get_bounding_client_rect();
     rect.top() >= view.top() - 1.0 && rect.bottom() <= view.bottom() + 1.0
+}
+
+/// The `<li>` of the rows built now, in order (the spacers are not rows).
+fn list_rows(list: &dyn Widget) -> Vec<HtmlElement> {
+    let rows = list
+        .native_element()
+        .query_selector_all("[role=option]")
+        .expect("行の検索");
+    (0..rows.length())
+        .filter_map(|i| rows.get(i))
+        .map(|node| node.unchecked_into::<HtmlElement>())
+        .collect()
+}
+
+/// The element of a list that scrolls.
+fn list_scroller(list: &dyn Widget) -> HtmlElement {
+    list.native_element()
+        .query_selector("select, [role=listbox]")
+        .expect("検索")
+        .expect("スクロールする要素")
+        .unchecked_into()
+}
+
+/// A list placed on the page with a fixed height.
+fn mounted_list(ui: &Ui) -> Result<(naui_web::List, Mounted)> {
+    let list = ui.list()?;
+    list.set_sizing(Sizing::fixed(240.0, 200.0));
+    let mounted = Mounted::new(&list);
+    Ok((list, mounted))
+}
+
+/// A `<select>` has no place for spacers and makes every `<option>`, so a list with more
+/// rows than the threshold is composed. At or below it, the standard control stays.
+#[wasm_bindgen_test]
+fn list_with_many_rows_leaves_the_select() {
+    with_ui(|ui| {
+        let (list, _mounted) = mounted_list(ui)?;
+        let items = |count: usize| ListItem::list((0..count).map(|index| format!("行 {index}")));
+        list.set_items(&items(ROW_WINDOW_THRESHOLD));
+        assert!(list.native_select().is_some(), "しきい値までは <select>");
+
+        const ROWS: usize = 100_000;
+        list.set_items(&items(ROWS));
+        assert!(list.native_select().is_none(), "超えたら <ul role=listbox>");
+        assert_eq!(list.len(), ROWS);
+        let rows = list_rows(&list);
+        assert!(
+            rows.len() > 2 && rows.len() < 200,
+            "見えている分だけを組み立てること: {} 行",
+            rows.len()
+        );
+        // 読み上げには全体の行数を伝える。
+        assert_eq!(
+            rows[1].get_attribute("aria-setsize").as_deref(),
+            Some("100000")
+        );
+        assert_eq!(rows[1].get_attribute("aria-posinset").as_deref(), Some("2"));
+
+        // スクロールの範囲は全行分。
+        let height = list.row_height();
+        assert!(height > 0.0, "行の高さが測られていること");
+        let scroller = list_scroller(&list);
+        let expected = height * ROWS as f64;
+        assert!(
+            (f64::from(scroller.scroll_height()) - expected).abs() < 2.0,
+            "全行分の高さであること: {} / {expected}",
+            scroller.scroll_height()
+        );
+
+        // 行数が戻れば、また <select> になる。
+        list.set_items(&items(3));
+        assert!(list.native_select().is_some());
+        Ok(())
+    });
+}
+
+/// Rows of widgets are built when they become visible, and every notification carries
+/// the row's place in the whole list.
+#[wasm_bindgen_test]
+fn list_builder_rows_scale() {
+    with_ui(|ui| {
+        const ROWS: usize = 20_000;
+        const TARGET: usize = 15_000;
+        let built = Rc::new(Cell::new(0usize));
+        let row_clicks = Rc::new(RefCell::new(Vec::new()));
+        let activated = Rc::new(RefCell::new(Vec::new()));
+        let selected = Rc::new(RefCell::new(Vec::new()));
+
+        let (list, _mounted) = mounted_list(ui)?;
+        list.on_row_activate({
+            let activated = activated.clone();
+            move |index| activated.borrow_mut().push(index)
+        });
+        list.on_select({
+            let selected = selected.clone();
+            move |indices| selected.borrow_mut().push(indices.to_vec())
+        });
+        list.set_row_builder(ROWS, {
+            let ui = ui.clone();
+            let built = built.clone();
+            let row_clicks = row_clicks.clone();
+            move |index| {
+                built.set(built.get() + 1);
+                let row = ListRow::new(&ui.label(&format!("行 {index}"))?);
+                row.on_activate({
+                    let row_clicks = row_clicks.clone();
+                    move || row_clicks.borrow_mut().push(index)
+                });
+                Ok(row)
+            }
+        });
+        assert!(
+            built.get() < 400,
+            "組み立てを呼ぶのも見えている行の分だけであること: {} 回",
+            built.get()
+        );
+
+        list.scroll_to_row(TARGET);
+        let rows = list_rows(&list);
+        assert!(rows.len() < 200, "送っても絞られていること: {}", rows.len());
+        let target = rows
+            .iter()
+            .find(|row| row.text_content().as_deref() == Some("行 15000"))
+            .expect("指定した行が組み立てられていること");
+        assert!(
+            is_within(&list_scroller(&list), target),
+            "指定した行が見えていること"
+        );
+
+        target.click();
+        assert_eq!(*row_clicks.borrow(), vec![TARGET], "全体の番号で届くこと");
+        assert_eq!(*selected.borrow(), vec![vec![TARGET]]);
+        mouse_at_center(target, "dblclick", 0);
+        assert_eq!(*activated.borrow(), vec![TARGET]);
+
+        // 中身が変わったら `refresh` で組み立て直す。選択と位置は残る。
+        let before = built.get();
+        list.refresh();
+        assert!(built.get() > before, "`refresh` は組み立て直すこと");
+        assert_eq!(list.selection(), vec![TARGET]);
+        let target = list_rows(&list)
+            .into_iter()
+            .find(|row| row.text_content().as_deref() == Some("行 15000"))
+            .expect("同じ行が残っていること");
+        assert_eq!(
+            target.get_attribute("aria-selected").as_deref(),
+            Some("true")
+        );
+        Ok(())
+    });
+}
+
+/// With many rows, every row built has the same height even when only some have
+/// `detail`, so the scroll bar does not drift as the window moves.
+#[wasm_bindgen_test]
+fn list_with_many_rows_has_uniform_heights() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        let items: Vec<ListItem> = (0..ROWS)
+            .map(|index| match index % 2 {
+                0 => ListItem::new(format!("行 {index}")),
+                _ => ListItem::new(format!("行 {index}")).detail("補助の文字"),
+            })
+            .collect();
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_items(&items);
+        let height = list.row_height();
+        for row in list_rows(&list) {
+            let measured = row.get_bounding_client_rect().height();
+            assert!(
+                (measured - height).abs() < 0.5,
+                "どの行も同じ高さになること: {measured} / {height}"
+            );
+        }
+        let scroller = list_scroller(&list);
+        let expected = height * ROWS as f64;
+        list.scroll_to_row(ROWS / 2);
+        assert!(
+            (f64::from(scroller.scroll_height()) - expected).abs() < 2.0,
+            "送っても全行分のままであること: {} / {expected}",
+            scroller.scroll_height()
+        );
+        Ok(())
+    });
+}
+
+/// The selection is held by naui, so it covers rows outside the window: ⌘ / Ctrl adds
+/// to it, a plain click replaces it, and Shift selects across rows not built.
+#[wasm_bindgen_test]
+fn list_selection_covers_rows_outside_the_window() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_selection_mode(SelectionMode::Multiple);
+        list.set_items(&ListItem::list(
+            (0..ROWS).map(|index| format!("行 {index}")),
+        ));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        list.on_select({
+            let seen = seen.clone();
+            move |indices| seen.borrow_mut().push(indices.to_vec())
+        });
+        let click = |index: usize, ctrl: bool, shift: bool| {
+            let row = list_rows(&list)
+                .into_iter()
+                .find(|row| row.text_content().as_deref() == Some(&format!("行 {index}")))
+                .expect("行が組み立てられていること");
+            let init = MouseEventInit::new();
+            init.set_bubbles(true);
+            init.set_ctrl_key(ctrl);
+            init.set_shift_key(shift);
+            let event =
+                MouseEvent::new_with_mouse_event_init_dict("click", &init).expect("イベント");
+            row.dispatch_event(&event).expect("配送");
+        };
+
+        // まだ組み立てていない行も選べる。
+        list.set_selection(&[1, 4_000]);
+        assert_eq!(list.selection(), vec![1, 4_000]);
+        assert!(seen.borrow().is_empty(), "通知しない経路であること");
+
+        // 組み立て直しても、窓に入った行が選ばれて見える。
+        list.scroll_to_row(4_000);
+        assert_eq!(list.selection(), vec![1, 4_000]);
+        let selected: Vec<_> = list_rows(&list)
+            .into_iter()
+            .filter(|row| row.get_attribute("aria-selected").as_deref() == Some("true"))
+            .map(|row| row.text_content().unwrap_or_default())
+            .collect();
+        assert_eq!(selected, vec!["行 4000".to_owned()]);
+
+        // Ctrl で足すと、画面の外の選択は残る。
+        click(4_001, true, false);
+        assert_eq!(list.selection(), vec![1, 4_000, 4_001]);
+        // ふつうのクリックは選び直し。
+        click(4_002, false, false);
+        assert_eq!(list.selection(), vec![4_002]);
+
+        // Shift は組み立てていない行もまたいで選ぶ。
+        list.scroll_to_row(100);
+        click(100, false, true);
+        assert_eq!(list.selection().len(), 4_002 - 100 + 1);
+        assert_eq!(list.selection().first(), Some(&100));
+        assert_eq!(list.selection().last(), Some(&4_002));
+        Ok(())
+    });
+}
+
+/// Moving with the keys builds the rows it reaches, all the way to the last row.
+#[wasm_bindgen_test]
+fn list_keys_reach_rows_not_built_yet() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_items(&ListItem::list(
+            (0..ROWS).map(|index| format!("行 {index}")),
+        ));
+        let scroller = list_scroller(&list);
+        let press = |key: &str| press_shortcut(scroller.as_ref(), key, false, false, false);
+
+        assert!(press("End"), "処理したキーは既定の動作を止める");
+        assert_eq!(list.selection(), vec![ROWS - 1]);
+        let last = list_rows(&list).pop().expect("行");
+        assert_eq!(last.text_content().as_deref(), Some("行 4999"));
+        assert!(is_within(&scroller, &last), "最後の行が見えること");
+
+        press("ArrowUp");
+        assert_eq!(list.selection(), vec![ROWS - 2]);
+
+        assert!(press("Home"));
+        assert_eq!(list.selection(), vec![0]);
+        let first = list_rows(&list).first().cloned().expect("行");
+        assert_eq!(first.text_content().as_deref(), Some("行 0"));
+        assert!(is_within(&scroller, &first), "先頭の行が見えること");
+
+        // 矢印で窓の端を越えていける。
+        for _ in 0..200 {
+            press("ArrowDown");
+        }
+        assert_eq!(list.selection(), vec![200]);
+        let current = list_rows(&list)
+            .into_iter()
+            .find(|row| row.text_content().as_deref() == Some("行 200"))
+            .expect("指している行が組み立てられていること");
+        assert!(is_within(&scroller, &current), "指している行が見えること");
+        Ok(())
+    });
+}
+
+/// Even with built rows, whether a row can be selected is answered without creating
+/// it.
+#[wasm_bindgen_test]
+fn list_row_selectable_answers_without_building() {
+    with_ui(|ui| {
+        const ROWS: usize = 10_000;
+        const LOCKED: usize = 5_000;
+        let built = Rc::new(Cell::new(0usize));
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_row_builder(ROWS, {
+            let ui = ui.clone();
+            let built = built.clone();
+            move |index| {
+                built.set(built.get() + 1);
+                let row = ListRow::new(&ui.label(&index.to_string())?);
+                Ok(row.selectable(index != LOCKED))
+            }
+        });
+        let realized = built.get();
+
+        list.set_selection(&[LOCKED]);
+        assert_eq!(list.selection(), vec![LOCKED], "述語が無ければ選べる扱い");
+
+        list.clear_selection();
+        list.set_row_selectable(|index| index != LOCKED);
+        list.set_selection(&[LOCKED]);
+        assert!(list.selection().is_empty(), "選べない行は取り除かれること");
+        list.set_selection(&[LOCKED - 1]);
+        assert_eq!(list.selection(), vec![LOCKED - 1]);
+        assert_eq!(built.get(), realized, "選択のために組み立て直さないこと");
+        Ok(())
+    });
+}
+
+/// The row height can be set. A `<select>`'s `<option>`s cannot have one, so the list
+/// becomes composed; passing 0 or less returns to the standard control.
+#[wasm_bindgen_test]
+fn list_row_height_follows_the_setting() {
+    with_ui(|ui| {
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_items(&ListItem::list(["東京", "大阪", "札幌"]));
+        list.set_selected(1);
+        assert!(list.native_select().is_some());
+
+        list.set_row_height(64.0);
+        assert_eq!(list.row_height(), 64.0);
+        assert!(list.native_select().is_none(), "高さの指定で組み立てになる");
+        let rows = list_rows(&list);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].get_bounding_client_rect().height(), 64.0);
+        assert_eq!(list.selection(), vec![1], "選択は残ること");
+        assert_eq!(
+            rows[1].get_attribute("aria-selected").as_deref(),
+            Some("true")
+        );
+
+        list.set_row_height(0.0);
+        assert!(
+            list.native_select().is_some(),
+            "指定を外すと <select> へ戻る"
+        );
+        assert_eq!(list.selection(), vec![1], "選択は残ること");
+        Ok(())
+    });
+}
+
+/// A list given its rows before it is placed in the document has no sizes yet. It
+/// measures and narrows its rows once it gets a size.
+#[wasm_bindgen_test]
+async fn list_filled_before_it_is_placed_narrows_its_rows() {
+    const ROWS: usize = 20_000;
+    let mut kept = None;
+    with_ui(|ui| {
+        let list = ui.list()?;
+        list.set_sizing(Sizing::fixed(240.0, 200.0));
+        list.set_items(&ListItem::list(
+            (0..ROWS).map(|index| format!("行 {index}")),
+        ));
+        assert_eq!(
+            list_rows(&list).len(),
+            ROW_WINDOW_THRESHOLD,
+            "大きさが分かるまでは先頭だけを組み立てる"
+        );
+        kept = Some(list);
+        Ok(())
+    });
+    let list = kept.expect("リスト");
+    let _mounted = Mounted::new(&list);
+    next_frames().await;
+    let rows = list_rows(&list).len();
+    assert!(rows < 100, "大きさが分かったら絞り直すこと: {rows} 行");
+    let height = list.row_height();
+    assert!(height > 0.0);
+    let scroller = list_scroller(&list);
+    assert!(
+        (f64::from(scroller.scroll_height()) - height * ROWS as f64).abs() < 2.0,
+        "全行分の高さになること"
+    );
+
+    // スクロールの通知で窓が動く。
+    scroller.set_scroll_top((height * 10_000.0) as i32);
+    next_frames().await;
+    let shown = list_rows(&list)
+        .iter()
+        .any(|row| row.text_content().as_deref() == Some("行 10000"));
+    assert!(shown, "スクロールした先の行が組み立てられること");
 }
 
 #[wasm_bindgen_test]

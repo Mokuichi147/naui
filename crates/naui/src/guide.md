@@ -342,8 +342,8 @@ matches the visible area in a direction that does not scroll, and grows past it 
 one that does. So while the content fits, a `Fill` child inside takes the leftover
 space, as it would outside a `Scroll`.
 
-An `Auto` height on a [`List`] follows all its rows. To scroll many rows within a
-limited area, specify `Fixed` or `Fill`. [`Tree`], [`Table`], `Scroll`, `SplitView`
+An `Auto` height on a [`List`] follows all its rows, so every row is built. To scroll
+many rows within a limited area, specify `Fixed` or `Fill`. [`Tree`], [`Table`], `Scroll`, `SplitView`
 and [`TextArea`] do not decide their height from their content, so you normally
 specify it with `set_sizing`.
 
@@ -2250,19 +2250,69 @@ row's left edge is passed). Once `on_context_menu` is set, the platform's defaul
 menu (including one attached with `PopupMenu::attach`) no longer appears over
 rows. On macOS, [`PopupMenu::open_at`] does not return until the menu closes.
 
+### Lists with many rows
+
+When the number of rows exceeds [`ROW_WINDOW_THRESHOLD`] and the list's height is
+limited (`Fixed` or `Fill`), every platform builds **only the range shown on screen
+(and a little before and after it)**, as a [`Table`] does. The scroll bar's length and
+position stay those of all rows.
+
+Text-only rows can simply be passed to [`List::set_items`]. [`ListRow`]s hold widgets
+that already exist, so for rows made of widgets, use [`List::set_row_builder`]: pass
+the number of rows and "a function that returns that row", and it is called only for
+the rows on screen. The widgets in a row may be recreated every time it is built, so
+keep per-row state on the app's data side, and rebuild with [`List::refresh`] when the
+content changes.
+
+```no_run
+# use naui::{ListRow, Result, Sizing, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+# let names: Vec<String> = Vec::new();
+let list = ui.list()?;
+list.set_sizing(Sizing::fill()); // an Auto height would build every row
+
+let ui = ui.clone(); // rows are built inside the callback
+list.set_row_builder(names.len(), move |index| {
+    let open = ui.button(&names[index])?;
+    open.on_click(move || println!("open row {index}"));
+    Ok(ListRow::new(&open))
+});
+# Ok(())
+# }
+```
+
+For that, **all rows are treated as having the same height**. Windows, Linux and the
+Web measure the rows built, give every row the tallest height, and fill in the rows
+off screen with it, so a taller row appearing later moves the scroll position once.
+If row heights vary, deciding the height with [`List::set_row_height`] avoids this. On
+macOS, `NSTableView` measures each row as it appears and needs none of this.
+
+The selection is remembered by index, so rows off screen can be selected too
+([`List::set_selection`]) and also appear in [`List::selection`]. Whether off-screen
+rows stay selected follows the modifier keys, as in a [`Table`]: adding and removing
+with ⌘ / Ctrl keeps them, and a plain click or a Shift range selection drops them as
+a fresh selection. For rows built with `set_row_builder`, naui does not know whether
+rows it has not built yet can be chosen, so pass the same decision to
+[`List::set_row_selectable`] if some cannot.
+
+On the Web, a `<select>` creates every `<option>` it is given and has no place for
+spacers, so with more rows than the threshold the list is built from
+`<ul role="listbox">` even when every row is plain text, and
+`List::native_select` returns `None`.
+
 ### Scrolling to a given row
 
 [`List::scroll_to_row`], [`Table::scroll_to_row`] and [`Tree::scroll_to_item`]
 scroll until that row is visible (to jump to a row found by a search, for
 example). **The selection does not change**, so to select and show it, combine it
 with `set_selected`. If it is already visible nothing moves, and if not, it is
-aligned to the nearer edge. A table can scroll to rows it has not built yet even
-when it builds only part of its rows. A tree expands the ancestors of an item
+aligned to the nearer edge. A list or table can scroll to rows it has not built yet
+even when it builds only part of its rows. A tree expands the ancestors of an item
 inside a collapsed branch before scrolling (the expansion is not notified).
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| List | `ListView.ScrollIntoView` | `scrollRowToVisible:` | `GtkAdjustment` (from the row's position) | `scrollTop` (from the row's position) |
+| List | `ScrollViewer.ChangeView` (from the row's position) | `scrollRowToVisible:` | `GtkAdjustment` (from the row's position) | `scrollTop` (from the row's position) |
 | Table | `ScrollViewer.ChangeView` (from the row height) | `scrollRowToVisible:` | `GtkAdjustment` (from the row height) | `scrollTop` (from the row height) |
 | Tree | `TreeViewItem.StartBringIntoView` | `scrollRowToVisible:` | `GtkAdjustment` (from the row's position) | `scrollTop` (from the row's position) |
 

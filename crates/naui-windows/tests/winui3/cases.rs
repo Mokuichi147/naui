@@ -18,8 +18,8 @@ use naui_windows::{run_for_test, MenuEntry, Ui, Widget};
 use crate::automation;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Border, Button as XamlButton, Canvas as XamlCanvas, CheckBox as XamlCheckBox,
-    ComboBox as XamlComboBox, Grid, Image as XamlImage, MenuFlyoutItem, ProgressRing, ScrollViewer,
-    Slider as XamlSlider, StackPanel, TextBlock, TextBox, ToggleSwitch,
+    ComboBox as XamlComboBox, Grid, Image as XamlImage, ListViewItem, MenuFlyoutItem, ProgressRing,
+    ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock, TextBox, ToggleSwitch,
 };
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::{BitmapImage, SvgImageSource};
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
@@ -142,6 +142,18 @@ const CASES: &[Case] = &[
     (
         "リストに行の起動と文脈メニューの受け口を付けられる",
         list_accepts_row_activate_and_context_menu,
+    ),
+    (
+        "行の多いリストが見えている行だけを組み立てる",
+        list_builds_only_the_rows_it_needs,
+    ),
+    (
+        "リストの組み立てる範囲が表示位置へ付いてくる",
+        list_rows_follow_scrolling,
+    ),
+    (
+        "行の多いリストで画面の外の選択が残る",
+        list_keeps_the_selection_outside_the_window,
     ),
     (
         "隠すと Visibility が Collapsed になり、戻すと Visible",
@@ -5709,6 +5721,187 @@ fn list_accepts_row_activate_and_context_menu(ui: &Ui) -> Result<()> {
     // 差し替えられる。
     list.on_row_activate(|_| {});
     list.on_context_menu(|_, _| {});
+    Ok(())
+}
+
+/// Even before the list has a size, it builds only a foothold, not every row, and the
+/// function is asked only for those rows.
+fn list_builds_only_the_rows_it_needs(ui: &Ui) -> Result<()> {
+    use naui_core::ROW_WINDOW_THRESHOLD;
+    use naui_windows::ListRow;
+
+    const ROWS: usize = 100_000;
+    const LOCKED: usize = 50_000;
+    let built = Rc::new(Cell::new(0usize));
+    let list = ui.list()?;
+    list.set_row_builder(ROWS, {
+        let ui = ui.clone();
+        let built = built.clone();
+        move |index| {
+            built.set(built.get() + 1);
+            let row = ListRow::new(&ui.label(&index.to_string())?);
+            Ok(row.selectable(index != LOCKED))
+        }
+    });
+    assert_eq!(list.len(), ROWS);
+    let items = list
+        .native_list_view()
+        .Items()
+        .expect("Items")
+        .Size()
+        .expect("Size") as usize;
+    assert_eq!(items, ROW_WINDOW_THRESHOLD, "先頭だけを組み立てること");
+    assert_eq!(built.get(), ROW_WINDOW_THRESHOLD);
+
+    // 組み立てずに答える関数があれば、画面の外の行も取り除ける。
+    list.set_selection(&[LOCKED]);
+    assert_eq!(list.selection(), vec![LOCKED], "述語が無ければ選べる扱い");
+    list.clear_selection();
+    list.set_row_selectable(|index| index != LOCKED);
+    list.set_selection(&[LOCKED]);
+    assert!(list.selection().is_empty(), "選べない行は取り除かれること");
+    assert_eq!(
+        built.get(),
+        ROW_WINDOW_THRESHOLD,
+        "選択のために組み立てない"
+    );
+
+    // `refresh` は組み立て直す。行数と選択は残る。
+    list.set_selection(&[LOCKED - 1]);
+    list.refresh();
+    assert_eq!(built.get(), ROW_WINDOW_THRESHOLD * 2);
+    assert_eq!(list.selection(), vec![LOCKED - 1]);
+    assert_eq!(list.len(), ROWS);
+
+    // 行の高さの指定。
+    list.set_row_height(48.0);
+    assert_eq!(list.row_height(), 48.0);
+    list.set_row_height(0.0);
+    assert_eq!(list.row_height(), 0.0, "0 以下で指定を外すこと");
+
+    // 組み立ての中からリストを触っても二重借用にならない。
+    let weak = list.downgrade();
+    let label_ui = ui.clone();
+    list.set_row_builder(3, move |index| {
+        let list = weak.upgrade().expect("リストが生きていること");
+        assert_eq!(list.len(), 3);
+        Ok(ListRow::new(&label_ui.label(&index.to_string())?))
+    });
+    assert_eq!(list.len(), 3);
+    Ok(())
+}
+
+/// The `ScrollViewer` of a list.
+fn list_scroller(list: &naui_windows::List) -> ScrollViewer {
+    native::<Border>(list)
+        .Child()
+        .and_then(|child| child.cast::<ScrollViewer>())
+        .expect("リストの ScrollViewer")
+}
+
+fn list_rows_follow_scrolling(ui: &Ui) -> Result<()> {
+    use naui_core::ListItem;
+
+    let window = ui.window("リストのスクロール", 240.0, 160.0)?;
+    let list = ui.list()?;
+    let labels: Vec<String> = (0..1000).map(|i| format!("行 {i}")).collect();
+    list.set_items(&ListItem::list(labels.iter().map(String::as_str)));
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        let scroll = list_scroller(&list);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        let body = scroll
+            .Content()
+            .and_then(|content| content.cast::<StackPanel>())
+            .expect("リストの本体");
+        let top_spacer = body
+            .Children()
+            .and_then(|children| children.GetAt(0))
+            .and_then(|spacer| spacer.cast::<FrameworkElement>())
+            .expect("先頭の詰め物");
+        let leading = || top_spacer.Height().unwrap_or(0.0);
+        assert_eq!(leading(), 0.0, "最初は先頭から組み立てている");
+        let rows = || {
+            list.native_list_view()
+                .Items()
+                .and_then(|items| items.Size())
+                .expect("行の数") as usize
+        };
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || rows() < 200);
+        assert!(rows() < 200, "見えている分に絞られること: {} 行", rows());
+
+        list.scroll_to_row(800);
+        pump_until(Duration::from_secs(2), || leading() > 0.0);
+        let offset = scroll.VerticalOffset().expect("リストの位置");
+        assert!(offset > 0.0, "リストが送られている");
+        assert!(
+            leading() > 0.0 && leading() <= offset,
+            "組み立てる範囲が表示位置へ付いてくる (詰め物 {}, 位置 {offset})",
+            leading()
+        );
+        assert!(rows() < 200, "送っても絞られていること: {} 行", rows());
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// The selection is held by naui, so it covers rows the `ListView` does not have.
+fn list_keeps_the_selection_outside_the_window(ui: &Ui) -> Result<()> {
+    use naui_core::{ListItem, SelectionMode};
+
+    const ROWS: usize = 5_000;
+    let labels: Vec<String> = (0..ROWS).map(|i| format!("行 {i}")).collect();
+    let list = ui.list()?;
+    list.set_selection_mode(SelectionMode::Multiple);
+    list.set_items(&ListItem::list(labels.iter().map(String::as_str)));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    list.on_select({
+        let seen = seen.clone();
+        move |indices| seen.borrow_mut().push(indices.to_vec())
+    });
+
+    // まだ組み立てていない行も選べる。組み立ててある行は `ListView` でも選ばれる。
+    list.set_selection(&[1, 4_000]);
+    assert_eq!(list.selection(), vec![1, 4_000]);
+    let items = list.native_list_view().Items().expect("Items");
+    let item = |index: u32| {
+        items
+            .GetAt(index)
+            .and_then(|item| item.cast::<ListViewItem>())
+            .expect("行")
+    };
+    assert!(item(1).IsSelected().expect("IsSelected"));
+    assert!(!item(0).IsSelected().expect("IsSelected"));
+    assert!(seen.borrow().is_empty(), "通知しない経路であること");
+
+    // ネイティブ側で選ばれると、窓の外の扱いは修飾キーで決まる (ここでは押されていない)。
+    item(0).SetIsSelected(true).expect("SetIsSelected");
+    assert_eq!(seen.borrow().last(), Some(&vec![0, 1]));
+    assert_eq!(list.selection(), vec![0, 1], "選び直しは窓の外を落とすこと");
+
+    // 通知する経路も同じ。
+    list.select_many(&[2, 4_500]);
+    assert_eq!(list.selection(), vec![2, 4_500]);
+    assert_eq!(seen.borrow().last(), Some(&vec![2, 4_500]));
+
+    // 単一選択では 1 行だけ。
+    list.set_selection_mode(SelectionMode::Single);
+    assert!(list.selection().is_empty());
+    list.set_selected(4_500);
+    assert_eq!(list.selection(), vec![4_500]);
+    item(0).SetIsSelected(true).expect("SetIsSelected");
+    assert_eq!(list.selection(), vec![0], "窓の外の行を残さないこと");
     Ok(())
 }
 

@@ -23,9 +23,13 @@
 //! the menu itself with [`crate::PopupMenu`].
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
-use naui_core::{Align, ListItem, Orientation, Point, SelectionMode, Sizing, TextColor, TextStyle};
+use naui_core::{
+    Align, ListItem, Orientation, Point, Result, RowSource, SelectionMode, Sizing, TextColor,
+    TextStyle,
+};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
@@ -163,6 +167,14 @@ impl ListRow {
         self.activation.set(f);
     }
 
+    /// The view for one row.
+    fn cell_view(&self, mtm: MainThreadMarker) -> Retained<NSView> {
+        match &self.content {
+            ListRowContent::Item(item) => list_item_cell_view(mtm, item),
+            ListRowContent::Custom(content) => custom_cell_view(mtm, &**content),
+        }
+    }
+
     /// A row that can be neither selected nor operated (`ListItem::enabled(false)`).
     ///
     /// The other three platforms disable the row itself, so neither activation nor the
@@ -173,13 +185,90 @@ impl ListRow {
     }
 }
 
+/// Where rows come from: rows the app passed ([`List::set_rows`]) or rows built when
+/// they become visible ([`List::set_row_builder`]).
+///
+/// `NSTableView` asks only for the rows it shows, so nothing else limits the rows here.
+/// Built rows are remembered until they leave the screen, because whether a row can be
+/// selected and its activation are looked up from them.
+#[derive(Default)]
+struct ListRows {
+    source: RowSource<ListRow>,
+    built: RefCell<HashMap<usize, ListRow>>,
+}
+
+impl ListRows {
+    fn len(&self) -> usize {
+        self.source.len()
+    }
+
+    fn set_rows(&self, rows: Vec<ListRow>) {
+        self.built.borrow_mut().clear();
+        self.source.set_rows(rows);
+    }
+
+    fn set_builder(&self, count: usize, build: impl FnMut(usize) -> Result<ListRow> + 'static) {
+        self.built.borrow_mut().clear();
+        self.source.set_builder(count, build);
+    }
+
+    /// The contents of that row, building it if it is not built yet.
+    fn row(&self, index: usize) -> Option<ListRow> {
+        if !self.source.is_built() {
+            return self.source.row(index)?.ok();
+        }
+        if let Some(row) = self.built.borrow().get(&index) {
+            return Some(row.clone());
+        }
+        // 組み立てに失敗した行は、空の行にする。
+        let row = self
+            .source
+            .row(index)?
+            .unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
+        self.built.borrow_mut().insert(index, row.clone());
+        Some(row)
+    }
+
+    /// A row that can already be read, without building anything.
+    fn read<R>(&self, index: usize, read: impl FnOnce(&ListRow) -> R) -> Option<R> {
+        if !self.source.is_built() {
+            return self.source.with_stored(index, read);
+        }
+        self.built.borrow().get(&index).map(read)
+    }
+
+    fn is_selectable(&self, index: usize) -> bool {
+        self.source
+            .is_selectable(index, ListRow::is_selectable, || {
+                self.read(index, ListRow::is_selectable)
+            })
+    }
+
+    fn is_disabled_item(&self, index: usize) -> bool {
+        self.read(index, ListRow::is_disabled_item).unwrap_or(false)
+    }
+
+    fn activation(&self, index: usize) -> Option<ActivationHandler> {
+        self.read(index, |row| row.activation.clone())
+    }
+
+    fn forget_built(&self) {
+        self.built.borrow_mut().clear();
+    }
+
+    /// Forgets a row that left the screen, so built rows do not pile up without limit.
+    fn forget_row(&self, index: usize) {
+        self.built.borrow_mut().remove(&index);
+    }
+}
+
 /// The key codes of Return and the keypad Enter.
 const RETURN_KEY_CODES: [u16; 2] = [36, 76];
 
 /// The state seen by the `NSTableView` that receives row activation and context
 /// menus.
 struct ListTableState {
-    rows: Rc<RefCell<Vec<ListRow>>>,
+    rows: Rc<ListRows>,
     /// The handler for double-clicks and Return / Enter.
     row_activate: SelectHandler,
     /// The handler for right-clicks.
@@ -189,10 +278,8 @@ struct ListTableState {
 impl ListTableState {
     /// The index, if `row` is a row that can receive activation and context menus.
     fn live_row(&self, row: NSInteger) -> Option<usize> {
-        let index = usize::try_from(row).ok()?;
-        let rows = self.rows.borrow();
-        let row = rows.get(index)?;
-        (!row.is_disabled_item()).then_some(index)
+        let index = usize::try_from(row).ok().filter(|&i| i < self.rows.len())?;
+        (!self.rows.is_disabled_item(index)).then_some(index)
     }
 }
 
@@ -217,12 +304,7 @@ define_class!(
                 return;
             };
             // 通知の中から `set_rows` を呼べるように、借りたまま呼ばない。
-            let activation = self
-                .ivars()
-                .rows
-                .borrow()
-                .get(index)
-                .map(|row| row.activation.clone());
+            let activation = self.ivars().rows.activation(index);
             if let Some(activation) = activation {
                 activation.emit();
             }
@@ -362,7 +444,7 @@ impl SelectionHandler {
 
 /// The state seen by the data source and delegate. Shared with the handle.
 struct SourceState {
-    rows: Rc<RefCell<Vec<ListRow>>>,
+    rows: Rc<ListRows>,
     handler: SelectionHandler,
     /// Stops notifications only while the selection is being changed from code, since
     /// AppKit calls the delegate even for `selectRowIndexes:`.
@@ -381,7 +463,7 @@ define_class!(
     unsafe impl NSTableViewDataSource for ListSource {
         #[unsafe(method(numberOfRowsInTableView:))]
         fn number_of_rows(&self, _table_view: &NSTableView) -> NSInteger {
-            self.ivars().rows.borrow().len() as NSInteger
+            self.ivars().rows.len() as NSInteger
         }
     }
 
@@ -398,28 +480,33 @@ define_class!(
             row: NSInteger,
         ) -> Option<Retained<NSView>> {
             let mtm = MainThreadMarker::from(self);
-            let rows = self.ivars().rows.borrow();
-            match usize::try_from(row).ok().and_then(|row| rows.get(row)) {
-                Some(row) => match &row.content {
-                    ListRowContent::Item(item) => Some(list_item_cell_view(mtm, item)),
-                    ListRowContent::Custom(content) => Some(custom_cell_view(mtm, &**content)),
-                },
-                None => None,
-            }
+            // 組み立てでアプリのコードが動くので、借用を持ったまま呼ばない。
+            usize::try_from(row)
+                .ok()
+                .and_then(|row| self.ivars().rows.row(row))
+                .map(|row| row.cell_view(mtm))
         }
 
         #[unsafe(method(tableView:shouldSelectRow:))]
         fn should_select_row(&self, _table_view: &NSTableView, row: NSInteger) -> bool {
             usize::try_from(row)
                 .ok()
-                .and_then(|row| {
-                    self.ivars()
-                        .rows
-                        .borrow()
-                        .get(row)
-                        .map(ListRow::is_selectable)
-                })
-                .unwrap_or(false)
+                .is_some_and(|row| self.ivars().rows.is_selectable(row))
+        }
+
+        // 行が画面から外れたら、その行のために組み立てたものを忘れる。
+        // ここからテーブルへ問い合わせない (`Table` と同じ。再入の警告になる)。
+        #[unsafe(method(tableView:didRemoveRowView:forRow:))]
+        fn did_remove_row_view(
+            &self,
+            _table_view: &NSTableView,
+            _row_view: &NSView,
+            row: NSInteger,
+        ) {
+            // 行が消されたときは -1 が来る。
+            if let Ok(row) = usize::try_from(row) {
+                self.ivars().rows.forget_row(row);
+            }
         }
 
         #[unsafe(method(tableViewSelectionDidChange:))]
@@ -437,7 +524,7 @@ define_class!(
             let Ok(table) = object.downcast::<NSTableView>() else {
                 return;
             };
-            let indices = selected_indices(&table, state.rows.borrow().len());
+            let indices = selected_indices(&table, state.rows.len());
             state.handler.emit(&indices);
         }
     }
@@ -649,7 +736,11 @@ struct ListInner {
     /// view.
     scroll: Retained<ContentSizedScrollView>,
     table: Retained<ListTableView>,
-    rows: Rc<RefCell<Vec<ListRow>>>,
+    rows: Rc<ListRows>,
+    /// The row height decided by the app ([`List::set_row_height`]).
+    fixed_row_height: Cell<Option<f64>>,
+    /// AppKit's row height, used as its estimate while heights are automatic.
+    default_row_height: f64,
     mode: Cell<SelectionMode>,
     handler: SelectionHandler,
     silent: Rc<Cell<bool>>,
@@ -681,7 +772,7 @@ crate::widgets::impl_sizing!(List);
 
 impl List {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
-        let rows: Rc<RefCell<Vec<ListRow>>> = Rc::new(RefCell::new(Vec::new()));
+        let rows: Rc<ListRows> = Rc::default();
         let table = ListTableView::new(
             mtm,
             ListTableState {
@@ -738,6 +829,7 @@ impl List {
             table.setDoubleAction(Some(sel!(nauiRowDoubleClicked:)));
         }
 
+        let default_row_height = table.rowHeight();
         let scroll = ContentSizedScrollView::new(mtm);
         scroll.setHasVerticalScroller(true);
         let document: &NSView = &table;
@@ -747,6 +839,8 @@ impl List {
             scroll,
             table,
             rows,
+            fixed_row_height: Cell::new(None),
+            default_row_height,
             mode: Cell::new(SelectionMode::Single),
             handler,
             silent,
@@ -756,8 +850,10 @@ impl List {
 
     /// Rebuilds the rows. Indices change meaning, so the selection is cleared.
     pub fn set_items(&self, items: &[ListItem]) {
-        let rows: Vec<ListRow> = items.iter().cloned().map(ListRow::from_item).collect();
-        self.set_rows(&rows);
+        self.0
+            .rows
+            .set_rows(items.iter().cloned().map(ListRow::from_item).collect());
+        self.reload_rows();
     }
 
     /// Replaces the rows with rows built from any widgets.
@@ -765,21 +861,122 @@ impl List {
     /// Controls inside a row can have their own callbacks as usual. Indices change
     /// meaning, so the selection is cleared.
     pub fn set_rows(&self, rows: &[ListRow]) {
-        *self.0.rows.borrow_mut() = rows.to_vec();
+        self.0.rows.set_rows(rows.to_vec());
         self.reload_rows();
+    }
+
+    /// Passes rows in a form that **builds each row when it becomes visible**.
+    ///
+    /// `count` is the number of rows, and `build` receives an index from 0 to
+    /// `count - 1` and returns that row ([`ListRow`]). It is called only for the rows on
+    /// screen (and a few before and after), so opening stays fast even with hundreds of
+    /// thousands of rows. Indices change meaning, so the selection is cleared.
+    ///
+    /// The widgets in a row may be recreated every time it is built. Keep per-row state
+    /// in the app's data and build from it inside `build`.
+    ///
+    /// ```no_run
+    /// # use naui_macos::{List, ListRow, Ui};
+    /// # fn fill(ui: &Ui, list: &List, cities: Vec<String>) {
+    /// let ui = ui.clone();
+    /// list.set_row_builder(cities.len(), move |index| {
+    ///     Ok(ListRow::new(&ui.label(&cities[index])?))
+    /// });
+    /// # }
+    /// ```
+    pub fn set_row_builder(
+        &self,
+        count: usize,
+        build: impl FnMut(usize) -> Result<ListRow> + 'static,
+    ) {
+        self.0.rows.set_builder(count, build);
+        self.reload_rows();
+    }
+
+    /// Passes a function that answers whether a row can be selected **without building
+    /// the row**.
+    ///
+    /// For rows built with [`List::set_row_builder`], naui does not know whether rows
+    /// not yet built can be selected. With this function, [`List::set_selection`] can
+    /// keep its promise of "removing rows that cannot be selected" even for rows off
+    /// screen. Without it, built rows follow [`ListRow::selectable`] and rows not yet
+    /// built are treated as selectable.
+    ///
+    /// Its answers must match the [`ListRow::selectable`] returned by `build`.
+    pub fn set_row_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
+        self.0.rows.source.set_selectable(selectable);
+    }
+
+    /// Rebuilds the visible rows. The row count and selection stay.
+    ///
+    /// Use it when what the function passed to [`List::set_row_builder`] returns has
+    /// changed.
+    pub fn refresh(&self) {
+        let picked = self.selection();
+        self.0.rows.forget_built();
+        self.without_notifying(|this| {
+            this.apply_row_height();
+            this.0.table.reloadData();
+            this.apply_selection(&picked);
+            this.0.scroll.invalidate_document_size();
+        });
+    }
+
+    /// Sets the row height in logical pixels. Passing 0 or less returns to AppKit
+    /// working out each row's height (`usesAutomaticRowHeights`).
+    ///
+    /// Every row gets this height. AppKit measures rows only when they appear, so with
+    /// many rows of varying height the scroll bar shifts as it finds out their real
+    /// heights; setting a height avoids that.
+    pub fn set_row_height(&self, height: f64) {
+        self.0
+            .fixed_row_height
+            .set((height > 0.0).then_some(height));
+        self.refresh();
+    }
+
+    /// The row height (logical pixels). 0 if there are no rows.
+    ///
+    /// With no height set, rows may differ in height, and this is the first row's.
+    pub fn row_height(&self) -> f64 {
+        if self.0.table.usesAutomaticRowHeights() {
+            match self.len() {
+                0 => 0.0,
+                _ => self.0.table.rectOfRow(0).size.height,
+            }
+        } else {
+            self.0.table.rowHeight()
+        }
     }
 
     fn reload_rows(&self) {
         self.without_notifying(|this| {
+            this.apply_row_height();
             this.0.table.reloadData();
             unsafe { this.0.table.deselectAll(None) };
             this.0.scroll.invalidate_document_size();
         });
     }
 
+    /// Decides how row heights are found (automatic or one height for every row).
+    fn apply_row_height(&self) {
+        let table = &self.0.table;
+        match self.0.fixed_row_height.get() {
+            Some(height) => {
+                table.setUsesAutomaticRowHeights(false);
+                table.setRowHeight(height);
+            }
+            // AppKit は自動の間、`rowHeight` を見積もりに使う。指定の値を残さない。
+            None => {
+                table.setRowHeight(self.0.default_row_height);
+                table.setUsesAutomaticRowHeights(true);
+            }
+        }
+    }
+
     /// The number of rows.
     pub fn len(&self) -> usize {
-        self.0.rows.borrow().len()
+        self.0.rows.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -814,7 +1011,7 @@ impl List {
     /// edge (the top if it is above, the bottom if it is below). Does nothing if out of
     /// range.
     pub fn scroll_to_row(&self, index: usize) {
-        if index < self.0.rows.borrow().len() {
+        if index < self.len() {
             self.0.table.scrollRowToVisible(index as isize);
         }
     }
@@ -829,12 +1026,7 @@ impl List {
     /// Out-of-range rows, unselectable rows and duplicates are removed, and with single
     /// selection only the first remains ([`SelectionMode::normalize`]).
     pub fn set_selection(&self, indices: &[usize]) {
-        let picked = {
-            let rows = self.0.rows.borrow();
-            self.0.mode.get().normalize_by(indices, |index| {
-                rows.get(index).is_some_and(ListRow::is_selectable)
-            })
-        };
+        let picked = self.normalize(indices);
         self.without_notifying(|this| this.apply_selection(&picked));
     }
 
@@ -850,12 +1042,7 @@ impl List {
 
     /// Replaces the selection through the same path as a user's selection (notifies).
     pub fn select_many(&self, indices: &[usize]) {
-        let picked = {
-            let rows = self.0.rows.borrow();
-            self.0.mode.get().normalize_by(indices, |index| {
-                rows.get(index).is_some_and(ListRow::is_selectable)
-            })
-        };
+        let picked = self.normalize(indices);
         // AppKit は同じ選択を選び直すとデリゲートを呼ばない。
         // 通知の回数をそろえるため、ここで 1 回だけ出す。
         self.without_notifying(|this| this.apply_selection(&picked));
@@ -903,6 +1090,14 @@ impl List {
     pub fn native_table(&self) -> Retained<NSTableView> {
         let table: &NSTableView = &self.0.table;
         table.retain()
+    }
+
+    fn normalize(&self, indices: &[usize]) -> Vec<usize> {
+        let rows = self.0.rows.clone();
+        self.0
+            .mode
+            .get()
+            .normalize_by(indices, |index| rows.is_selectable(index))
     }
 
     fn apply_selection(&self, indices: &[usize]) {

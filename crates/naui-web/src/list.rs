@@ -4,8 +4,8 @@
 //!
 //! | Rows | Built from |
 //! | --- | --- |
-//! | Text only | `<select size>` + `<option>` — the browser's standard list box itself |
-//! | With `detail` / custom content | `<ul role="listbox">` + `<li role="option">` — composed |
+//! | Text only, up to [`ROW_WINDOW_THRESHOLD`] rows | `<select size>` + `<option>` — the browser's standard list box itself |
+//! | With `detail` / custom content, or more rows than that | `<ul role="listbox">` + `<li role="option">` — composed |
 //!
 //! The content model of `<option>` is **text only**; it can hold neither elements
 //! nor line breaks. Showing two-line rows means leaving `<select>`. Still,
@@ -17,6 +17,11 @@
 //! selection (`Field` / `SelectedItem` / `Highlight` / `GrayText`) as is; naui
 //! decides no colors.
 //!
+//! **With many rows, only the rows on screen are built** (the same mechanism as
+//! [`crate::Table`]). A `<select>` creates every `<option>` it is given and has no place
+//! for spacers, so such lists are always composed: `<li>`s exist only for the window,
+//! and spacer `<li>`s carry the height of the rest.
+//!
 //! Row activation (`dblclick` and Enter) and right-clicks (`contextmenu`) are
 //! received together on the outer frame, which stays the same even when the
 //! contents are swapped, and the row is looked up from the clicked element.
@@ -25,12 +30,15 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    Align, ListItem, Orientation, Point, Result, SelectionMode, Sizing, TextColor, TextStyle,
+    keeps_row_window, row_window, Align, ListItem, Orientation, Point, Result, RowSource,
+    RowWindow, SelectionMode, Sizing, TextColor, TextStyle, ROW_WINDOW_OVERSCAN,
+    ROW_WINDOW_THRESHOLD,
 };
-use wasm_bindgen::JsCast;
+use wasm_bindgen::prelude::Closure;
+use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{
     Document, Element, Event, HtmlElement, HtmlOptionElement, HtmlSelectElement, KeyboardEvent,
-    MouseEvent,
+    MouseEvent, ResizeObserver,
 };
 
 use crate::widgets::{create, impl_widget, Label, Listener, Stack, ValueHandler, Widget};
@@ -142,6 +150,11 @@ impl ListRow {
     /// clicked directly, so the same action does not fire twice.
     pub fn on_activate(&self, f: impl FnMut() + 'static) {
         self.activation.set(f);
+    }
+
+    /// Whether a `<select>`'s `<option>` can show this row (text only, one line).
+    fn fits_an_option(&self) -> bool {
+        matches!(&self.content, ListRowContent::Item(item) if item.detail.is_none())
     }
 
     /// A row that can be neither selected nor operated (`ListItem::enabled(false)`).
@@ -268,11 +281,17 @@ enum Body {
         /// The `change` and `click` subscriptions. Dropping them also unsubscribes.
         _listeners: Vec<Listener>,
     },
-    /// A composition for showing two-line rows.
+    /// A composition for showing two-line rows and many rows.
     Listbox {
         list: HtmlElement,
+        /// Fill in for the rows outside the window, keeping the scroll bar length.
+        top_spacer: HtmlElement,
+        bottom_spacer: HtmlElement,
+        /// The `<li>`s of the built rows, in order from `window.start`.
         options: Vec<HtmlElement>,
-        /// The subscriptions for clicks on each row and key operations on the whole list.
+        /// The click subscription per built row. Replaced whenever the rows are rebuilt.
+        row_listeners: Vec<Listener>,
+        /// The subscriptions to the whole list (keys and scrolling).
         _listeners: Vec<Listener>,
     },
 }
@@ -284,10 +303,26 @@ struct ListInner {
     document: Document,
     id: u32,
     body: RefCell<Body>,
-    /// The rows. Whether they can be selected and their activation are looked up from
-    /// here. It also keeps the event subscriptions and the like contained in the rows
-    /// alive.
-    rows: RefCell<Vec<ListRow>>,
+    /// Where the rows come from.
+    rows: RowSource<ListRow>,
+    /// The range of rows currently built. With many rows, only those around the screen.
+    window: Cell<RowWindow>,
+    /// Whether rows are being built right now. Prevents nested rebuilds.
+    rebuilding: Cell<bool>,
+    /// The contents of the built rows, in order from `window.start`. It also keeps the
+    /// event subscriptions and the like contained in the rows alive.
+    realized: RefCell<Vec<ListRow>>,
+    /// The height of one row (logical pixels). Either measured or set with
+    /// [`List::set_row_height`].
+    row_height: Cell<f64>,
+    /// Whether `row_height` is from rows that are gone, so the next measurement replaces
+    /// it instead of only growing it.
+    row_height_stale: Cell<bool>,
+    /// The row height decided by the app. If absent, it is measured from the built rows.
+    fixed_row_height: Cell<Option<f64>>,
+    /// Moves the window when the list gets its size or it changes.
+    resize_observer: RefCell<Option<ResizeObserver>>,
+    resize_callback: RefCell<Option<Closure<dyn FnMut(JsValue)>>>,
     mode: Cell<SelectionMode>,
     /// The selected rows (ascending). This is the source of truth for both `<select>`
     /// and the composed list.
@@ -307,10 +342,19 @@ struct ListInner {
     file_drop: crate::file_drop::FileDrop,
 }
 
+impl Drop for ListInner {
+    fn drop(&mut self) {
+        // 捨てたあとに通知が届くと、解放した `Closure` を呼んでしまう。
+        if let Some(observer) = self.resize_observer.borrow_mut().take() {
+            observer.disconnect();
+        }
+    }
+}
+
 /// A vertical list of selectable rows.
 ///
-/// Text-only rows become a `<select size>`; rows with `detail` become a
-/// `<ul role="listbox">`. An `Auto` height follows the number and content of the
+/// Text-only rows become a `<select size>`; rows with `detail`, and lists with more than
+/// [`ROW_WINDOW_THRESHOLD`] rows, become a `<ul role="listbox">`. An `Auto` height follows the number and content of the
 /// rows; with a fixed height or `Fill`, it scrolls whatever overflows.
 #[derive(Clone)]
 pub struct List(Rc<ListInner>);
@@ -332,7 +376,15 @@ impl List {
                 select: create(doc, "select")?.unchecked_into(),
                 _listeners: Vec::new(),
             }),
-            rows: RefCell::new(Vec::new()),
+            rows: RowSource::default(),
+            window: Cell::new(RowWindow::default()),
+            rebuilding: Cell::new(false),
+            realized: RefCell::new(Vec::new()),
+            row_height: Cell::new(0.0),
+            row_height_stale: Cell::new(false),
+            fixed_row_height: Cell::new(None),
+            resize_observer: RefCell::new(None),
+            resize_callback: RefCell::new(None),
             mode: Cell::new(SelectionMode::Single),
             selected: RefCell::new(Vec::new()),
             active: Cell::new(None),
@@ -343,18 +395,22 @@ impl List {
             _row_listeners: RefCell::new(Vec::new()),
             file_drop: Default::default(),
         }));
-        this.build_select(&[])?;
+        this.build_select()?;
         this.listen_row_events()?;
+        this.observe_size()?;
         Ok(this)
     }
 
     /// Rebuilds the rows. Indices change meaning, so the selection is cleared.
     ///
-    /// If even one row has `detail`, it is rebuilt as a `<ul role="listbox">`;
-    /// otherwise as a `<select size>`.
+    /// If even one row has `detail`, or there are more than
+    /// [`ROW_WINDOW_THRESHOLD`] rows, it is rebuilt as a `<ul role="listbox">`; otherwise
+    /// as a `<select size>`.
     pub fn set_items(&self, items: &[ListItem]) {
-        let rows: Vec<ListRow> = items.iter().cloned().map(ListRow::from_item).collect();
-        self.set_rows(&rows);
+        self.0
+            .rows
+            .set_rows(items.iter().cloned().map(ListRow::from_item).collect());
+        self.reset_rows();
     }
 
     /// Rebuilds the rows. Both plain text rows and custom-content rows are built
@@ -363,26 +419,105 @@ impl List {
     /// Controls inside a row can have their own callbacks as usual. Indices change
     /// meaning, so the selection is cleared.
     pub fn set_rows(&self, rows: &[ListRow]) {
-        *self.0.rows.borrow_mut() = rows.to_vec();
-        self.0.selected.borrow_mut().clear();
-        self.0.active.set(None);
-        self.0.anchor.set(None);
+        self.0.rows.set_rows(rows.to_vec());
+        self.reset_rows();
+    }
 
-        // `<option>` はテキストしか持てないので、文字だけの行がそろっている
-        // ときだけブラウザ標準の `<select>` を使い続ける。
-        let plain = rows
-            .iter()
-            .all(|row| matches!(&row.content, ListRowContent::Item(item) if item.detail.is_none()));
-        let _ = if plain {
-            self.build_select(rows)
+    /// Passes rows in a form that **builds each row when it becomes visible**.
+    ///
+    /// `count` is the number of rows, and `build` receives an index from 0 to
+    /// `count - 1` and returns that row ([`ListRow`]). It is called only for the rows on
+    /// screen (and a few before and after), so opening stays fast even with hundreds of
+    /// thousands of rows. Indices change meaning, so the selection is cleared.
+    ///
+    /// The widgets in a row may be recreated every time it is built. Keep per-row state
+    /// in the app's data and build from it inside `build`.
+    ///
+    /// ```no_run
+    /// # use naui_web::{List, ListRow, Ui};
+    /// # fn fill(ui: &Ui, list: &List, cities: Vec<String>) {
+    /// let ui = ui.clone();
+    /// list.set_row_builder(cities.len(), move |index| {
+    ///     Ok(ListRow::new(&ui.label(&cities[index])?))
+    /// });
+    /// # }
+    /// ```
+    pub fn set_row_builder(
+        &self,
+        count: usize,
+        build: impl FnMut(usize) -> Result<ListRow> + 'static,
+    ) {
+        self.0.rows.set_builder(count, build);
+        self.reset_rows();
+    }
+
+    /// Passes a function that answers whether a row can be selected **without building
+    /// the row**.
+    ///
+    /// For rows built with [`List::set_row_builder`], naui does not know whether rows
+    /// not yet built can be selected. With this function, [`List::set_selection`] can
+    /// keep its promise of "removing rows that cannot be selected" even for rows off
+    /// screen. Without it, built rows follow [`ListRow::selectable`] and rows not yet
+    /// built are treated as selectable.
+    ///
+    /// Its answers must match the [`ListRow::selectable`] returned by `build`.
+    pub fn set_row_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
+        self.0.rows.set_selectable(selectable);
+    }
+
+    /// Rebuilds the visible rows. The row count and selection stay.
+    ///
+    /// Use it when what the function passed to [`List::set_row_builder`] returns has
+    /// changed.
+    pub fn refresh(&self) {
+        // `<select>` の行はアプリが渡したものなので、組み立て直すものが無い。
+        if !matches!(&*self.0.body.borrow(), Body::Listbox { .. }) {
+            return;
+        }
+        self.0.row_height_stale.set(true);
+        let _ = self.build_window();
+        // 中身が変わって行の高さが動いていれば、窓を引き直す。
+        if self.settle_row_height() {
+            self.update_window();
+        }
+    }
+
+    /// Sets the row height in logical pixels. Passing 0 or less measures it from the
+    /// rows.
+    ///
+    /// Every row gets at least this height. With more rows than
+    /// [`ROW_WINDOW_THRESHOLD`], rows off screen are filled in as "row count × this
+    /// height", so set it when the rows' heights vary. A `<select>`'s `<option>`s cannot
+    /// be given a height, so setting one makes the list composed.
+    pub fn set_row_height(&self, height: f64) {
+        let fixed = (height > 0.0).then_some(height);
+        let changes_body = fixed.is_some() != self.0.fixed_row_height.get().is_some();
+        self.0.fixed_row_height.set(fixed);
+        // 指定を外したときは、組み立て直した行から測り直す。
+        self.0.row_height.set(height.max(0.0));
+        if changes_body {
+            // 選択は残す。`set_rows` と違って行の意味は変わらない。
+            let picked = self.selection();
+            self.rebuild_body();
+            self.write_selection(&picked);
         } else {
-            self.build_listbox(rows)
-        };
+            self.refresh();
+        }
+    }
+
+    /// The row height (logical pixels). 0 if no row has been built yet.
+    ///
+    /// With few rows and no height set, rows may differ, and this is the tallest built.
+    pub fn row_height(&self) -> f64 {
+        if matches!(&*self.0.body.borrow(), Body::Select { .. }) {
+            self.settle_row_height();
+        }
+        self.0.row_height.get()
     }
 
     /// The number of rows.
     pub fn len(&self) -> usize {
-        self.0.rows.borrow().len()
+        self.0.rows.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -486,8 +621,8 @@ impl List {
 
     /// The inner `<select>`. Public as a backend-specific escape hatch.
     ///
-    /// When some row has `detail` it is a `<ul role="listbox">` instead, so this returns
-    /// `None`. The frame itself can be obtained from [`Widget::native_element`].
+    /// When some row has `detail`, or there are more than [`ROW_WINDOW_THRESHOLD`] rows,
+    /// it is a `<ul role="listbox">` instead, so this returns `None`. The frame itself can be obtained from [`Widget::native_element`].
     pub fn native_select(&self) -> Option<HtmlSelectElement> {
         match &*self.0.body.borrow() {
             Body::Select { select, .. } => Some(select.clone()),
@@ -499,10 +634,14 @@ impl List {
 
     /// Creates the browser's standard `<select size>`. The structure for text-only
     /// rows.
-    fn build_select(&self, rows: &[ListRow]) -> Result<()> {
+    fn build_select(&self) -> Result<()> {
         let select: HtmlSelectElement = create(&self.0.document, "select")?.unchecked_into();
-        for row in rows {
-            let ListRowContent::Item(item) = &row.content else {
+        let count = self.len();
+        for index in 0..count {
+            let Some(Some(item)) = self.0.rows.with_stored(index, |row| match &row.content {
+                ListRowContent::Item(item) => Some(item.clone()),
+                ListRowContent::Custom(_) => None,
+            }) else {
                 continue;
             };
             let option: HtmlOptionElement = create(&self.0.document, "option")?.unchecked_into();
@@ -511,7 +650,7 @@ impl List {
             let _ = select.append_child(&option);
         }
         // `size` が無いとドロップダウンになるので、必ず 2 以上を入れる。
-        let size = u32::try_from(rows.len()).unwrap_or(u32::MAX).max(MIN_ROWS);
+        let size = u32::try_from(count).unwrap_or(u32::MAX).max(MIN_ROWS);
         select.set_size(size);
 
         let mut listeners = Vec::with_capacity(2);
@@ -541,11 +680,7 @@ impl List {
                 let Some(index) = clicked_option_index(&event) else {
                     return;
                 };
-                let activation = inner
-                    .rows
-                    .borrow()
-                    .get(index)
-                    .map(|row| row.activation.clone());
+                let activation = List(inner).read_row(index, |row| row.activation.clone());
                 if let Some(activation) = activation {
                     activation.emit();
                 }
@@ -563,9 +698,9 @@ impl List {
         Ok(())
     }
 
-    /// Builds the `role="listbox"`. Both two-line rows and custom-content rows go
-    /// through here.
-    fn build_listbox(&self, rows: &[ListRow]) -> Result<()> {
+    /// Builds the `role="listbox"`, without its rows. Two-line rows, custom-content rows
+    /// and many rows go through here.
+    fn build_listbox(&self) -> Result<()> {
         let list: HtmlElement = create(&self.0.document, "ul")?.unchecked_into();
         let _ = list.set_attribute("role", "listbox");
         // キーボードで入れるようにする。中の行は `aria-activedescendant` で指す。
@@ -586,78 +721,12 @@ impl List {
         style(&list, "background-color", "Field");
         style(&list, "color", "FieldText");
 
-        let mut options = Vec::with_capacity(rows.len());
-        let mut listeners = Vec::with_capacity(rows.len() + 1);
-        for (index, row) in rows.iter().enumerate() {
-            let option: HtmlElement = create(&self.0.document, "li")?.unchecked_into();
-            let _ = option.set_attribute("role", "option");
-            let _ = option.set_attribute("id", &self.option_id(index));
-            let _ = option.set_attribute("aria-selected", "false");
-            match &row.content {
-                ListRowContent::Item(item) => {
-                    style(&option, "padding", "2px 4px");
-                    let content =
-                        item_content(&self.0.document, &item.label, item.detail.as_deref())?;
-                    let _ = option.append_child(&content.native_element());
-                }
-                ListRowContent::Custom(content) => {
-                    style(&option, "padding", "6px 10px");
-                    let _ = option.append_child(&content.native_element());
-                }
-            }
+        let top_spacer = spacer_item(&self.0.document)?;
+        let bottom_spacer = spacer_item(&self.0.document)?;
+        let _ = list.append_child(&top_spacer);
+        let _ = list.append_child(&bottom_spacer);
 
-            if !row.selectable {
-                let _ = option.set_attribute("aria-disabled", "true");
-            }
-            if row.is_dimmed() {
-                // 無効な文字にブラウザが使うシステム色。
-                style(&option, "color", "GrayText");
-                // 行そのものも中身も操作できないので、購読も付けない。
-                let _ = list.append_child(&option);
-                options.push(option);
-                continue;
-            }
-
-            let selectable = row.selectable;
-            listeners.push(Listener::attach_event(option.as_ref(), "click", {
-                let weak = Rc::downgrade(&self.0);
-                let option = option.clone();
-                let list = list.clone();
-                move |event| {
-                    let Some(inner) = weak.upgrade() else {
-                        return;
-                    };
-                    // Button や input 自身の操作はそのまま通し、行そのものが
-                    // 押されたときだけ activation を出す。
-                    if !control_was_targeted(&option, &event) {
-                        // クリックの続きを矢印キーで行えるように、
-                        // リストへフォーカスを移す (行内のコントロールを
-                        // 押したときは、そのコントロールから奪わない)。
-                        let _ = list.focus();
-                        let activation = inner
-                            .rows
-                            .borrow()
-                            .get(index)
-                            .map(|row| row.activation.clone());
-                        if let Some(activation) = activation {
-                            activation.emit();
-                        }
-                    }
-                    if !selectable {
-                        return;
-                    }
-                    // 行選択は通常のクリックと同じ規則で更新する。
-                    let mouse = event.dyn_ref::<MouseEvent>();
-                    let toggle = mouse.is_some_and(|e| e.meta_key() || e.ctrl_key());
-                    let extend = mouse.is_some_and(|e| e.shift_key());
-                    List(inner).on_row_activated(index, toggle, extend);
-                }
-            })?);
-
-            let _ = list.append_child(&option);
-            options.push(option);
-        }
-
+        let mut listeners = Vec::with_capacity(2);
         listeners.push(Listener::attach_event(list.as_ref(), "keydown", {
             let weak = Rc::downgrade(&self.0);
             let list = list.clone();
@@ -678,15 +747,349 @@ impl List {
                 }
             }
         })?);
+        // 行が多いときは、スクロールに合わせて組み立てる範囲を動かす。
+        listeners.push(Listener::attach(list.as_ref(), "scroll", {
+            let weak = Rc::downgrade(&self.0);
+            move || {
+                if let Some(inner) = weak.upgrade() {
+                    List(inner).update_window();
+                }
+            }
+        })?);
 
         self.swap_body(&list)?;
         *self.0.body.borrow_mut() = Body::Listbox {
             list,
-            options,
+            top_spacer,
+            bottom_spacer,
+            options: Vec::new(),
+            row_listeners: Vec::new(),
             _listeners: listeners,
         };
         self.apply_mode();
         Ok(())
+    }
+
+    /// Builds one `<li>` and its click subscription.
+    ///
+    /// Rows outside the window have no `<li>`, so `index` is the row's place in the whole
+    /// list, not among the rows built.
+    fn build_option(
+        &self,
+        list: &HtmlElement,
+        index: usize,
+        row: &ListRow,
+    ) -> Result<(HtmlElement, Option<Listener>)> {
+        let window = self.0.window.get();
+        let option: HtmlElement = create(&self.0.document, "li")?.unchecked_into();
+        let _ = option.set_attribute("role", "option");
+        let _ = option.set_attribute("id", &self.option_id(index));
+        let _ = option.set_attribute("aria-selected", "false");
+        // 読み上げには、窓ではなくリストそのものの位置を伝える。
+        let _ = option.set_attribute("aria-setsize", &window.count.to_string());
+        let _ = option.set_attribute("aria-posinset", &(index + 1).to_string());
+        // 行の高さをそろえるときの指定に、余白も含める。
+        style(&option, "box-sizing", "border-box");
+        if let Some(height) = self.0.fixed_row_height.get() {
+            style(&option, "min-height", &format!("{height}px"));
+        }
+        match &row.content {
+            ListRowContent::Item(item) => {
+                style(&option, "padding", "2px 4px");
+                let content = item_content(&self.0.document, &item.label, item.detail.as_deref())?;
+                let _ = option.append_child(&content.native_element());
+            }
+            ListRowContent::Custom(content) => {
+                style(&option, "padding", "6px 10px");
+                let _ = option.append_child(&content.native_element());
+            }
+        }
+
+        if !row.selectable {
+            let _ = option.set_attribute("aria-disabled", "true");
+        }
+        if row.is_dimmed() {
+            // 無効な文字にブラウザが使うシステム色。
+            style(&option, "color", "GrayText");
+            // 行そのものも中身も操作できないので、購読も付けない。
+            return Ok((option, None));
+        }
+
+        let selectable = row.selectable;
+        let listener = Listener::attach_event(option.as_ref(), "click", {
+            let weak = Rc::downgrade(&self.0);
+            let option = option.clone();
+            let list = list.clone();
+            move |event| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let this = List(inner);
+                // Button や input 自身の操作はそのまま通し、行そのものが
+                // 押されたときだけ activation を出す。
+                if !control_was_targeted(&option, &event) {
+                    // クリックの続きを矢印キーで行えるように、
+                    // リストへフォーカスを移す (行内のコントロールを
+                    // 押したときは、そのコントロールから奪わない)。
+                    let _ = list.focus();
+                    let activation = this.read_row(index, |row| row.activation.clone());
+                    if let Some(activation) = activation {
+                        activation.emit();
+                    }
+                }
+                if !selectable {
+                    return;
+                }
+                // 行選択は通常のクリックと同じ規則で更新する。
+                let mouse = event.dyn_ref::<MouseEvent>();
+                let toggle = mouse.is_some_and(|e| e.meta_key() || e.ctrl_key());
+                let extend = mouse.is_some_and(|e| e.shift_key());
+                this.on_row_activated(index, toggle, extend);
+            }
+        })?;
+        Ok((option, Some(listener)))
+    }
+
+    /// Moves the window when the list gets its size (it has none until it is placed in
+    /// the document) or its size changes.
+    fn observe_size(&self) -> Result<()> {
+        let weak = Rc::downgrade(&self.0);
+        let callback = Closure::<dyn FnMut(JsValue)>::new(move |_entries: JsValue| {
+            if let Some(inner) = weak.upgrade() {
+                List(inner).update_window();
+            }
+        });
+        let observer = ResizeObserver::new(callback.as_ref().unchecked_ref())
+            .map_err(|e| crate::to_error("create the ResizeObserver", e))?;
+        observer.observe(self.0.root.as_ref());
+        *self.0.resize_observer.borrow_mut() = Some(observer);
+        *self.0.resize_callback.borrow_mut() = Some(callback);
+        Ok(())
+    }
+
+    // ------------------------------------------------------- 行を絞る窓
+
+    /// Rebuilds the rows and moves the window back to the start. The selection is
+    /// cleared too.
+    fn reset_rows(&self) {
+        self.0.selected.borrow_mut().clear();
+        self.0.active.set(None);
+        self.0.anchor.set(None);
+        self.rebuild_body();
+    }
+
+    /// Chooses the body for the current rows and builds it.
+    fn rebuild_body(&self) {
+        self.0.row_height_stale.set(true);
+        self.0.realized.borrow_mut().clear();
+        // `<option>` はテキストしか持てず、作った分だけ重くなり、高さも指定できない。
+        // そのどれにも当たらないときだけブラウザ標準の `<select>` を使い続ける。
+        let plain = !self.0.rows.is_built()
+            && self.len() <= ROW_WINDOW_THRESHOLD
+            && self.0.fixed_row_height.get().is_none()
+            && !self.0.rows.any_stored(|row| !row.fits_an_option());
+        if plain {
+            self.0.window.set(RowWindow::all(self.len()));
+            let _ = self.build_select();
+            return;
+        }
+        if self.build_listbox().is_err() {
+            return;
+        }
+        // 詰め物とスクロールの位置は作り直したばかりなので、先頭から始める。
+        self.0.window.set(self.compute_window(ROW_WINDOW_OVERSCAN));
+        let _ = self.build_window();
+        // 行の高さが分かったら、その高さで窓を引き直す。
+        if self.settle_row_height() {
+            self.update_window();
+        }
+    }
+
+    /// Rebuilds the `<li>`s for just the current window.
+    ///
+    /// Rows outside the window get no `<li>`; the spacers above and below carry their
+    /// height, so the scroll bar's length and position are those of all the rows.
+    fn build_window(&self) -> Result<()> {
+        // 組み立ての途中でアプリのコードが動くので、そこから呼ばれても
+        // 二重に作り直さない。
+        if self.0.rebuilding.replace(true) {
+            return Ok(());
+        }
+        let result = self.build_window_once();
+        self.0.rebuilding.set(false);
+        result
+    }
+
+    fn build_window_once(&self) -> Result<()> {
+        let window = self.0.window.get();
+        // アプリのコードが動く間は、中身の借用を持たない。
+        let Some((list, bottom_spacer, old)) = (match &mut *self.0.body.borrow_mut() {
+            Body::Listbox {
+                list,
+                bottom_spacer,
+                options,
+                row_listeners,
+                ..
+            } => {
+                row_listeners.clear();
+                Some((list.clone(), bottom_spacer.clone(), std::mem::take(options)))
+            }
+            Body::Select { .. } => None,
+        }) else {
+            return Ok(());
+        };
+        // 詰め物は残したまま行だけを入れ替える。
+        for option in &old {
+            option.remove();
+        }
+
+        let mut options = Vec::with_capacity(window.len());
+        let mut listeners = Vec::with_capacity(window.len());
+        let mut realized = Vec::with_capacity(window.len());
+        for index in window.indices() {
+            let Some(row) = self.0.rows.row(index) else {
+                continue;
+            };
+            // 組み立てに失敗した行は、空の行にする。
+            let row = row.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
+            let (option, listener) = self.build_option(&list, index, &row)?;
+            let _ = list.insert_before(&option, Some(&bottom_spacer));
+            options.push(option);
+            listeners.extend(listener);
+            realized.push(row);
+        }
+        *self.0.realized.borrow_mut() = realized;
+        if let Body::Listbox {
+            options: stored,
+            row_listeners,
+            ..
+        } = &mut *self.0.body.borrow_mut()
+        {
+            *stored = options;
+            *row_listeners = listeners;
+        }
+        self.write_spacers();
+        // 覚えている選択を、組み立て直した行へ写す。
+        let picked = self.selection();
+        self.write_selection(&picked);
+        Ok(())
+    }
+
+    /// Writes the height of the rows outside the window into the spacers.
+    fn write_spacers(&self) {
+        let window = self.0.window.get();
+        let height = self.0.row_height.get();
+        if let Body::Listbox {
+            top_spacer,
+            bottom_spacer,
+            ..
+        } = &*self.0.body.borrow()
+        {
+            set_spacer_height(top_spacer, window.leading(height));
+            set_spacer_height(bottom_spacer, window.trailing(height));
+        }
+    }
+
+    /// Computes the range of rows to build from the current scroll position.
+    fn compute_window(&self, overscan: usize) -> RowWindow {
+        let (top, viewport) = match &*self.0.body.borrow() {
+            Body::Listbox { list, .. } => (list.scroll_top(), list.client_height()),
+            Body::Select { .. } => return RowWindow::all(self.len()),
+        };
+        row_window(
+            self.len(),
+            f64::from(top),
+            f64::from(viewport),
+            self.0.row_height.get(),
+            overscan,
+        )
+    }
+
+    /// Moves the built range along with scrolling and resizing.
+    ///
+    /// Rebuilding for every row scrolled is heavy, so the window is reused until you
+    /// have scrolled through half of the extra rows ([`ROW_WINDOW_OVERSCAN`]).
+    fn update_window(&self) {
+        if self.0.rebuilding.get() {
+            return;
+        }
+        let shown = match &*self.0.body.borrow() {
+            Body::Listbox { list, .. } => list.client_height() > 0,
+            Body::Select { .. } => false,
+        };
+        // 隠れている間は位置も大きさも読めないので、組み立てた行をそのまま残す。
+        if !shown {
+            return;
+        }
+        // 文書に載る前に組み立てた行は、ここで初めて測れる。
+        if self.0.row_height.get() <= 0.0 {
+            self.settle_row_height();
+        }
+        let current = self.0.window.get();
+        let needed = self.compute_window(ROW_WINDOW_OVERSCAN / 2);
+        let next = self.compute_window(ROW_WINDOW_OVERSCAN);
+        if next == current || keeps_row_window(current, needed, next) {
+            return;
+        }
+        self.0.window.set(next);
+        let _ = self.build_window();
+        if self.settle_row_height() {
+            self.update_window();
+        }
+    }
+
+    /// Finds the height of one row from the built rows. `true` if it changed.
+    ///
+    /// The browser decides row heights, so they are not known until a row is built.
+    /// **The tallest built row is used, and every built row is given that height.**
+    /// The rows outside the window are filled in as "row count × this height", so rows
+    /// of differing height (only some with `detail`, for instance) would make the
+    /// scroll bar drift every time the window moves. A taller row appearing later grows
+    /// the height once.
+    fn settle_row_height(&self) -> bool {
+        if self.0.fixed_row_height.get().is_some() {
+            return false;
+        }
+        let window = self.0.window.get();
+        let body = self.0.body.borrow();
+        let tallest = match &*body {
+            Body::Listbox { options, .. } => options
+                .iter()
+                .map(|option| option.get_bounding_client_rect().height())
+                .fold(0.0, f64::max),
+            Body::Select { select, .. } => select
+                .options()
+                .item(0)
+                .map_or(0.0, |option| option.get_bounding_client_rect().height()),
+        };
+        let previous = self.0.row_height.get();
+        // 文書に載る前は 0 が返る。古い高さを捨てず、測れるようになるのを待つ。
+        if tallest <= 0.0 {
+            return false;
+        }
+        let measured = match self.0.row_height_stale.replace(false) {
+            true => tallest,
+            false => tallest.max(previous),
+        };
+        // 行が少なければ行ごとの高さのまま (窓の外の行が無いので、ずれない)。
+        if let (Body::Listbox { options, .. }, false) = (&*body, window.is_complete()) {
+            for option in options {
+                style(option, "min-height", &format!("{measured}px"));
+            }
+        }
+        drop(body);
+        self.0.row_height.set(measured);
+        self.write_spacers();
+        (previous - measured).abs() >= 0.5
+    }
+
+    /// Reads a row without building anything: one the app passed, or one built now.
+    fn read_row<R>(&self, index: usize, read: impl FnOnce(&ListRow) -> R) -> Option<R> {
+        if !self.0.rows.is_built() {
+            return self.0.rows.with_stored(index, read);
+        }
+        let offset = index.checked_sub(self.0.window.get().start)?;
+        self.0.realized.borrow().get(offset).map(read)
     }
 
     /// Receives row activation and right-clicks on the outer frame. Not reattached when
@@ -778,10 +1181,10 @@ impl List {
             }
             Body::Listbox { options, .. } => {
                 let option = target.closest("[role=\"option\"]").ok()??;
-                let index = options
+                let offset = options
                     .iter()
                     .position(|row| row.is_same_node(Some(option.as_ref())))?;
-                (index, options[index].clone())
+                (self.0.window.get().start + offset, options[offset].clone())
             }
         };
         self.is_live(index).then_some((index, row))
@@ -806,11 +1209,7 @@ impl List {
     /// Whether the row can receive activation and right-clicks (not an unselectable
     /// `ListItem`).
     fn is_live(&self, index: usize) -> bool {
-        self.0
-            .rows
-            .borrow()
-            .get(index)
-            .is_some_and(|row| !row.is_dimmed())
+        index < self.len() && !self.read_row(index, ListRow::is_dimmed).unwrap_or(false)
     }
 
     /// Swaps the contents of the frame.
@@ -866,10 +1265,19 @@ impl List {
     }
 
     fn normalize(&self, indices: &[usize]) -> Vec<usize> {
-        let rows = self.0.rows.borrow();
-        self.0.mode.get().normalize_by(indices, |index| {
-            rows.get(index).is_some_and(ListRow::is_selectable)
-        })
+        self.0
+            .mode
+            .get()
+            .normalize_by(indices, |index| self.is_selectable(index))
+    }
+
+    /// Whether the row can be selected.
+    fn is_selectable(&self, index: usize) -> bool {
+        self.0
+            .rows
+            .is_selectable(index, ListRow::is_selectable, || {
+                self.read_row(index, ListRow::is_selectable)
+            })
     }
 
     /// Remembers the selection and writes it into the body as is (no notification).
@@ -889,9 +1297,10 @@ impl List {
                 }
             }
             Body::Listbox { options, .. } => {
-                let rows = self.0.rows.borrow();
-                for (index, option) in options.iter().enumerate() {
-                    let picked = indices.contains(&index);
+                let start = self.0.window.get().start;
+                for (offset, option) in options.iter().enumerate() {
+                    let index = start + offset;
+                    let picked = indices.binary_search(&index).is_ok();
                     let _ = option
                         .set_attribute("aria-selected", if picked { "true" } else { "false" });
                     if picked {
@@ -904,7 +1313,7 @@ impl List {
                     } else {
                         style(option, "background-color", "");
                         style(option, "color", "");
-                        if rows.get(index).is_some_and(ListRow::is_dimmed) {
+                        if self.read_row(index, ListRow::is_dimmed).unwrap_or(false) {
                             style(option, "color", "GrayText");
                         }
                     }
@@ -987,10 +1396,10 @@ impl List {
 
     /// Returns the first selectable row going from `start` in the direction of `step`.
     fn first_enabled(&self, start: isize, step: isize) -> Option<usize> {
-        let rows = self.0.rows.borrow();
+        let len = self.len();
         let mut at = start;
-        while at >= 0 && (at as usize) < rows.len() {
-            if rows[at as usize].is_selectable() {
+        while at >= 0 && (at as usize) < len {
+            if self.is_selectable(at as usize) {
                 return Some(at as usize);
             }
             at += step;
@@ -1001,9 +1410,8 @@ impl List {
     /// The selectable rows from `a` to `b`.
     fn range(&self, a: usize, b: usize) -> Vec<usize> {
         let (lo, hi) = if a <= b { (a, b) } else { (b, a) };
-        let rows = self.0.rows.borrow();
-        (lo..=hi.min(rows.len().saturating_sub(1)))
-            .filter(|&i| rows[i].is_selectable())
+        (lo..=hi.min(self.len().saturating_sub(1)))
+            .filter(|&i| self.is_selectable(i))
             .collect()
     }
 
@@ -1026,17 +1434,52 @@ impl List {
         self.reveal_row(active);
     }
 
-    /// Brings row `index` into the scroll area.
+    /// Brings row `index` into the scroll area, building the rows around it.
     fn reveal_row(&self, index: usize) {
-        match &*self.0.body.borrow() {
-            Body::Listbox { list, options, .. } => {
+        if index >= self.len() {
+            return;
+        }
+        let window = self.0.window.get();
+        let list = match &*self.0.body.borrow() {
+            // すべての行があるなら、高さのそろわない行でも実際の位置へ送れる。
+            Body::Listbox { list, options, .. } if window.is_complete() => {
                 if let Some(option) = options.get(index) {
                     reveal_within(list, option);
                 }
+                return;
             }
-            Body::Select { select, .. } => reveal_option(select, index),
-        }
+            Body::Listbox { list, .. } => list.clone(),
+            Body::Select { select, .. } => {
+                reveal_option(select, index);
+                return;
+            }
+        };
+        // 絞っている間は、まだ無い行へ送れるように位置を行の高さから求める。
+        // 載せた直後はまだ測っていないので、先に測る。
+        self.settle_row_height();
+        let height = self.0.row_height.get().max(1.0);
+        let top = index as f64 * height;
+        reveal_range(&list, top, top + height);
+        // スクロールの通知を待たずに、指した行を組み立てておく。
+        self.update_window();
     }
+}
+
+/// Creates a `<li>` that fills in for the rows outside the window.
+///
+/// It only has a height and is hidden from screen readers.
+fn spacer_item(document: &Document) -> Result<HtmlElement> {
+    let item: HtmlElement = create(document, "li")?.unchecked_into();
+    let _ = item.set_attribute("aria-hidden", "true");
+    let _ = item.set_attribute("role", "presentation");
+    set_spacer_height(&item, 0.0);
+    Ok(item)
+}
+
+/// Writes the spacer's height. At 0 it is collapsed.
+fn set_spacer_height(item: &HtmlElement, height: f64) {
+    style(item, "display", if height > 0.0 { "block" } else { "none" });
+    style(item, "height", &format!("{height}px"));
 }
 
 /// Whether the event was aimed at a field inside the row.

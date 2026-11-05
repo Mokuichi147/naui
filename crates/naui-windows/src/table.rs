@@ -629,7 +629,7 @@ fn append_widget_cell(
 /// spot. `GetKeyState` returns the state as far as the thread has processed, so it
 /// is the state at the same moment as the click or key operation that caused the
 /// selection.
-fn selection_gesture() -> SelectionGesture {
+pub(crate) fn selection_gesture() -> SelectionGesture {
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_SHIFT};
 
     // 最上位のビットが立っていれば、そのキーは押されている。

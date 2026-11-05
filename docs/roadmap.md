@@ -216,11 +216,16 @@ Gaps that ordinary apps run into right away and that all four platforms have nat
 counterparts for, plus steps 2 to 4 of the application layer track, so that its
 Model–View–Update structure is complete in v0.16.0 (the guide stays in P2).
 
-- [ ] **Row windowing for large `List`s.** Extend `Table`'s mechanism
-      (`row_window` in naui-core) to `List`. naui-core already decides which rows
-      to build, so each backend needs only what `Table`'s does: padding for the
-      rows outside the window, uniform row heights, and selection held by naui
-      rather than by the native list, which knows only the rows built.
+- [x] **Row windowing for large `List`s** (`List::set_row_builder`,
+      `set_row_selectable`, `refresh`, `set_row_height`, `row_height`). With more
+      than 200 rows and a limited height, `List` builds only the rows on screen, by
+      `Table`'s mechanism (`row_window` in naui-core, and the new `RowSource` for
+      where rows come from): padding for the rows outside the window, uniform row
+      heights, and selection held by naui rather than by the native list. macOS
+      needs only the builder, since `NSTableView` asks only for the rows it shows
+      and estimates the heights of the rest. On the Web such a list leaves
+      `<select>`, which has no place for padding, for the composed
+      `<ul role="listbox">`.
 - [ ] **Rich text** (mixing bold, colors and links within a line).
       `NSAttributedString`, Pango markup, `TextBlock.Inlines`, `<span>`. As with
       `set_text` since v0.15.0, setting the content already shown must do nothing,

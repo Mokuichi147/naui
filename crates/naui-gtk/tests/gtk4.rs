@@ -728,6 +728,34 @@ fn main() {
             table_sorting_works_while_windowed,
         ),
         (
+            "リストの行が多くても見えている行だけを組み立てる",
+            list_builder_rows_scale,
+        ),
+        (
+            "行の多いリストの行の高さがそろい、スクロールバーが全行分になる",
+            list_with_many_rows_has_uniform_heights,
+        ),
+        (
+            "行の多いリストで画面の外の選択が残る",
+            list_keeps_the_selection_outside_the_window,
+        ),
+        (
+            "リストは行を組み立てずに選べるかどうかを答える",
+            list_row_selectable_answers_without_building,
+        ),
+        (
+            "リストの行の高さを指定できる",
+            list_row_height_follows_the_setting,
+        ),
+        (
+            "行を組み立て直してもフォーカスした行が残る",
+            list_keeps_the_focused_row_across_rebuilds,
+        ),
+        (
+            "行の多いリストの指定した行まで送れる",
+            list_scrolls_to_a_row_not_built_yet,
+        ),
+        (
             "組み立てる行でも行数と並べ替えに耐える",
             table_builder_rows_scale_and_sort,
         ),
@@ -5618,6 +5646,323 @@ fn table_labels(container: &impl IsA<gtk::Widget>) -> Vec<gtk::Label> {
     children(container)
         .into_iter()
         .filter_map(|child| child.downcast::<gtk::Label>().ok())
+        .collect()
+}
+
+/// A shown list of `count` rows in a small window, with its `GtkListBox`.
+fn shown_big_list(
+    ui: &Ui,
+    title: &str,
+    fill: impl FnOnce(&naui_gtk::List),
+) -> Result<(naui_gtk::Window, naui_gtk::List, gtk::ListBox)> {
+    let list = ui.list()?;
+    list.set_sizing(Sizing::fill());
+    let window = ui.window(title, 300.0, 200.0)?;
+    window.set_child(&list);
+    window.show();
+    fill(&list);
+    let native = list_box_of(&list);
+    tick(&native);
+    tick(&native);
+    Ok((window, list, native))
+}
+
+/// Moves the list's scroll position and waits for the rows to follow.
+fn scroll_list_to(native: &gtk::ListBox, value: f64) {
+    let scroller = scroller_of(native).expect("GtkScrolledWindow");
+    scroller.vadjustment().set_value(value);
+    tick(native);
+}
+
+/// Even rows made of widgets are built only when they become visible, and what the
+/// row reports is the row's real index, not its position among the rows built.
+fn list_builder_rows_scale(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 20_000;
+    let built = Rc::new(Cell::new(0usize));
+    let activated = Rc::new(RefCell::new(Vec::new()));
+    let (window, list, native) = shown_big_list(ui, "大きなリスト", |list| {
+        let ui = ui.clone();
+        let built = built.clone();
+        let activated = activated.clone();
+        list.set_row_builder(ROWS, move |index| {
+            built.set(built.get() + 1);
+            let row = ListRow::new(&ui.label(&format!("行 {index}"))?);
+            row.on_activate({
+                let activated = activated.clone();
+                move || activated.borrow_mut().push(index)
+            });
+            Ok(row)
+        });
+    })?;
+    assert_eq!(list.len(), ROWS);
+    let realized = children(&native).len();
+    assert!(
+        realized > 0 && realized < 200,
+        "見えている分だけを組み立てること: {realized} 行"
+    );
+    assert!(
+        built.get() < 400,
+        "組み立てを呼ぶのも見えている行の分だけであること: {} 回",
+        built.get()
+    );
+
+    // 真ん中まで送ると、その近くの行が組み立てられる。
+    let height = list.row_height();
+    assert!(height > 0.0, "行の高さが測られていること");
+    scroll_list_to(&native, height * 10_000.0);
+    assert!(children(&native).len() < 200);
+
+    // 行の起動は、窓の中の位置ではなく全体の番号で届く。
+    let first = native.row_at_index(0).expect("組み立てた先頭の行");
+    activate_row(&native, &first);
+    let index = activated.borrow().first().copied().expect("起動が届くこと");
+    assert!(
+        (9_900..10_100).contains(&index),
+        "全体の番号で届くこと: {index}"
+    );
+
+    // 中身が変わったら `refresh` で組み立て直す。行数と位置は変わらない。
+    let before = built.get();
+    list.refresh();
+    assert!(built.get() > before, "`refresh` は組み立て直すこと");
+    assert!(built.get() < before + 200);
+    assert_eq!(list.len(), ROWS);
+    window.close();
+    Ok(())
+}
+
+/// With many rows, every built row has the same height even when only some have
+/// `detail`, and the scroll range covers all the rows.
+fn list_with_many_rows_has_uniform_heights(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    let items: Vec<ListItem> = (0..ROWS)
+        .map(|index| match index % 2 {
+            0 => ListItem::new(format!("行 {index}")),
+            _ => ListItem::new(format!("行 {index}")).detail("補助の文字"),
+        })
+        .collect();
+    let (window, list, native) =
+        shown_big_list(ui, "そろう高さ", |list| list.set_items(&items))?;
+    let height = list.row_height();
+    assert!(height > 0.0);
+    let rows = children(&native);
+    assert!(rows.len() < 200, "絞られていること: {} 行", rows.len());
+    assert!(rows.len() > 2);
+    for row in &rows {
+        assert_eq!(allocated_height(row), height, "どの行も同じ高さになること");
+    }
+    let scroller = scroller_of(&native).expect("GtkScrolledWindow");
+    let upper = scroller.vadjustment().upper();
+    let expected = height * ROWS as f64;
+    assert!(
+        (upper - expected).abs() < 2.0,
+        "スクロールの範囲が全行分であること: {upper} / {expected}"
+    );
+
+    // 送っても全体の長さは変わらない。
+    scroll_list_to(&native, expected / 2.0);
+    let upper = scroller.vadjustment().upper();
+    assert!(
+        (upper - expected).abs() < 2.0,
+        "送っても全行分のままであること: {upper} / {expected}"
+    );
+    window.close();
+    Ok(())
+}
+
+/// The selection is remembered by index, so it survives the row leaving the window.
+fn list_keeps_the_selection_outside_the_window(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    let items = ListItem::list((0..ROWS).map(|index| format!("行 {index}")));
+    let (window, list, native) = shown_big_list(ui, "窓の外の選択", |list| {
+        list.set_selection_mode(SelectionMode::Multiple);
+        list.set_items(&items);
+    })?;
+    let (seen, mut sink) = recorder::<Vec<usize>>();
+    list.on_select(move |indices| sink(indices.to_vec()));
+
+    // まだ組み立てていない行も選べる。
+    list.set_selection(&[2, 4_000]);
+    assert_eq!(list.selection(), vec![2, 4_000]);
+    assert_eq!(
+        native.selected_rows().len(),
+        1,
+        "作ってある行だけが選ばれる"
+    );
+
+    // 送ると、作ってある行の選択が入れ替わる。覚えている選択は変わらない。
+    let height = list.row_height();
+    scroll_list_to(&native, height * 3_990.0);
+    assert_eq!(list.selection(), vec![2, 4_000]);
+    assert_eq!(native.selected_rows().len(), 1);
+    assert!(seen.borrow().is_empty(), "送っただけでは通知しないこと");
+
+    // 窓の中の行を足すと、窓の外の選択は残る (修飾キーが読めないときの判断)。
+    let start = 4_000 - native.selected_rows()[0].index() as usize;
+    let row = native.row_at_index(1).expect("行");
+    native.select_row(Some(&row));
+    let added = start + 1;
+    assert_eq!(list.selection(), vec![2, added, 4_000]);
+    assert_eq!(seen.borrow().last(), Some(&vec![2, added, 4_000]));
+
+    // 単一選択では、窓の外の行を残さない。
+    list.set_selection_mode(SelectionMode::Single);
+    assert!(list.selection().is_empty(), "モードの変更で選択を落とす");
+    list.set_selected(2);
+    native.select_row(native.row_at_index(1).as_ref());
+    assert_eq!(list.selection(), vec![added], "1 行だけになること");
+    window.close();
+    Ok(())
+}
+
+/// Even with built rows, whether a row can be selected is answered without creating
+/// it.
+fn list_row_selectable_answers_without_building(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 10_000;
+    const LOCKED: usize = 5_000;
+    let built = Rc::new(Cell::new(0usize));
+    let list = ui.list()?;
+    list.set_row_builder(ROWS, {
+        let built = built.clone();
+        let ui = ui.clone();
+        move |index| {
+            built.set(built.get() + 1);
+            let row = ListRow::new(&ui.label(&index.to_string())?);
+            Ok(row.selectable(index != LOCKED))
+        }
+    });
+    let realized = built.get();
+
+    list.set_selection(&[LOCKED]);
+    assert_eq!(list.selection(), vec![LOCKED], "述語が無ければ選べる扱い");
+
+    list.clear_selection();
+    list.set_row_selectable(|index| index != LOCKED);
+    list.set_selection(&[LOCKED]);
+    assert!(list.selection().is_empty(), "選べない行は取り除かれること");
+    list.set_selection(&[LOCKED - 1]);
+    assert_eq!(list.selection(), vec![LOCKED - 1]);
+    assert_eq!(built.get(), realized, "選択のために組み立て直さないこと");
+    Ok(())
+}
+
+/// The row height can be set, and passing 0 or less measures it again.
+fn list_row_height_follows_the_setting(ui: &Ui) -> Result<()> {
+    let items = ListItem::list(["東京", "大阪"]);
+    let (window, list, native) = shown_big_list(ui, "行の高さ", |list| list.set_items(&items))?;
+    let measured = list.row_height();
+    assert!(measured > 0.0, "測られていること");
+
+    list.set_row_height(64.0);
+    tick(&native);
+    assert_eq!(list.row_height(), 64.0);
+    assert_eq!(allocated_height(&children(&native)[0]), 64.0);
+
+    list.set_row_height(0.0);
+    tick(&native);
+    assert_eq!(list.row_height(), measured, "0 以下で測り直すこと");
+    window.close();
+    Ok(())
+}
+
+/// The row with the focus stays focused when the window moves and rows are rebuilt,
+/// so moving with the arrow keys is not cut off at the edge of the window.
+fn list_keeps_the_focused_row_across_rebuilds(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    let items = ListItem::list((0..ROWS).map(|index| format!("行 {index}")));
+    let (window, list, native) =
+        shown_big_list(ui, "フォーカス", |list| list.set_items(&items))?;
+    let height = list.row_height();
+    scroll_list_to(&native, height * 100.0);
+    let row = native.row_at_index(14).expect("行");
+    let target = row_texts(&row);
+    assert_eq!(target.len(), 1);
+    assert!(row.grab_focus(), "行にフォーカスを置けること");
+
+    scroll_list_to(&native, height * 110.0);
+    let focused = native
+        .root()
+        .and_then(|root| root.focus())
+        .and_downcast::<gtk::ListBoxRow>()
+        .expect("組み立て直したあとも行にフォーカスがあること");
+    assert_ne!(focused, row, "組み立て直されていること");
+    assert!(focused.index() < 14, "窓が動いていること");
+    assert_eq!(row_texts(&focused), target, "同じ行であること");
+    let adjustment = scroller_of(&native)
+        .expect("GtkScrolledWindow")
+        .vadjustment();
+    assert_eq!(
+        adjustment.value(),
+        height * 110.0,
+        "フォーカスを戻しても位置が飛ばないこと"
+    );
+
+    // 窓の外まで送ったときは、組み立ててある行へ移す (宙に浮かせない)。
+    scroll_list_to(&native, height * 3_000.0);
+    let focused = native
+        .root()
+        .and_then(|root| root.focus())
+        .and_downcast::<gtk::ListBoxRow>()
+        .expect("行にフォーカスがあること");
+    assert!(focused.parent().is_some(), "取り除いた行に残らないこと");
+    assert_eq!(adjustment.value(), height * 3_000.0);
+    window.close();
+    Ok(())
+}
+
+/// `scroll_to_row` reaches rows not built yet.
+fn list_scrolls_to_a_row_not_built_yet(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    let items = ListItem::list((0..ROWS).map(|index| format!("行 {index}")));
+    let (window, list, native) =
+        shown_big_list(ui, "行まで送る", |list| list.set_items(&items))?;
+    let scroller = scroller_of(&native).expect("GtkScrolledWindow");
+    let adjustment = scroller.vadjustment();
+
+    list.scroll_to_row(4_000);
+    tick(&native);
+    let top = list.row_height() * 4_000.0;
+    let view = adjustment.value();
+    assert!(
+        view <= top && top < view + adjustment.page_size(),
+        "指定した行が見えること: {view} / {top}"
+    );
+    let shown: Vec<String> = children(&native).iter().flat_map(row_texts).collect();
+    assert!(
+        shown.contains(&"行 4000".to_owned()),
+        "指定した行が組み立てられていること"
+    );
+
+    // 表示の前に呼ばれても、レイアウトが済んでから送られる。
+    let items = ListItem::list((0..ROWS).map(|index| format!("項目 {index}")));
+    list.set_items(&items);
+    list.scroll_to_row(1_000);
+    for _ in 0..4 {
+        tick(&native);
+    }
+    let top = list.row_height() * 1_000.0;
+    let view = adjustment.value();
+    assert!(
+        view <= top && top < view + adjustment.page_size(),
+        "組み立て直した直後でも送られること: {view} / {top}"
+    );
+    window.close();
+    Ok(())
+}
+
+/// The height a widget was given, including its CSS padding and border (`height()` is
+/// only the content's).
+fn allocated_height(widget: &gtk::Widget) -> f64 {
+    widget
+        .compute_bounds(widget)
+        .map_or(0.0, |bounds| f64::from(bounds.height()))
+}
+
+/// The text of the `GtkLabel`s inside, in order.
+fn row_texts(widget: &impl IsA<gtk::Widget>) -> Vec<String> {
+    labels_in(widget)
+        .iter()
+        .map(|label| label.text().to_string())
         .collect()
 }
 

@@ -97,10 +97,25 @@ that shape are covered in
   specified. Some function keys reach the OS or the browser first: macOS assigns
   F11 to Show Desktop by default and laptops may need fn, and browsers may keep F11
   (full screen) or F12 (developer tools) for themselves.
-- `List` has one column. For data lists that need columns, use `Table`. `List`
-  also lacks `Table`'s row windowing for large numbers of rows (building only the
-  range shown on screen), so `Table` is also better suited for lists of more than
-  tens of thousands of rows.
+- `List` has one column. For data lists that need columns, use `Table`.
+- A `List` with more than 200 rows and a limited height (`Fixed` or `Fill`) builds
+  only the range shown on screen. With an `Auto` height every row is built, because
+  the list is as tall as all its rows. This leads to the following rules.
+  - **All rows are treated as having the same height** (except on macOS, where
+    `NSTableView` measures each row as it appears). Rows are given the tallest height
+    built so far, so a taller row appearing later moves the scroll position once. If
+    heights vary, set it with `set_row_height`.
+  - naui does not know whether rows it has not built yet can be chosen, so with
+    `set_row_builder` they are assumed to be choosable by default (this can be passed
+    with `set_row_selectable`).
+  - On Windows and Linux, keyboard movement goes through the native list, which knows
+    only the rows built: Home and End go to the first and last rows built, and the
+    arrow keys continue past them as the rows follow. A Shift range selection also
+    covers only the rows built. macOS and the Web cover every row.
+  - A control inside a row loses the keyboard focus when its row leaves the range
+    built, because the row is rebuilt.
+  - On the Web, such a list is built from `<ul role="listbox">` instead of `<select>`,
+    and the same limit on the element height as for `Table` applies.
 - Sorting by pressing a `Table` header only goes as far as notifying "which column,
   in which direction"; **sorting the rows is the app's job**.
 - A `Table` with more than 200 rows builds only the range shown on screen (with
