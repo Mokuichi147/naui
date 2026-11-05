@@ -190,6 +190,10 @@ const ROW_PADDING: Thickness = Thickness {
 
 /// The list's frame. `ListView` has no frame, so it is surrounded by a `Border` with
 /// the same color and rounded corners as `Table` and `Tree`.
+///
+/// The rows are rebuilt as a whole on every `set_rows`, so the default item transitions
+/// (which animate rows as they are added and removed) are cleared. Otherwise the whole
+/// list animates each time it is rebuilt. `Table` does the same.
 const SURFACE_XAML: &str = r##"<Border
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Background="{ThemeResource ControlFillColorDefaultBrush}"
@@ -198,14 +202,170 @@ const SURFACE_XAML: &str = r##"<Border
     CornerRadius="{ThemeResource ControlCornerRadius}"
     Padding="4">
     <ListView Background="Transparent" BorderThickness="0" Padding="0"
-        HorizontalContentAlignment="Stretch"/>
+        HorizontalContentAlignment="Stretch">
+        <ListView.ItemContainerTransitions>
+            <TransitionCollection/>
+        </ListView.ItemContainerTransitions>
+    </ListView>
 </Border>"##;
+
+/// One row (`ListViewItem`). Its content transitions are cleared as well: every row
+/// is a new container on each rebuild, so the content's default entrance would play
+/// for the whole list.
+const ROW_ITEM_XAML: &str = r##"<ListViewItem
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+    <ListViewItem.ContentTransitions>
+        <TransitionCollection/>
+    </ListViewItem.ContentTransitions>
+</ListViewItem>"##;
+
+/// Creates one row container. Falls back to a plain `ListViewItem` if the XAML cannot
+/// be read.
+pub(crate) fn new_row_item() -> Result<ListViewItem> {
+    let loaded = XamlReader::Load(&HSTRING::from(ROW_ITEM_XAML))
+        .and_then(|element| element.cast::<ListViewItem>());
+    match loaded {
+        Ok(item) => Ok(item),
+        Err(_) => ListViewItem::new().map_err(|e| to_error("create the ListViewItem", e)),
+    }
+}
 
 /// The holder for a row's content. With `Background="Transparent"`, it receives the
 /// pointer even in empty space without text (to pick up clicks on the row itself).
 const ROW_HOST_XAML: &str = r##"<Grid
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Background="Transparent"/>"##;
+
+/// A transparent `Grid` (see [`ROW_HOST_XAML`]). Falls back to a plain `Grid` if the
+/// XAML cannot be read, which only loses clicks on empty space.
+pub(crate) fn transparent_grid() -> Result<XamlGrid> {
+    match XamlReader::Load(&HSTRING::from(ROW_HOST_XAML))
+        .and_then(|element| element.cast::<XamlGrid>())
+    {
+        Ok(host) => Ok(host),
+        Err(_) => XamlGrid::new().map_err(|e| to_error("create the row container", e)),
+    }
+}
+
+/// The padding of a row's `ListViewItem`. A row that cannot be selected has none: the
+/// padding is moved into its holder (see [`row_host`]), so that the whole row is the
+/// holder and a press in its margins is held too.
+pub(crate) fn item_padding(selectable: bool) -> Thickness {
+    if selectable {
+        ROW_PADDING
+    } else {
+        Thickness {
+            Left: 0.0,
+            Top: 0.0,
+            Right: 0.0,
+            Bottom: 0.0,
+        }
+    }
+}
+
+/// Holds a press that starts on a row which cannot be selected, so that `ListView`
+/// never sees it and does not show the pressed or selected look for an instant.
+///
+/// Only the primary button is held, and the release that pairs with it, so a
+/// right-click still reaches the context menu. The row's own content is already
+/// handled the same way: buttons and fields stop the press, which is why clicking
+/// them does not select the row.
+///
+/// The held press is remembered by its pointer id, so only the release of that same
+/// pointer is taken. It is forgotten when that pointer is cancelled, loses capture or
+/// leaves the row, so a press that never gets its release cannot swallow a later one.
+pub(crate) fn hold_unselectable_press(holder: &XamlGrid) -> Result<()> {
+    // 押下中のポインターの id。押していなければ `None`。
+    let held: Arc<UiThreadCell<Option<u32>>> = Arc::new(UiThreadCell::new(None));
+
+    let on_press = held.clone();
+    let pressed = PointerEventHandler::new(move |_, args| {
+        let Some(args) = args.as_ref() else {
+            return Ok(());
+        };
+        if is_primary_press(Some(args)) {
+            let id = pointer_id(args);
+            on_press.with_mut(|held| *held = Some(id));
+            let _ = args.SetHandled(true);
+        }
+        Ok(())
+    });
+
+    let on_release = held.clone();
+    let released = PointerEventHandler::new(move |_, args| {
+        let Some(args) = args.as_ref() else {
+            return Ok(());
+        };
+        let id = pointer_id(args);
+        let ours = on_release.with_mut(|held| {
+            if *held == Some(id) {
+                *held = None;
+                true
+            } else {
+                false
+            }
+        });
+        if ours {
+            let _ = args.SetHandled(true);
+        }
+        Ok(())
+    });
+
+    // 押下が離されずに終わる経路 (キャンセル、捕捉の喪失、行からの離脱) では、
+    // 押下を覚えたままにしない。
+    let on_cancel = held.clone();
+    let canceled = PointerEventHandler::new(move |_, args| {
+        forget_press(&on_cancel, args.as_ref());
+        Ok(())
+    });
+    let on_lost = held.clone();
+    let capture_lost = PointerEventHandler::new(move |_, args| {
+        forget_press(&on_lost, args.as_ref());
+        Ok(())
+    });
+    let on_exit = held.clone();
+    let exited = PointerEventHandler::new(move |_, args| {
+        forget_press(&on_exit, args.as_ref());
+        Ok(())
+    });
+
+    holder
+        .PointerPressed(&pressed)
+        .map_err(|e| to_error("subscribe to row presses", e))?;
+    holder
+        .PointerReleased(&released)
+        .map_err(|e| to_error("subscribe to row releases", e))?;
+    holder
+        .PointerCanceled(&canceled)
+        .map_err(|e| to_error("subscribe to row cancels", e))?;
+    holder
+        .PointerCaptureLost(&capture_lost)
+        .map_err(|e| to_error("subscribe to row capture loss", e))?;
+    holder
+        .PointerExited(&exited)
+        .map_err(|e| to_error("subscribe to row exits", e))?;
+    Ok(())
+}
+
+/// The id of the pointer that raised the event (mouse, touch or pen each has its own).
+fn pointer_id(args: &PointerRoutedEventArgs) -> u32 {
+    args.Pointer()
+        .and_then(|pointer| pointer.PointerId())
+        .unwrap_or(0)
+}
+
+/// Forgets the press held for this pointer, if there is one.
+fn forget_press(held: &UiThreadCell<Option<u32>>, args: Option<&PointerRoutedEventArgs>) {
+    let Some(args) = args else {
+        return;
+    };
+    let id = pointer_id(args);
+    held.with_mut(|held| {
+        if *held == Some(id) {
+            *held = None;
+        }
+    });
+}
 
 /// Loads the themed frame. Falls back to a plain `Border` + `ListView` if it cannot
 /// be read.
@@ -230,8 +390,24 @@ fn load_surface() -> Result<(Border, ListView)> {
     Ok((native, list_view))
 }
 
+/// The `ListView` of the fallback frame. It is read from XAML, not built in code,
+/// because the row transitions can only be cleared there (see [`SURFACE_XAML`]). It
+/// has no theme resources, so it can be read even when the frame cannot. Falls back to
+/// a plain `ListView` only if XAML cannot be read at all.
+const PLAIN_LIST_VIEW_XAML: &str = r##"<ListView
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+    <ListView.ItemContainerTransitions>
+        <TransitionCollection/>
+    </ListView.ItemContainerTransitions>
+</ListView>"##;
+
 fn plain_surface() -> Result<(Border, ListView)> {
-    let list_view = ListView::new().map_err(|e| to_error("create the ListView", e))?;
+    let list_view = match XamlReader::Load(&HSTRING::from(PLAIN_LIST_VIEW_XAML))
+        .and_then(|element| element.cast::<ListView>())
+    {
+        Ok(list_view) => list_view,
+        Err(_) => ListView::new().map_err(|e| to_error("create the ListView", e))?,
+    };
     let native = Border::new().map_err(|e| to_error("create the List Border", e))?;
     native
         .SetChild(&list_view)
@@ -498,8 +674,8 @@ impl List {
 
         let mut native_rows = Vec::with_capacity(rows.len());
         for (index, row) in rows.iter().enumerate() {
-            let native = ListViewItem::new().map_err(|e| to_error("create the ListViewItem", e))?;
-            let _ = native.SetPadding(ROW_PADDING);
+            let native = new_row_item()?;
+            let _ = native.SetPadding(item_padding(row.is_selectable()));
             let host = row_host(row)?;
             native
                 .SetContent(&host)
@@ -820,14 +996,9 @@ fn context_point(
 /// event themselves and stop it, so they do not fire together with the row's
 /// activation (the same division as the other platforms).
 fn row_host(row: &ListRow) -> Result<XamlGrid> {
-    let host = match XamlReader::Load(&HSTRING::from(ROW_HOST_XAML))
-        .and_then(|element| element.cast::<XamlGrid>())
-    {
-        Ok(host) => host,
-        // 透明な背景を持てないと余白では押せなくなるが、
-        // 文字やアイコンの上では届くので動作を優先する。
-        Err(_) => XamlGrid::new().map_err(|e| to_error("create the row container", e))?,
-    };
+    // 透明な背景を持てないと余白では押せなくなるが、文字やアイコンの上では
+    // 届くので、`transparent_grid` は読めなければ普通の `Grid` にする。
+    let host = transparent_grid()?;
     let children = host
         .Children()
         .map_err(|e| to_error("get the row container", e))?;
@@ -845,6 +1016,11 @@ fn row_host(row: &ListRow) -> Result<XamlGrid> {
         Ok(())
     });
     let _ = host.PointerPressed(&handler);
+    if !row.is_selectable() {
+        // 選べない行は、余白を含めて行の全体を入れ物が受け持ち、押下を止める。
+        let _ = host.SetPadding(ROW_PADDING);
+        hold_unselectable_press(&host)?;
+    }
     Ok(host)
 }
 
