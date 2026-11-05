@@ -534,6 +534,79 @@ fn stopping_stops_the_effects_of_children_too() {
     assert!(!sender.is_open(), "別スレッドの処理が止まったと分かる");
 }
 
+/// Panics when the future holding it is dropped.
+struct PanicsWhenDropped;
+
+impl Drop for PanicsWhenDropped {
+    fn drop(&mut self) {
+        panic!("dropping the future panicked (intended)");
+    }
+}
+
+#[test]
+fn stopping_on_a_panic_while_replacing_a_key_does_not_start_the_new_one() {
+    let (event_loop, tasks) = Loop::new();
+    let started = Log::default();
+    let noted = started.clone();
+    let (app, _, seen) =
+        app_answering(Some(&tasks), Decision::Stop, move |message| match message {
+            Msg::Plain => {
+                let guard = PanicsWhenDropped;
+                Effect::spawn(move |_| async move {
+                    let _guard = guard;
+                    std::future::pending::<Msg>().await
+                })
+                .key("feed")
+            }
+            _ => noting(&noted, "new").key("feed"),
+        });
+    app.send(Msg::Plain);
+    assert!(seen.borrow().is_empty());
+
+    app.send(Msg::FromHandler);
+    assert!(app.is_stopped());
+    assert!(taken(&started).is_empty(), "新しい効果は始まらない");
+    assert_eq!(texts(&seen), ["dropping the future panicked (intended)"]);
+    event_loop.run();
+}
+
+#[test]
+fn a_panic_while_stopping_stops_the_rest_and_quits() {
+    let (event_loop, tasks) = Loop::new();
+    let (app, _, seen) = app_answering(Some(&tasks), Decision::Stop, |message| match message {
+        Msg::Plain => {
+            let guard = PanicsWhenDropped;
+            Effect::spawn(move |_| async move {
+                let _guard = guard;
+                std::future::pending::<Msg>().await
+            })
+            .and(Effect::after(Duration::from_secs(1), Msg::FromHandler))
+        }
+        _ => panic!("update panicked (intended)"),
+    });
+    // 後から設定したこちらへは届かない。
+    let (_other, _, other_seen) = app_answering(Some(&tasks), Decision::GoOn, |_| Effect::none());
+    let quit = Rc::new(Cell::new(false));
+    let quitting = quit.clone();
+    *app.inner.quit.borrow_mut() = Some(Box::new(move || quitting.set(true)));
+    app.send(Msg::Plain);
+    assert_eq!(app.running(), 2);
+
+    app.send(Msg::Named("save"));
+    event_loop.run();
+    assert!(quit.get(), "片付けの panic があっても UI を閉じる");
+    assert_eq!(app.running(), 0, "残りも止まる");
+    let told: Vec<_> = seen.borrow().iter().map(|r| r.text().to_owned()).collect();
+    assert_eq!(
+        told,
+        [
+            "update panicked (intended)",
+            "dropping the future panicked (intended)"
+        ]
+    );
+    assert!(other_seen.borrow().is_empty());
+}
+
 // 同じスレッドの複数の App
 
 fn texts(seen: &Seen) -> Vec<String> {

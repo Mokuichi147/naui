@@ -113,10 +113,12 @@ impl<T: Send + 'static> LocalEntry for ChannelLocal<T> {
         }
         // 入っている分だけ処理する。処理の途中で増えた分は次のティックへ回す。
         // 処理の途中で閉じられたら、残りは渡さない。
-        for value in self.shared.take_all() {
-            if self.shared.is_closed() {
+        // 残りの Drop が panic しても片付けが飛ばないよう、捨てるのはこの関数の最後。
+        let mut values = self.shared.take_all().into_iter();
+        while !self.shared.is_closed() {
+            let Some(value) = values.next() else {
                 break;
-            }
+            };
             call_guarded(&self.handler, value);
         }
         self.busy.set(false);

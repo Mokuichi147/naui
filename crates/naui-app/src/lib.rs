@@ -577,7 +577,8 @@ impl<P: Program> Inner<P> {
     fn wind_down(&self) {
         let _queue = self.queue_scope();
         self.abandon();
-        self.started.cancel_all();
+        // 効果を捨てるときの panic で、UI を閉じずに終わらないように。
+        error::catch(|| self.started.cancel_all());
         let quit = self.quit.borrow_mut().take();
         if let Some(quit) = quit {
             quit();

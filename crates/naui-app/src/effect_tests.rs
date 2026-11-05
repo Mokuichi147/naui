@@ -1080,25 +1080,120 @@ fn a_keys_owner_dropped_while_the_effect_starts_stops_it() {
     assert!(log.borrow().is_empty(), "{:?}", log.borrow());
 }
 
+/// 捨てられるときに panic する Future。
+struct PanicsWhenDropped;
+
+impl Future for PanicsWhenDropped {
+    type Output = Msg;
+
+    fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Msg> {
+        Poll::Pending
+    }
+}
+
+impl Drop for PanicsWhenDropped {
+    fn drop(&mut self) {
+        panic!("dropping the future panicked (intended)");
+    }
+}
+
+/// 先頭の効果が捨てられるときに panic する効果たち。後ろの 2 つが止まるかを見る。
+fn panicking_then_others(log: &Log) -> Effect<Msg> {
+    let guard = Dropped("task", log.clone());
+    Effect::spawn(|_| PanicsWhenDropped)
+        .and(Effect::spawn(move |_| async move {
+            let _guard = guard;
+            pending::<Msg>().await
+        }))
+        .and(Effect::every(SECOND, || Msg::Done("tick")))
+}
+
+#[test]
+fn a_panic_while_replacing_a_key_stops_the_others_and_starts_the_new_one() {
+    let (event_loop, tasks) = Loop::new();
+    let log = Log::default();
+    let inner = log.clone();
+    let app = app(&tasks, &log, move |message| match message {
+        Msg::Go => panicking_then_others(&inner).key("feed"),
+        Msg::Number(0) => Effect::after(SECOND, Msg::Done("new")).key("feed"),
+        _ => Effect::none(),
+    });
+    app.send(Msg::Go);
+    assert_eq!(app.running(), 3);
+    taken(&log);
+
+    // panic はキューの中で受け止められ、ここまで巻き戻ってこない。
+    app.send(Msg::Number(0));
+    assert!(
+        log.borrow().iter().any(|line| line == "dropped task"),
+        "{:?}",
+        log.borrow()
+    );
+    assert_eq!(app.running(), 1, "新しい効果だけが動いている");
+    taken(&log);
+    event_loop.advance(SECOND);
+    assert_eq!(taken(&log), [r#"update Done("new")"#, "render"]);
+}
+
+#[test]
+fn a_panic_while_dropping_a_wrapper_stops_the_rest() {
+    let (event_loop, tasks) = Loop::new();
+    let log = Log::default();
+    let inner = log.clone();
+    let app = parent(&tasks, &log, move |message| match message {
+        Msg::Go => panicking_then_others(&inner),
+        _ => Effect::none(),
+    });
+    app.send(ParentMsg::Child(1, Msg::Go));
+    assert_eq!(child_running(&app, 1), 3);
+    taken(&log);
+
+    // panic はキューの中で受け止められ、ここまで巻き戻ってこない。
+    app.send(ParentMsg::Remove(1));
+    assert!(
+        log.borrow().iter().any(|line| line == "dropped task"),
+        "{:?}",
+        log.borrow()
+    );
+    taken(&log);
+    event_loop.advance(SECOND * 3);
+    assert!(log.borrow().is_empty(), "{:?}", log.borrow());
+}
+
+#[test]
+fn a_panic_while_stopping_during_another_panic_is_reported() {
+    let (_event_loop, tasks) = Loop::new();
+    let log = Log::default();
+    let slot = Slot::default();
+    *slot.borrow_mut() = Some(Scoped::new(script(&log, |message| match message {
+        Msg::Go => Effect::spawn(|_| PanicsWhenDropped),
+        _ => Effect::none(),
+    })));
+    let app = app_of_slot(&tasks, &log, &slot);
+    app.send(Msg::Go);
+    reported();
+
+    let child = slot.borrow_mut().take();
+    // 巻き戻しの中でもう一度 panic を外へ出すと、プロセスごと落ちる。
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+        let _child = child;
+        panic!("the first panic (intended)");
+    }));
+    let panic = outcome.expect_err("panicked");
+    assert_eq!(
+        panic.downcast_ref::<&str>(),
+        Some(&"the first panic (intended)")
+    );
+    let reported = reported();
+    assert_eq!(reported.len(), 1, "{reported:?}");
+    assert!(
+        reported[0].contains("dropping the future panicked"),
+        "{reported:?}"
+    );
+}
+
 #[test]
 fn stopping_an_effect_whose_owner_went_while_starting_can_panic() {
-    /// 捨てられるときに panic する Future。
-    struct PanicsWhenDropped;
-
-    impl Future for PanicsWhenDropped {
-        type Output = Msg;
-
-        fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Msg> {
-            Poll::Pending
-        }
-    }
-
-    impl Drop for PanicsWhenDropped {
-        fn drop(&mut self) {
-            panic!("dropping the future panicked (intended)");
-        }
-    }
-
     let (_event_loop, tasks) = Loop::new();
     let log = Log::default();
     let slot = Slot::default();

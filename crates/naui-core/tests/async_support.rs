@@ -6,6 +6,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::future::Future;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -845,4 +846,98 @@ fn 終了後のタイマーは動かない() {
     assert!(!timer.is_active());
     fake.advance();
     fake.drain_all();
+}
+
+// --- 捨てるときの panic ---------------------------------------------------
+
+/// Panics when dropped, as an app's value, future or callback can.
+struct PanicOnDrop;
+
+impl Drop for PanicOnDrop {
+    fn drop(&mut self) {
+        panic!("わざと落とす");
+    }
+}
+
+#[test]
+fn 閉じるときに値を捨てて落ちても受信側は解放される() {
+    let (fake, tasks) = setup();
+    let (tracer, dropped) = Tracer::new();
+    let tx = tasks.channel(move |_: PanicOnDrop| {
+        let _ = &tracer;
+    });
+    tx.send(PanicOnDrop).unwrap();
+    let closer = tx.closer();
+
+    assert!(catch_unwind(AssertUnwindSafe(|| closer.close())).is_err());
+    fake.drain_all();
+    assert!(dropped.get());
+}
+
+#[test]
+fn 受信の途中で閉じて残りを捨てるときに落ちても解放される() {
+    let (fake, tasks) = setup();
+    let (tracer, dropped) = Tracer::new();
+    let closer: Rc<RefCell<Option<naui_core::ChannelCloser>>> = Rc::new(RefCell::new(None));
+    let inner = closer.clone();
+    let tx = tasks.channel(move |_: Option<PanicOnDrop>| {
+        let _ = &tracer;
+        if let Some(closer) = inner.borrow_mut().take() {
+            closer.close();
+        }
+    });
+    *closer.borrow_mut() = Some(tx.closer());
+    // 受け取る値と、残って捨てられる値。
+    tx.send(None).unwrap();
+    tx.send(Some(PanicOnDrop)).unwrap();
+
+    fake.drain_all();
+    assert!(dropped.get());
+}
+
+#[test]
+fn 受信側を捨てるときに落ちても外へ出ない() {
+    let (fake, tasks) = setup();
+    let guard = PanicOnDrop;
+    let tx = tasks.channel(move |_: i32| {
+        let _ = &guard;
+    });
+    drop(tx);
+    fake.drain_all();
+}
+
+#[test]
+fn 終わった処理を捨てるときに落ちても外へ出ず終わりになる() {
+    struct Done(#[allow(dead_code)] PanicOnDrop);
+
+    impl Future for Done {
+        type Output = ();
+
+        fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<()> {
+            Poll::Ready(())
+        }
+    }
+
+    let (fake, tasks) = setup();
+    let task = tasks.spawn(Done(PanicOnDrop));
+    fake.drain_all();
+    assert!(task.is_finished());
+}
+
+#[test]
+fn 呼び出しの中で止めたタイマーを捨てるときに落ちても外へ出ない() {
+    let (fake, tasks) = setup();
+    let guard = PanicOnDrop;
+    let slot: Rc<RefCell<Option<naui_core::Timer>>> = Rc::new(RefCell::new(None));
+    let inner = slot.clone();
+    let timer = tasks.every(Duration::from_secs(1), move || {
+        let _ = &guard;
+        if let Some(timer) = inner.borrow_mut().take() {
+            timer.cancel();
+        }
+    });
+    *slot.borrow_mut() = Some(timer.clone());
+    fake.advance();
+    fake.drain_all();
+    assert!(!timer.is_active());
 }

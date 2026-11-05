@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use naui::{ChannelCloser, Sender, Task, Tasks, Timer};
 
+use crate::component::attempt;
 use crate::error::{catch, panic_text, report};
 use crate::{Dispatch, Program, ReportKind};
 
@@ -102,8 +103,9 @@ impl Ledger {
         entries.push(Entry { key, running });
     }
 
-    /// Cancels what `matches` selects. The ledger is not borrowed meanwhile, since
-    /// dropping a future runs the app's code, which can reach this one.
+    /// Cancels what `matches` selects, all of it even if the app's code panics on the
+    /// way, and then carries on the first panic. The ledger is not borrowed meanwhile,
+    /// since dropping a future runs the app's code, which can reach this one.
     fn cancel(&self, matches: impl Fn(&Entry) -> bool) {
         let cancelled: Vec<_> = {
             let mut entries = self.entries.borrow_mut();
@@ -111,8 +113,25 @@ impl Ledger {
             *entries = kept;
             cancelled
         };
+        // 帳簿からはもう外れているので、ここで止めないと止める手段がなくなる。
+        let mut panicked = None;
         for entry in cancelled {
-            entry.running.cancel();
+            attempt(&mut panicked, || entry.running.cancel());
+        }
+        let Some(panic) = panicked else {
+            return;
+        };
+        // 巻き戻しの最中に panic を外へ出すと、プロセスごと落ちる。
+        if std::thread::panicking() {
+            report(
+                ReportKind::Failure,
+                &format!(
+                    "stopping an effect panicked while another panic was unwinding: {}",
+                    panic_text(panic.as_ref())
+                ),
+            );
+        } else {
+            resume_unwind(panic);
         }
     }
 
@@ -234,7 +253,8 @@ impl<M: 'static> Node<M> {
                     node.start(cx, None, keys);
                     return;
                 };
-                owner.cancel(|entry| entry.key.as_ref() == Some(&key));
+                // ここで受け止めてハンドラへ伝えるので、新しい効果の前に答えが分かる。
+                catch(|| owner.cancel(|entry| entry.key.as_ref() == Some(&key)));
                 keys.push((owner.clone(), key));
                 node.start(cx, ledger, keys);
                 keys.pop();
