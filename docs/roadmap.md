@@ -264,9 +264,9 @@ Model–View–Update structure is complete in v0.16.0 (the guide stays in P2).
       effect that has not started does not start. Effects under the same key in one
       model replace each other: the earlier one is cancelled, or its result discarded
       (a search overtaken by further typing). `Effect::cancel`
-      stops what runs under a key with nothing to replace it. Until the next step, a
-      failure goes to standard error.
-- [ ] *(app)* **Unified error handling.** One handler, set by the app, receives
+      stops what runs under a key with nothing to replace it.
+- [x] *(app)* **Unified error handling** (`run_with_handler`,
+      `App::set_error_handler`, `Report`, `Decision`). One handler, set by the app, receives
       panics on the UI thread, the failures from `update` and effects, and the
       mount failures of `Children::sync` (which stops returning them: `render` has
       no caller to hand them to) along with its repeated keys, which go to standard
@@ -282,7 +282,14 @@ Model–View–Update structure is complete in v0.16.0 (the guide stays in P2).
       `panic = "abort"`, the handler is told and the app stops, which is
       written in [Known limitations](known-limitations.md). naui itself gets no
       handler: panics in ordinary naui callbacks reach naui-app's hook as well and
-      are reported without a message.
+      are reported without a message. A panic in the queue is told after it is caught,
+      so the model is no longer borrowed and a panic in the handler can be caught too. A
+      failed mount and a repeated key come again on every `render`, so each is reported
+      once until it is put right; a handler that sends a message about them would
+      otherwise go round forever. With several apps on a thread, each handler hears
+      about its own queue and effects; a panic outside any queue goes to the handler
+      set last. Stopping an app cancels everything it started, children's effects in
+      a `Scoped` included, since an app stopped with `with_tasks` can stay around.
 
 ## P1: Do next
 

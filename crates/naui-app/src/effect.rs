@@ -1,6 +1,5 @@
 //! Effects: asynchronous work `update` asks for, and the models that own it.
 
-use std::any::Any;
 use std::borrow::Borrow;
 use std::cell::{Cell, RefCell};
 use std::future::Future;
@@ -12,29 +11,14 @@ use std::time::Duration;
 use naui::{ChannelCloser, Sender, Task, Tasks, Timer};
 
 use crate::component::attempt;
-use crate::{Dispatch, Program};
-
-/// Where a failure goes. Everything reported passes through here.
-pub(crate) fn report(failure: &str) {
-    #[cfg(test)]
-    tests_support::REPORTED.with(|reported| reported.borrow_mut().push(failure.to_owned()));
-    #[cfg(not(test))]
-    eprintln!("naui-app: {failure}");
-}
-
-#[cfg(test)]
-pub(crate) mod tests_support {
-    use std::cell::RefCell;
-
-    thread_local! {
-        /// What [`report`](super::report) received on this thread.
-        pub(crate) static REPORTED: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    }
-}
+use crate::error::{catch, panic_text, report};
+use crate::{Dispatch, Program, ReportKind};
 
 /// What an [`Effect`] uses to hand back what it produced.
 struct Deliver<M> {
     send: Rc<dyn Fn(M)>,
+    /// Reports to the app that started the effect, whichever queue runs when this comes.
+    report: Rc<dyn Fn(&str)>,
     /// Closed when the effect is cancelled, so that what arrives later is discarded.
     open: Rc<Cell<bool>>,
 }
@@ -48,7 +32,7 @@ impl<M> Deliver<M> {
 
     fn fail(&self, failure: &str) {
         if self.open.get() {
-            report(failure);
+            (self.report)(failure);
         }
     }
 }
@@ -120,9 +104,9 @@ impl Ledger {
     }
 
     /// Cancels what `matches` selects, all of it even if the app's code panics on the
-    /// way, and leaves the first panic in `panicked`. The ledger is not borrowed
-    /// meanwhile, since dropping a future runs the app's code, which can reach this one.
-    fn cancel(&self, panicked: &mut Option<Box<dyn Any + Send>>, matches: impl Fn(&Entry) -> bool) {
+    /// way, and then carries on the first panic. The ledger is not borrowed meanwhile,
+    /// since dropping a future runs the app's code, which can reach this one.
+    fn cancel(&self, matches: impl Fn(&Entry) -> bool) {
         let cancelled: Vec<_> = {
             let mut entries = self.entries.borrow_mut();
             let (cancelled, kept) = std::mem::take(&mut *entries).into_iter().partition(matches);
@@ -130,8 +114,24 @@ impl Ledger {
             cancelled
         };
         // 帳簿からはもう外れているので、ここで止めないと止める手段がなくなる。
+        let mut panicked = None;
         for entry in cancelled {
-            attempt(panicked, || entry.running.cancel());
+            attempt(&mut panicked, || entry.running.cancel());
+        }
+        let Some(panic) = panicked else {
+            return;
+        };
+        // 巻き戻しの最中に panic を外へ出すと、プロセスごと落ちる。
+        if std::thread::panicking() {
+            report(
+                ReportKind::Failure,
+                &format!(
+                    "stopping an effect panicked while another panic was unwinding: {}",
+                    panic_text(panic.as_ref())
+                ),
+            );
+        } else {
+            resume_unwind(panic);
         }
     }
 
@@ -153,6 +153,10 @@ impl Owner {
         self.0.running()
     }
 
+    pub(crate) fn cancel_all(&self) {
+        self.0.cancel(|_| true);
+    }
+
     /// How many entries the ledger holds, finished ones included.
     #[cfg(test)]
     pub(crate) fn entries(&self) -> usize {
@@ -163,20 +167,7 @@ impl Owner {
 impl Drop for Owner {
     fn drop(&mut self) {
         self.0.closed.set(true);
-        let mut panicked = None;
-        self.0.cancel(&mut panicked, |_| true);
-        let Some(panic) = panicked else {
-            return;
-        };
-        // 巻き戻しの最中に panic を外へ出すと、プロセスごと落ちる。
-        if std::thread::panicking() {
-            report(&format!(
-                "stopping an effect panicked while another panic was unwinding: {}",
-                panic_text(panic.as_ref())
-            ));
-        } else {
-            resume_unwind(panic);
-        }
+        self.cancel_all();
     }
 }
 
@@ -230,8 +221,9 @@ impl<M: 'static> Node<M> {
                     kind,
                     start: Box::new(move |tasks, deliver: Deliver<N>| {
                         let open = deliver.open.clone();
+                        let report = deliver.report.clone();
                         let send = Rc::new(move |message| (deliver.send)(wrap(message)));
-                        start(tasks, Deliver { send, open })
+                        start(tasks, Deliver { send, report, open })
                     }),
                 })
             }
@@ -243,7 +235,7 @@ impl<M: 'static> Node<M> {
 
     fn start(
         self,
-        cx: &mut Starting<'_, M>,
+        cx: &Starting<'_, M>,
         ledger: Option<Rc<Ledger>>,
         keys: &mut Vec<(Rc<Ledger>, Rc<str>)>,
     ) {
@@ -254,19 +246,24 @@ impl<M: 'static> Node<M> {
                 }
             }
             // 持ち主がいなくなっていても、起きた失敗はなかったことにしない。
-            Node::Fail(failure) => report(&failure),
+            Node::Fail(failure) => report(ReportKind::Failure, &failure),
             Node::Owned(owner, node) => node.start(cx, owner.upgrade(), keys),
             Node::Keyed(key, node) => {
                 let Some(owner) = &ledger else {
                     node.start(cx, None, keys);
                     return;
                 };
-                owner.cancel(&mut cx.panicked, |entry| entry.key.as_ref() == Some(&key));
+                // ここで受け止めてハンドラへ伝えるので、新しい効果の前に答えが分かる。
+                catch(|| owner.cancel(|entry| entry.key.as_ref() == Some(&key)));
                 keys.push((owner.clone(), key));
                 node.start(cx, ledger, keys);
                 keys.pop();
             }
             Node::Work(work) => {
+                // 同じバッチの前の要素でハンドラが止めた。
+                if cx.stopped.get() {
+                    return;
+                }
                 // 持ち主はこの効果が始まる前に落とされた。
                 let Some(ledger) = ledger else {
                     return;
@@ -281,6 +278,7 @@ impl<M: 'static> Node<M> {
                 }
                 let Some(tasks) = cx.tasks else {
                     report(
+                        ReportKind::Failure,
                         "an effect needs naui's Tasks to run, and this App has none: \
                          make it with App::with_tasks",
                     );
@@ -290,10 +288,13 @@ impl<M: 'static> Node<M> {
                 let dispatch = cx.dispatch.clone();
                 let deliver = Deliver {
                     send: Rc::new(move |message| dispatch.send(message)),
+                    report: cx.report.clone(),
                     open: open.clone(),
                 };
-                let Some(handle) = attempt(&mut cx.panicked, || (work.start)(tasks, deliver))
-                else {
+                // ここで受け止めてハンドラへ伝えるので、次の要素の前に答えが分かる。
+                let mut started = None;
+                catch(|| started = Some((work.start)(tasks, deliver)));
+                let Some(handle) = started else {
                     return;
                 };
                 let running = Rc::new(Running {
@@ -303,22 +304,29 @@ impl<M: 'static> Node<M> {
                 // 始めるコードの中で持ち主が落とされると、その取り消しはまだ帳簿にない
                 // この効果へ届かない。載せても誰も止めないので、ここで止める。
                 if gone(keys) {
-                    attempt(&mut cx.panicked, || running.cancel());
+                    catch(|| running.cancel());
                     return;
                 }
                 ledger.add(None, running.clone());
                 for (owner, key) in keys.iter() {
                     owner.add(Some(key.clone()), running.clone());
                 }
+                cx.started.0.add(None, running);
             }
         }
     }
 }
 
-struct Starting<'a, M: 'static> {
-    tasks: Option<&'a Tasks>,
-    dispatch: &'a Dispatch<M>,
-    panicked: Option<Box<dyn Any + Send>>,
+/// What the app gives the effects it starts.
+pub(crate) struct Starting<'a, M: 'static> {
+    pub(crate) tasks: Option<&'a Tasks>,
+    pub(crate) dispatch: &'a Dispatch<M>,
+    /// Whether the handler has stopped the app, which can happen halfway through.
+    pub(crate) stopped: &'a Cell<bool>,
+    /// Holds everything the app starts, whichever model owns it, for stopping the app.
+    pub(crate) started: &'a Owner,
+    /// Reports a failure that comes later to the app.
+    pub(crate) report: &'a Rc<dyn Fn(&str)>,
 }
 
 impl<M> std::fmt::Debug for Node<M> {
@@ -456,7 +464,10 @@ impl<M: 'static> Effect<M> {
                     let _ = sender.send(catch_unwind(AssertUnwindSafe(work)));
                 });
             if let Err(error) = started {
-                report(&format!("could not start an effect's thread: {error}"));
+                report(
+                    ReportKind::Failure,
+                    &format!("could not start an effect's thread: {error}"),
+                );
             }
             Handle::Channel(closed, closer)
         })
@@ -512,11 +523,13 @@ impl<M: 'static> Effect<M> {
         })
     }
 
-    /// Reports a failure, which for now goes to standard error.
+    /// Reports a failure to the app's handler
+    /// ([`App::set_error_handler`](crate::App::set_error_handler)), or without one to
+    /// standard error.
     ///
     /// It is reported when the effect would start, after the next `render`. For an
     /// error inside `update`, and for a failed effect, whose result comes back to
-    /// `update` as a message.
+    /// `update` as a message. The report carries the message `update` was given.
     pub fn fail(failure: impl std::fmt::Display) -> Self {
         Self {
             node: Node::Fail(failure.to_string()),
@@ -634,19 +647,12 @@ impl<M: 'static> Effect<M> {
         }
     }
 
-    /// Starts what is in here, as `owner`'s. A panic in the code it calls does not stop
-    /// the rest, and carries on once they have started.
-    pub(crate) fn start(self, tasks: Option<&Tasks>, dispatch: &Dispatch<M>, owner: &Owner) {
-        let mut cx = Starting {
-            tasks,
-            dispatch,
-            panicked: None,
-        };
-        self.node
-            .start(&mut cx, Some(owner.0.clone()), &mut Vec::new());
-        if let Some(panic) = cx.panicked {
-            resume_unwind(panic);
-        }
+    /// Starts what is in here, as `owner`'s, one piece at a time. A panic in the code it
+    /// calls is told to the handler there and then, as a failure is. Unless the answer
+    /// stops the app, the rest starts; once it has, a failure among the rest
+    /// is still reported, since it has happened all the same, and work does not start.
+    pub(crate) fn start(self, cx: &Starting<'_, M>, owner: &Owner) {
+        self.node.start(cx, Some(owner.0.clone()), &mut Vec::new());
     }
 }
 
@@ -659,17 +665,6 @@ impl<M: 'static> Default for Effect<M> {
 impl<M: 'static> std::fmt::Debug for Effect<M> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         self.node.fmt(f)
-    }
-}
-
-/// The text of a panic's payload, for the usual `panic!` forms.
-fn panic_text(panic: &(dyn Any + Send)) -> &str {
-    if let Some(text) = panic.downcast_ref::<&str>() {
-        text
-    } else if let Some(text) = panic.downcast_ref::<String>() {
-        text
-    } else {
-        "(not a string)"
     }
 }
 

@@ -6,7 +6,6 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::convert::Infallible;
 use std::future::{pending, Future};
-use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::{mpsc, Arc, Mutex};
@@ -16,7 +15,7 @@ use std::time::{Duration, Instant};
 use naui::Tasks;
 use naui_core::{MainThread, Work};
 
-use super::effect::tests_support::REPORTED;
+use super::error::tests_support::REPORTED;
 use super::{App, Effect, Program, Scoped};
 
 const SECOND: Duration = Duration::from_secs(1);
@@ -31,7 +30,7 @@ struct LoopState {
 
 /// The event loop's waiting room. Other threads post into it, as they do for real.
 #[derive(Clone, Default)]
-struct Loop(Arc<Mutex<LoopState>>);
+pub(super) struct Loop(Arc<Mutex<LoopState>>);
 
 impl MainThread for Loop {
     fn post(&self, work: Work) -> bool {
@@ -48,7 +47,7 @@ impl MainThread for Loop {
 }
 
 impl Loop {
-    fn new() -> (Self, Tasks) {
+    pub(super) fn new() -> (Self, Tasks) {
         let event_loop = Self::default();
         let tasks = Tasks::from_main_thread(Arc::new(event_loop.clone()));
         (event_loop, tasks)
@@ -70,7 +69,7 @@ impl Loop {
     }
 
     /// Runs all that is due, including what that makes due.
-    fn run(&self) {
+    pub(super) fn run(&self) {
         while let Some(work) = self.take_due() {
             work();
         }
@@ -279,7 +278,7 @@ fn messages_sent_while_building_can_start_work() {
 }
 
 #[test]
-fn a_panic_in_update_leaves_earlier_effects_for_the_next_turn() {
+fn a_panic_in_update_does_not_stop_earlier_effects() {
     let (event_loop, tasks) = Loop::new();
     let log = Log::default();
     let app = app(&tasks, &log, |message| match message {
@@ -287,20 +286,10 @@ fn a_panic_in_update_leaves_earlier_effects_for_the_next_turn() {
         Msg::Number(_) => panic!("update panicked (intended)"),
         _ => Effect::none(),
     });
-    let dispatch = app.dispatch();
     // Go と Number を同じ周回で処理する。Number の update が panic する。
-    let sent = dispatch.clone();
-    let outcome = catch_unwind(AssertUnwindSafe(|| {
-        app.inner.queue.borrow_mut().push_back(Msg::Go);
-        sent.send(Msg::Number(1));
-    }));
-    assert!(outcome.is_err());
-    event_loop.run();
-    assert!(
-        !log.borrow().iter().any(|line| line.contains("kept")),
-        "まだ始まっていない"
-    );
-    dispatch.send(Msg::Done("next"));
+    app.inner.queue.borrow_mut().push_back(Msg::Go);
+    app.send(Msg::Number(1));
+    assert_eq!(app.running(), 1);
     event_loop.run();
     assert!(log.borrow().iter().any(|line| line.contains("kept")));
 }
@@ -316,8 +305,7 @@ fn a_panic_while_starting_does_not_stop_the_rest() {
         }
         _ => Effect::none(),
     });
-    let outcome = catch_unwind(AssertUnwindSafe(|| app.send(Msg::Go)));
-    assert!(outcome.is_err());
+    app.send(Msg::Go);
     assert_eq!(app.running(), 1);
     event_loop.run();
     assert!(log.borrow().iter().any(|line| line.contains("rest")));
@@ -343,8 +331,8 @@ fn a_channel_whose_start_panicked_delivers_nothing() {
         Msg::Number(0) => Effect::after(SECOND, Msg::Done("new")).key("feed"),
         _ => Effect::none(),
     });
-    let outcome = catch_unwind(AssertUnwindSafe(|| app.send(Msg::Go)));
-    assert!(outcome.is_err());
+    // panic はキューの中で受け止められ、ここまで巻き戻ってこない。
+    app.send(Msg::Go);
     assert_eq!(app.running(), 0, "始まらなかった効果は動いていない");
     taken(&log);
 
@@ -1134,8 +1122,8 @@ fn a_panic_while_replacing_a_key_stops_the_others_and_starts_the_new_one() {
     assert_eq!(app.running(), 3);
     taken(&log);
 
-    let outcome = catch_unwind(AssertUnwindSafe(|| app.send(Msg::Number(0))));
-    assert!(outcome.is_err(), "panic は片付けの後で伝わる");
+    // panic はキューの中で受け止められ、ここまで巻き戻ってこない。
+    app.send(Msg::Number(0));
     assert!(
         log.borrow().iter().any(|line| line == "dropped task"),
         "{:?}",
@@ -1160,8 +1148,8 @@ fn a_panic_while_dropping_a_wrapper_stops_the_rest() {
     assert_eq!(child_running(&app, 1), 3);
     taken(&log);
 
-    let outcome = catch_unwind(AssertUnwindSafe(|| app.send(ParentMsg::Remove(1))));
-    assert!(outcome.is_err(), "panic は片付けの後で伝わる");
+    // panic はキューの中で受け止められ、ここまで巻き戻ってこない。
+    app.send(ParentMsg::Remove(1));
     assert!(
         log.borrow().iter().any(|line| line == "dropped task"),
         "{:?}",
@@ -1187,7 +1175,7 @@ fn a_panic_while_stopping_during_another_panic_is_reported() {
 
     let child = slot.borrow_mut().take();
     // 巻き戻しの中でもう一度 panic を外へ出すと、プロセスごと落ちる。
-    let outcome = catch_unwind(AssertUnwindSafe(move || {
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
         let _child = child;
         panic!("the first panic (intended)");
     }));
@@ -1223,8 +1211,8 @@ fn stopping_an_effect_whose_owner_went_while_starting_can_panic() {
     })));
     let app = app_of_slot(&tasks, &log, &slot);
     reported();
-    let outcome = catch_unwind(AssertUnwindSafe(|| app.send(Msg::Go)));
-    assert!(outcome.is_err(), "panic は止めた後で伝わる");
+    // panic はキューの中で受け止められ、ここまで巻き戻ってこない。
+    app.send(Msg::Go);
     assert_eq!(reported(), ["still reported"], "残りの効果は止まらない");
 }
 
@@ -1403,6 +1391,50 @@ fn a_wrappers_effects_stop_before_its_model_is_dropped() {
 fn the_apps_effects_stop_before_its_model_is_dropped() {
     let (_event_loop, tasks) = Loop::new();
     let (model, open_on_drop) = ChecksChannelOnDrop::new();
+    let app = App::with_tasks(&tasks, model, |_| Ok::<_, Infallible>(())).expect("build");
+    app.send(Msg::Go);
+    drop(app);
+    assert_eq!(open_on_drop.get(), Some(false));
+}
+
+/// 落とされるときに、子のチャンネルがもう閉じているかを記録するモデル。
+struct ChecksChildOnDrop {
+    child: Scoped<ChecksChannelOnDrop>,
+    open_on_drop: Rc<Cell<Option<bool>>>,
+}
+
+impl Program for ChecksChildOnDrop {
+    type Message = Msg;
+    type View = ();
+
+    fn update(&mut self, message: Msg) -> Effect<Msg> {
+        self.child.update(message)
+    }
+
+    fn render(&self, _: &()) {}
+}
+
+impl Drop for ChecksChildOnDrop {
+    fn drop(&mut self) {
+        let open = self
+            .child
+            .sender
+            .borrow()
+            .as_ref()
+            .map(naui::Sender::is_open);
+        self.open_on_drop.set(open);
+    }
+}
+
+#[test]
+fn a_childs_effects_stop_before_the_apps_model_is_dropped() {
+    let (_event_loop, tasks) = Loop::new();
+    let (child, _) = ChecksChannelOnDrop::new();
+    let open_on_drop = Rc::new(Cell::new(None));
+    let model = ChecksChildOnDrop {
+        child: Scoped::new(child),
+        open_on_drop: open_on_drop.clone(),
+    };
     let app = App::with_tasks(&tasks, model, |_| Ok::<_, Infallible>(())).expect("build");
     app.send(Msg::Go);
     drop(app);

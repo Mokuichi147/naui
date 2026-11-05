@@ -168,10 +168,8 @@ fn a_failing_build_returns_its_error() {
 fn the_queue_keeps_working_after_a_panic() {
     let log = Log::default();
     let app = start(recorder(&log));
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        app.send(Msg::Panic);
-    }));
-    assert!(outcome.is_err());
+    // ハンドラがなくても、キューの中で受け止めて、送った側へ巻き戻さない。
+    app.send(Msg::Panic);
     app.send(Msg::Add(7));
     assert_eq!(app.model().total, 7, "panic のあとも送ったものが届く");
 }

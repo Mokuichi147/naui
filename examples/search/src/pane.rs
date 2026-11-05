@@ -50,6 +50,7 @@ pub struct Pane {
     pub state: State,
 }
 
+#[derive(Debug)]
 pub enum Message {
     QueryChanged(String),
     /// Typing paused.

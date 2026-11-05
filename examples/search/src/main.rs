@@ -6,13 +6,15 @@
 //! - The panes are kept in [`Scoped`] wrappers, so closing one (removing it from the
 //!   model) cancels what it started, with nothing else to do.
 //! - The app's own clock is an effect too, started by a message sent from `build`.
+//! - A failure reaches the one error handler, which shows it through a message. A panic
+//!   stops the app, since the model may be half changed.
 
 mod pane;
 
 use std::time::Duration;
 
 use naui::{Orientation, Padding, Settings, Sizing, Ui};
-use naui_app::{Change, Children, Dispatch, Effect, Program, Scoped};
+use naui_app::{Change, Children, Decision, Dispatch, Effect, Program, Report, ReportKind, Scoped};
 use pane::Pane;
 
 #[derive(Default)]
@@ -20,13 +22,17 @@ struct Search {
     panes: Vec<Scoped<Pane>>,
     next_id: u64,
     seconds: u64,
+    /// The last failure reported.
+    problem: String,
 }
 
+#[derive(Debug)]
 enum Message {
     Started,
     Tick,
     AddPane,
     Pane(u64, pane::Message),
+    Reported(String),
 }
 
 struct View {
@@ -34,6 +40,7 @@ struct View {
     /// Holds only the panes' widgets, so a `Change`'s position is a position in it.
     list: naui::Stack,
     clock: naui::Label,
+    problem: naui::Label,
 }
 
 impl Search {
@@ -61,6 +68,10 @@ impl Program for Search {
                 self.add_pane();
                 Effect::none()
             }
+            Message::Reported(problem) => {
+                self.problem = problem;
+                Effect::none()
+            }
             Message::Pane(id, pane::Message::Close) => {
                 self.panes.retain(|pane| pane.id != id);
                 Effect::none()
@@ -78,15 +89,13 @@ impl Program for Search {
 
     fn render(&self, view: &View) {
         let panes = self.panes.iter().map(|pane| (pane.id, pane));
-        let synced = view.panes.sync(panes, |change| match change {
+        view.panes.sync(panes, |change| match change {
             Change::Insert { index, root } => view.list.insert(index, root),
             Change::Remove { index, .. } => view.list.remove(index),
         });
-        if let Err(error) = synced {
-            eprintln!("could not show a search: {error}");
-        }
         view.clock
             .set_text(&format!("Running for {} s", self.seconds));
+        view.problem.set_text(&self.problem);
     }
 }
 
@@ -106,6 +115,7 @@ fn build(ui: &Ui, dispatch: &Dispatch<Message>) -> naui::Result<View> {
     let footer = ui.stack(Orientation::Horizontal)?;
     footer.set_sizing(Sizing::fill_width());
     let clock = ui.label("")?;
+    let problem = ui.label("")?;
     let add = ui.button("Add a search")?;
     add.on_click(dispatch.to(|| Message::AddPane));
     footer.append(&clock);
@@ -113,6 +123,7 @@ fn build(ui: &Ui, dispatch: &Dispatch<Message>) -> naui::Result<View> {
     footer.append(&add);
 
     root.append(&scroll);
+    root.append(&problem);
     root.append(&footer);
     window.set_child(&root);
     window.show();
@@ -123,11 +134,22 @@ fn build(ui: &Ui, dispatch: &Dispatch<Message>) -> naui::Result<View> {
         panes: Children::new(ui, dispatch, Message::Pane),
         list,
         clock,
+        problem,
     })
 }
 
+/// What goes wrong anywhere in the app ends up here.
+fn on_error(report: &Report, dispatch: &Dispatch<Message>) -> Decision {
+    eprintln!("{report}");
+    if report.kind() == ReportKind::Panic {
+        return Decision::Stop;
+    }
+    dispatch.send(Message::Reported(report.text().to_owned()));
+    Decision::GoOn
+}
+
 fn main() -> naui::Result<()> {
-    naui_app::run(Settings::new("search"), Search::default(), build)
+    naui_app::run_with_handler(Settings::new("search"), Search::default(), build, on_error)
 }
 
 /// `update` and the effects it returns are plain values: no window is needed.
@@ -176,6 +198,13 @@ mod tests {
         let failed = search.update(Message::Pane(0, PaneMessage::Results(Err("no".into()))));
         assert_eq!(failed.failures(), ["no"]);
         assert_eq!(search.panes[0].state, State::Failed);
+    }
+
+    #[test]
+    fn a_reported_failure_is_kept_to_be_shown() {
+        let mut search = started();
+        assert!(search.update(Message::Reported("no".to_owned())).is_none());
+        assert_eq!(search.problem, "no");
     }
 
     #[test]

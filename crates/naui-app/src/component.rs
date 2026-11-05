@@ -4,13 +4,15 @@ use std::any::Any;
 use std::borrow::Borrow;
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
+use std::fmt::Display;
 use std::hash::Hash;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::rc::{Rc, Weak};
 
 use naui::{Ui, Widget};
 
-use crate::{Dispatch, Program, Running};
+use crate::error::report;
+use crate::{Dispatch, Program, ReportKind, Running};
 
 /// A part of an app (a screen, a panel, a row) with its own model, messages,
 /// `update` and widgets.
@@ -359,6 +361,11 @@ pub(crate) struct Keyed<K, C: Program> {
     /// Whether `place` panicked, so that the container may not match `entries`.
     /// `entries` still lists everything the container may hold.
     broken: Cell<bool>,
+    /// The keys whose failed mount has been reported. Each `render` tries them again,
+    /// and telling every time would make a handler that sends a message go round forever.
+    failed: RefCell<HashSet<K>>,
+    /// Whether the repeated keys of the last call were reported, for the same reason.
+    repeat_reported: Cell<bool>,
 }
 
 /// Runs `f`, keeping a panic for later, so that the other children still get their
@@ -419,6 +426,8 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
             unmount,
             syncing: Cell::new(false),
             broken: Cell::new(false),
+            failed: RefCell::new(HashSet::new()),
+            repeat_reported: Cell::new(false),
         }
     }
 
@@ -437,17 +446,16 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
     // 外のコード (mount / unmount / render / place) を呼ぶ間は entries を借りない。
     // 呼ばれた先から len や get を呼べるようにするため。entries を変えるのはここだけ
     // で、入れ子の呼び出しは何もしないので、借り直しても位置はずれない。
-    pub(crate) fn sync_with<'a, E>(
+    pub(crate) fn sync_with<'a, E: Display>(
         &self,
         models: impl IntoIterator<Item = (K, &'a C)>,
         mut mount: impl FnMut(&Dispatch<C::Message>) -> Result<C::View, E>,
         mut place: impl FnMut(Step<'_, C::View>),
-    ) -> Result<(), E>
-    where
+    ) where
         C: 'a,
     {
         if self.syncing.replace(true) {
-            return Ok(());
+            return;
         }
         let _syncing = Running(&self.syncing);
 
@@ -461,9 +469,16 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
                 new
             })
             .collect();
-        if repeated {
-            eprintln!("naui-app: Children::sync got the same key twice; ignoring the later ones");
+        if repeated && !self.repeat_reported.get() {
+            report(
+                ReportKind::RepeatedKey,
+                "Children::sync got the same key twice; ignoring the later ones",
+            );
         }
+        self.repeat_reported.set(repeated);
+        self.failed
+            .borrow_mut()
+            .retain(|key| wanted_keys.contains(key));
 
         let mut apply = |step: Step<'_, C::View>| {
             self.broken.set(true);
@@ -471,7 +486,6 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
             self.broken.set(false);
         };
         let mut panicked = None;
-        let mut failure = None;
 
         // 前回 place が panic したなら、容器に何が残っているか分からない。entries は
         // 容器に残りうるものをすべて含むので、全部外して (範囲外は何も起きない)
@@ -591,11 +605,19 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
                         Mounted::with_link(link, dispatch, &mut mount, self.unmount)
                     });
                     let mounted = match mounted {
-                        Some(Ok(mounted)) => Rc::new(mounted),
+                        Some(Ok(mounted)) => {
+                            self.failed.borrow_mut().remove(key);
+                            Rc::new(mounted)
+                        }
                         Some(Err(error)) => {
                             // この子だけ外したまま続け、ほかの子は置いて描く。
                             // 次の呼び出しでまた作ってみる。
-                            failure.get_or_insert(error);
+                            if self.failed.borrow_mut().insert(key.clone()) {
+                                report(
+                                    ReportKind::Mount,
+                                    &format!("could not mount a child: {error}"),
+                                );
+                            }
                             continue;
                         }
                         None => continue,
@@ -632,7 +654,6 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
         if let Some(panic) = panicked {
             resume_unwind(panic);
         }
-        failure.map_or(Ok(()), Err)
     }
 }
 
@@ -665,13 +686,10 @@ impl<K: Clone + Eq + Hash + 'static, C: Program> Keyed<K, C> {
 /// # impl Model {
 /// fn render(&self, view: &View) {
 ///     let rows = self.rows.iter().map(|row| (row.id, row));
-///     let synced = view.rows.sync(rows, |change| match change {
+///     view.rows.sync(rows, |change| match change {
 ///         Change::Insert { index, root } => view.list.insert(index, root),
 ///         Change::Remove { index, .. } => view.list.remove(index),
 ///     });
-///     if let Err(error) = synced {
-///         eprintln!("could not show a row: {error}");
-///     }
 /// }
 /// # }
 /// ```
@@ -720,15 +738,18 @@ impl<K: Clone + Eq + Hash + 'static, C: Component> Children<K, C> {
     ///    from the top to the bottom moves only that row.
     /// 3. Every child is rendered with its model.
     ///
-    /// When a key appears more than once, the later ones are ignored and a line goes
-    /// to standard error, since it means the ids are not unique. If a mount fails,
-    /// that child is left out and the rest are still placed and rendered, so the
-    /// other children do not stay stale; the first error is returned, and the next
-    /// call tries to mount the missing child again.
+    /// When a key appears more than once, the later ones are ignored and that is
+    /// reported, since it means the ids are not unique. If a mount fails, that child is
+    /// left out and the rest are still placed and rendered, so the other children do not
+    /// stay stale. That is reported too, and the next call tries to mount the missing
+    /// child again. It returns nothing, since `render` has no caller to hand a failure
+    /// to: what is reported goes to the
+    /// [handler](crate::App::set_error_handler), once until it is put right, or without
+    /// one to standard error.
     ///
     /// The code it calls can read [`len`](Self::len) and [`get`](Self::get), which
     /// show the children as they are at that moment. A `sync` of the same `Children`
-    /// made from there does nothing and returns `Ok`: the one running decides.
+    /// made from there does nothing: the one running decides.
     ///
     /// A panic in a child's `mount`, `unmount` or `render` does not stop the others.
     /// It carries on once the rest are done. A panic in `place` stops there, since
@@ -740,8 +761,7 @@ impl<K: Clone + Eq + Hash + 'static, C: Component> Children<K, C> {
         &self,
         models: impl IntoIterator<Item = (K, &'a T)>,
         mut place: impl FnMut(Change<'_>),
-    ) -> naui::Result<()>
-    where
+    ) where
         C: 'a,
     {
         self.keyed.sync_with(
@@ -759,7 +779,7 @@ impl<K: Clone + Eq + Hash + 'static, C: Component> Children<K, C> {
                     },
                 })
             },
-        )
+        );
     }
 
     /// The child under `key`, if it is mounted.
