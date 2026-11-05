@@ -10085,6 +10085,20 @@ fn spinner_fits_below_native_minimum(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// The color the theme's `.error` has right now.
+fn theme_error_hex() -> String {
+    let probe = gtk::Label::new(None);
+    probe.add_css_class("error");
+    let error = probe.color();
+    let channel = |value: f32| (value * 255.0).round() as u8;
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        channel(error.red()),
+        channel(error.green()),
+        channel(error.blue())
+    )
+}
+
 fn sample_rich_text() -> RichText {
     RichText::new()
         .text("a ")
@@ -10110,16 +10124,7 @@ fn rich_text_maps_to_markup(ui: &Ui) -> Result<()> {
     assert!(markup.contains(">c </span>"), "色: {markup}");
 
     // 役割の色はテーマの `.error` と同じ。
-    let probe = gtk::Label::new(None);
-    probe.add_css_class("error");
-    let error = probe.color();
-    let channel = |value: f32| (value * 255.0).round() as u8;
-    let hex = format!(
-        "#{:02x}{:02x}{:02x}",
-        channel(error.red()),
-        channel(error.green()),
-        channel(error.blue())
-    );
+    let hex = theme_error_hex();
     assert!(markup.contains(&hex), "{hex} が {markup} に入ること");
 
     // アプリの文字はマークアップとして読まれない。
@@ -10226,13 +10231,23 @@ fn rich_text_follows_the_theme(ui: &Ui) -> Result<()> {
 
     let manager = adw::StyleManager::default();
     let saved = manager.color_scheme();
-    manager.set_color_scheme(adw::ColorScheme::ForceLight);
-    let light = native.label().to_string();
-    manager.set_color_scheme(adw::ColorScheme::ForceDark);
-    let dark = native.label().to_string();
+    // 暗い環境から始まると明るいほうへの切り替えも通知されるので、両方向を試す。
+    // 切り替え前の色を読むと、書き換わっていても 1 回分ずれる。
+    let mut seen = Vec::new();
+    for scheme in [
+        adw::ColorScheme::ForceLight,
+        adw::ColorScheme::ForceDark,
+        adw::ColorScheme::ForceLight,
+    ] {
+        manager.set_color_scheme(scheme);
+        seen.push((theme_error_hex(), native.label().to_string()));
+    }
     manager.set_color_scheme(saved);
 
-    assert_ne!(light, dark, "明暗で役割の色が変わること: {light}");
+    assert_ne!(seen[0].0, seen[1].0, "明暗で `.error` の色が変わること");
+    for (hex, markup) in &seen {
+        assert!(markup.contains(hex), "{hex} が {markup} に入ること");
+    }
     assert_eq!(label.text(), "cb");
     Ok(())
 }

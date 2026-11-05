@@ -355,7 +355,9 @@ impl LabelInner {
         if !colored || this.theme.borrow().is_some() {
             return;
         }
-        let manager = adw::StyleManager::default();
+        // 既定のマネージャーは display を持たず CSS を読まない。その通知は表示先の
+        // マネージャーが CSS を読み替える前に届き、色を聞くと切り替え前の値が返る。
+        let manager = adw::StyleManager::for_display(&this.native.display());
         // `accent-color` は libadwaita 1.6 から。無い版では通知が来ないだけ。
         let handlers = ["dark", "high-contrast", "accent-color"]
             .into_iter()
