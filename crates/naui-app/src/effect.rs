@@ -87,6 +87,9 @@ struct Entry {
 #[derive(Default)]
 struct Ledger {
     entries: RefCell<Vec<Entry>>,
+    /// Whether the [`Owner`] has been dropped. An effect that is starting holds the
+    /// ledger too, so being able to reach it does not tell.
+    closed: Cell<bool>,
 }
 
 impl Ledger {
@@ -142,6 +145,7 @@ impl Owner {
 
 impl Drop for Owner {
     fn drop(&mut self) {
+        self.0.closed.set(true);
         self.cancel_all();
     }
 }
@@ -241,6 +245,14 @@ impl<M: 'static> Node<M> {
                 let Some(ledger) = ledger else {
                     return;
                 };
+                // 帳簿に載っていれば持ち主と一緒に止まるものは、ここでも同じに扱う。
+                // キーの持ち主も、落ちるときに自分の帳簿のものを止める。
+                let gone = |keys: &[(Rc<Ledger>, Rc<str>)]| {
+                    ledger.closed.get() || keys.iter().any(|(owner, _)| owner.closed.get())
+                };
+                if gone(keys) {
+                    return;
+                }
                 let Some(tasks) = cx.tasks else {
                     report(
                         ReportKind::Failure,
@@ -265,6 +277,12 @@ impl<M: 'static> Node<M> {
                     open,
                     handle: RefCell::new(Some(handle)),
                 });
+                // 始めるコードの中で持ち主が落とされると、その取り消しはまだ帳簿にない
+                // この効果へ届かない。載せても誰も止めないので、ここで止める。
+                if gone(keys) {
+                    catch(|| running.cancel());
+                    return;
+                }
                 ledger.add(None, running.clone());
                 for (owner, key) in keys.iter() {
                     owner.add(Some(key.clone()), running.clone());
@@ -640,7 +658,8 @@ impl<M: 'static> std::fmt::Debug for Effect<M> {
 /// [`update`](Self::update) marks the effects it returns as the child's. So removing a
 /// child from the collection in the parent's `update` is all it takes: a task or a
 /// timer is cancelled, and the result of work on another thread is discarded. An
-/// effect that has not started yet does not start. A task never outlives the state its
+/// effect that has not started yet does not start, and one whose starting code drops
+/// the wrapper is stopped as soon as it has. A task never outlives the state its
 /// result is for, and all this needs nothing from the view, whose widgets follow in
 /// the next `render`.
 ///
