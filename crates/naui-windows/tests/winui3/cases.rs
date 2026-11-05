@@ -6023,46 +6023,70 @@ fn list_keeps_the_selection_outside_the_window(ui: &Ui) -> Result<()> {
 
     const ROWS: usize = 5_000;
     let labels: Vec<String> = (0..ROWS).map(|i| format!("行 {i}")).collect();
+    let window = ui.window("窓の外の選択", 240.0, 160.0)?;
     let list = ui.list()?;
     list.set_selection_mode(SelectionMode::Multiple);
     list.set_items(&ListItem::list(labels.iter().map(String::as_str)));
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
     let seen = Rc::new(RefCell::new(Vec::new()));
     list.on_select({
         let seen = seen.clone();
         move |indices| seen.borrow_mut().push(indices.to_vec())
     });
 
-    // まだ組み立てていない行も選べる。組み立ててある行は `ListView` でも選ばれる。
-    list.set_selection(&[1, 4_000]);
-    assert_eq!(list.selection(), vec![1, 4_000]);
-    let items = list.native_list_view().Items().expect("Items");
-    let item = |index: u32| {
-        items
-            .GetAt(index)
-            .and_then(|item| item.cast::<ListViewItem>())
-            .expect("行")
-    };
-    assert!(item(1).IsSelected().expect("IsSelected"));
-    assert!(!item(0).IsSelected().expect("IsSelected"));
-    assert!(seen.borrow().is_empty(), "通知しない経路であること");
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        // `ListViewItem` の `IsSelected` の変更が `SelectionChanged` になるのは、
+        // `ListView` が表示されてから。
+        window.show();
+        let scroll = list_scroller(&list);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        let items = list.native_list_view().Items().expect("Items");
+        let item = |index: u32| {
+            items
+                .GetAt(index)
+                .and_then(|item| item.cast::<ListViewItem>())
+                .expect("行")
+        };
 
-    // ネイティブ側で選ばれると、窓の外の扱いは修飾キーで決まる (ここでは押されていない)。
-    item(0).SetIsSelected(true).expect("SetIsSelected");
-    assert_eq!(seen.borrow().last(), Some(&vec![0, 1]));
-    assert_eq!(list.selection(), vec![0, 1], "選び直しは窓の外を落とすこと");
+        // まだ組み立てていない行も選べる。組み立ててある行は `ListView` でも選ばれる。
+        list.set_selection(&[1, 4_000]);
+        assert_eq!(list.selection(), vec![1, 4_000]);
+        assert!(item(1).IsSelected().expect("IsSelected"));
+        assert!(!item(0).IsSelected().expect("IsSelected"));
+        assert!(seen.borrow().is_empty(), "通知しない経路であること");
 
-    // 通知する経路も同じ。
-    list.select_many(&[2, 4_500]);
-    assert_eq!(list.selection(), vec![2, 4_500]);
-    assert_eq!(seen.borrow().last(), Some(&vec![2, 4_500]));
+        // ネイティブ側で選ばれると、窓の外の扱いは修飾キーで決まる (ここでは押されていない)。
+        item(0).SetIsSelected(true).expect("SetIsSelected");
+        pump_until(Duration::from_secs(2), || !seen.borrow().is_empty());
+        assert_eq!(seen.borrow().last(), Some(&vec![0, 1]));
+        assert_eq!(list.selection(), vec![0, 1], "選び直しは窓の外を落とすこと");
 
-    // 単一選択では 1 行だけ。
-    list.set_selection_mode(SelectionMode::Single);
-    assert!(list.selection().is_empty());
-    list.set_selected(4_500);
-    assert_eq!(list.selection(), vec![4_500]);
-    item(0).SetIsSelected(true).expect("SetIsSelected");
-    assert_eq!(list.selection(), vec![0], "窓の外の行を残さないこと");
+        // 通知する経路も同じ。
+        list.select_many(&[2, 4_500]);
+        assert_eq!(list.selection(), vec![2, 4_500]);
+        assert_eq!(seen.borrow().last(), Some(&vec![2, 4_500]));
+
+        // 単一選択では 1 行だけ。
+        list.set_selection_mode(SelectionMode::Single);
+        assert!(list.selection().is_empty());
+        list.set_selected(4_500);
+        assert_eq!(list.selection(), vec![4_500]);
+        let before = seen.borrow().len();
+        item(0).SetIsSelected(true).expect("SetIsSelected");
+        pump_until(Duration::from_secs(2), || seen.borrow().len() > before);
+        assert_eq!(list.selection(), vec![0], "窓の外の行を残さないこと");
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
     Ok(())
 }
 

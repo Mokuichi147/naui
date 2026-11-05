@@ -169,6 +169,8 @@ struct ListInner {
     built_start: Cell<usize>,
     /// Whether rows are being built right now. Prevents nested rebuilds.
     rebuilding: Cell<bool>,
+    /// Whether moving the window is already waiting for the current handling to finish.
+    window_update_queued: Cell<bool>,
     /// How the selection was changed (modifier keys), as inferred from the last input.
     gesture: Cell<SelectionGesture>,
     /// The contents of the built rows, in order from `window.start`.
@@ -234,6 +236,7 @@ impl List {
             window: Cell::new(RowWindow::default()),
             built_start: Cell::new(0),
             rebuilding: Cell::new(false),
+            window_update_queued: Cell::new(false),
             gesture: Cell::new(SelectionGesture::Unknown),
             realized: RefCell::new(Vec::new()),
             selected: RefCell::new(Vec::new()),
@@ -307,7 +310,7 @@ impl List {
             let weak = Rc::downgrade(&inner);
             let update = move |_: &gtk::Adjustment| {
                 if let Some(inner) = weak.upgrade() {
-                    List(inner).update_window();
+                    List(inner).queue_window_update();
                 }
             };
             let adjustment = inner.scroller.vadjustment();
@@ -645,6 +648,36 @@ impl List {
             self.0.row_height.get(),
             overscan,
         )
+    }
+
+    /// Moves the window at the start of the next frame.
+    ///
+    /// **The scroll position can change from inside `GtkListBox`'s own handling.** Moving
+    /// the cursor focuses the next row, `GtkViewport` scrolls to it, and only then does
+    /// `GtkListBox` select that row. Rebuilding the rows in the middle removes the row it
+    /// is about to select, so the selection lands on the wrong row.
+    ///
+    /// It waits for a frame rather than just for the handling to finish, because the
+    /// frame lays the new rows out right after this, before any more input. A key
+    /// arriving while a new row has no position yet would make `GtkViewport` scroll to
+    /// the top of the list.
+    fn queue_window_update(&self) {
+        // 表示されていなければフレームが来ない。キーの処理の途中でもない。
+        if !self.0.scroller.is_mapped() {
+            self.update_window();
+            return;
+        }
+        if self.0.window_update_queued.replace(true) {
+            return;
+        }
+        let weak = Rc::downgrade(&self.0);
+        self.0.scroller.add_tick_callback(move |_, _| {
+            if let Some(inner) = weak.upgrade() {
+                inner.window_update_queued.set(false);
+                List(inner).update_window();
+            }
+            glib::ControlFlow::Break
+        });
     }
 
     /// Moves the built range along with scrolling.

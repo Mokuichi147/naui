@@ -764,6 +764,10 @@ fn main() {
             list_keeps_the_focused_row_across_rebuilds,
         ),
         (
+            "矢印キーで窓の端を越えても 1 行ずつ進む",
+            list_arrow_keys_cross_the_window_edge,
+        ),
+        (
             "行の多いリストの指定した行まで送れる",
             list_scrolls_to_a_row_not_built_yet,
         ),
@@ -5918,6 +5922,57 @@ fn list_keeps_the_focused_row_across_rebuilds(ui: &Ui) -> Result<()> {
         .expect("行にフォーカスがあること");
     assert!(focused.parent().is_some(), "取り除いた行に残らないこと");
     assert_eq!(adjustment.value(), height * 3_000.0);
+    window.close();
+    Ok(())
+}
+
+/// Moving the cursor scrolls the list from inside `GtkListBox`'s own handling. Rows must
+/// not be rebuilt in the middle of it: it goes on to select the row it moved to, which
+/// would be gone, and the selection would land on the wrong row.
+fn list_arrow_keys_cross_the_window_edge(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    const STEPS: usize = 60;
+    let items = ListItem::list((0..ROWS).map(|index| format!("行 {index}")));
+    let (window, list, native) = shown_big_list(ui, "矢印キー", |list| list.set_items(&items))?;
+    let press_down = || {
+        native.emit_by_name::<()>(
+            "move-cursor",
+            &[&gtk::MovementStep::DisplayLines, &1i32, &false, &false],
+        );
+    };
+    let first = native.row_at_index(0).expect("行");
+    assert!(first.grab_focus(), "行にフォーカスを置けること");
+    list.set_selected(0);
+
+    for step in 1..=STEPS {
+        press_down();
+        tick(&native);
+        tick(&native);
+        assert_eq!(list.selection(), vec![step], "{step} 回目の移動");
+        let focused = native
+            .root()
+            .and_then(|root| root.focus())
+            .and_downcast::<gtk::ListBoxRow>()
+            .expect("行にフォーカスがあること");
+        assert_eq!(
+            row_texts(&focused),
+            vec![format!("行 {step}")],
+            "{step} 回目のフォーカス"
+        );
+    }
+
+    // キーの連打: フレームを待たずに続けて押されても、行を飛ばさない。
+    // 位置がまだ無い行へフォーカスが移ると、先頭へ飛んでしまう。
+    let mut expected = STEPS;
+    for round in 1..=20 {
+        for _ in 0..3 {
+            press_down();
+            pump();
+            expected += 1;
+            assert_eq!(list.selection(), vec![expected], "連打の {round} 回目");
+        }
+        tick(&native);
+    }
     window.close();
     Ok(())
 }
