@@ -576,24 +576,7 @@ impl Ui {
     /// string cannot be read as a URL or there is nothing to open it with. Failures
     /// that happen in whatever opens it are not reported.
     pub fn open_url(&self, url: &str) -> Result<()> {
-        use windows::Win32::UI::Shell::ShellExecuteW;
-        use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-        use windows_core::{w, HSTRING};
-
-        if url.trim().is_empty() || !url.contains(':') {
-            return Err(Error::new(
-                "open the URL",
-                format!("not a valid URL: {url}"),
-            ));
-        }
-        let target = HSTRING::from(url);
-        // 32 以下はエラーの番号 (`ShellExecute` の古い約束)。
-        let result = unsafe { ShellExecuteW(None, w!("open"), &target, None, None, SW_SHOWNORMAL) };
-        if result.0 as isize > 32 {
-            Ok(())
-        } else {
-            Err(Error::new("open the URL", format!("could not open: {url}")))
-        }
+        open_url(url)
     }
 
     /// Quits the app.
@@ -608,6 +591,28 @@ impl Ui {
         if let Ok(app) = naui_winui3::Microsoft::UI::Xaml::Application::Current() {
             let _ = app.Exit();
         }
+    }
+}
+
+/// [`Ui::open_url`]. A link inside a `Label` opens through the same path.
+pub(crate) fn open_url(url: &str) -> Result<()> {
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    use windows_core::{w, HSTRING};
+
+    if url.trim().is_empty() || !url.contains(':') {
+        return Err(Error::new(
+            "open the URL",
+            format!("not a valid URL: {url}"),
+        ));
+    }
+    let target = HSTRING::from(url);
+    // 32 以下はエラーの番号 (`ShellExecute` の古い約束)。
+    let result = unsafe { ShellExecuteW(None, w!("open"), &target, None, None, SW_SHOWNORMAL) };
+    if result.0 as isize > 32 {
+        Ok(())
+    } else {
+        Err(Error::new("open the URL", format!("could not open: {url}")))
     }
 }
 

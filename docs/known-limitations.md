@@ -25,6 +25,7 @@ that shape are covered in
 | What a dropped file carries (`on_file_drop`) | The absolute path | The absolute path | The absolute path (local files only) | A `blob:` URL, no path |
 | Looks of `ButtonRole` | Only `Primary` (accent) | `Primary` (accent), `Destructive` (red text, macOS 26 and later) | Both (`suggested-action` / `destructive-action`) | Neither (only `data-naui-role` is written) |
 | `AdaptivePanes` switching to one pane | `TwoPaneView` decides, below the breakpoint, with no slack | naui decides, with 8 px of slack | naui decides, with 8 px of slack (slides between the panes) | naui decides, with 8 px of slack |
+| `Label` holding links | Selectable as asked | Always selectable | Selectable as asked | Selectable as asked |
 | Where `Group`'s heading goes | Above the card | On the frame's top edge | On the frame's top edge | On the frame's top edge (`<legend>`) |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
 
@@ -314,6 +315,10 @@ that shape are covered in
 
 ### Widgets
 
+- **A `Label` holding links is selectable**, whatever `set_selectable` says (and
+  `is_selectable` still answers what was asked), because AppKit reacts to links only
+  in a selectable field. Clicking a link gives the label the keyboard focus, and the
+  pointing-hand cursor appears only after the label has been clicked once.
 - `ButtonRole::Destructive` sets `hasDestructiveAction`, but **only macOS 26 and
   later give it a look** (red text on a faint red bezel, the same as destructive
   buttons in alerts). Before that it looks like an ordinary button.

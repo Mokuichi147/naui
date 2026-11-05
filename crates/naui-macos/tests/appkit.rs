@@ -19,9 +19,10 @@ use naui_core::{
     Align, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
     EventResponse, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem,
     MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
-    PointerButton, PointerPhase, PopupItem, Rect, Result, ScrollPolicy, SelectionMode, SidebarItem,
-    SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle, Theme, Time,
-    ToolbarIcon, ToolbarItem, Track, TreeItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
+    PointerButton, PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode,
+    SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle,
+    Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem, WindowPlacement, WindowState,
+    DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
 use objc2::rc::{autoreleasepool, Retained};
@@ -32,14 +33,15 @@ use objc2::{
     define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message,
 };
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSBox, NSBoxType, NSButton, NSColor,
-    NSColorSpace, NSComboBox, NSControlStateValueOff, NSControlStateValueOn, NSDatePicker,
-    NSDatePickerElementFlags, NSEvent, NSEventMask, NSEventModifierFlags, NSEventType, NSImage,
-    NSImageScaling, NSImageView, NSLayoutAttribute, NSLayoutConstraint,
-    NSLayoutConstraintOrientation, NSLayoutRelation, NSOutlineViewDelegate, NSResponder,
-    NSScrollView, NSScrollerStyle, NSSearchField, NSSecureTextField, NSSegmentedControl,
-    NSStandardKeyBindingResponding, NSStepper, NSSwitch, NSTableViewDelegate, NSTextField,
-    NSTextInputClient, NSTextView, NSTintProminence, NSTitlePosition,
+    NSApplication, NSApplicationActivationPolicy, NSAttributedStringNSStringDrawing, NSBox,
+    NSBoxType, NSButton, NSColor, NSColorSpace, NSComboBox, NSControlStateValueOff,
+    NSControlStateValueOn, NSDatePicker, NSDatePickerElementFlags, NSEvent, NSEventMask,
+    NSEventModifierFlags, NSEventType, NSFont, NSFontAttributeName, NSForegroundColorAttributeName,
+    NSImage, NSImageScaling, NSImageView, NSLayoutAttribute, NSLayoutConstraint,
+    NSLayoutConstraintOrientation, NSLayoutRelation, NSLinkAttributeName, NSOutlineViewDelegate,
+    NSResponder, NSScrollView, NSScrollerStyle, NSSearchField, NSSecureTextField,
+    NSSegmentedControl, NSStandardKeyBindingResponding, NSStepper, NSSwitch, NSTableViewDelegate,
+    NSTextField, NSTextInputClient, NSTextView, NSTintProminence, NSTitlePosition,
     NSUserInterfaceItemIdentification, NSUserInterfaceLayoutDirection, NSView, NSWindow,
     NSWindowStyleMask, NSWindowTitleVisibility,
 };
@@ -533,6 +535,30 @@ fn main() {
             spinner_is_a_spinning_indicator,
         ),
         ("ラベルを選べるようにできる", label_can_be_selectable),
+        (
+            "リッチテキストの太字と色とリンクが属性になる",
+            rich_text_maps_to_attributes,
+        ),
+        (
+            "リッチテキストは表示中と同じ内容なら何もしない",
+            rich_text_same_content_keeps_the_selection,
+        ),
+        (
+            "リッチテキストからふつうの文字へ戻せる",
+            rich_text_goes_back_to_plain_text,
+        ),
+        (
+            "リッチテキストはラベルの段階と色の変更に付いてくる",
+            rich_text_follows_the_label_style_and_color,
+        ),
+        (
+            "リッチテキストも折り返しの指定に従う",
+            rich_text_follows_wrapping,
+        ),
+        (
+            "リンクの押下が on_link へ届き、中で内容を変えられる",
+            rich_text_link_click_reaches_on_link,
+        ),
         (
             "クリップボードへ書いた文字を読み戻せる",
             clipboard_round_trips_text,
@@ -5429,6 +5455,348 @@ fn label_can_be_selectable(ui: &Ui) -> Result<()> {
         .expect("NSTextField");
     assert!(native.isSelectable());
     assert!(!native.isEditable(), "選べても書き換えられない");
+    Ok(())
+}
+
+/// The value of an attribute at a character index of a label.
+fn label_attribute(
+    native: &NSTextField,
+    key: &objc2_foundation::NSAttributedStringKey,
+    index: usize,
+) -> Option<Retained<AnyObject>> {
+    let mut range = NSRange::new(0, 0);
+    unsafe {
+        native
+            .attributedStringValue()
+            .attribute_atIndex_effectiveRange(key, index, &mut range)
+    }
+}
+
+fn label_font_at(native: &NSTextField, index: usize) -> Retained<NSFont> {
+    label_attribute(native, unsafe { NSFontAttributeName }, index)
+        .expect("フォントの属性があること")
+        .downcast()
+        .expect("NSFont")
+}
+
+fn label_color_at(native: &NSTextField, index: usize) -> Retained<NSColor> {
+    label_attribute(native, unsafe { NSForegroundColorAttributeName }, index)
+        .expect("色の属性があること")
+        .downcast()
+        .expect("NSColor")
+}
+
+fn is_bold(font: &NSFont) -> bool {
+    font.fontDescriptor()
+        .symbolicTraits()
+        .contains(objc2_app_kit::NSFontDescriptorSymbolicTraits::TraitBold)
+}
+
+fn sample_rich_text() -> RichText {
+    RichText::new()
+        .text("a ")
+        .bold("b ")
+        .colored("c ", TextColor::Danger)
+        .link("d", "https://example.com/d")
+}
+
+fn rich_text_maps_to_attributes(ui: &Ui) -> Result<()> {
+    let label = ui.label("")?;
+    let native: Retained<NSTextField> = label.native_view().downcast().expect("NSTextField");
+    label.set_rich_text(&sample_rich_text());
+    assert_eq!(label.text(), "a b c d");
+
+    assert!(!is_bold(&label_font_at(&native, 0)));
+    assert!(is_bold(&label_font_at(&native, 2)), "太字の断片だけ太い");
+    assert!(!is_bold(&label_font_at(&native, 4)));
+    assert_eq!(
+        label_font_at(&native, 0).pointSize(),
+        label_font_at(&native, 2).pointSize(),
+        "太字でも級数は変わらない"
+    );
+
+    assert_eq!(*label_color_at(&native, 0), *NSColor::labelColor());
+    assert_eq!(*label_color_at(&native, 4), *NSColor::systemRedColor());
+    assert_eq!(*label_color_at(&native, 6), *NSColor::linkColor());
+
+    assert!(label_attribute(&native, unsafe { NSLinkAttributeName }, 0).is_none());
+    let link = label_attribute(&native, unsafe { NSLinkAttributeName }, 6)
+        .expect("リンクの属性があること");
+    assert_eq!(
+        link.downcast::<NSString>().expect("NSString").to_string(),
+        "https://example.com/d"
+    );
+
+    // AppKit はこの 2 つが立っている欄でしかリンクに反応しない (QA1487)。
+    assert!(native.isSelectable());
+    assert!(native.allowsEditingTextAttributes());
+    assert!(!native.isEditable(), "リンクがあっても書き換えられない");
+    assert!(!label.is_selectable(), "利用者の指定は変わらない");
+
+    // リンクの無い内容なら選べないままでよい。
+    label.set_rich_text(&RichText::new().bold("b"));
+    assert!(!native.isSelectable());
+    assert!(!native.allowsEditingTextAttributes());
+
+    // 選べるようにする指定は、リンクの有無をまたいで残る。
+    label.set_selectable(true);
+    label.set_rich_text(&sample_rich_text());
+    label.set_rich_text(&RichText::new().bold("b"));
+    assert!(native.isSelectable());
+    assert!(label.is_selectable());
+    Ok(())
+}
+
+/// `render` sets the same content every time, so it must not disturb what the user
+/// is doing with the text.
+fn rich_text_same_content_keeps_the_selection(ui: &Ui) -> Result<()> {
+    let window = ui.window("同じ内容", 400.0, 200.0)?;
+    let label = ui.label("")?;
+    window.set_child(&label);
+    window.show();
+    let native: Retained<NSTextField> = label.native_view().downcast().expect("NSTextField");
+    label.set_rich_text(&sample_rich_text());
+
+    // 選べるだけの欄は `makeFirstResponder:` では編集に入らない。
+    unsafe { native.selectText(None) };
+    let editor = native.currentEditor().expect("欄の編集が始まること");
+    editor.setSelectedRange(NSRange::new(2, 3));
+
+    // 作り方が違っても、見せるものが同じなら同じ内容。
+    label.set_rich_text(
+        &RichText::new()
+            .text("a")
+            .text(" ")
+            .bold("b ")
+            .colored("c ", TextColor::Danger)
+            .link("d", "https://example.com/d"),
+    );
+    let editor = native.currentEditor().expect("編集が続いていること");
+    assert_eq!(editor.selectedRange(), NSRange::new(2, 3), "選択が残ること");
+
+    // 内容が変われば書き換わる。
+    label.set_rich_text(&RichText::new().text("a ").bold("b ").text("c d"));
+    assert_eq!(label.text(), "a b c d");
+    assert!(label_attribute(&native, unsafe { NSLinkAttributeName }, 6).is_none());
+    window.close();
+    Ok(())
+}
+
+fn rich_text_goes_back_to_plain_text(ui: &Ui) -> Result<()> {
+    let label = ui.label("")?;
+    let native: Retained<NSTextField> = label.native_view().downcast().expect("NSTextField");
+    let body = native.font().expect("フォント");
+
+    // 文字が同じでも、飾りは外れる。最初の断片の太字が欄に残らないことも見る。
+    label.set_rich_text(&RichText::new().bold("abc").link("d", "x:y"));
+    label.set_text("abcd");
+    assert_eq!(label.text(), "abcd");
+    assert!(!is_bold(&label_font_at(&native, 0)));
+    assert!(label_attribute(&native, unsafe { NSLinkAttributeName }, 3).is_none());
+    assert!(!native.isSelectable());
+    assert_eq!(native.font().expect("フォント").fontName(), body.fontName());
+
+    // 飾りの無い RichText は set_text と同じ。
+    label.set_rich_text(&RichText::new().bold("abcd"));
+    assert!(is_bold(&label_font_at(&native, 0)));
+    label.set_rich_text(&RichText::new().text("abcd"));
+    assert!(!is_bold(&label_font_at(&native, 0)));
+
+    label.set_rich_text(&RichText::new());
+    assert_eq!(label.text(), "");
+    Ok(())
+}
+
+fn rich_text_follows_the_label_style_and_color(ui: &Ui) -> Result<()> {
+    let label = ui.label("")?;
+    let native: Retained<NSTextField> = label.native_view().downcast().expect("NSTextField");
+    label.set_rich_text(&sample_rich_text());
+    let body_size = label_font_at(&native, 0).pointSize();
+
+    label.set_style(TextStyle::Title);
+    assert!(label_font_at(&native, 0).pointSize() > body_size);
+    assert!(label_font_at(&native, 2).pointSize() > body_size);
+    assert!(is_bold(&label_font_at(&native, 2)), "太字のまま");
+
+    // 役割を持たない断片だけがラベルの色に従う。
+    label.set_color(TextColor::Secondary);
+    assert_eq!(*label_color_at(&native, 0), *NSColor::secondaryLabelColor());
+    assert_eq!(*label_color_at(&native, 4), *NSColor::systemRedColor());
+    assert_eq!(*label_color_at(&native, 6), *NSColor::linkColor());
+    assert_eq!(label.text(), "a b c d");
+
+    // 先に決めた段階と色の上へ載せても同じ。
+    let later = ui.label("")?;
+    let later_native: Retained<NSTextField> = later.native_view().downcast().expect("NSTextField");
+    later.set_style(TextStyle::Title);
+    later.set_color(TextColor::Secondary);
+    later.set_rich_text(&sample_rich_text());
+    assert!(label_font_at(&later_native, 0).pointSize() > body_size);
+    assert_eq!(
+        *label_color_at(&later_native, 0),
+        *NSColor::secondaryLabelColor()
+    );
+
+    // ふつうの文字へ戻っても、最後に指定した段階と色は残る。
+    later.set_text("plain");
+    let font = later_native.font().expect("フォント");
+    assert!(font.pointSize() > body_size);
+    assert!(!is_bold(&label_font_at(&native, 0)) || font.pointSize() > body_size);
+    assert_eq!(
+        *later_native.textColor().expect("色"),
+        *NSColor::secondaryLabelColor()
+    );
+    Ok(())
+}
+
+/// Attributes of their own must not take over the field's line breaking.
+fn rich_text_follows_wrapping(ui: &Ui) -> Result<()> {
+    let window = ui.window("折り返し", 200.0, 240.0)?;
+    let stack = ui.stack(Orientation::Vertical)?;
+    let text = RichText::new()
+        .text("これはとても長い説明の文章で、")
+        .bold("狭い幅には ")
+        .link("1 行で収まりません。", "x:y");
+
+    let plain = ui.label("")?;
+    plain.set_rich_text(&text);
+    plain.set_sizing(Sizing::fill_width());
+    let wrapped = ui.label("")?;
+    wrapped.set_wrap(true);
+    wrapped.set_rich_text(&text);
+    wrapped.set_sizing(Sizing::fill_width());
+    stack.append(&plain);
+    stack.append(&wrapped);
+    window.set_child(&stack);
+
+    let content = window.native_window().contentView().expect("中身");
+    content.setFrameSize(NSSize::new(200.0, 240.0));
+    content.layoutSubtreeIfNeeded();
+    content.layoutSubtreeIfNeeded();
+
+    let plain_frame = plain.native_view().frame();
+    let wrapped_frame = wrapped.native_view().frame();
+    assert!(
+        wrapped_frame.size.height > plain_frame.size.height * 1.5,
+        "折り返した側だけ高くなること: 1 行 {} / 折り返し {}",
+        plain_frame.size.height,
+        wrapped_frame.size.height
+    );
+    assert!(
+        plain_frame.size.width <= 210.0,
+        "折り返さない側も配られた幅に収まること: {plain_frame:?}"
+    );
+
+    // 文字が増えれば、折り返している側は高くなる (親の連なりへ伝わる)。
+    let before = wrapped_frame.size.height;
+    wrapped.set_rich_text(
+        &RichText::new()
+            .text("これはとても長い説明の文章で、".repeat(4))
+            .bold("狭い幅には収まりません。"),
+    );
+    content.layoutSubtreeIfNeeded();
+    content.layoutSubtreeIfNeeded();
+    assert!(
+        wrapped.native_view().frame().size.height > before,
+        "増えた行のぶん高くなること"
+    );
+    Ok(())
+}
+
+fn rich_text_link_click_reaches_on_link(ui: &Ui) -> Result<()> {
+    let window = ui.window("リンク", 400.0, 200.0)?;
+    let stack = ui.stack(Orientation::Vertical)?;
+    let label = ui.label("")?;
+    stack.append(&label);
+    window.set_child(&stack);
+    window.show();
+    let view = label.native_view();
+    let native: Retained<NSTextField> = view.clone().downcast().expect("NSTextField");
+    label.set_rich_text(&RichText::new().text("open ").link("here", "app:first"));
+
+    // テストからブラウザを開かないよう、常に Handled で答える。
+    let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+    {
+        let seen = seen.clone();
+        let again = label.clone();
+        label.on_link(move |href| {
+            seen.borrow_mut().push(href.to_string());
+            // 通知の中で中身を変えられる (`render` はここから走る)。
+            again.set_rich_text(&RichText::new().text("open ").link("there", "app:second"));
+            EventResponse::Handled
+        });
+    }
+
+    let ns_window = window.native_window();
+    let content = ns_window.contentView().expect("中身");
+    content.layoutSubtreeIfNeeded();
+
+    // 「here」の位置を、欄と同じ文字組みで測る。
+    let open_width = {
+        let attributed = native.attributedStringValue();
+        let prefix = attributed.attributedSubstringFromRange(NSRange::new(0, 5));
+        prefix.size().width
+    };
+    let frame = view.frame();
+    let point = NSPoint::new(open_width + 2.0 + 6.0, view.bounds().size.height / 2.0);
+    assert!(point.x < frame.size.width, "前提: 文字が欄に収まること");
+    let in_window = view.convertPoint_toView(point, None);
+    let event = |kind, timestamp| {
+        NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+            kind,
+            in_window,
+            NSEventModifierFlags::empty(),
+            timestamp,
+            ns_window.windowNumber(),
+            None,
+            0,
+            1,
+            1.0,
+        )
+        .expect("マウスイベント")
+    };
+    let app = NSApplication::sharedApplication(MainThreadMarker::new().expect("main"));
+    let now = objc2_foundation::NSProcessInfo::processInfo().systemUptime();
+    unsafe { app.postEvent_atStart(&event(NSEventType::LeftMouseUp, now + 0.01), false) };
+    let frame_view = unsafe { content.superview() }.expect("ウィンドウの枠のビュー");
+    // 欄が編集に入っていれば、当たるのはフィールドエディタで、リンクの判定は
+    // それがする。アクティブでないアプリの窓は押下で編集に入らないので
+    // (CI も同じ)、先に入れておく。
+    unsafe { native.selectText(None) };
+    // 全選択のままだと、選択の上の押下はドラッグの始まりと見なされてリンクに届かない。
+    native
+        .currentEditor()
+        .expect("欄の編集が始まること")
+        .setSelectedRange(NSRange::new(0, 0));
+    let target = frame_view.hitTest(in_window).expect("文字の上のビュー");
+    assert!(
+        target.downcast_ref::<NSTextView>().is_some(),
+        "押下を受けるのはフィールドエディタ: {:?}",
+        target.class().name()
+    );
+    target.mouseDown(&event(NSEventType::LeftMouseDown, now));
+    deliver_events(&app);
+    pump(0.05);
+
+    assert_eq!(
+        *seen.borrow(),
+        ["app:first"],
+        "押したリンクの href が届くこと"
+    );
+    assert_eq!(label.text(), "open there", "通知の中で変えた内容が残ること");
+
+    // 差し替えた後のリンクも、同じ受け口へ届く。
+    let responded: objc2::runtime::Bool = unsafe {
+        msg_send![
+            &*native,
+            textView: Option::<&NSTextView>::None,
+            clickedOnLink: &*NSString::from_str("app:direct"),
+            atIndex: 5usize,
+        ]
+    };
+    assert!(responded.as_bool());
+    assert_eq!(seen.borrow().last().map(String::as_str), Some("app:direct"));
+    window.close();
     Ok(())
 }
 

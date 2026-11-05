@@ -23,6 +23,7 @@ block2 = "0.6"
 dispatch2 = { version = "0.3", default-features = false, features = ["std", "objc2"] }
 objc2-foundation = { version = "0.3", features = [
     "NSArray",
+    "NSAttributedString",
     "NSCalendar",
     "NSData",
     "NSDate",
@@ -38,6 +39,7 @@ objc2-foundation = { version = "0.3", features = [
     "NSTimer",
     "NSURL",
     "NSUserDefaults",
+    "NSValue",
 ] }
 objc2-app-kit = { version = "0.3", features = [
     "NSAccessibilityProtocols",
@@ -208,6 +210,7 @@ objc2-core-graphics = { version = "0.3", default-features = false, features = [
     "CGEventTypes",
 ] }
 objc2-foundation = { version = "0.3", features = [
+    "NSAttributedString",
     "NSDate",
     "NSDictionary",
     "NSString",

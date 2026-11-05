@@ -17,7 +17,8 @@ use gtk::glib;
 use gtk::pango;
 use gtk::prelude::*;
 use naui_core::{
-    Align, Breakpoint, ButtonRole, Orientation, Padding, StackArrangement, TextColor, TextStyle,
+    Align, Breakpoint, ButtonRole, EventResponse, LinkHandler, Orientation, Padding, RichText,
+    StackArrangement, TextColor, TextRun, TextStyle,
 };
 
 use crate::bin::{apply_padding, SizeBin};
@@ -163,6 +164,28 @@ pub(crate) fn without_signal<T>(
 struct LabelInner {
     native: gtk::Label,
     bin: SizeBin,
+    /// The formatted content being shown. `None` while showing plain text.
+    rich: RefCell<Option<RichText>>,
+    on_link: LinkHandler,
+    /// The subscriptions to the theme, made when a run first needs a color from it.
+    theme: RefCell<Option<ThemeWatch>>,
+}
+
+/// The subscriptions that rewrite the markup when the theme's colors change.
+struct ThemeWatch {
+    manager: adw::StyleManager,
+    handlers: Vec<glib::SignalHandlerId>,
+}
+
+impl Drop for LabelInner {
+    fn drop(&mut self) {
+        // `AdwStyleManager` はアプリの間ずっと生きるので、外さないと接続が残り続ける。
+        if let Some(watch) = self.theme.take() {
+            for handler in watch.handlers {
+                watch.manager.disconnect(handler);
+            }
+        }
+    }
 }
 
 /// Non-editable text (`GtkLabel`).
@@ -176,7 +199,26 @@ impl Label {
         // GtkLabel の既定は中央ぞろえだが、naui のラベルは他の環境と同じく左詰め。
         native.set_xalign(0.0);
         let bin = SizeBin::wrap(&native);
-        let this = Self(Rc::new(LabelInner { native, bin }));
+        let inner = Rc::new(LabelInner {
+            native,
+            bin,
+            rich: RefCell::new(None),
+            on_link: LinkHandler::default(),
+            theme: RefCell::new(None),
+        });
+        let weak = Rc::downgrade(&inner);
+        inner.native.connect_activate_link(move |_native, href| {
+            let Some(inner) = weak.upgrade() else {
+                return glib::Propagation::Proceed;
+            };
+            if inner.on_link.emit(href) == EventResponse::Handled || href.is_empty() {
+                glib::Propagation::Stop
+            } else {
+                // 既定の処理が既定のハンドラで開く。
+                glib::Propagation::Proceed
+            }
+        });
+        let this = Self(inner);
         this.set_wrap(false);
         this
     }
@@ -188,10 +230,45 @@ impl Label {
     pub fn set_text(&self, text: &str) {
         // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
         // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
-        if self.text() == text {
+        // 飾りが付いているときは、文字が同じでも飾りを外す必要がある。
+        if self.0.rich.borrow().is_none() && self.text() == text {
             return;
         }
+        self.0.rich.borrow_mut().take();
         self.0.native.set_text(text);
+    }
+
+    /// Shows text that mixes bold, colors and links (Pango markup).
+    ///
+    /// Setting the content already shown does nothing, so the selection and the
+    /// keyboard focus survive, and `render` can call it every time.
+    /// [`text`](Self::text) returns the text without its formatting, and
+    /// [`set_text`](Self::set_text) goes back to plain text.
+    ///
+    /// Pango markup has no way to name a theme color, so a run's role is resolved to
+    /// the color libadwaita gives it now, and written again when the theme changes.
+    /// `Secondary` is the text color at libadwaita's dimmed opacity.
+    pub fn set_rich_text(&self, text: &RichText) {
+        if text.is_plain() {
+            self.set_text(&text.plain_text());
+            return;
+        }
+        if self.0.rich.borrow().as_ref() == Some(text) {
+            return;
+        }
+        *self.0.rich.borrow_mut() = Some(text.clone());
+        LabelInner::watch_theme(&self.0, text);
+        self.0.apply_rich_text();
+    }
+
+    /// Called with the `href` when a link in the text is clicked. Calling it again
+    /// removes the previous one.
+    ///
+    /// Answering [`EventResponse::Continue`] then opens the `href` with the default
+    /// handler; [`EventResponse::Handled`] keeps it from being opened, for links that
+    /// act inside the app.
+    pub fn on_link(&self, f: impl FnMut(&str) -> EventResponse + 'static) {
+        self.0.on_link.set(f);
     }
 
     /// Whether the text can be selected and copied. Not selectable by default.
@@ -254,6 +331,105 @@ impl Label {
             self.0.native.add_css_class(class);
         }
     }
+}
+
+impl LabelInner {
+    /// Writes the formatted content to the label, if it differs from what is there.
+    fn apply_rich_text(&self) {
+        let rich = self.rich.borrow();
+        let Some(rich) = rich.as_ref() else {
+            return;
+        };
+        let markup = rich_text_markup(rich);
+        if self.native.label() != markup.as_str() || !self.native.uses_markup() {
+            self.native.set_markup(&markup);
+        }
+    }
+
+    /// Subscribes to the theme the first time a run takes a color from it.
+    fn watch_theme(this: &Rc<Self>, text: &RichText) {
+        let colored = text
+            .runs()
+            .iter()
+            .any(|run| run.text_color() != TextColor::Default);
+        if !colored || this.theme.borrow().is_some() {
+            return;
+        }
+        let manager = adw::StyleManager::default();
+        // `accent-color` は libadwaita 1.6 から。無い版では通知が来ないだけ。
+        let handlers = ["dark", "high-contrast", "accent-color"]
+            .into_iter()
+            .map(|property| {
+                let weak = Rc::downgrade(this);
+                manager.connect_notify_local(Some(property), move |_, _| {
+                    if let Some(inner) = weak.upgrade() {
+                        inner.apply_rich_text();
+                    }
+                })
+            })
+            .collect();
+        *this.theme.borrow_mut() = Some(ThemeWatch { manager, handlers });
+    }
+}
+
+/// The Pango markup for rich text. Everything that comes from the app is escaped.
+fn rich_text_markup(text: &RichText) -> String {
+    let mut markup = String::new();
+    for run in text.runs() {
+        push_run_markup(&mut markup, run);
+    }
+    markup
+}
+
+fn push_run_markup(markup: &mut String, run: &TextRun) {
+    let color = role_color_attributes(run.text_color());
+    if let Some(href) = run.href() {
+        markup.push_str(&format!("<a href=\"{}\">", glib::markup_escape_text(href)));
+    }
+    if run.is_bold() {
+        markup.push_str("<b>");
+    }
+    if let Some(color) = &color {
+        markup.push_str(&format!("<span {color}>"));
+    }
+    markup.push_str(&glib::markup_escape_text(run.text()));
+    if color.is_some() {
+        markup.push_str("</span>");
+    }
+    if run.is_bold() {
+        markup.push_str("</b>");
+    }
+    if run.href().is_some() {
+        markup.push_str("</a>");
+    }
+}
+
+/// libadwaita's `--dim-opacity`, which `.dim-label` applies to the whole widget.
+const DIM_OPACITY_PERCENT: u32 = 55;
+
+/// The attributes of a `<span>` showing a color role as the theme has it now.
+///
+/// `None` for the default role, which takes the label's own color.
+fn role_color_attributes(role: TextColor) -> Option<String> {
+    let class = role.style_class()?;
+    // 役割の色はスタイルクラスの中にしか無いので、そのクラスを付けた部品に聞く。
+    let probe = gtk::Label::new(None);
+    probe.add_css_class(class);
+    let color = probe.color();
+    let channel = |value: f32| (value.clamp(0.0, 1.0) * 255.0).round() as u8;
+    let hex = format!(
+        "#{:02x}{:02x}{:02x}",
+        channel(color.red()),
+        channel(color.green()),
+        channel(color.blue()),
+    );
+    // `.dim-label` は色ではなく不透明度を変えるので、部品の色には表れない。
+    let alpha = if role == TextColor::Secondary {
+        DIM_OPACITY_PERCENT
+    } else {
+        (color.alpha().clamp(0.0, 1.0) * 100.0).round() as u32
+    };
+    Some(format!("foreground=\"{hex}\" fgalpha=\"{alpha}%\""))
 }
 
 // ----------------------------------------------------------------- Button

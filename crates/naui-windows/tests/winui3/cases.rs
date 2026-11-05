@@ -10,8 +10,8 @@ use std::time::Duration;
 
 use naui_core::{
     Align, ButtonRole, Color, GridCell, MenuItem, MenuShortcut, MenuSpec, Orientation, Point, Rect,
-    Result, ScrollPolicy, SidebarItem, SidebarSection, Sizing, TextColor, TextStyle, ToolbarIcon,
-    WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
+    Result, RichText, ScrollPolicy, SidebarItem, SidebarSection, Sizing, TextColor, TextStyle,
+    ToolbarIcon, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_windows::{run_for_test, MenuEntry, Ui, Widget};
 
@@ -21,6 +21,7 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
     ComboBox as XamlComboBox, Grid, Image as XamlImage, MenuFlyoutItem, ProgressRing, ScrollViewer,
     Slider as XamlSlider, StackPanel, TextBlock, TextBox, ToggleSwitch,
 };
+use naui_winui3::Microsoft::UI::Xaml::Documents::{Hyperlink, Inline, Run};
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::{BitmapImage, SvgImageSource};
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
 use naui_winui3::Microsoft::UI::Xaml::{
@@ -222,6 +223,15 @@ const CASES: &[Case] = &[
     (
         "ラベルを選べるようにすると IsTextSelectionEnabled が立つ",
         label_can_be_selectable,
+    ),
+    ("リッチテキストが Inlines になる", rich_text_builds_inlines),
+    (
+        "リッチテキストは表示中と同じ内容なら何もしない",
+        rich_text_same_content_keeps_the_inlines,
+    ),
+    (
+        "リッチテキストからふつうの文字へ戻せる",
+        rich_text_goes_back_to_plain_text,
     ),
     ("URL として読めないものは開かない", open_url_rejects_garbage),
     (
@@ -6596,6 +6606,109 @@ fn moved_window_child_keeps_new_parent(ui: &Ui) -> Result<()> {
         32.0,
         "新しい窓を閉じたら既定幅に戻る"
     );
+    Ok(())
+}
+
+fn sample_rich_text() -> RichText {
+    RichText::new()
+        .text("a ")
+        .bold("b ")
+        .colored("c ", TextColor::Danger)
+        .link("d", "https://example.com/d")
+}
+
+/// The inlines of a label, in order.
+fn inlines_of(label: &naui_windows::Label) -> Vec<Inline> {
+    let inlines = native::<TextBlock>(label)
+        .Inlines()
+        .expect("TextBlock の Inlines");
+    let count = inlines.Size().expect("Inlines の数");
+    (0..count)
+        .map(|index| inlines.GetAt(index).expect("Inline"))
+        .collect()
+}
+
+/// `Run`s are built through `XamlReader`, so this also checks that WinUI accepts the
+/// XAML of a bold and colored run (a `{ThemeResource}` that does not resolve fails
+/// here).
+fn rich_text_builds_inlines(ui: &Ui) -> Result<()> {
+    let label = ui.label("")?;
+    label.set_rich_text(&sample_rich_text());
+    assert_eq!(label.text(), "a b c d");
+
+    let inlines = inlines_of(&label);
+    assert_eq!(inlines.len(), 4, "断片ごとに Inline ができること");
+    for (index, expected) in ["a ", "b ", "c "].into_iter().enumerate() {
+        let run: Run = inlines[index].cast().expect("Run");
+        assert_eq!(run.Text().expect("Run の文字列").to_string(), expected);
+    }
+    let link: Hyperlink = inlines[3].cast().expect("リンクは Hyperlink");
+    assert!(
+        link.NavigateUri().is_err(),
+        "開くかどうかは on_link の答えで決めるので、WinUI に任せない"
+    );
+    let inside = link.Inlines().expect("Hyperlink の Inlines");
+    assert_eq!(inside.Size().expect("数"), 1);
+    let run: Run = inside.GetAt(0).expect("Inline").cast().expect("Run");
+    assert_eq!(run.Text().expect("Run の文字列").to_string(), "d");
+
+    // 段階と色は `Style` で当たるので、中身に関わらず何度でも変えられる。
+    label.set_style(TextStyle::Title);
+    label.set_color(TextColor::Secondary);
+    assert_eq!(inlines_of(&label).len(), 4, "段階と色で中身は変わらない");
+    Ok(())
+}
+
+/// `render` sets the same content every time, so the inlines, which hold the selection
+/// and the hover state, must stay the same objects.
+fn rich_text_same_content_keeps_the_inlines(ui: &Ui) -> Result<()> {
+    let label = ui.label("")?;
+    label.set_rich_text(&sample_rich_text());
+    let before = inlines_of(&label);
+
+    // 作り方が違っても、見せるものが同じなら同じ内容。
+    label.set_rich_text(
+        &RichText::new()
+            .text("a")
+            .text(" ")
+            .bold("b ")
+            .colored("c ", TextColor::Danger)
+            .link("d", "https://example.com/d"),
+    );
+    assert_eq!(
+        before,
+        inlines_of(&label),
+        "同じオブジェクトのままであること"
+    );
+
+    label.set_rich_text(&RichText::new().bold("a b c d"));
+    assert_ne!(before, inlines_of(&label), "内容が変われば書き換わる");
+    assert_eq!(inlines_of(&label).len(), 1);
+    Ok(())
+}
+
+fn rich_text_goes_back_to_plain_text(ui: &Ui) -> Result<()> {
+    let label = ui.label("")?;
+    let text_block = native::<TextBlock>(&label);
+
+    // 文字が同じでも、飾りは外れる。
+    label.set_rich_text(&RichText::new().bold("abc").link("d", "x:y"));
+    label.set_text("abcd");
+    assert_eq!(label.text(), "abcd");
+    assert_eq!(text_block.Text().expect("文字列").to_string(), "abcd");
+    let inlines = inlines_of(&label);
+    assert!(
+        inlines
+            .iter()
+            .all(|inline| inline.cast::<Hyperlink>().is_err()),
+        "リンクが残らないこと"
+    );
+
+    // 飾りの無い RichText は set_text と同じ。
+    label.set_rich_text(&RichText::new().bold("abcd"));
+    label.set_rich_text(&RichText::new().text("plain"));
+    assert_eq!(label.text(), "plain");
+    assert_eq!(text_block.Text().expect("文字列").to_string(), "plain");
     Ok(())
 }
 

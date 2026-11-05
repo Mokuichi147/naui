@@ -4,8 +4,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    Align, Breakpoint, ButtonRole, Orientation, Padding, Result, StackArrangement, TextColor,
-    TextStyle,
+    Align, Breakpoint, ButtonRole, EventResponse, LinkHandler, Orientation, Padding, Result,
+    RichText, StackArrangement, TextColor, TextRun, TextStyle,
 };
 use naui_winui3::Microsoft::UI::Dispatching::{
     DispatcherQueue, DispatcherQueueHandler, DispatcherQueueTimer,
@@ -13,6 +13,9 @@ use naui_winui3::Microsoft::UI::Dispatching::{
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button as XamlButton, CheckBox as XamlCheckBox, Grid, PasswordBox, ProgressRing,
     ScrollBarVisibility, ScrollViewer, Slider as XamlSlider, TextBlock, TextBox,
+};
+use naui_winui3::Microsoft::UI::Xaml::Documents::{
+    Hyperlink, HyperlinkClickEventArgs, Inline, Run,
 };
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{
@@ -179,6 +182,9 @@ struct LabelInner {
     /// can be rebuilt even when only one of them changes.
     style: Cell<TextStyle>,
     color: Cell<TextColor>,
+    /// The formatted content being shown. `None` while showing plain text.
+    rich: RefCell<Option<RichText>>,
+    on_link: LinkHandler,
 }
 
 /// Text display (TextBlock).
@@ -213,6 +219,8 @@ impl Label {
             native,
             style: Cell::new(TextStyle::default()),
             color: Cell::new(TextColor::default()),
+            rich: RefCell::new(None),
+            on_link: LinkHandler::default(),
         }));
         this.set_wrap(false);
         Ok(this)
@@ -243,6 +251,9 @@ impl Label {
     }
 
     pub fn text(&self) -> String {
+        if let Some(rich) = self.0.rich.borrow().as_ref() {
+            return rich.plain_text();
+        }
         self.0
             .native
             .Text()
@@ -253,10 +264,49 @@ impl Label {
     pub fn set_text(&self, text: &str) {
         // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
         // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
-        if self.text() == text {
+        // 飾りが付いているときは、文字が同じでも飾りを外す必要がある。
+        if self.0.rich.borrow().is_none() && self.text() == text {
             return;
         }
+        self.0.rich.borrow_mut().take();
+        // `Text` を書くと `Inlines` は入れ替わる。
         let _ = self.0.native.SetText(&HSTRING::from(text));
+    }
+
+    /// Shows text that mixes bold, colors and links (`TextBlock.Inlines`).
+    ///
+    /// Setting the content already shown does nothing, so the selection and the
+    /// keyboard focus survive, and `render` can call it every time.
+    /// [`text`](Self::text) returns the text without its formatting, and
+    /// [`set_text`](Self::set_text) goes back to plain text.
+    ///
+    /// A run's color is set as a `{ThemeResource}`, so it follows when the window's
+    /// `RequestedTheme` is switched, as with [`set_color`](Self::set_color).
+    pub fn set_rich_text(&self, text: &RichText) {
+        if text.is_plain() {
+            self.set_text(&text.plain_text());
+            return;
+        }
+        if self.0.rich.borrow().as_ref() == Some(text) {
+            return;
+        }
+        if let Err(error) = LabelInner::write_inlines(&self.0, text) {
+            // 飾りを諦めても、文字は見せる。
+            eprintln!("naui-windows: could not format the label text: {error}");
+            self.set_text(&text.plain_text());
+            return;
+        }
+        *self.0.rich.borrow_mut() = Some(text.clone());
+    }
+
+    /// Called with the `href` when a link in the text is clicked. Calling it again
+    /// removes the previous one.
+    ///
+    /// Answering [`EventResponse::Continue`] then opens the `href` with the default
+    /// handler; [`EventResponse::Handled`] keeps it from being opened, for links that
+    /// act inside the app.
+    pub fn on_link(&self, f: impl FnMut(&str) -> EventResponse + 'static) {
+        self.0.on_link.set(f);
     }
 
     /// The level of text size and weight. The default is [`TextStyle::Body`].
@@ -290,6 +340,94 @@ impl Label {
         };
         let _ = self.0.native.SetStyle(&style);
     }
+}
+
+impl LabelInner {
+    /// Replaces the `TextBlock`'s `Inlines` with the runs.
+    fn write_inlines(this: &Rc<Self>, text: &RichText) -> Result<()> {
+        // 途中で失敗しても表示中の中身を壊さないよう、先に全部作る。
+        let inlines = text
+            .runs()
+            .iter()
+            .map(|run| rich_inline(this, run))
+            .collect::<Result<Vec<_>>>()?;
+        let target = this
+            .native
+            .Inlines()
+            .map_err(|e| to_error("get the TextBlock inlines", e))?;
+        target
+            .Clear()
+            .map_err(|e| to_error("clear the TextBlock inlines", e))?;
+        for inline in &inlines {
+            target
+                .Append(inline)
+                .map_err(|e| to_error("append a TextBlock inline", e))?;
+        }
+        Ok(())
+    }
+}
+
+/// The inline for one run: a `Run`, inside a `Hyperlink` if it is a link.
+fn rich_inline(this: &Rc<LabelInner>, run: &TextRun) -> Result<Inline> {
+    let text = rich_run(run)?;
+    let Some(href) = run.href() else {
+        return text
+            .cast()
+            .map_err(|e| to_error("use a Run as an inline", e));
+    };
+    let link = Hyperlink::new().map_err(|e| to_error("create the Hyperlink", e))?;
+    link.Inlines()
+        .and_then(|inlines| inlines.Append(&text))
+        .map_err(|e| to_error("put the Run into the Hyperlink", e))?;
+    // `NavigateUri` を入れると、`Handled` と答えても WinUI が開いてしまう。
+    // 開くのは押下の通知で決める。
+    let inner = UiThreadCell::new(Rc::downgrade(this));
+    let href = href.to_string();
+    let handler = TypedEventHandler::<Hyperlink, HyperlinkClickEventArgs>::new(move |_, _| {
+        inner.with_mut(|inner| {
+            let Some(inner) = inner.upgrade() else {
+                return;
+            };
+            if inner.on_link.emit(&href) == EventResponse::Continue && !href.is_empty() {
+                if let Err(error) = crate::open_url(&href) {
+                    eprintln!("naui-windows: could not open the link: {error}");
+                }
+            }
+        });
+        Ok(())
+    });
+    link.Click(&handler)
+        .map_err(|e| to_error("listen to the Hyperlink", e))?;
+    link.cast()
+        .map_err(|e| to_error("use a Hyperlink as an inline", e))
+}
+
+/// The `Run` holding a run's text, bold and color.
+///
+/// The bold and the color are written in XAML: only there can a color be a
+/// `{ThemeResource}`, which is what makes it follow the theme.
+fn rich_run(run: &TextRun) -> Result<Run> {
+    let mut attributes = String::new();
+    if run.is_bold() {
+        attributes.push_str(r#" FontWeight="Bold""#);
+    }
+    if let Some(key) = run.text_color().xaml_brush_key() {
+        attributes.push_str(&format!(r#" Foreground="{{ThemeResource {key}}}""#));
+    }
+    let native = if attributes.is_empty() {
+        Run::new().map_err(|e| to_error("create the Run", e))?
+    } else {
+        let xaml = format!(
+            r#"<Run xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"{attributes}/>"#
+        );
+        XamlReader::Load(&HSTRING::from(xaml))
+            .and_then(|element| element.cast::<Run>())
+            .map_err(|e| to_error("create the formatted Run", e))?
+    };
+    native
+        .SetText(&HSTRING::from(run.text()))
+        .map_err(|e| to_error("set the Run text", e))?;
+    Ok(native)
 }
 
 /// The base of the `Style` holding the color `Setter`. `{brush}` is replaced with
