@@ -2914,6 +2914,64 @@ fn table_builds_only_the_visible_rows() {
 
 /// Even when a row outside the window is selected, the selection is remembered, and
 /// the row looks selected when scrolled back into view.
+/// A table given its rows before it is placed in the document has no sizes yet. It
+/// measures and narrows its rows once it gets a size.
+#[wasm_bindgen_test]
+async fn table_filled_before_it_is_placed_narrows_its_rows() {
+    const ROWS: usize = 20_000;
+    let mut kept = None;
+    with_ui(|ui| {
+        let table = ui.table()?;
+        table.set_columns(&TableColumn::list(["番号"]));
+        table.set_sizing(Sizing::fixed(240.0, 200.0));
+        table.set_rows(
+            &(0..ROWS)
+                .map(|index| TableRow::new([index.to_string()]))
+                .collect::<Vec<_>>(),
+        );
+        assert_eq!(
+            table_rows(&table).len(),
+            ROW_WINDOW_THRESHOLD,
+            "大きさが分かるまでは先頭だけを組み立てる"
+        );
+        kept = Some(table);
+        Ok(())
+    });
+    let table = kept.expect("表");
+    let _mounted = Mounted::new(&table);
+    next_frames().await;
+    let rows = table_rows(&table).len();
+    assert!(rows < 100, "大きさが分かったら絞り直すこと: {rows} 行");
+    let height = table.row_height();
+    assert!(height > 0.0, "行の高さを測ること");
+    let scroller = table.native_element();
+    assert!(
+        f64::from(scroller.scroll_height()) >= height * ROWS as f64,
+        "全行分の高さになること: {} (行の高さ {height})",
+        scroller.scroll_height()
+    );
+
+    // スクロールの通知で窓が動く。
+    scroller.set_scroll_top((height * 10_000.0) as i32);
+    next_frames().await;
+    assert!(
+        table_rows(&table)
+            .iter()
+            .any(|row| table_row_index(row) == 10_000),
+        "スクロールした先の行が組み立てられること"
+    );
+
+    // 大きさが変わっても引き直す。
+    let before = table_rows(&table).len();
+    table.set_sizing(Sizing::fixed(240.0, 600.0));
+    next_frames().await;
+    let after = table_rows(&table).len();
+    assert!(
+        after > before,
+        "広がった分の行も組み立てること: {before} → {after}"
+    );
+}
+
 #[wasm_bindgen_test]
 fn table_keeps_the_selection_outside_the_window() {
     with_ui(|ui| {
