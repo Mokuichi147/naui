@@ -306,8 +306,9 @@ impl Label {
     /// AppKit reacts to links only in a selectable field, so **a label holding links
     /// can be selected whatever [`set_selectable`](Self::set_selectable) says**
     /// (`allowsEditingTextAttributes` is also needed, and does not make it editable).
-    /// Clicking a link gives the label the keyboard focus, and the pointing-hand
-    /// cursor appears only after the label has been clicked once.
+    /// Clicking a link gives the label the keyboard focus, and the pointer over a link
+    /// stays an I-beam rather than a pointing hand (the field's cursor rect covers the
+    /// whole label, and the field editor's `linkTextAttributes` names no cursor).
     pub fn set_rich_text(&self, text: &RichText) {
         if text.is_plain() {
             self.set_text(&text.plain_text());

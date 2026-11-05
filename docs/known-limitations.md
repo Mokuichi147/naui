@@ -318,7 +318,9 @@ that shape are covered in
 - **A `Label` holding links is selectable**, whatever `set_selectable` says (and
   `is_selectable` still answers what was asked), because AppKit reacts to links only
   in a selectable field. Clicking a link gives the label the keyboard focus, and the
-  pointing-hand cursor appears only after the label has been clicked once.
+  pointer over a link stays an I-beam rather than a pointing hand (the field's cursor
+  rect covers the whole label, and the field editor's `linkTextAttributes` names no
+  cursor).
 - `ButtonRole::Destructive` sets `hasDestructiveAction`, but **only macOS 26 and
   later give it a look** (red text on a faint red bezel, the same as destructive
   buttons in alerts). Before that it looks like an ordinary button.
