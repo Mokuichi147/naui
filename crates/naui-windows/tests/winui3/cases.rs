@@ -10,12 +10,13 @@ use std::time::Duration;
 
 use naui_core::{
     Align, ButtonRole, Color, GridCell, MenuItem, MenuShortcut, MenuSpec, Orientation, Point, Rect,
-    Result, ScrollPolicy, SidebarItem, SidebarSection, Sizing, TextColor, TextStyle, ToolbarIcon,
-    WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
+    Result, ScrollPolicy, SidebarItem, SidebarSection, Sizing, TextColor, TextStyle, Theme,
+    ToolbarIcon, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_windows::{run_for_test, MenuEntry, Ui, Widget};
 
 use crate::automation;
+use naui_winui3::Microsoft::UI::Windowing::TitleBarTheme;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Border, Button as XamlButton, Canvas as XamlCanvas, CheckBox as XamlCheckBox,
     ComboBox as XamlComboBox, Grid, Image as XamlImage, MenuFlyoutItem, ProgressRing, ScrollViewer,
@@ -263,6 +264,10 @@ const CASES: &[Case] = &[
     (
         "ウィンドウの位置が AppWindow と往復する",
         window_position_round_trips,
+    ),
+    (
+        "タイトルバーのボタンがウィンドウのテーマに従う",
+        title_bar_buttons_follow_the_theme,
     ),
     (
         "ウィンドウの最大化・最小化・全画面が往復し通知される",
@@ -2598,6 +2603,44 @@ fn window_lifecycle(ui: &Ui) -> Result<Deferred> {
         assert!(!window.is_visible(), "閉じたら見えないこと");
         Ok(())
     }))
+}
+
+/// The system draws the title bar's buttons, so `RequestedTheme` on the XAML root does
+/// not reach them; the theme has to be handed to `AppWindowTitleBar.PreferredTheme`.
+/// The colors themselves can only be seen on a real screen, so this checks that the
+/// theme is handed over both when creating a window and when switching at runtime.
+fn title_bar_buttons_follow_the_theme(ui: &Ui) -> Result<()> {
+    let preferred = |window: &naui_windows::Window| {
+        window
+            .native_window()
+            .AppWindow()
+            .and_then(|window| window.TitleBar())
+            .and_then(|bar| bar.PreferredTheme())
+            .expect("タイトルバーのテーマ")
+    };
+
+    let window = ui.window("テーマ", 320.0, 240.0)?;
+    assert_eq!(preferred(&window), TitleBarTheme::UseDefaultAppMode);
+    // 中身を載せるとタイトルバーの中まで広げるので、そのあとの切り替えを確かめる。
+    window.set_child(&ui.label("中身")?);
+    for (theme, expected) in [
+        (Theme::Light, TitleBarTheme::Light),
+        (Theme::Dark, TitleBarTheme::Dark),
+        (Theme::System, TitleBarTheme::UseDefaultAppMode),
+    ] {
+        window.set_theme(theme)?;
+        assert_eq!(preferred(&window), expected, "{theme:?} へ切り替えたとき");
+    }
+    window.close();
+
+    // はじめから Light のアプリで作ったウィンドウも、最初から従う。
+    ui.set_theme(Theme::Light)?;
+    let created = ui.window("はじめから", 320.0, 240.0)?;
+    let theme = preferred(&created);
+    ui.set_theme(Theme::System)?;
+    created.close();
+    assert_eq!(theme, TitleBarTheme::Light);
+    Ok(())
 }
 
 /// `size` and `on_resize` are the size of the content row, excluding the title bar
