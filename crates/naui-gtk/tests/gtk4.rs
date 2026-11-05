@@ -25,7 +25,7 @@ use naui_core::{
     Align, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
     EventResponse, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem,
     MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
-    PointerPhase, PopupItem, Rect, Result, ScrollPolicy, SelectionMode, SidebarItem,
+    PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode, SidebarItem,
     SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle, Theme, Time,
     ToolbarIcon, ToolbarItem, Track, TreeItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
@@ -401,6 +401,23 @@ fn main() {
             spinner_fits_below_native_minimum,
         ),
         ("ラベルを選べるようにできる", label_can_be_selectable),
+        (
+            "リッチテキストの太字と色とリンクがマークアップになる",
+            rich_text_maps_to_markup,
+        ),
+        (
+            "リッチテキストは表示中と同じ内容なら何もしない",
+            rich_text_same_content_keeps_the_selection,
+        ),
+        (
+            "リッチテキストからふつうの文字へ戻せる",
+            rich_text_goes_back_to_plain_text,
+        ),
+        (
+            "リンクの押下が on_link へ届き、中で内容を変えられる",
+            rich_text_link_click_reaches_on_link,
+        ),
+        ("リッチテキストの色がテーマに付いてくる", rich_text_follows_the_theme),
         (
             "クリップボードへ書いた文字を読み戻せる",
             clipboard_round_trips_text,
@@ -10564,6 +10581,173 @@ fn spinner_fits_below_native_minimum(ui: &Ui) -> Result<()> {
     let bounds = native.compute_bounds(&bin).expect("default bounds");
     assert_eq!((bounds.width(), bounds.height()), (16.0, 16.0));
     window.close();
+    Ok(())
+}
+
+/// The color the theme's `.error` has right now.
+fn theme_error_hex() -> String {
+    let probe = gtk::Label::new(None);
+    probe.add_css_class("error");
+    let error = probe.color();
+    let channel = |value: f32| (value * 255.0).round() as u8;
+    format!(
+        "#{:02x}{:02x}{:02x}",
+        channel(error.red()),
+        channel(error.green()),
+        channel(error.blue())
+    )
+}
+
+fn sample_rich_text() -> RichText {
+    RichText::new()
+        .text("a ")
+        .bold("b ")
+        .colored("c ", TextColor::Danger)
+        .link("d", "https://example.com/d")
+}
+
+fn rich_text_maps_to_markup(ui: &Ui) -> Result<()> {
+    let label = ui.label("")?;
+    let native: gtk::Label = label.native_widget().downcast().expect("GtkLabel");
+    label.set_rich_text(&sample_rich_text());
+
+    assert_eq!(label.text(), "a b c d", "text は飾りの無い文字を返す");
+    assert!(native.uses_markup());
+    let markup = native.label().to_string();
+    assert!(markup.starts_with("a <b>b </b>"), "太字: {markup}");
+    assert!(
+        markup.contains(r#"<a href="https://example.com/d">d</a>"#),
+        "リンク: {markup}"
+    );
+    assert!(markup.contains("<span foreground=\"#"), "色: {markup}");
+    assert!(markup.contains(">c </span>"), "色: {markup}");
+
+    // 役割の色はテーマの `.error` と同じ。
+    let hex = theme_error_hex();
+    assert!(markup.contains(&hex), "{hex} が {markup} に入ること");
+
+    // アプリの文字はマークアップとして読まれない。
+    label.set_rich_text(
+        &RichText::new()
+            .bold("<i>&</i>")
+            .link("\"q\"", "https://example.com/?a=1&b=\"2\""),
+    );
+    assert_eq!(label.text(), "<i>&</i>\"q\"");
+    assert!(
+        native.label().contains("&lt;i&gt;&amp;"),
+        "{}",
+        native.label()
+    );
+    Ok(())
+}
+
+/// `render` sets the same content every time, so it must not disturb what the user
+/// is doing with the text.
+fn rich_text_same_content_keeps_the_selection(ui: &Ui) -> Result<()> {
+    let label = ui.label("")?;
+    let native: gtk::Label = label.native_widget().downcast().expect("GtkLabel");
+    label.set_rich_text(&sample_rich_text());
+
+    // GtkLabel は中身を書くたびに選択を捨て、`label` を通知する。
+    let rewrites = Rc::new(Cell::new(0));
+    native.connect_notify_local(Some("label"), {
+        let rewrites = rewrites.clone();
+        move |_, _| rewrites.set(rewrites.get() + 1)
+    });
+
+    // 作り方が違っても、見せるものが同じなら同じ内容。
+    label.set_rich_text(
+        &RichText::new()
+            .text("a")
+            .text(" ")
+            .bold("b ")
+            .colored("c ", TextColor::Danger)
+            .link("d", "https://example.com/d"),
+    );
+    assert_eq!(rewrites.get(), 0, "書き直さないこと");
+
+    label.set_rich_text(&RichText::new().bold("a b c d"));
+    assert!(rewrites.get() > 0, "内容が変われば書き換わる");
+    assert_eq!(native.label().as_str(), "<b>a b c d</b>");
+    Ok(())
+}
+
+fn rich_text_goes_back_to_plain_text(ui: &Ui) -> Result<()> {
+    let label = ui.label("")?;
+    let native: gtk::Label = label.native_widget().downcast().expect("GtkLabel");
+
+    // 文字が同じでも、飾りは外れる。
+    label.set_rich_text(&RichText::new().bold("abc").link("d", "x:y"));
+    label.set_text("abcd");
+    assert_eq!(label.text(), "abcd");
+    assert!(!native.uses_markup());
+    assert_eq!(native.label().as_str(), "abcd");
+
+    // 飾りの無い RichText は set_text と同じ。文字に `<` があってもそのまま。
+    label.set_rich_text(&RichText::new().bold("a"));
+    label.set_rich_text(&RichText::new().text("a<b"));
+    assert!(!native.uses_markup());
+    assert_eq!(label.text(), "a<b");
+
+    label.set_rich_text(&RichText::new());
+    assert_eq!(label.text(), "");
+    Ok(())
+}
+
+fn rich_text_link_click_reaches_on_link(ui: &Ui) -> Result<()> {
+    let label = ui.label("")?;
+    let native: gtk::Label = label.native_widget().downcast().expect("GtkLabel");
+    label.set_rich_text(&RichText::new().text("open ").link("here", "app:first"));
+
+    let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+    {
+        let seen = seen.clone();
+        let again = label.clone();
+        label.on_link(move |href| {
+            seen.borrow_mut().push(href.to_string());
+            // 通知の中で中身を変えられる (`render` はここから走る)。
+            again.set_rich_text(&RichText::new().text("open ").link("there", "app:second"));
+            EventResponse::Handled
+        });
+    }
+    let stopped: bool = native.emit_by_name("activate-link", &[&"app:first"]);
+    assert!(stopped, "Handled なら既定の処理へ進まない");
+    assert_eq!(*seen.borrow(), ["app:first"]);
+    assert_eq!(label.text(), "open there");
+
+    // Continue なら既定の処理へ進む。行き先が空なら開こうとしない。
+    label.on_link(|_href| EventResponse::Continue);
+    let stopped: bool = native.emit_by_name("activate-link", &[&""]);
+    assert!(stopped, "行き先の無いリンクは開こうとしない");
+    Ok(())
+}
+
+/// Pango markup cannot name a theme color, so the markup is rewritten on a switch.
+fn rich_text_follows_the_theme(ui: &Ui) -> Result<()> {
+    let label = ui.label("")?;
+    let native: gtk::Label = label.native_widget().downcast().expect("GtkLabel");
+    label.set_rich_text(&RichText::new().colored("c", TextColor::Danger).bold("b"));
+
+    let manager = adw::StyleManager::default();
+    let saved = manager.color_scheme();
+    // 暗い環境から始まると明るいほうへの切り替えも通知されるので、両方向を試す。
+    // 切り替え前の色を読むと、書き換わっていても 1 回分ずれる。
+    let mut seen = Vec::new();
+    for scheme in [
+        adw::ColorScheme::ForceLight,
+        adw::ColorScheme::ForceDark,
+        adw::ColorScheme::ForceLight,
+    ] {
+        manager.set_color_scheme(scheme);
+        seen.push((theme_error_hex(), native.label().to_string()));
+    }
+    manager.set_color_scheme(saved);
+
+    assert_ne!(seen[0].0, seen[1].0, "明暗で `.error` の色が変わること");
+    for (hex, markup) in &seen {
+        assert!(markup.contains(hex), "{hex} が {markup} に入ること");
+    }
+    assert_eq!(label.text(), "cb");
     Ok(())
 }
 

@@ -2,8 +2,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui::{
-    Align, Button, ButtonRole, Checkbox, ComboBox, Orientation, RadioGroup, Result, Slider,
-    TextColor, TextStyle, Theme, Toggle, Ui, WindowPlacement, WindowState,
+    Align, Button, ButtonRole, Checkbox, ComboBox, EventResponse, Orientation, RadioGroup, Result,
+    RichText, Slider, TextColor, TextStyle, Theme, Toggle, Ui, WindowPlacement, WindowState,
 };
 
 use crate::parts::{self, Disabler, Form, Notice};
@@ -176,7 +176,7 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window, notice: &Notice) -> Result<n
     });
     form.row(ui, "Theme", &theme)?;
 
-    text_styles(ui, &pane)?;
+    text_styles(ui, &pane, notice)?;
     system(ui, &pane, notice)?;
     window_controls(ui, &pane, window, notice)?;
     Ok(pane)
@@ -186,7 +186,7 @@ pub(crate) fn build(ui: &Ui, window: &naui::Window, notice: &Notice) -> Result<n
 ///
 /// 大きさは段階で、色は役割で指定する。級数と色そのものは OS が決めるので、
 /// テーマや文字サイズの設定に追従する。
-fn text_styles(ui: &Ui, pane: &naui::Stack) -> Result<()> {
+fn text_styles(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
     parts::section(ui, pane, "Label")?;
     let styles = ui.stack(Orientation::Vertical)?;
     styles.set_spacing(4.0);
@@ -221,6 +221,36 @@ fn text_styles(ui: &Ui, pane: &naui::Stack) -> Result<()> {
         colors.append(&sample);
     }
     pane.append(&colors);
+
+    // 1 行の中で太字・色・リンクを混ぜる。`app:` のリンクはアプリの中で受け、
+    // それ以外は既定のハンドラで開く。
+    let rich = ui.label("")?;
+    rich.set_wrap(true);
+    rich.set_sizing(naui::Sizing::fill_width());
+    rich.set_rich_text(
+        &RichText::new()
+            .text("Build ")
+            .colored("failed", TextColor::Danger)
+            .text(" on ")
+            .bold("3 of 120")
+            .text(" tests. ")
+            .link("Retry", "app:retry")
+            .text(" or read the ")
+            .link("documentation", "https://docs.rs/naui")
+            .text("."),
+    );
+    rich.on_link({
+        let notice = notice.clone();
+        move |href| {
+            if href == "app:retry" {
+                notice.show("Retrying");
+                EventResponse::Handled
+            } else {
+                EventResponse::Continue
+            }
+        }
+    });
+    pane.append(&rich);
     Ok(())
 }
 

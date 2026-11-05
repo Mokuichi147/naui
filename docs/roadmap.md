@@ -226,10 +226,17 @@ Model–View–Update structure is complete in v0.16.0 (the guide stays in P2).
       and estimates the heights of the rest. On the Web such a list leaves
       `<select>`, which has no place for padding, for the composed
       `<ul role="listbox">`.
-- [ ] **Rich text** (mixing bold, colors and links within a line).
+- [x] **Rich text** (`RichText`, `TextRun`, `Label::set_rich_text`,
+      `Label::on_link`), mixing bold, colors and links within a line.
       `NSAttributedString`, Pango markup, `TextBlock.Inlines`, `<span>`. As with
-      `set_text` since v0.15.0, setting the content already shown must do nothing,
-      so that naui-app's `render` can set it every time.
+      `set_text` since v0.15.0, setting the content already shown does nothing, so
+      that naui-app's `render` can set it every time: `RichText` compares by what it
+      shows (empty runs are dropped, neighbouring runs with the same look are joined),
+      and the selection and the keyboard focus survive. Colors are the `TextColor`
+      roles, and a link keeps the platform's link color. A click opens the `href` with
+      the default handler unless `on_link` answers `Handled`, for links that act inside
+      the app. On macOS a label holding links is selectable, since AppKit reacts to
+      links only in a selectable field.
 - [x] *(app)* **Components** (`Component`, `Mounted`, `Children`,
       `Dispatch::wrap`, `examples/checklist`). A component has its own model,
       messages, `update` and widgets, and goes through `mount` (building its

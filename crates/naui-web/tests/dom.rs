@@ -24,8 +24,8 @@ use std::rc::Rc;
 use naui_core::{
     Align, ButtonRole, Color, DialogButtons, DialogResponse, EventResponse, GridCell, Key,
     KeyEvent, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding,
-    Pane, Point, PointerButton, PointerPhase, PopupItem, Rect, Result, ScrollMetrics,
-    SelectionMode, SidebarItem, SidebarSection, Sizing, TableColumn, TableRow, TextColor,
+    Pane, Point, PointerButton, PointerPhase, PopupItem, Rect, Result, RichText, ScrollMetrics,
+    SelectionMode, SidebarItem, SidebarSection, Sizing, TableColumn, TableRow, TextColor, TextRun,
     TextStyle, Theme, ToolbarIcon, ToolbarItem, WindowPlacement, WindowState,
     DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_THRESHOLD,
 };
@@ -1382,6 +1382,163 @@ fn label_text_round_trips() {
         assert_eq!(label.text(), "はじめ");
         label.set_text("あと");
         assert_eq!(label.text(), "あと");
+        Ok(())
+    });
+}
+
+fn sample_rich_text() -> RichText {
+    RichText::new()
+        .text("a ")
+        .bold("b ")
+        .colored("c ", TextColor::Danger)
+        .link("d", "https://example.com/d")
+}
+
+#[wasm_bindgen_test]
+fn rich_text_maps_to_elements() {
+    with_ui(|ui| {
+        let label = ui.label("")?;
+        label.set_rich_text(&sample_rich_text());
+        assert_eq!(label.text(), "a b c d");
+
+        let element = label.native_element();
+        let bold = element.query_selector("b").unwrap().expect("<b>");
+        assert_eq!(bold.text_content().as_deref(), Some("b "));
+        let colored: web_sys::HtmlElement = element
+            .query_selector("span")
+            .unwrap()
+            .expect("<span>")
+            .unchecked_into();
+        assert_eq!(colored.text_content().as_deref(), Some("c "));
+        assert!(
+            !colored
+                .style()
+                .get_property_value("color")
+                .unwrap()
+                .is_empty(),
+            "役割の色が当たること"
+        );
+        let link = element.query_selector("a").unwrap().expect("<a>");
+        assert_eq!(link.text_content().as_deref(), Some("d"));
+        assert_eq!(
+            link.get_attribute("href").as_deref(),
+            Some("https://example.com/d")
+        );
+        assert_eq!(link.get_attribute("target").as_deref(), Some("_blank"));
+
+        // アプリの文字は HTML として読まれない。
+        label.set_rich_text(&RichText::new().bold("<i>&</i>"));
+        assert_eq!(label.text(), "<i>&</i>");
+        assert!(element.query_selector("i").unwrap().is_none());
+        Ok(())
+    });
+}
+
+/// `render` sets the same content every time, so the elements, which hold the
+/// selection and the keyboard focus, must stay the same.
+#[wasm_bindgen_test]
+fn rich_text_same_content_keeps_the_elements() {
+    with_ui(|ui| {
+        let label = ui.label("")?;
+        label.set_rich_text(&sample_rich_text());
+        let element = label.native_element();
+        let link = element.query_selector("a").unwrap().expect("<a>");
+
+        // 作り方が違っても、見せるものが同じなら同じ内容。
+        label.set_rich_text(
+            &RichText::new()
+                .text("a")
+                .text(" ")
+                .bold("b ")
+                .colored("c ", TextColor::Danger)
+                .link("d", "https://example.com/d"),
+        );
+        assert!(element.contains(Some(&link)), "同じ要素のままであること");
+
+        label.set_rich_text(&RichText::new().bold("a b c d"));
+        assert!(!element.contains(Some(&link)), "内容が変われば書き換わる");
+        assert_eq!(element.child_element_count(), 1);
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn rich_text_goes_back_to_plain_text() {
+    with_ui(|ui| {
+        let label = ui.label("")?;
+        let element = label.native_element();
+
+        // 文字が同じでも、飾りは外れる。
+        label.set_rich_text(&RichText::new().bold("abc").link("d", "x:y"));
+        label.set_text("abcd");
+        assert_eq!(label.text(), "abcd");
+        assert_eq!(element.child_element_count(), 0);
+
+        // 飾りの無い RichText は set_text と同じ。
+        label.set_rich_text(&RichText::new().bold("a"));
+        label.set_rich_text(&RichText::new().text("a<b"));
+        assert_eq!(label.text(), "a<b");
+        assert_eq!(element.child_element_count(), 0);
+
+        label.set_rich_text(&RichText::new());
+        assert_eq!(label.text(), "");
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn rich_text_link_click_reaches_on_link() {
+    with_ui(|ui| {
+        let label = ui.label("")?;
+        let element = label.native_element();
+        label.set_rich_text(
+            &RichText::new()
+                .text("open ")
+                .run(TextRun::new("here").bold().link("app:first")),
+        );
+
+        let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+        {
+            let seen = seen.clone();
+            let again = label.clone();
+            label.on_link(move |href| {
+                seen.borrow_mut().push(href.to_string());
+                // 通知の中で中身を変えられる (`render` はここから走る)。
+                again.set_rich_text(&RichText::new().link("there", "app:second"));
+                EventResponse::Handled
+            });
+        }
+        // リンクの中の `<b>` を押しても、`<a>` の href が届く。
+        let inner: web_sys::HtmlElement = element
+            .query_selector("a b")
+            .unwrap()
+            .expect("リンクの中の太字")
+            .unchecked_into();
+        inner.click();
+        assert_eq!(*seen.borrow(), ["app:first"]);
+        assert_eq!(label.text(), "there");
+
+        // リンクの外を押しても通知しない。
+        label.set_rich_text(&RichText::new().bold("plain").link("there", "app:second"));
+        let outside: web_sys::HtmlElement = element
+            .query_selector("b")
+            .unwrap()
+            .expect("太字")
+            .unchecked_into();
+        outside.click();
+        assert_eq!(seen.borrow().len(), 1);
+
+        // Handled はブラウザに辿らせない。
+        let link = element.query_selector("a").unwrap().expect("<a>");
+        let event = web_sys::MouseEvent::new_with_mouse_event_init_dict("click", &{
+            let init = web_sys::MouseEventInit::new();
+            init.set_bubbles(true);
+            init.set_cancelable(true);
+            init
+        })
+        .unwrap();
+        link.dispatch_event(&event).unwrap();
+        assert!(event.default_prevented());
         Ok(())
     });
 }
@@ -2953,6 +3110,63 @@ fn table_keeps_the_selection_outside_the_window() {
             vec![4_000],
             "戻ってきたら選ばれた見た目になること"
         );
+        Ok(())
+    });
+}
+
+/// `aria-activedescendant` names an element in the document, so it follows the row the
+/// keyboard is on only while that row is built, and the keys carry on from that row.
+#[wasm_bindgen_test]
+fn table_active_descendant_only_names_rows_that_exist() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        let table = ui.table()?;
+        table.set_columns(&TableColumn::list(["名前"]));
+        table.set_sizing(
+            Sizing::new()
+                .width(Length::Fill)
+                .height(Length::Fixed(200.0)),
+        );
+        let _mounted = Mounted::new(&table);
+        table.set_rows(
+            &(0..ROWS)
+                .map(|index| TableRow::new([format!("行 {index}")]))
+                .collect::<Vec<_>>(),
+        );
+        let grid = table.native_table();
+        let press = |key: &str| press_shortcut(grid.as_ref(), key, false, false, false);
+        let named = || {
+            grid.get_attribute("aria-activedescendant").map(|id| {
+                web_sys::window()
+                    .expect("window")
+                    .document()
+                    .expect("document")
+                    .get_element_by_id(&id)
+                    .and_then(|row| row.text_content())
+                    .unwrap_or_else(|| format!("文書に無い行 {id}"))
+            })
+        };
+
+        assert_eq!(named(), None, "まだキーで動かしていないこと");
+        press("ArrowDown");
+        press("ArrowDown");
+        assert_eq!(named().as_deref(), Some("行 1"));
+
+        // 遠くへ送ると、その行は組み立てられなくなるので指さない。
+        table.scroll_to_row(4_000);
+        assert_eq!(named(), None, "文書に無い行を指さないこと");
+
+        // 行が戻ると、また指す。
+        table.scroll_to_row(1);
+        assert_eq!(named().as_deref(), Some("行 1"));
+
+        // 離れていても、キーはその行から続く。窓の端の先の行も指せる。
+        table.scroll_to_row(4_000);
+        press("ArrowDown");
+        assert_eq!(table.selection(), vec![2]);
+        assert_eq!(named().as_deref(), Some("行 2"));
+        press("End");
+        assert_eq!(named().as_deref(), Some("行 4999"));
         Ok(())
     });
 }
