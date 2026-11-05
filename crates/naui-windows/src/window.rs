@@ -1724,8 +1724,8 @@ fn title_bar_theme(theme: Theme) -> TitleBarTheme {
 /// them. Left alone, they keep the colors of the OS theme: white on the light title
 /// bar when the OS is dark.
 ///
-/// `PreferredTheme` is missing from older Windows App SDK runtimes (naui attaches down
-/// to 1.3, see `crate::sdk`). The window still works there, with buttons in the OS
+/// `PreferredTheme` needs Windows App SDK 1.7, while naui attaches down to 1.3 (see
+/// `crate::sdk`). The window still works on the older runtimes, with buttons in the OS
 /// theme's colors, so a failure is ignored in the same way as Mica's.
 fn set_title_bar_theme(native: &XamlWindow, theme: Theme) {
     let _ = native

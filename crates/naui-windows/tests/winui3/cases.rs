@@ -29,6 +29,7 @@ use naui_winui3::Microsoft::UI::Xaml::{
     UIElement, VerticalAlignment, Visibility,
 };
 use windows::Foundation::{IPropertyValue, PropertyValue};
+use windows::Win32::Foundation::E_NOINTERFACE;
 use windows_core::{Interface, HSTRING};
 
 /// One test case.
@@ -2609,17 +2610,28 @@ fn window_lifecycle(ui: &Ui) -> Result<Deferred> {
 /// not reach them; the theme has to be handed to `AppWindowTitleBar.PreferredTheme`.
 /// The colors themselves can only be seen on a real screen, so this checks that the
 /// theme is handed over both when creating a window and when switching at runtime.
+///
+/// Older runtimes that naui still supports have no `PreferredTheme`. There the buttons
+/// stay in the OS theme's colors, so only check that switching the theme still works.
 fn title_bar_buttons_follow_the_theme(ui: &Ui) -> Result<()> {
-    let preferred = |window: &naui_windows::Window| {
+    let read_preferred = |window: &naui_windows::Window| {
         window
             .native_window()
             .AppWindow()
             .and_then(|window| window.TitleBar())
             .and_then(|bar| bar.PreferredTheme())
-            .expect("タイトルバーのテーマ")
     };
+    let preferred =
+        |window: &naui_windows::Window| read_preferred(window).expect("タイトルバーのテーマ");
 
     let window = ui.window("テーマ", 320.0, 240.0)?;
+    if matches!(read_preferred(&window), Err(error) if error.code() == E_NOINTERFACE) {
+        println!("     (PreferredTheme が無いランタイムなので、ボタンのテーマは確かめずに通す)");
+        window.set_theme(Theme::Light)?;
+        window.set_theme(Theme::System)?;
+        window.close();
+        return Ok(());
+    }
     assert_eq!(preferred(&window), TitleBarTheme::UseDefaultAppMode);
     // 中身を載せるとタイトルバーの中まで広げるので、そのあとの切り替えを確かめる。
     window.set_child(&ui.label("中身")?);
