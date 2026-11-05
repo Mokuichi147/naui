@@ -529,29 +529,34 @@ impl Ui {
     /// nothing to open it with. Failures that happen in whatever opens it are not
     /// reported.
     pub fn open_url(&self, url: &str) -> Result<()> {
-        // `URLWithString:` は空文字や `example.com` のような scheme の無い文字列にも
-        // nil でない URL を返す。それを `NSWorkspace` へ渡すと、Finder が
-        // 「アプリケーションを開けません。(-50)」のダイアログを出してしまうので、
-        // scheme の無いものはここで弾く。
-        let Some(parsed) =
-            objc2_foundation::NSURL::URLWithString(&objc2_foundation::NSString::from_str(url))
-                .filter(|parsed| parsed.scheme().is_some_and(|scheme| scheme.length() > 0))
-        else {
-            return Err(Error::new(
-                "open the URL",
-                format!("not a valid URL: {url}"),
-            ));
-        };
-        if objc2_app_kit::NSWorkspace::sharedWorkspace().openURL(&parsed) {
-            Ok(())
-        } else {
-            Err(Error::new("open the URL", format!("could not open: {url}")))
-        }
+        open_url(url)
     }
 
     /// Quits the app.
     pub fn quit(&self) {
         NSApplication::sharedApplication(self.0.mtm).terminate(None);
+    }
+}
+
+/// [`Ui::open_url`]. A link inside a `Label` opens through the same path.
+pub(crate) fn open_url(url: &str) -> Result<()> {
+    // `URLWithString:` は空文字や `example.com` のような scheme の無い文字列にも
+    // nil でない URL を返す。それを `NSWorkspace` へ渡すと、Finder が
+    // 「アプリケーションを開けません。(-50)」のダイアログを出してしまうので、
+    // scheme の無いものはここで弾く。
+    let Some(parsed) =
+        objc2_foundation::NSURL::URLWithString(&objc2_foundation::NSString::from_str(url))
+            .filter(|parsed| parsed.scheme().is_some_and(|scheme| scheme.length() > 0))
+    else {
+        return Err(Error::new(
+            "open the URL",
+            format!("not a valid URL: {url}"),
+        ));
+    };
+    if objc2_app_kit::NSWorkspace::sharedWorkspace().openURL(&parsed) {
+        Ok(())
+    } else {
+        Err(Error::new("open the URL", format!("could not open: {url}")))
     }
 }
 

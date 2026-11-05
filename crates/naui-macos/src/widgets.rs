@@ -9,22 +9,30 @@ use std::rc::Rc;
 
 use dispatch2::{DispatchQueue, MainThreadBound};
 use naui_core::{
-    Align, Breakpoint, ButtonRole, Orientation, Padding, StackArrangement, TextColor, TextStyle,
+    Align, Breakpoint, ButtonRole, EventResponse, LinkHandler, Orientation, Padding, RichText,
+    StackArrangement, TextColor, TextRun, TextStyle,
 };
 use objc2::rc::{Allocated, Retained};
-use objc2::runtime::NSObjectProtocol;
-use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly, Message};
+use objc2::runtime::{AnyObject, Bool, NSObject, NSObjectProtocol};
+use objc2::{
+    define_class, msg_send, sel, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message,
+};
 use objc2_app_kit::{
-    NSAutoresizingMaskOptions, NSBorderType, NSButton, NSButtonType, NSColor,
-    NSControlStateValueOff, NSControlStateValueOn, NSFont, NSFontTextStyle, NSFontTextStyleBody,
-    NSFontTextStyleHeadline, NSFontTextStyleLargeTitle, NSFontTextStyleSubheadline,
-    NSFontTextStyleTitle1, NSFontTextStyleTitle3, NSLayoutAttribute, NSLayoutConstraint,
-    NSLineBreakMode, NSProgressIndicator, NSProgressIndicatorStyle, NSScrollView, NSSearchField,
-    NSSecureTextField, NSSlider, NSStackView, NSStackViewDistribution, NSTextField, NSTextView,
-    NSTintProminence, NSUserInterfaceLayoutOrientation, NSView, NSViewFrameDidChangeNotification,
+    NSAutoresizingMaskOptions, NSBorderType, NSButton, NSButtonType, NSColor, NSControl,
+    NSControlStateValueOff, NSControlStateValueOn, NSFont, NSFontAttributeName,
+    NSFontDescriptorSymbolicTraits, NSFontTextStyle, NSFontTextStyleBody, NSFontTextStyleHeadline,
+    NSFontTextStyleLargeTitle, NSFontTextStyleSubheadline, NSFontTextStyleTitle1,
+    NSFontTextStyleTitle3, NSForegroundColorAttributeName, NSLayoutAttribute, NSLayoutConstraint,
+    NSLineBreakMode, NSLinkAttributeName, NSProgressIndicator, NSProgressIndicatorStyle,
+    NSResponder, NSScrollView, NSSearchField, NSSecureTextField, NSSlider, NSStackView,
+    NSStackViewDistribution, NSTextField, NSTextView, NSTintProminence, NSUnderlineStyle,
+    NSUnderlineStyleAttributeName, NSUserInterfaceLayoutOrientation, NSView,
+    NSViewFrameDidChangeNotification,
 };
 use objc2_foundation::{
-    NSArray, NSDictionary, NSEdgeInsets, NSNotificationCenter, NSPoint, NSRect, NSSize, NSString,
+    NSArray, NSAttributedString, NSAttributedStringKey, NSDictionary, NSEdgeInsets,
+    NSMutableAttributedString, NSNotificationCenter, NSNumber, NSPoint, NSRect, NSSize, NSString,
+    NSUInteger, NSURL,
 };
 
 use crate::trampoline::{ActionTarget, FieldHandlers, FieldObserver, TextViewObserver};
@@ -158,8 +166,66 @@ pub(crate) use {impl_interaction, impl_sizing, impl_widget};
 
 // ------------------------------------------------------------------ Label
 
+define_class!(
+    #[unsafe(super(NSTextField, NSControl, NSView, NSResponder, NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiLabel"]
+    #[ivars = LinkHandler]
+    /// A label that hears about clicks on its links.
+    ///
+    /// While a selectable text field is being clicked, the field editor is what shows
+    /// the text, and the field is that editor's delegate. So a link's click arrives
+    /// here as `NSTextViewDelegate`'s method.
+    struct NauiLabel;
+
+    unsafe impl NSObjectProtocol for NauiLabel {}
+
+    impl NauiLabel {
+        #[unsafe(method(textView:clickedOnLink:atIndex:))]
+        fn clicked_on_link(
+            &self,
+            _text_view: Option<&NSTextView>,
+            link: &AnyObject,
+            _index: NSUInteger,
+        ) -> Bool {
+            let href = match (link.downcast_ref::<NSString>(), link.downcast_ref::<NSURL>()) {
+                (Some(text), _) => text.to_string(),
+                (None, Some(url)) => url
+                    .absoluteString()
+                    .map(|text| text.to_string())
+                    .unwrap_or_default(),
+                (None, None) => return Bool::NO,
+            };
+            if self.ivars().emit(&href) == EventResponse::Continue && !href.is_empty() {
+                if let Err(error) = crate::open_url(&href) {
+                    eprintln!("naui-macos: could not open the link: {error}");
+                }
+            }
+            Bool::YES
+        }
+    }
+);
+
+impl NauiLabel {
+    fn new(mtm: MainThreadMarker, text: &str) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(LinkHandler::default());
+        let this: Retained<Self> = unsafe { msg_send![super(this), init] };
+        // NSTextField::labelWithString と同じ構成を手で作る。あちらは ivars を
+        // 初期化する機会がない。
+        this.setEditable(false);
+        this.setSelectable(false);
+        this.setBezeled(false);
+        this.setDrawsBackground(false);
+        this.setTextColor(Some(&NSColor::labelColor()));
+        this.setFont(Some(&NSFont::systemFontOfSize(NSFont::systemFontSize())));
+        this.setTranslatesAutoresizingMaskIntoConstraints(false);
+        this.setStringValue(&NSString::from_str(text));
+        this
+    }
+}
+
 struct LabelInner {
-    native: Retained<NSTextField>,
+    native: Retained<NauiLabel>,
     mtm: MainThreadMarker,
     /// Whether it wraps.
     wraps: Cell<bool>,
@@ -169,6 +235,15 @@ struct LabelInner {
     /// The relay is held with the same lifetime as the handle (the same rule as
     /// `Toast`).
     width_target: RefCell<Option<Retained<ActionTarget>>>,
+    /// The formatted content being shown. `None` while showing plain text.
+    rich: RefCell<Option<RichText>>,
+    /// What `set_selectable` asked for. AppKit's own flag also goes up for links.
+    selectable: Cell<bool>,
+    /// The font from `set_style`. Kept here because the field's own font follows the
+    /// first run of an attributed string.
+    font: RefCell<Retained<NSFont>>,
+    /// The role from `set_color`, for the same reason.
+    color: Cell<TextColor>,
 }
 
 /// Non-editable text (an NSTextField in label configuration).
@@ -178,12 +253,19 @@ impl_widget!(Label);
 
 impl Label {
     pub(crate) fn new(mtm: MainThreadMarker, text: &str) -> Self {
-        let native = NSTextField::labelWithString(&NSString::from_str(text), mtm);
+        let native = NauiLabel::new(mtm, text);
+        let font = native
+            .font()
+            .unwrap_or_else(|| NSFont::systemFontOfSize(NSFont::systemFontSize()));
         let this = Self(Rc::new(LabelInner {
             native,
             mtm,
             wraps: Cell::new(false),
             width_target: RefCell::new(None),
+            rich: RefCell::new(None),
+            selectable: Cell::new(false),
+            font: RefCell::new(font),
+            color: Cell::new(TextColor::default()),
         }));
         this.set_wrap(false);
         this
@@ -196,13 +278,59 @@ impl Label {
     pub fn set_text(&self, text: &str) {
         // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
         // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
-        if self.text() == text {
+        // 飾りが付いているときは、文字が同じでも飾りを外す必要がある。
+        if self.0.rich.borrow().is_none() && self.text() == text {
             return;
         }
+        self.0.rich.borrow_mut().take();
+        self.0.sync_link_support();
         self.0.native.setStringValue(&NSString::from_str(text));
+        // 飾り付きの文字を入れている間に、欄のフォントと色は最初の断片のものへ
+        // 変わっている。
+        self.0.native.setFont(Some(&self.0.font.borrow()));
+        self.0
+            .native
+            .setTextColor(Some(&label_color(self.0.color.get())));
         // 文字が変われば要る大きさも変わる (折り返していれば行数ごと)。
         // 親の連なりへ伝えないと、`Grid` の `Auto` 行が前の高さのまま残る。
         crate::layout::invalidate_ancestors(&self.0.native);
+    }
+
+    /// Shows text that mixes bold, colors and links (`NSAttributedString`).
+    ///
+    /// Setting the content already shown does nothing, so the selection and the
+    /// keyboard focus survive, and `render` can call it every time.
+    /// [`text`](Self::text) returns the text without its formatting, and
+    /// [`set_text`](Self::set_text) goes back to plain text.
+    ///
+    /// AppKit reacts to links only in a selectable field, so **a label holding links
+    /// can be selected whatever [`set_selectable`](Self::set_selectable) says**
+    /// (`allowsEditingTextAttributes` is also needed, and does not make it editable).
+    /// Clicking a link gives the label the keyboard focus, and the pointer over a link
+    /// stays an I-beam rather than a pointing hand (the field's cursor rect covers the
+    /// whole label, and the field editor's `linkTextAttributes` names no cursor).
+    pub fn set_rich_text(&self, text: &RichText) {
+        if text.is_plain() {
+            self.set_text(&text.plain_text());
+            return;
+        }
+        if self.0.rich.borrow().as_ref() == Some(text) {
+            return;
+        }
+        *self.0.rich.borrow_mut() = Some(text.clone());
+        self.0.sync_link_support();
+        self.0.apply_rich_text();
+        crate::layout::invalidate_ancestors(&self.0.native);
+    }
+
+    /// Called with the `href` when a link in the text is clicked. Calling it again
+    /// removes the previous one.
+    ///
+    /// Answering [`EventResponse::Continue`] then opens the `href` with the default
+    /// handler; [`EventResponse::Handled`] keeps it from being opened, for links that
+    /// act inside the app.
+    pub fn on_link(&self, f: impl FnMut(&str) -> EventResponse + 'static) {
+        self.0.native.ivars().set(f);
     }
 
     /// Whether the text can be selected and copied. Not selectable by default.
@@ -210,11 +338,12 @@ impl Label {
     /// Use it for text readers will want to copy, such as chat messages or error
     /// details. Unlike a text field, the text cannot be edited.
     pub fn set_selectable(&self, selectable: bool) {
-        self.0.native.setSelectable(selectable);
+        self.0.selectable.set(selectable);
+        self.0.sync_link_support();
     }
 
     pub fn is_selectable(&self) -> bool {
-        self.0.native.isSelectable()
+        self.0.selectable.get()
     }
 
     /// Whether long text wraps. Does not wrap by default.
@@ -280,7 +409,10 @@ impl Label {
     /// (`preferredFontForTextStyle:`). The OS decides the point sizes, so they follow
     /// the system's text size setting as is.
     pub fn set_style(&self, style: TextStyle) {
-        self.0.native.setFont(Some(&preferred_font(style)));
+        let font = preferred_font(style);
+        self.0.native.setFont(Some(&font));
+        *self.0.font.borrow_mut() = font;
+        self.0.apply_rich_text();
         // フォントが変われば行の高さも変わる。折り返し中なら、いまの幅で
         // 測り直させる (frame が動かないときは通知が来ないため)。
         self.0.sync_preferred_width();
@@ -291,7 +423,9 @@ impl Label {
     /// AppKit's semantic colors (`labelColor` and so on) are used as is, so they follow
     /// light / dark switching and the accent color setting.
     pub fn set_color(&self, color: TextColor) {
+        self.0.color.set(color);
         self.0.native.setTextColor(Some(&label_color(color)));
+        self.0.apply_rich_text();
     }
 }
 
@@ -332,7 +466,78 @@ fn label_color(color: TextColor) -> Retained<NSColor> {
     }
 }
 
+/// The bold face of `font`. `font` itself if it has none.
+fn bold_font(font: &NSFont) -> Retained<NSFont> {
+    let descriptor = font.fontDescriptor();
+    let traits = descriptor.symbolicTraits() | NSFontDescriptorSymbolicTraits::TraitBold;
+    let bold = descriptor.fontDescriptorWithSymbolicTraits(traits);
+    NSFont::fontWithDescriptor_size(&bold, font.pointSize()).unwrap_or_else(|| font.retain())
+}
+
 impl LabelInner {
+    /// Writes the formatted content to the field. Does nothing while showing plain
+    /// text. An attributed string fixes its font and colors when it is made, so this
+    /// also runs when the label's own font or color changes.
+    fn apply_rich_text(&self) {
+        let rich = self.rich.borrow();
+        let Some(rich) = rich.as_ref() else {
+            return;
+        };
+        let whole = NSMutableAttributedString::new();
+        for run in rich.runs() {
+            whole.appendAttributedString(&self.attributed_run(run));
+        }
+        self.native.setAttributedStringValue(&whole);
+        // 文字の大きさが変わるので、折り返し中ならいまの幅で測り直させる。
+        self.sync_preferred_width();
+    }
+
+    fn attributed_run(&self, run: &TextRun) -> Retained<NSAttributedString> {
+        let base = self.font.borrow();
+        let font = if run.is_bold() {
+            bold_font(&base)
+        } else {
+            base.retain()
+        };
+        let color = match (run.href(), run.text_color()) {
+            (Some(_), _) => NSColor::linkColor(),
+            (None, TextColor::Default) => label_color(self.color.get()),
+            (None, role) => label_color(role),
+        };
+        // リンクの見た目は欄の編集中だけ AppKit が付ける。それ以外の間も同じに
+        // 見えるよう、色と下線を自分で入れる。
+        let underline = NSNumber::new_isize(NSUnderlineStyle::Single.0);
+        let href = run.href().map(NSString::from_str);
+        // SAFETY: どれも AppKit が持つ属性名の定数で、値の型は各属性の約束どおり
+        // (NSLinkAttributeName は NSString を受ける)。
+        let attributes = unsafe {
+            let mut keys: Vec<&NSAttributedStringKey> =
+                vec![NSFontAttributeName, NSForegroundColorAttributeName];
+            let mut values: Vec<&AnyObject> = vec![font.as_ref(), color.as_ref()];
+            if let Some(href) = &href {
+                keys.extend([NSLinkAttributeName, NSUnderlineStyleAttributeName]);
+                values.extend::<[&AnyObject; 2]>([href.as_ref(), underline.as_ref()]);
+            }
+            NSDictionary::from_slices(&keys, &values)
+        };
+        // SAFETY: 属性の値の型は上で確かめたとおり。
+        unsafe {
+            NSAttributedString::initWithString_attributes(
+                NSAttributedString::alloc(),
+                &NSString::from_str(run.text()),
+                Some(&attributes),
+            )
+        }
+    }
+
+    /// Puts AppKit's selectable flags in line with the content. A field reacts to its
+    /// links only while both are up.
+    fn sync_link_support(&self) {
+        let links = self.rich.borrow().as_ref().is_some_and(RichText::has_links);
+        self.native.setAllowsEditingTextAttributes(links);
+        self.native.setSelectable(links || self.selectable.get());
+    }
+
     /// Matches the wrapping width to the current frame's width.
     ///
     /// It is written only when the value changes. Writing `preferredMaxLayoutWidth`

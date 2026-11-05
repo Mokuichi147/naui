@@ -1,8 +1,8 @@
 use crate::sys;
 use crate::Widget;
 use naui_core::{
-    Align, Breakpoint, ButtonRole, EventResponse, KeyEvent, Orientation, Padding, TextColor,
-    TextStyle,
+    Align, Breakpoint, ButtonRole, EventResponse, KeyEvent, Orientation, Padding, RichText,
+    TextColor, TextStyle,
 };
 
 /// A push button (`GtkButton`).
@@ -84,6 +84,32 @@ impl Label {
     #[inline]
     pub fn set_text(&self, text: &str) {
         self.0.set_text(text)
+    }
+
+    /// Shows text that mixes bold, colors and links.
+    ///
+    /// Setting the content already shown does nothing, so the selection and the
+    /// keyboard focus survive, and `render` can call it every time.
+    /// [`text`](Self::text) returns the text without its formatting, and
+    /// [`set_text`](Self::set_text) goes back to plain text.
+    ///
+    /// On macOS, AppKit reacts to links only in a selectable field, so a label holding
+    /// links can be selected there whatever
+    /// [`set_selectable`](Self::set_selectable) says.
+    #[inline]
+    pub fn set_rich_text(&self, text: &RichText) {
+        self.0.set_rich_text(text)
+    }
+
+    /// Called with the `href` when a link in the text is clicked. Calling it again
+    /// removes the previous one.
+    ///
+    /// Answering [`EventResponse::Continue`] then opens the `href` with the default
+    /// handler (a new tab on the Web); [`EventResponse::Handled`] keeps it from being
+    /// opened, for links that act inside the app.
+    #[inline]
+    pub fn on_link(&self, f: impl FnMut(&str) -> EventResponse + 'static) {
+        self.0.on_link(f)
     }
 
     /// Whether the text can be selected and copied. Not selectable by default.
