@@ -1,7 +1,7 @@
 //! The field for a new item: a component that is always there.
 
 use naui::{Orientation, Sizing, Ui};
-use naui_app::{Component, Dispatch, Program};
+use naui_app::{Component, Dispatch, Effect, Program};
 
 #[derive(Default)]
 pub struct Entry {
@@ -33,11 +33,12 @@ impl Program for Entry {
     type Message = Message;
     type View = View;
 
-    fn update(&mut self, message: Message) {
+    fn update(&mut self, message: Message) -> Effect<Message> {
         match message {
             Message::DraftChanged(text) => self.draft = text,
             Message::Submit => {}
         }
+        Effect::none()
     }
 
     fn render(&self, view: &View) {

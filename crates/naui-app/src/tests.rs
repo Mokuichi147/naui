@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use std::convert::Infallible;
 use std::rc::Rc;
 
-use super::{App, Dispatch, Program};
+use super::{App, Dispatch, Effect, Program};
 
 /// What happened, in order: `update` and `render` calls.
 type Log = Rc<RefCell<Vec<String>>>;
@@ -36,7 +36,7 @@ impl Program for Recorder {
     type Message = Msg;
     type View = Shown;
 
-    fn update(&mut self, message: Msg) {
+    fn update(&mut self, message: Msg) -> Effect<Msg> {
         self.log.borrow_mut().push(format!("update {message:?}"));
         match message {
             Msg::Add(n) => self.total += n,
@@ -47,6 +47,7 @@ impl Program for Recorder {
             }
             Msg::Panic => panic!("update panicked (intended)"),
         }
+        Effect::none()
     }
 
     fn render(&self, view: &Shown) {

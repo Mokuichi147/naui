@@ -11,7 +11,7 @@
 use std::cell::RefCell;
 
 use naui::{ListItem, Orientation, Padding, Settings, Sizing, Ui};
-use naui_app::{Dispatch, Program};
+use naui_app::{Dispatch, Effect, Program};
 
 #[derive(Default)]
 struct Todo {
@@ -42,7 +42,7 @@ impl Program for Todo {
     type Message = Message;
     type View = View;
 
-    fn update(&mut self, message: Message) {
+    fn update(&mut self, message: Message) -> Effect<Message> {
         match message {
             Message::DraftChanged(text) => self.draft = text,
             Message::Add => {
@@ -61,6 +61,7 @@ impl Program for Todo {
                 }
             }
         }
+        Effect::none()
     }
 
     fn render(&self, view: &View) {

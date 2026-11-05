@@ -6,6 +6,7 @@
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::future::Future;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::pin::Pin;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
@@ -348,6 +349,91 @@ fn 終了で受信側が解放される() {
 
     assert!(!dropped.get());
     tasks.shutdown();
+    assert!(dropped.get());
+}
+
+#[test]
+fn 閉じると届く前の値は捨てられ以後は送れない() {
+    let (fake, tasks) = setup();
+    let got = Rc::new(RefCell::new(Vec::new()));
+    let sink = got.clone();
+    let tx = tasks.channel(move |v: i32| sink.borrow_mut().push(v));
+    let other = tx.clone();
+    let closer = tx.closer();
+    tx.send(1).unwrap();
+    assert!(tx.is_open());
+    closer.close();
+    closer.close();
+    assert!(!tx.is_open());
+    assert!(!other.is_open());
+    assert!(tx.send(2).is_err());
+    assert!(other.send(3).is_err());
+    fake.drain_all();
+    assert!(got.borrow().is_empty());
+}
+
+#[test]
+fn 閉じると送り手が残っていても受信側が解放される() {
+    let (fake, tasks) = setup();
+    let (tracer, dropped) = Tracer::new();
+    let tx = tasks.channel(move |_: i32| {
+        let _ = &tracer;
+    });
+    tx.closer().close();
+    assert!(!dropped.get(), "受信側を外すのは UI スレッドが空いたとき");
+    fake.drain_all();
+    assert!(dropped.get());
+    assert!(tx.send(1).is_err());
+    fake.drain_all();
+}
+
+#[test]
+fn 閉じる手段は送り手に数えない() {
+    let (fake, tasks) = setup();
+    let (tracer, dropped) = Tracer::new();
+    let tx = tasks.channel(move |_: i32| {
+        let _ = &tracer;
+    });
+    let closer = tx.closer();
+    drop(tx);
+    fake.drain_all();
+    assert!(dropped.get(), "closer を持っていてもチャネルは閉じる");
+    closer.close();
+    fake.drain_all();
+}
+
+#[test]
+fn 受信の途中で閉じると残りは渡さない() {
+    let (fake, tasks) = setup();
+    let got = Rc::new(RefCell::new(Vec::new()));
+    let sink = got.clone();
+    let closer: Rc<RefCell<Option<naui_core::ChannelCloser>>> = Rc::new(RefCell::new(None));
+    let inner = closer.clone();
+    let tx = tasks.channel(move |v: i32| {
+        sink.borrow_mut().push(v);
+        if let Some(closer) = inner.borrow_mut().take() {
+            closer.close();
+        }
+    });
+    *closer.borrow_mut() = Some(tx.closer());
+    tx.send(1).unwrap();
+    tx.send(2).unwrap();
+    fake.drain_all();
+    assert_eq!(*got.borrow(), [1]);
+    assert!(tx.send(3).is_err());
+}
+
+#[test]
+fn 別スレッドから閉じられる() {
+    let (fake, tasks) = setup();
+    let (tracer, dropped) = Tracer::new();
+    let tx = tasks.channel(move |_: i32| {
+        let _ = &tracer;
+    });
+    let closer = tx.closer();
+    std::thread::spawn(move || closer.close()).join().unwrap();
+    assert!(!tx.is_open());
+    fake.drain_all();
     assert!(dropped.get());
 }
 
@@ -760,4 +846,194 @@ fn 終了後のタイマーは動かない() {
     assert!(!timer.is_active());
     fake.advance();
     fake.drain_all();
+}
+
+// --- 別スレッドから閉じる -------------------------------------------------
+
+#[test]
+fn 別スレッドの閉じる処理は受信処理の終わりを待つ() {
+    let (fake, tasks) = setup();
+    let received = Rc::new(RefCell::new(Vec::new()));
+    let closer: Rc<RefCell<Option<naui_core::ChannelCloser>>> = Rc::new(RefCell::new(None));
+    let thread = Rc::new(RefCell::new(None));
+    let returned = Arc::new(AtomicBool::new(false));
+    let returned_during = Rc::new(Cell::new(false));
+    let tx = tasks.channel({
+        let (received, closer, thread) = (received.clone(), closer.clone(), thread.clone());
+        let (returned, returned_during) = (returned.clone(), returned_during.clone());
+        move |value: i32| {
+            received.borrow_mut().push(value);
+            let Some(closer) = closer.borrow_mut().take() else {
+                return;
+            };
+            let returned_in = returned.clone();
+            *thread.borrow_mut() = Some(std::thread::spawn(move || {
+                closer.close();
+                returned_in.store(true, Ordering::Release);
+            }));
+            std::thread::sleep(Duration::from_millis(50));
+            returned_during.set(returned.load(Ordering::Acquire));
+        }
+    });
+    *closer.borrow_mut() = Some(tx.closer());
+    tx.send(1).unwrap();
+    tx.send(2).unwrap();
+
+    fake.drain_all();
+    let thread = thread.borrow_mut().take().expect("started");
+    thread.join().unwrap();
+    assert!(!returned_during.get(), "受信処理の間は戻らない");
+    assert!(returned.load(Ordering::Acquire));
+    assert_eq!(*received.borrow(), [1], "閉じたあとの値は渡さない");
+}
+
+#[test]
+fn 別スレッドから閉じたあとに受信処理は始まらない() {
+    let (fake, tasks) = setup();
+    for _ in 0..2000 {
+        let closed = Arc::new(AtomicBool::new(false));
+        let late = Rc::new(Cell::new(false));
+        let tx = tasks.channel({
+            let (closed, late) = (closed.clone(), late.clone());
+            move |_: i32| {
+                if closed.load(Ordering::Acquire) {
+                    late.set(true);
+                }
+            }
+        });
+        for value in 0..8 {
+            tx.send(value).unwrap();
+        }
+        let closer = tx.closer();
+        let closing = {
+            let closed = closed.clone();
+            std::thread::spawn(move || {
+                closer.close();
+                closed.store(true, Ordering::Release);
+            })
+        };
+        while !closing.is_finished() {
+            fake.drain();
+        }
+        closing.join().unwrap();
+        fake.drain_all();
+        assert!(!late.get(), "close が戻ったあとに受信処理が始まった");
+    }
+}
+
+#[test]
+fn 受信処理が落ちても別スレッドの閉じる処理は戻る() {
+    let (fake, tasks) = setup();
+    let closer: Rc<RefCell<Option<naui_core::ChannelCloser>>> = Rc::new(RefCell::new(None));
+    let thread = Rc::new(RefCell::new(None));
+    let tx = tasks.channel({
+        let (closer, thread) = (closer.clone(), thread.clone());
+        move |_: i32| {
+            if let Some(closer) = closer.borrow_mut().take() {
+                *thread.borrow_mut() = Some(std::thread::spawn(move || closer.close()));
+            }
+            panic!("わざと落とす");
+        }
+    });
+    *closer.borrow_mut() = Some(tx.closer());
+    tx.send(1).unwrap();
+
+    fake.drain_all();
+    let thread = thread.borrow_mut().take().expect("started");
+    thread.join().unwrap();
+    assert!(!tx.is_open());
+}
+
+// --- 捨てるときの panic ---------------------------------------------------
+
+/// Panics when dropped, as an app's value, future or callback can.
+struct PanicOnDrop;
+
+impl Drop for PanicOnDrop {
+    fn drop(&mut self) {
+        panic!("わざと落とす");
+    }
+}
+
+#[test]
+fn 閉じるときに値を捨てて落ちても受信側は解放される() {
+    let (fake, tasks) = setup();
+    let (tracer, dropped) = Tracer::new();
+    let tx = tasks.channel(move |_: PanicOnDrop| {
+        let _ = &tracer;
+    });
+    tx.send(PanicOnDrop).unwrap();
+    let closer = tx.closer();
+
+    assert!(catch_unwind(AssertUnwindSafe(|| closer.close())).is_err());
+    fake.drain_all();
+    assert!(dropped.get());
+}
+
+#[test]
+fn 受信の途中で閉じて残りを捨てるときに落ちても解放される() {
+    let (fake, tasks) = setup();
+    let (tracer, dropped) = Tracer::new();
+    let closer: Rc<RefCell<Option<naui_core::ChannelCloser>>> = Rc::new(RefCell::new(None));
+    let inner = closer.clone();
+    let tx = tasks.channel(move |_: Option<PanicOnDrop>| {
+        let _ = &tracer;
+        if let Some(closer) = inner.borrow_mut().take() {
+            closer.close();
+        }
+    });
+    *closer.borrow_mut() = Some(tx.closer());
+    // 受け取る値と、残って捨てられる値。
+    tx.send(None).unwrap();
+    tx.send(Some(PanicOnDrop)).unwrap();
+
+    fake.drain_all();
+    assert!(dropped.get());
+}
+
+#[test]
+fn 受信側を捨てるときに落ちても外へ出ない() {
+    let (fake, tasks) = setup();
+    let guard = PanicOnDrop;
+    let tx = tasks.channel(move |_: i32| {
+        let _ = &guard;
+    });
+    drop(tx);
+    fake.drain_all();
+}
+
+#[test]
+fn 終わった処理を捨てるときに落ちても外へ出ず終わりになる() {
+    struct Done(#[allow(dead_code)] PanicOnDrop);
+
+    impl Future for Done {
+        type Output = ();
+
+        fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<()> {
+            Poll::Ready(())
+        }
+    }
+
+    let (fake, tasks) = setup();
+    let task = tasks.spawn(Done(PanicOnDrop));
+    fake.drain_all();
+    assert!(task.is_finished());
+}
+
+#[test]
+fn 呼び出しの中で止めたタイマーを捨てるときに落ちても外へ出ない() {
+    let (fake, tasks) = setup();
+    let guard = PanicOnDrop;
+    let slot: Rc<RefCell<Option<naui_core::Timer>>> = Rc::new(RefCell::new(None));
+    let inner = slot.clone();
+    let timer = tasks.every(Duration::from_secs(1), move || {
+        let _ = &guard;
+        if let Some(timer) = inner.borrow_mut().take() {
+            timer.cancel();
+        }
+    });
+    *slot.borrow_mut() = Some(timer.clone());
+    fake.advance();
+    fake.drain_all();
+    assert!(!timer.is_active());
 }
