@@ -11,7 +11,7 @@ use naui_winui3::Microsoft::UI::Composition::SystemBackdrops::{
 };
 use naui_winui3::Microsoft::UI::Windowing::{
     AppWindow, AppWindowChangedEventArgs, AppWindowPresenterKind, OverlappedPresenter,
-    OverlappedPresenterState,
+    OverlappedPresenterState, TitleBarTheme,
 };
 use naui_winui3::Microsoft::UI::Xaml::Controls::TextBlock;
 use naui_winui3::Microsoft::UI::Xaml::Input::KeyEventHandler;
@@ -207,6 +207,7 @@ impl Window {
             .SetTitle(&HSTRING::from(title))
             .map_err(|e| to_error("set the Window title", e))?;
         let backdrop = create_backdrop(&native, theme);
+        set_title_bar_theme(&native, theme);
 
         let this = Self(Rc::new(WindowInner {
             native,
@@ -1539,6 +1540,7 @@ impl Window {
     /// Switches this window's color theme.
     pub fn set_theme(&self, theme: Theme) -> Result<()> {
         self.0.theme.set(theme);
+        set_title_bar_theme(&self.0.native, theme);
         let theme_root = self.0.theme_root.borrow();
         if let Some(theme_root) = theme_root.as_ref() {
             set_theme_on_element(theme_root, theme)?;
@@ -1706,6 +1708,30 @@ fn backdrop_theme(theme: Theme) -> SystemBackdropTheme {
         Theme::Light => SystemBackdropTheme::Light,
         Theme::Dark => SystemBackdropTheme::Dark,
     }
+}
+
+fn title_bar_theme(theme: Theme) -> TitleBarTheme {
+    match theme {
+        Theme::System => TitleBarTheme::UseDefaultAppMode,
+        Theme::Light => TitleBarTheme::Light,
+        Theme::Dark => TitleBarTheme::Dark,
+    }
+}
+
+/// Tells the title bar which theme to draw the minimize, maximize and close buttons in.
+///
+/// The system draws those buttons, so the XAML root's `RequestedTheme` does not reach
+/// them. Left alone, they keep the colors of the OS theme: white on the light title
+/// bar when the OS is dark.
+///
+/// `PreferredTheme` needs Windows App SDK 1.7, while naui attaches down to 1.3 (see
+/// `crate::sdk`). The window still works on the older runtimes, with buttons in the OS
+/// theme's colors, so a failure is ignored in the same way as Mica's.
+fn set_title_bar_theme(native: &XamlWindow, theme: Theme) {
+    let _ = native
+        .AppWindow()
+        .and_then(|window| window.TitleBar())
+        .and_then(|bar| bar.SetPreferredTheme(title_bar_theme(theme)));
 }
 
 /// Lays Mica as the window's background.
