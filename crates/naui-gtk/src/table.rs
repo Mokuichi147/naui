@@ -336,8 +336,8 @@ struct TableInner {
     built_start: Cell<usize>,
     /// Whether rows are being built right now. Prevents nested rebuilds.
     rebuilding: Cell<bool>,
-    /// Whether a window update is already waiting for GTK's handler to return.
-    update_pending: Cell<bool>,
+    /// Whether a window update is already waiting for the next frame.
+    window_update_queued: Cell<bool>,
     /// How the selection was changed (modifier keys), as inferred from the last input.
     gesture: Cell<SelectionGesture>,
     /// The contents of the built rows, in order from `window.start`.
@@ -423,7 +423,7 @@ impl Table {
             window: Cell::new(RowWindow::default()),
             built_start: Cell::new(0),
             rebuilding: Cell::new(false),
-            update_pending: Cell::new(false),
+            window_update_queued: Cell::new(false),
             gesture: Cell::new(SelectionGesture::Unknown),
             realized: RefCell::new(Vec::new()),
             selected: RefCell::new(Vec::new()),
@@ -497,7 +497,7 @@ impl Table {
             let weak = Rc::downgrade(&table.0);
             adjustment.connect_value_changed(move |_| {
                 if let Some(inner) = weak.upgrade() {
-                    Table(inner).schedule_window_update();
+                    Table(inner).queue_window_update();
                 }
             });
             // 表そのものの大きさが変わったときも引き直す。
@@ -932,21 +932,29 @@ impl Table {
         )
     }
 
-    /// Moves the built range once the handler that changed the scroll position returned.
+    /// Moves the built range on the next frame.
     ///
-    /// Moving the cursor inside `GtkListBox` scrolls synchronously: `grab_focus` reaches
-    /// `GtkViewport`'s `scroll-to-focus`, which changes the adjustment. `GtkListBox` is
-    /// still using the row at that point, so rebuilding there would pull it out from under
-    /// the move. The idle's priority is above `GDK_PRIORITY_REDRAW`, so the rows are ready
-    /// before the next frame.
-    fn schedule_window_update(&self) {
-        if self.0.update_pending.replace(true) {
+    /// Moving the cursor scrolls from inside `GtkListBox`'s own handling: `grab_focus`
+    /// reaches `GtkViewport`'s `scroll-to-focus`, which changes the adjustment. Rebuilding
+    /// there would remove the row `GtkListBox` is about to select, so the selection would
+    /// land on the wrong row.
+    ///
+    /// It waits for a frame rather than just for the handling to finish, because the frame
+    /// lays the new rows out right after this, before any more input. A key arriving while
+    /// a new row has no position yet would make `GtkViewport` scroll to the top of the list.
+    fn queue_window_update(&self) {
+        // 表示されていなければフレームが来ない。キーの処理の途中でもない。
+        if !self.0.scroller.is_mapped() {
+            self.update_window();
+            return;
+        }
+        if self.0.window_update_queued.replace(true) {
             return;
         }
         let weak = Rc::downgrade(&self.0);
-        glib::idle_add_local_full(glib::Priority::HIGH_IDLE, move || {
+        self.0.scroller.add_tick_callback(move |_, _| {
             if let Some(inner) = weak.upgrade() {
-                inner.update_pending.set(false);
+                inner.window_update_queued.set(false);
                 Table(inner).update_window();
             }
             glib::ControlFlow::Break

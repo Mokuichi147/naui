@@ -6369,32 +6369,51 @@ fn table_keeps_the_focused_row_across_rebuilds(ui: &Ui) -> Result<()> {
 
 /// Moving with the arrow keys goes through `GtkListBox`, which knows only the rows
 /// built, so the cursor has to survive the rows being rebuilt at the window's edge.
+///
+/// It scrolls from inside `GtkListBox`'s own handling, so rows must not be rebuilt in
+/// the middle of it, and a key arriving before a new row has a position must not make
+/// `GtkViewport` jump to the top.
 fn table_arrow_keys_cross_the_window_edge(ui: &Ui) -> Result<()> {
     const ROWS: usize = 5_000;
     const STEPS: usize = 60;
-    let (window, _table, native) = shown_big_table(ui, "表の矢印キー", ROWS)?;
+    let (window, table, native) = shown_big_table(ui, "表の矢印キー", ROWS)?;
+    let press_down = || {
+        native.emit_by_name::<()>(
+            "move-cursor",
+            &[&gtk::MovementStep::DisplayLines, &1i32, &false, &false],
+        );
+    };
     assert!(
         native.row_at_index(0).expect("行").grab_focus(),
         "行にフォーカスを置けること"
     );
+    table.set_selected(0);
     assert!(
         children(&native).len() < STEPS,
         "組み立てた行より遠くまで動くこと"
     );
     for step in 1..=STEPS {
-        native.emit_by_name::<()>(
-            "move-cursor",
-            &[&gtk::MovementStep::DisplayLines, &1i32, &false, &false],
-        );
+        press_down();
         tick(&native);
+        assert_eq!(table.selection(), vec![step], "{step} 回目の移動");
+    }
+    let focused = focused_list_row(&native).expect("行にフォーカスがあること");
+    assert_eq!(
+        table_cells(focused.upcast_ref()),
+        vec![format!("行 {STEPS}")],
+        "フォーカスも付いてくること"
+    );
+
+    // キーの連打: フレームを待たずに続けて押されても、行を飛ばさない。
+    let mut expected = STEPS;
+    for round in 1..=20 {
+        for _ in 0..3 {
+            press_down();
+            pump();
+            expected += 1;
+            assert_eq!(table.selection(), vec![expected], "連打の {round} 回目");
+        }
         tick(&native);
-        let focused = focused_list_row(&native)
-            .unwrap_or_else(|| panic!("{step} 回目で行からフォーカスが外れた"));
-        assert_eq!(
-            table_cells(focused.upcast_ref()),
-            vec![format!("行 {step}")],
-            "{step} 回目の移動先"
-        );
     }
     window.close();
     Ok(())
