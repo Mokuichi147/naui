@@ -7634,6 +7634,54 @@ fn list_keys_reach_rows_not_built_yet() {
     });
 }
 
+/// `aria-activedescendant` names an element in the document, so it follows the row the
+/// keyboard is on only while that row is built, and the keys carry on from that row.
+#[wasm_bindgen_test]
+fn list_active_descendant_only_names_rows_that_exist() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_items(&ListItem::list(
+            (0..ROWS).map(|index| format!("行 {index}")),
+        ));
+        let scroller = list_scroller(&list);
+        let press = |key: &str| press_shortcut(scroller.as_ref(), key, false, false, false);
+        let named = || {
+            scroller.get_attribute("aria-activedescendant").map(|id| {
+                web_sys::window()
+                    .expect("window")
+                    .document()
+                    .expect("document")
+                    .get_element_by_id(&id)
+                    .and_then(|row| row.text_content())
+                    .unwrap_or_else(|| format!("文書に無い行 {id}"))
+            })
+        };
+
+        assert_eq!(named(), None, "まだキーで動かしていないこと");
+        press("ArrowDown");
+        press("ArrowDown");
+        assert_eq!(named().as_deref(), Some("行 1"));
+
+        // 遠くへ送ると、その行は組み立てられなくなるので指さない。
+        list.scroll_to_row(4_000);
+        assert_eq!(named(), None, "文書に無い行を指さないこと");
+
+        // 行が戻ると、また指す。
+        list.scroll_to_row(1);
+        assert_eq!(named().as_deref(), Some("行 1"));
+
+        // 離れていても、キーはその行から続く。窓の端の先の行も指せる。
+        list.scroll_to_row(4_000);
+        press("ArrowDown");
+        assert_eq!(list.selection(), vec![2]);
+        assert_eq!(named().as_deref(), Some("行 2"));
+        press("End");
+        assert_eq!(named().as_deref(), Some("行 4999"));
+        Ok(())
+    });
+}
+
 /// Even with built rows, whether a row can be selected is answered without creating
 /// it.
 #[wasm_bindgen_test]

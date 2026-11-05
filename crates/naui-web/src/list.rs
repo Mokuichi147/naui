@@ -969,6 +969,7 @@ impl List {
             *row_listeners = listeners;
         }
         self.write_spacers();
+        self.sync_active_descendant();
         // 覚えている選択を、組み立て直した行へ写す。
         let picked = self.selection();
         self.write_selection(&picked);
@@ -1428,10 +1429,25 @@ impl List {
         let Some(active) = self.0.active.get() else {
             return;
         };
-        if let Body::Listbox { list, .. } = &*self.0.body.borrow() {
-            let _ = list.set_attribute("aria-activedescendant", &self.option_id(active));
-        }
         self.reveal_row(active);
+        self.sync_active_descendant();
+    }
+
+    /// Points `aria-activedescendant` at the row the keyboard is on, if it is built.
+    ///
+    /// The attribute must name an element in the document, so it is removed while the row
+    /// is outside the window (scrolled away with the wheel, say). `active` stays, so the
+    /// keys carry on from that row, and the attribute returns with the row.
+    fn sync_active_descendant(&self) {
+        let body = self.0.body.borrow();
+        let Body::Listbox { list, .. } = &*body else {
+            return;
+        };
+        let window = self.0.window.get();
+        let _ = match self.0.active.get().filter(|&index| window.contains(index)) {
+            Some(index) => list.set_attribute("aria-activedescendant", &self.option_id(index)),
+            None => list.remove_attribute("aria-activedescendant"),
+        };
     }
 
     /// Brings row `index` into the scroll area, building the rows around it.
