@@ -30,6 +30,7 @@ Microsoft.UI.Windowing.AppWindowTitleBar
 Microsoft.UI.Windowing.FullScreenPresenter
 Microsoft.UI.Windowing.OverlappedPresenter
 Microsoft.UI.Windowing.OverlappedPresenterState
+Microsoft.UI.Windowing.TitleBarTheme
 Microsoft.UI.Xaml.Application
 Microsoft.UI.Xaml.ApplicationInitializationCallback
 Microsoft.UI.Xaml.ApplicationTheme

@@ -12196,6 +12196,27 @@ pub mod Microsoft {
                         .ok()
                     }
                 }
+                pub fn PreferredTheme(&self) -> windows_core::Result<TitleBarTheme> {
+                    let this = &windows_core::Interface::cast::<IAppWindowTitleBar3>(self)?;
+                    unsafe {
+                        let mut result__ = core::mem::zeroed();
+                        (windows_core::Interface::vtable(this).PreferredTheme)(
+                            windows_core::Interface::as_raw(this),
+                            &mut result__,
+                        )
+                        .map(|| result__)
+                    }
+                }
+                pub fn SetPreferredTheme(&self, value: TitleBarTheme) -> windows_core::Result<()> {
+                    let this = &windows_core::Interface::cast::<IAppWindowTitleBar3>(self)?;
+                    unsafe {
+                        (windows_core::Interface::vtable(this).SetPreferredTheme)(
+                            windows_core::Interface::as_raw(this),
+                            value,
+                        )
+                        .ok()
+                    }
+                }
                 pub fn IsCustomizationSupported() -> windows_core::Result<bool> {
                     Self::IAppWindowTitleBarStatics(|this| unsafe {
                         let mut result__ = core::mem::zeroed();
@@ -14771,18 +14792,53 @@ pub mod Microsoft {
             impl windows_core::RuntimeName for IAppWindowTitleBar3 {
                 const NAME: &'static str = "Microsoft.UI.Windowing.IAppWindowTitleBar3";
             }
-            pub trait IAppWindowTitleBar3_Impl: windows_core::IUnknownImpl {}
+            pub trait IAppWindowTitleBar3_Impl: windows_core::IUnknownImpl {
+                fn PreferredTheme(&self) -> windows_core::Result<TitleBarTheme>;
+                fn SetPreferredTheme(&self, value: TitleBarTheme) -> windows_core::Result<()>;
+            }
             impl IAppWindowTitleBar3_Vtbl {
                 pub const fn new<Identity: IAppWindowTitleBar3_Impl, const OFFSET: isize>() -> Self
                 {
+                    unsafe extern "system" fn PreferredTheme<
+                        Identity: IAppWindowTitleBar3_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        result__: *mut TitleBarTheme,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            match IAppWindowTitleBar3_Impl::PreferredTheme(this) {
+                                Ok(ok__) => {
+                                    result__.write(core::mem::transmute_copy(&ok__));
+                                    windows_core::HRESULT(0)
+                                }
+                                Err(err) => err.into(),
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn SetPreferredTheme<
+                        Identity: IAppWindowTitleBar3_Impl,
+                        const OFFSET: isize,
+                    >(
+                        this: *mut core::ffi::c_void,
+                        value: TitleBarTheme,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this: &Identity =
+                                &*((this as *const *const ()).offset(OFFSET) as *const Identity);
+                            IAppWindowTitleBar3_Impl::SetPreferredTheme(this, value).into()
+                        }
+                    }
                     Self {
                         base__: windows_core::IInspectable_Vtbl::new::<
                             Identity,
                             IAppWindowTitleBar3,
                             OFFSET,
                         >(),
-                        PreferredTheme: 0,
-                        SetPreferredTheme: 0,
+                        PreferredTheme: PreferredTheme::<Identity, OFFSET>,
+                        SetPreferredTheme: SetPreferredTheme::<Identity, OFFSET>,
                     }
                 }
                 pub fn matches(iid: &windows_core::GUID) -> bool {
@@ -14793,8 +14849,16 @@ pub mod Microsoft {
             #[doc(hidden)]
             pub struct IAppWindowTitleBar3_Vtbl {
                 pub base__: windows_core::IInspectable_Vtbl,
-                PreferredTheme: usize,
-                SetPreferredTheme: usize,
+                pub PreferredTheme: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    *mut TitleBarTheme,
+                )
+                    -> windows_core::HRESULT,
+                pub SetPreferredTheme: unsafe extern "system" fn(
+                    *mut core::ffi::c_void,
+                    TitleBarTheme,
+                )
+                    -> windows_core::HRESULT,
             }
             windows_core::imp::define_interface!(
                 IAppWindowTitleBarStatics,
@@ -16342,6 +16406,24 @@ pub mod Microsoft {
                 const SIGNATURE: windows_core::imp::ConstBuffer =
                     windows_core::imp::ConstBuffer::from_slice(
                         b"enum(Microsoft.UI.Windowing.OverlappedPresenterState;i4)",
+                    );
+            }
+            #[repr(transparent)]
+            #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+            pub struct TitleBarTheme(pub i32);
+            impl TitleBarTheme {
+                pub const Legacy: Self = Self(0i32);
+                pub const UseDefaultAppMode: Self = Self(1i32);
+                pub const Light: Self = Self(2i32);
+                pub const Dark: Self = Self(3i32);
+            }
+            impl windows_core::TypeKind for TitleBarTheme {
+                type TypeKind = windows_core::CopyType;
+            }
+            impl windows_core::RuntimeType for TitleBarTheme {
+                const SIGNATURE: windows_core::imp::ConstBuffer =
+                    windows_core::imp::ConstBuffer::from_slice(
+                        b"enum(Microsoft.UI.Windowing.TitleBarTheme;i4)",
                     );
             }
         }
