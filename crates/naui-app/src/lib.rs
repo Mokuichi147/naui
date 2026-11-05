@@ -422,6 +422,13 @@ type Waiting<M> = (Option<Rc<str>>, Effect<M>);
 type Describe<M> = fn(&M) -> Rc<str>;
 
 struct Inner<P: Program> {
+    /// Holds everything this app has started, children's too, for when it stops. It goes
+    /// before the model, so that a `Drop` of the model can wait for work on another thread
+    /// that watches [`Sender::is_open`], a child's included.
+    started: Owner,
+    /// Owns the effects that belong to the app's own model. A child's belong to its
+    /// [`Scoped`] wrapper.
+    owner: Owner,
     model: RefCell<P>,
     view: OnceCell<P::View>,
     queue: RefCell<VecDeque<P::Message>>,
@@ -429,11 +436,6 @@ struct Inner<P: Program> {
     effects: RefCell<VecDeque<Waiting<P::Message>>>,
     /// What the effects run on. `None` when the app was made without it.
     tasks: Option<Tasks>,
-    /// Owns the effects that belong to the app's own model. A child's belong to its
-    /// [`Scoped`] wrapper, and those go first, with the model.
-    owner: Owner,
-    /// Holds everything this app has started, children's too, for when it stops.
-    started: Owner,
     /// Reports a failure to this app's handler, from outside its queue.
     report: Rc<dyn Fn(&str)>,
     /// A dispatch to this app, for what effects send.

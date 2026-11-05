@@ -8,17 +8,28 @@
 use std::cell::{Cell, RefCell};
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread::ThreadId;
 
 use crate::main_thread::{
     call_guarded, deregister, next_id, pump_by_id, register, AppDispatch, LocalEntry,
 };
 use crate::{Result, Slot};
 
+/// What the lock of [`ChannelShared`] protects.
+struct Queue<T> {
+    values: VecDeque<T>,
+    /// The thread inside the receiving closure, while it is. A thread closing the
+    /// channel waits for it, unless it is that thread.
+    delivering: Option<ThreadId>,
+}
+
 /// State shared by the sending side. **The only part that goes to other threads.**
 pub(crate) struct ChannelShared<T> {
     id: u64,
-    queue: Mutex<VecDeque<T>>,
+    queue: Mutex<Queue<T>>,
+    /// Signalled when the receiving closure has returned.
+    delivered: Condvar,
     /// Whether a pump on the UI thread is already scheduled. Sending 1000 times still
     /// posts only once.
     scheduled: AtomicBool,
@@ -58,7 +69,7 @@ impl<T: Send + 'static> ChannelShared<T> {
         if self.is_closed() {
             return false;
         }
-        queue.push_back(value);
+        queue.values.push_back(value);
         true
     }
 
@@ -68,11 +79,33 @@ impl<T: Send + 'static> ChannelShared<T> {
 
     fn take_all(&self) -> VecDeque<T> {
         let mut queue = lock(&self.queue);
-        std::mem::take(&mut *queue)
+        std::mem::take(&mut queue.values)
     }
 
     fn is_empty(&self) -> bool {
-        lock(&self.queue).is_empty()
+        lock(&self.queue).values.is_empty()
+    }
+
+    /// Enters the receiving closure, unless the channel is closed. The flag is read
+    /// under the lock [`close`](CloseChannel::close) sets it under, so either this sees
+    /// it, or that sees the closure entered and waits for it to return.
+    fn start_delivery(&self) -> Option<Delivery<'_, T>> {
+        let mut queue = lock(&self.queue);
+        if self.is_closed() {
+            return None;
+        }
+        queue.delivering = Some(std::thread::current().id());
+        Some(Delivery(self))
+    }
+}
+
+/// The receiving closure being called. Dropping it says that it has returned.
+struct Delivery<'a, T>(&'a ChannelShared<T>);
+
+impl<T> Drop for Delivery<'_, T> {
+    fn drop(&mut self) {
+        lock(&self.0.queue).delivering = None;
+        self.0.delivered.notify_all();
     }
 }
 
@@ -83,9 +116,24 @@ trait CloseChannel: Send + Sync {
 
 impl<T: Send + 'static> CloseChannel for ChannelShared<T> {
     fn close(&self) {
-        self.closed.store(true, Ordering::Release);
+        let waiting = {
+            let mut queue = lock(&self.queue);
+            self.closed.store(true, Ordering::Release);
+            let waiting = std::mem::take(&mut queue.values);
+            // 別のスレッドで受信処理が動いていれば、戻るまで待つ。受信処理の中から
+            // 閉じたのなら、待つと自分の終わりを待つことになるので待たない。
+            while queue
+                .delivering
+                .is_some_and(|thread| thread != std::thread::current().id())
+            {
+                queue = self
+                    .delivered
+                    .wait(queue)
+                    .unwrap_or_else(|e| e.into_inner());
+            }
+            waiting
+        };
         // ロックの外で捨てる。値の Drop がこのチャネルへ送っても固まらないように。
-        let waiting = self.take_all();
         drop(waiting);
         // 受信側は UI スレッドのレジストリにあるので、外すのは pump に任せる。
         self.schedule();
@@ -115,11 +163,13 @@ impl<T: Send + 'static> LocalEntry for ChannelLocal<T> {
         // 処理の途中で閉じられたら、残りは渡さない。
         // 残りの Drop が panic しても片付けが飛ばないよう、捨てるのはこの関数の最後。
         let mut values = self.shared.take_all().into_iter();
-        while !self.shared.is_closed() {
-            let Some(value) = values.next() else {
+        while values.len() > 0 {
+            let Some(_delivery) = self.shared.start_delivery() else {
                 break;
             };
-            call_guarded(&self.handler, value);
+            if let Some(value) = values.next() {
+                call_guarded(&self.handler, value);
+            }
         }
         self.busy.set(false);
 
@@ -145,7 +195,11 @@ where
     let id = next_id();
     let shared = Arc::new(ChannelShared {
         id,
-        queue: Mutex::new(VecDeque::new()),
+        queue: Mutex::new(Queue {
+            values: VecDeque::new(),
+            delivering: None,
+        }),
+        delivered: Condvar::new(),
         scheduled: AtomicBool::new(false),
         senders: AtomicUsize::new(1),
         closing: AtomicBool::new(false),
@@ -241,6 +295,11 @@ impl<T: Send + 'static> Drop for Sender<T> {
 /// receiving closure itself is released the next time the UI thread is free.
 ///
 /// It can be sent to other threads. Closing twice does nothing more.
+///
+/// When `close` has returned, the receiving closure is not running and will not start.
+/// So on another thread it waits for a call in progress to return: do not close while
+/// holding what the closure needs, or from a thread the closure is waiting for. Called
+/// from inside the closure it does not wait, and that call runs to its end.
 #[derive(Clone)]
 pub struct ChannelCloser {
     shared: Arc<dyn CloseChannel>,
