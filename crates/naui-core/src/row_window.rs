@@ -184,6 +184,40 @@ pub fn row_window(
     }
 }
 
+/// [`row_window`] for a list, whose height may follow its rows.
+///
+/// A height the app limited (`Fixed` or `Fill`) scrolls, so only the rows on screen are
+/// built. An `Auto` height is as tall as all the rows, so **every row is built**, each at
+/// its own height.
+///
+/// That waits until the list has a size. Until then the first rows are built as usual,
+/// because a height is often set after the rows: a list of a million rows given `Fill`
+/// on the next line must not build them all first.
+///
+/// ```
+/// # use naui_core::{list_row_window, ROW_WINDOW_THRESHOLD};
+/// // An `Auto` height with a size builds every row.
+/// assert_eq!(list_row_window(false, 5_000, 0.0, 200.0, 20.0, 5).len(), 5_000);
+/// // Not placed yet: only the first rows, whatever the height turns out to be.
+/// let first = list_row_window(false, 5_000, 0.0, 0.0, 0.0, 5);
+/// assert_eq!(first.len(), ROW_WINDOW_THRESHOLD);
+/// // A limited height builds what is on screen.
+/// assert!(list_row_window(true, 5_000, 0.0, 200.0, 20.0, 5).len() < 20);
+/// ```
+pub fn list_row_window(
+    height_limited: bool,
+    count: usize,
+    scroll_top: f64,
+    viewport: f64,
+    row_height: f64,
+    overscan: usize,
+) -> RowWindow {
+    if !height_limited && viewport > 0.0 {
+        return RowWindow::all(count);
+    }
+    row_window(count, scroll_top, viewport, row_height, overscan)
+}
+
 /// Whether the window built now can be kept.
 ///
 /// Rebuilding everything on every scroll is heavy, so **the window is reused until
@@ -508,6 +542,28 @@ impl<T: Clone> RowSource<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_list_with_an_auto_height_builds_every_row_once_it_has_a_size() {
+        let count = ROW_WINDOW_THRESHOLD * 10;
+        assert!(list_row_window(false, count, 500.0, 200.0, 20.0, 5).is_complete());
+        // 行の高さがまだ分からなくても、全行を作ることは決まっている。
+        assert!(list_row_window(false, count, 0.0, 200.0, 0.0, 5).is_complete());
+
+        // 大きさが分かるまでは、あとから高さが指定されるかもしれない。
+        let unplaced = list_row_window(false, count, 0.0, 0.0, 0.0, 5);
+        assert_eq!(unplaced.len(), ROW_WINDOW_THRESHOLD);
+        assert_eq!(unplaced.start, 0);
+    }
+
+    #[test]
+    fn a_list_with_a_limited_height_builds_what_is_on_screen() {
+        let count = ROW_WINDOW_THRESHOLD * 10;
+        assert_eq!(
+            list_row_window(true, count, 500.0, 200.0, 20.0, 5),
+            row_window(count, 500.0, 200.0, 20.0, 5)
+        );
+    }
 
     #[test]
     fn replacing_the_rows_changes_the_generation() {

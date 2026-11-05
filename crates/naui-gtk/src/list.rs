@@ -23,7 +23,7 @@ use std::rc::{Rc, Weak};
 use gtk::prelude::*;
 use gtk::{gdk, glib, graphene};
 use naui_core::{
-    keeps_row_window, merge_hidden_selection, row_window, Align, ListItem, Orientation, Point,
+    keeps_row_window, list_row_window, merge_hidden_selection, Align, ListItem, Orientation, Point,
     Result, RowSource, RowWindow, SelectionGesture, SelectionMode, Sizing, TextColor, TextStyle,
     ROW_WINDOW_OVERSCAN,
 };
@@ -200,7 +200,7 @@ struct ListInner {
 /// or `Fill`, it scrolls whatever overflows.
 #[derive(Clone)]
 pub struct List(Rc<ListInner>);
-impl_widget!(List);
+impl_widget!(List, after_sizing: |list: &List| list.update_window());
 
 impl List {
     pub(crate) fn new() -> Self {
@@ -685,7 +685,8 @@ impl List {
         let adjustment = self.0.scroller.vadjustment();
         // 詰め物が窓の外の行と同じ高さを持つので、スクロール位置は
         // 「全行を作ったとき」と同じ座標になる。
-        row_window(
+        list_row_window(
+            self.0.bin.sizing().height != naui_core::Length::Auto,
             self.len(),
             adjustment.value(),
             adjustment.page_size(),

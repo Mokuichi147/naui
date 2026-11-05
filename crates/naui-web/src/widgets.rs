@@ -28,8 +28,13 @@ pub trait Widget: 'static {
     fn boxed_clone(&self) -> Box<dyn Widget>;
 }
 
+/// `after_sizing` is for widgets whose own work depends on the `Sizing`: it runs at the end
+/// of every `set_sizing`, once the new one is in effect.
 macro_rules! impl_widget {
     ($t:ty, $field:ident) => {
+        crate::widgets::impl_widget!($t, $field, after_sizing: |_: &$t| {});
+    };
+    ($t:ty, $field:ident, after_sizing: $after:expr) => {
         impl Widget for $t {
             fn native_element(&self) -> Element {
                 self.0.$field.clone().unchecked_into()
@@ -47,6 +52,8 @@ macro_rules! impl_widget {
             pub fn set_sizing(&self, sizing: naui_core::Sizing) {
                 let element = <$t as Widget>::native_element(self);
                 crate::layout::apply_sizing(&element, sizing);
+                let after: fn(&$t) = $after;
+                after(self);
             }
 
             /// Whether it is shown. Shown by default.

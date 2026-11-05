@@ -41,6 +41,9 @@ pub trait Widget: 'static {
 
 macro_rules! impl_widget {
     ($t:ty) => {
+        crate::widgets::impl_widget!($t, after_sizing: |_: &$t| {});
+    };
+    ($t:ty, after_sizing: $after:expr) => {
         impl Widget for $t {
             fn native_widget(&self) -> gtk::Widget {
                 self.0.native.clone().upcast()
@@ -53,13 +56,19 @@ macro_rules! impl_widget {
             }
         }
 
-        crate::widgets::impl_sizing!($t);
+        crate::widgets::impl_sizing!($t, after_sizing: $after);
     };
 }
 
 /// Adds only size specification to types that implement `Widget` by hand.
+///
+/// `after_sizing` is for widgets whose own work depends on the `Sizing`: it runs at the end
+/// of every `set_sizing`, once the new one is in effect.
 macro_rules! impl_sizing {
     ($t:ty) => {
+        crate::widgets::impl_sizing!($t, after_sizing: |_: &$t| {});
+    };
+    ($t:ty, after_sizing: $after:expr) => {
         impl $t {
             /// Sets the size. Each call discards the previous setting.
             ///
@@ -71,6 +80,8 @@ macro_rules! impl_sizing {
             /// `Grid` column's width) is kept either way.
             pub fn set_sizing(&self, sizing: naui_core::Sizing) {
                 <$t as Widget>::size_bin(self).apply_sizing(sizing);
+                let after: fn(&$t) = $after;
+                after(self);
             }
 
             /// Whether it is shown. Shown by default.

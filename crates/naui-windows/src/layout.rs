@@ -166,6 +166,15 @@ pub(crate) fn wants_fill(element: &FrameworkElement, horizontal: bool) -> bool {
     })
 }
 
+/// Whether the app gave this element a height other than `Auto`.
+pub(crate) fn height_is_limited(element: &UIElement) -> bool {
+    let Ok(framework) = element.cast::<FrameworkElement>() else {
+        return false;
+    };
+    // WinUI では NaN が「中身に合わせる」を表す。
+    framework.Height().is_ok_and(f64::is_finite) || wants_fill(&framework, false)
+}
+
 /// Whether the parent stretches an Auto-sized child on this axis.
 pub(crate) fn parent_stretches_auto(element: &FrameworkElement, horizontal: bool) -> bool {
     match parent_state(element) {

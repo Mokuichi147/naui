@@ -167,6 +167,10 @@ const CASES: &[Case] = &[
         list_keeps_the_selection_outside_the_window,
     ),
     (
+        "Auto の高さのリストは全行を行ごとの高さで組み立てる",
+        list_auto_height_builds_every_row,
+    ),
+    (
         "隠すと Visibility が Collapsed になり、戻すと Visible",
         set_visible_maps_to_visibility,
     ),
@@ -6094,6 +6098,77 @@ fn list_rows_taller_than_the_height_set_keep_the_window_right(ui: &Ui) -> Result
             "高さを変えても行が画面にあること (詰め物 {}, 位置 {offset})",
             leading()
         );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// An `Auto` height is as tall as all the rows, so every row is built at its own height.
+/// Only a height the app limited makes the list build what is on screen.
+fn list_auto_height_builds_every_row(ui: &Ui) -> Result<()> {
+    use naui_core::{ListItem, ROW_WINDOW_THRESHOLD};
+
+    const ROWS: usize = 300;
+    let items: Vec<ListItem> = (0..ROWS)
+        .map(|index| match index % 2 {
+            0 => ListItem::new(format!("行 {index}")),
+            _ => ListItem::new(format!("行 {index}")).detail("補助の文字"),
+        })
+        .collect();
+    let window = ui.window("Auto の高さのリスト", 240.0, 160.0)?;
+    let list = ui.list()?;
+    list.set_items(&items);
+    window.set_child(&list);
+    let rows = || {
+        list.native_list_view()
+            .Items()
+            .and_then(|items| items.Size())
+            .expect("行の数") as usize
+    };
+    assert_eq!(
+        rows(),
+        ROW_WINDOW_THRESHOLD,
+        "大きさが分かるまでは先頭だけを組み立てる"
+    );
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        let scroll = list_scroller(&list);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && rows() == ROWS
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        assert_eq!(rows(), ROWS, "Auto の高さでは全行を組み立てること");
+        let height = |index: u32| {
+            list.native_list_view()
+                .Items()
+                .and_then(|items| items.GetAt(index))
+                .and_then(|item| item.cast::<ListViewItem>())
+                .and_then(|item| item.ActualHeight())
+                .expect("行の高さ")
+        };
+        pump_until(Duration::from_secs(2), || {
+            height(0) > 0.0 && height(1) > height(0)
+        });
+        assert!(
+            height(0) > 0.0 && height(1) > height(0),
+            "行ごとの高さのままであること: {} / {}",
+            height(0),
+            height(1)
+        );
+
+        // 指定を付けると絞り、外すと全行へ戻る。実際の大きさが変わらなくても追従する。
+        list.set_sizing(Sizing::fill());
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || rows() < ROW_WINDOW_THRESHOLD);
+        assert!(rows() < ROW_WINDOW_THRESHOLD, "絞られること: {} 行", rows());
+        list.set_sizing(Sizing::AUTO);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || rows() == ROWS);
+        assert_eq!(rows(), ROWS, "指定を外すと全行へ戻ること");
     }));
     window.close();
     if let Err(panic) = outcome {

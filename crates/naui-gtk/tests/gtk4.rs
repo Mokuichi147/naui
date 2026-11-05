@@ -761,6 +761,10 @@ fn main() {
             list_keeps_the_selection_outside_the_window,
         ),
         (
+            "Auto の高さのリストは全行を行ごとの高さで組み立てる",
+            list_auto_height_builds_every_row,
+        ),
+        (
             "リストは行を組み立てずに選べるかどうかを答える",
             list_row_selectable_answers_without_building,
         ),
@@ -5894,6 +5898,55 @@ fn list_with_many_rows_has_uniform_heights(ui: &Ui) -> Result<()> {
         (upper - expected).abs() < 2.0,
         "送っても全行分のままであること: {upper} / {expected}"
     );
+    window.close();
+    Ok(())
+}
+
+/// An `Auto` height is as tall as all the rows, so every row is built at its own height.
+/// Only a height the app limited makes the list build what is on screen.
+fn list_auto_height_builds_every_row(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 300;
+    let items: Vec<ListItem> = (0..ROWS)
+        .map(|index| match index % 2 {
+            0 => ListItem::new(format!("行 {index}")),
+            _ => ListItem::new(format!("行 {index}")).detail("補助の文字"),
+        })
+        .collect();
+    let window = ui.window("Auto の高さのリスト", 300.0, 200.0)?;
+    let list = ui.list()?;
+    list.set_items(&items);
+    window.set_child(&list);
+    let native = list_box_of(&list);
+    assert_eq!(
+        children(&native).len(),
+        naui_core::ROW_WINDOW_THRESHOLD,
+        "大きさが分かるまでは先頭だけを組み立てる"
+    );
+    window.show();
+    for _ in 0..3 {
+        tick(&native);
+    }
+    let rows = children(&native);
+    assert_eq!(rows.len(), ROWS, "Auto の高さでは全行を組み立てること");
+    assert!(
+        allocated_height(&rows[1]) > allocated_height(&rows[0]),
+        "行ごとの高さのままであること: {} / {}",
+        allocated_height(&rows[0]),
+        allocated_height(&rows[1])
+    );
+
+    // 指定を付けると絞り、外すと全行へ戻る。
+    list.set_sizing(Sizing::fill());
+    for _ in 0..3 {
+        tick(&native);
+    }
+    let built = children(&native).len();
+    assert!(built < 200, "絞られること: {built} 行");
+    list.set_sizing(Sizing::AUTO);
+    for _ in 0..3 {
+        tick(&native);
+    }
+    assert_eq!(children(&native).len(), ROWS, "指定を外すと全行へ戻ること");
     window.close();
     Ok(())
 }

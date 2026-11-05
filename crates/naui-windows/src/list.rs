@@ -31,7 +31,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{
-    keeps_row_window, merge_hidden_selection, row_window, Align, ListItem, Orientation, Point,
+    keeps_row_window, list_row_window, merge_hidden_selection, Align, ListItem, Orientation, Point,
     Result, RowSource, RowWindow, SelectionGesture, SelectionMode, Sizing, TextColor, TextStyle,
     ROW_WINDOW_OVERSCAN,
 };
@@ -759,6 +759,15 @@ impl List {
             .scroll
             .ViewChanged(&handler)
             .map_err(|e| to_error("subscribe to List scroll position changes", e))?;
+
+        // `Auto` の高さでは全行を組み立て、指定があれば絞る。実際の大きさが同じままの
+        // 変更もあるので、`SizeChanged` は待たない。
+        let target = Rc::downgrade(&self.0);
+        crate::layout::on_sizing_change(&self.native_element(), move || {
+            if let Some(inner) = target.upgrade() {
+                List(inner).update_window();
+            }
+        });
         Ok(())
     }
 
@@ -1048,7 +1057,8 @@ impl List {
     fn compute_window(&self, overscan: usize) -> RowWindow {
         // 詰め物が窓の外の行と同じ高さを持つので、表示位置は
         // 「全行を入れたとき」と同じ座標になる。
-        row_window(
+        list_row_window(
+            crate::layout::height_is_limited(&self.native_element()),
             self.len(),
             self.0.scroll.VerticalOffset().unwrap_or(0.0),
             self.0.scroll.ViewportHeight().unwrap_or(0.0),

@@ -8092,6 +8092,95 @@ fn list_row_height_follows_the_setting() {
     });
 }
 
+/// Going to or from a height set replaces the `<ul>`, whose scroll position starts at 0.
+/// The rows mean the same as before, so the position carries over and its rows are built.
+#[wasm_bindgen_test]
+fn list_row_height_keeps_the_scroll_position() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        const TOP: i32 = 3_000;
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_items(&ListItem::list(
+            (0..ROWS).map(|index| format!("行 {index}")),
+        ));
+        list_scroller(&list).set_scroll_top(TOP);
+
+        list.set_row_height(40.0);
+        let top = list_scroller(&list).scroll_top();
+        assert!((top - TOP).abs() <= 1, "位置を引き継ぐこと: {top}");
+        // 3,000 / 40 で 75 行目が見えている。
+        let shown = list_rows(&list)
+            .iter()
+            .any(|row| row.text_content().as_deref() == Some("行 75"));
+        assert!(shown, "その位置の行が組み立てられること");
+
+        list.set_row_height(0.0);
+        let top = list_scroller(&list).scroll_top();
+        assert!((top - TOP).abs() <= 1, "指定を外しても引き継ぐこと: {top}");
+        Ok(())
+    });
+}
+
+/// An `Auto` height is as tall as all the rows, so every row is built at its own height.
+/// Only a height the app limited makes the list build what is on screen.
+#[wasm_bindgen_test]
+fn list_auto_height_builds_every_row() {
+    with_ui(|ui| {
+        const ROWS: usize = 300;
+        let items: Vec<ListItem> = (0..ROWS)
+            .map(|index| match index % 2 {
+                0 => ListItem::new(format!("行 {index}")),
+                _ => ListItem::new(format!("行 {index}")).detail("補助の文字"),
+            })
+            .collect();
+        let list = ui.list()?;
+        let _mounted = Mounted::new(&list);
+        list.set_items(&items);
+        let rows = list_rows(&list);
+        assert_eq!(rows.len(), ROWS, "Auto の高さでは全行を組み立てること");
+        let height = |row: &Element| row.get_bounding_client_rect().height();
+        assert!(
+            height(&rows[1]) > height(&rows[0]),
+            "行ごとの高さのままであること: {} / {}",
+            height(&rows[0]),
+            height(&rows[1])
+        );
+
+        // 指定を付けると絞り、外すと全行へ戻る。
+        list.set_sizing(Sizing::fixed(240.0, 200.0));
+        let built = list_rows(&list).len();
+        assert!(built < 100, "絞られること: {built} 行");
+        list.set_sizing(Sizing::AUTO);
+        assert_eq!(list_rows(&list).len(), ROWS, "指定を外すと全行へ戻ること");
+        Ok(())
+    });
+}
+
+/// A list placed after it was filled learns its size only then. An `Auto` height goes from
+/// the first rows to every row, and a height given before placing never builds them all.
+#[wasm_bindgen_test]
+async fn list_auto_height_filled_before_it_is_placed_builds_every_row() {
+    const ROWS: usize = 300;
+    let mut kept = None;
+    with_ui(|ui| {
+        let list = ui.list()?;
+        list.set_items(&ListItem::list(
+            (0..ROWS).map(|index| format!("行 {index}")),
+        ));
+        assert_eq!(
+            list_rows(&list).len(),
+            ROW_WINDOW_THRESHOLD,
+            "大きさが分かるまでは先頭だけを組み立てる"
+        );
+        kept = Some(list);
+        Ok(())
+    });
+    let list = kept.expect("リスト");
+    let _mounted = Mounted::new(&list);
+    next_frames().await;
+    assert_eq!(list_rows(&list).len(), ROWS, "全行を組み立てること");
+}
+
 /// The height set is a minimum. A row that needs more grows, so the spacers and scrolling
 /// must use the real height rather than the one set.
 #[wasm_bindgen_test]

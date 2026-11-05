@@ -30,7 +30,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    keeps_row_window, row_window, Align, ListItem, Orientation, Point, Result, RowSource,
+    keeps_row_window, list_row_window, Align, ListItem, Orientation, Point, Result, RowSource,
     RowWindow, SelectionMode, Sizing, TextColor, TextStyle, ROW_WINDOW_OVERSCAN,
     ROW_WINDOW_THRESHOLD,
 };
@@ -358,7 +358,7 @@ impl Drop for ListInner {
 /// rows; with a fixed height or `Fill`, it scrolls whatever overflows.
 #[derive(Clone)]
 pub struct List(Rc<ListInner>);
-impl_widget!(List, root);
+impl_widget!(List, root, after_sizing: |list: &List| list.update_window());
 
 impl List {
     pub(crate) fn new(doc: &Document) -> Result<Self> {
@@ -497,12 +497,33 @@ impl List {
         // 指定を外したときは、組み立て直した行から測り直す。
         self.0.row_height.set(height.max(0.0));
         if changes_body {
-            // 選択は残す。`set_rows` と違って行の意味は変わらない。
+            // 選択と表示位置は残す。`set_rows` と違って行の意味は変わらない。
             let picked = self.selection();
+            let top = self.scroll_top();
             self.rebuild_body();
             self.write_selection(&picked);
+            // 作り直した要素は先頭にある。詰め物の高さが決まってから戻し、そこの行を
+            // 組み立てる。
+            self.set_scroll_top(top);
+            self.update_window();
         } else {
             self.refresh();
+        }
+    }
+
+    /// The scroll position of the body.
+    fn scroll_top(&self) -> i32 {
+        match &*self.0.body.borrow() {
+            Body::Listbox { list, .. } => list.scroll_top(),
+            Body::Select { select, .. } => select.scroll_top(),
+        }
+    }
+
+    /// Moves the body's scroll position. The browser keeps it within the content.
+    fn set_scroll_top(&self, top: i32) {
+        match &*self.0.body.borrow() {
+            Body::Listbox { list, .. } => list.set_scroll_top(top),
+            Body::Select { select, .. } => select.set_scroll_top(top),
         }
     }
 
@@ -1025,7 +1046,16 @@ impl List {
             Body::Listbox { list, .. } => (list.scroll_top(), list.client_height()),
             Body::Select { .. } => return RowWindow::all(self.len()),
         };
-        row_window(
+        let limited = crate::layout::height_is_limited(&self.0.root);
+        // `Auto` の高さで知りたいのは、大きさが決まる場所にあるかどうか。作り直したばかりの
+        // `<ul>` は空で内側の高さが 0 なので、枠に聞く (`<ul>` の線の分があるので、文書に
+        // 載って表示されていれば 0 にならない)。
+        let viewport = match limited {
+            true => viewport,
+            false => self.0.root.client_height(),
+        };
+        list_row_window(
+            limited,
             self.len(),
             f64::from(top),
             f64::from(viewport),
