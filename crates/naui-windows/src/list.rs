@@ -325,8 +325,24 @@ fn load_surface() -> Result<(Border, ListView)> {
     Ok((native, list_view))
 }
 
+/// The `ListView` of the fallback frame. It is read from XAML, not built in code,
+/// because the row transitions can only be cleared there (see [`SURFACE_XAML`]). It
+/// has no theme resources, so it can be read even when the frame cannot. Falls back to
+/// a plain `ListView` only if XAML cannot be read at all.
+const PLAIN_LIST_VIEW_XAML: &str = r##"<ListView
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation">
+    <ListView.ItemContainerTransitions>
+        <TransitionCollection/>
+    </ListView.ItemContainerTransitions>
+</ListView>"##;
+
 fn plain_surface() -> Result<(Border, ListView)> {
-    let list_view = ListView::new().map_err(|e| to_error("create the ListView", e))?;
+    let list_view = match XamlReader::Load(&HSTRING::from(PLAIN_LIST_VIEW_XAML))
+        .and_then(|element| element.cast::<ListView>())
+    {
+        Ok(list_view) => list_view,
+        Err(_) => ListView::new().map_err(|e| to_error("create the ListView", e))?,
+    };
     let native = Border::new().map_err(|e| to_error("create the List Border", e))?;
     native
         .SetChild(&list_view)
