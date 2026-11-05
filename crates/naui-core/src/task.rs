@@ -78,10 +78,11 @@ impl TaskLocal {
         self.finished.set(true);
         self.wake.active.store(false, Ordering::Release);
         let future = self.future.borrow_mut().take();
-        drop(future);
         let waker = self.waker.borrow_mut().take();
-        drop(waker);
         deregister(self.id);
+        // アプリのコードが走り、panic することもあるので、片付けを終えてから捨てる。
+        drop(waker);
+        drop(future);
     }
 
     fn cancel(&self) {
@@ -125,8 +126,9 @@ impl LocalEntry for TaskLocal {
             *self.future.borrow_mut() = Some(future);
             return;
         }
-        drop(future);
+        // 捨てるときの panic で片付けが飛ばないように、捨てるのは後。
         self.finish();
+        drop(future);
     }
 }
 

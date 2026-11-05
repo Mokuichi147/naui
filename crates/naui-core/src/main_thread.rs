@@ -138,7 +138,13 @@ pub(crate) fn pump_by_id(id: u64) {
         .ok()
         .flatten();
     if let Some(entry) = entry {
-        entry.pump();
+        // panic はここで止める (どのバックエンドでも C / WinRT の境界を越えて巻き戻せない
+        // ため)。処理やコールバックは中で守っているが、それを捨てるときの panic が残る。
+        // ここで最後の参照を落とすこともあるので、それも含める。
+        let _ = catch_unwind(AssertUnwindSafe(move || {
+            entry.pump();
+            drop(entry);
+        }));
     }
 }
 
@@ -286,5 +292,62 @@ impl std::fmt::Debug for Tasks {
         f.debug_struct("Tasks")
             .field("alive", &self.dispatch.is_alive())
             .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::future::pending;
+    use std::time::Duration;
+
+    use super::*;
+
+    struct Accepts;
+
+    impl MainThread for Accepts {
+        fn post(&self, _: Work) -> bool {
+            true
+        }
+
+        fn post_after(&self, _: Duration, _: Work) -> bool {
+            true
+        }
+    }
+
+    struct PanicOnDrop;
+
+    impl Drop for PanicOnDrop {
+        fn drop(&mut self) {
+            panic!("わざと落とす");
+        }
+    }
+
+    fn registered() -> usize {
+        REGISTRY.with(|r| r.borrow().len())
+    }
+
+    #[test]
+    fn 取り消しで処理を捨てて落ちても登録は残らない() {
+        let tasks = Tasks::from_main_thread(Arc::new(Accepts));
+        let guard = PanicOnDrop;
+        let task = tasks.spawn(async move {
+            let _guard = guard;
+            pending::<()>().await
+        });
+        assert_eq!(registered(), 1);
+        assert!(catch_unwind(AssertUnwindSafe(|| task.cancel())).is_err());
+        assert_eq!(registered(), 0);
+    }
+
+    #[test]
+    fn 取り消しでコールバックを捨てて落ちても登録は残らない() {
+        let tasks = Tasks::from_main_thread(Arc::new(Accepts));
+        let guard = PanicOnDrop;
+        let timer = tasks.every(Duration::from_secs(1), move || {
+            let _ = &guard;
+        });
+        assert_eq!(registered(), 1);
+        assert!(catch_unwind(AssertUnwindSafe(|| timer.cancel())).is_err());
+        assert_eq!(registered(), 0);
     }
 }

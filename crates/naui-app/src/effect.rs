@@ -119,17 +119,19 @@ impl Ledger {
         entries.push(Entry { key, running });
     }
 
-    /// Cancels what `matches` selects. The ledger is not borrowed meanwhile, since
-    /// dropping a future runs the app's code, which can reach this one.
-    fn cancel(&self, matches: impl Fn(&Entry) -> bool) {
+    /// Cancels what `matches` selects, all of it even if the app's code panics on the
+    /// way, and leaves the first panic in `panicked`. The ledger is not borrowed
+    /// meanwhile, since dropping a future runs the app's code, which can reach this one.
+    fn cancel(&self, panicked: &mut Option<Box<dyn Any + Send>>, matches: impl Fn(&Entry) -> bool) {
         let cancelled: Vec<_> = {
             let mut entries = self.entries.borrow_mut();
             let (cancelled, kept) = std::mem::take(&mut *entries).into_iter().partition(matches);
             *entries = kept;
             cancelled
         };
+        // 帳簿からはもう外れているので、ここで止めないと止める手段がなくなる。
         for entry in cancelled {
-            entry.running.cancel();
+            attempt(panicked, || entry.running.cancel());
         }
     }
 
@@ -161,7 +163,20 @@ impl Owner {
 impl Drop for Owner {
     fn drop(&mut self) {
         self.0.closed.set(true);
-        self.0.cancel(|_| true);
+        let mut panicked = None;
+        self.0.cancel(&mut panicked, |_| true);
+        let Some(panic) = panicked else {
+            return;
+        };
+        // 巻き戻しの最中に panic を外へ出すと、プロセスごと落ちる。
+        if std::thread::panicking() {
+            report(&format!(
+                "stopping an effect panicked while another panic was unwinding: {}",
+                panic_text(panic.as_ref())
+            ));
+        } else {
+            resume_unwind(panic);
+        }
     }
 }
 
@@ -246,7 +261,7 @@ impl<M: 'static> Node<M> {
                     node.start(cx, None, keys);
                     return;
                 };
-                owner.cancel(|entry| entry.key.as_ref() == Some(&key));
+                owner.cancel(&mut cx.panicked, |entry| entry.key.as_ref() == Some(&key));
                 keys.push((owner.clone(), key));
                 node.start(cx, ledger, keys);
                 keys.pop();

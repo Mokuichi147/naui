@@ -43,8 +43,10 @@ impl TimerLocal {
         if self.active.replace(false) {
             // 呼び出し中に止められても、コールバックはここでは落とさない
             // (取り出してあるので、戻ってから捨てられる)。
-            self.callback.borrow_mut().take();
+            let callback = self.callback.borrow_mut().take();
             deregister(self.id);
+            // アプリのコードが走り、panic することもあるので、片付けを終えてから捨てる。
+            drop(callback);
         }
     }
 }
