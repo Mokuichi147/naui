@@ -732,6 +732,10 @@ fn main() {
             list_builder_rows_scale,
         ),
         (
+            "行を組み立てる関数の中で行を差し替えても新しい行にそろう",
+            list_builder_can_replace_the_rows,
+        ),
+        (
             "行の多いリストの行の高さがそろい、スクロールバーが全行分になる",
             list_with_many_rows_has_uniform_heights,
         ),
@@ -5676,6 +5680,101 @@ fn scroll_list_to(native: &gtk::ListBox, value: f64) {
     let scroller = scroller_of(native).expect("GtkScrolledWindow");
     scroller.vadjustment().set_value(value);
     tick(native);
+}
+
+/// Replacing the rows from inside the function that builds a row leaves only the new
+/// rows, in the new window, however far the build had got.
+fn list_builder_can_replace_the_rows(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 1_000;
+    /// What the old builder does when it reaches the row it was waiting for.
+    type Replace = Rc<dyn Fn(&naui_gtk::List)>;
+
+    let fill = |list: &naui_gtk::List, replace: Rc<RefCell<Option<Replace>>>| {
+        let weak = list.downgrade();
+        let ui = ui.clone();
+        list.set_row_builder(ROWS, move |index| {
+            // 窓の途中の行で差し替える。
+            if index % 7 == 3 {
+                let replace = replace.borrow_mut().take();
+                if let (Some(replace), Some(list)) = (replace, weak.upgrade()) {
+                    replace(&list);
+                }
+            }
+            Ok(ListRow::new(&ui.label(&format!("古い {index}"))?))
+        });
+    };
+    let replace_slot = Rc::new(RefCell::new(None::<Replace>));
+    let (window, list, native) = shown_big_list(ui, "行の差し替え", |list| {
+        fill(list, replace_slot.clone());
+    })?;
+    let height = list.row_height();
+    assert!(height > 0.0, "行の高さが測られていること");
+
+    // 別の組み立て関数へ。
+    let new_built = Rc::new(RefCell::new(Vec::new()));
+    *replace_slot.borrow_mut() = Some(Rc::new({
+        let ui = ui.clone();
+        let new_built = new_built.clone();
+        move |list: &naui_gtk::List| {
+            let ui = ui.clone();
+            let new_built = new_built.clone();
+            list.set_row_builder(2_000, move |index| {
+                new_built.borrow_mut().push(index);
+                Ok(ListRow::new(&ui.label(&format!("新しい {index}"))?))
+            });
+        }
+    }));
+    list.refresh();
+    tick(&native);
+    assert_eq!(list.len(), 2_000);
+    let texts = row_texts(&native);
+    assert!(
+        !texts.is_empty() && texts.iter().all(|text| text.starts_with("新しい ")),
+        "古い行が残らないこと: {texts:?}"
+    );
+    assert_eq!(texts[0], "新しい 0");
+    assert_eq!(texts.len(), children(&native).len());
+    assert_eq!(
+        *new_built.borrow(),
+        (0..texts.len()).collect::<Vec<_>>(),
+        "新しい関数は新しい窓の行だけを、1 回ずつ組み立てること"
+    );
+
+    // スクロールで窓が動いている途中に、行の少ない固定の行へ。
+    fill(&list, replace_slot.clone());
+    tick(&native);
+    list.set_selection(&[1]);
+    *replace_slot.borrow_mut() = Some(Rc::new(|list: &naui_gtk::List| {
+        list.set_items(&ListItem::list(["東京", "大阪", "京都"]));
+    }));
+    scroll_list_to(&native, height * 500.0);
+    tick(&native);
+    assert_eq!(list.len(), 3);
+    assert_eq!(row_texts(&native), ["東京", "大阪", "京都"]);
+    assert!(list.selection().is_empty(), "選択は外れること");
+    // 窓も新しい行に合っていること。行番号がずれていれば、ここで別の行が選ばれる。
+    list.set_selection(&[2]);
+    let selected = native.selected_rows();
+    assert_eq!(selected.len(), 1);
+    assert_eq!(row_texts(&selected[0]), ["京都"]);
+
+    // 組み立てるたびに差し替える関数でも止まること。
+    fn keep_replacing(list: &naui_gtk::List, ui: &Ui) {
+        let weak = list.downgrade();
+        let ui = ui.clone();
+        list.set_row_builder(ROWS, move |index| {
+            if let Some(list) = weak.upgrade() {
+                keep_replacing(&list, &ui);
+            }
+            Ok(ListRow::new(&ui.label(&index.to_string())?))
+        });
+    }
+    keep_replacing(&list, ui);
+    tick(&native);
+    assert_eq!(list.len(), ROWS);
+
+    window.close();
+    Ok(())
 }
 
 /// Even rows made of widgets are built only when they become visible, and what the

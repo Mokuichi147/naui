@@ -687,6 +687,10 @@ impl List {
     fn reset_rows(&self) {
         self.0.selected.borrow_mut().clear();
         self.0.row_height_stale.set(true);
+        // 組み立ての途中で差し替えられたら、組み立てている側が新しい行でやり直す。
+        if self.0.rebuilding.get() {
+            return;
+        }
         self.0.window.set(self.compute_window(ROW_WINDOW_OVERSCAN));
         self.build_window();
         if self.settle_row_height() {
@@ -701,11 +705,15 @@ impl List {
         if self.0.rebuilding.replace(true) {
             return;
         }
-        let result = self.build_window_once();
+        self.0.rows.build_until_settled(|replaced| {
+            if replaced {
+                self.0.window.set(self.compute_window(ROW_WINDOW_OVERSCAN));
+            }
+            if let Err(error) = self.build_window_once() {
+                eprintln!("naui-windows: failed to build the list rows: {error}");
+            }
+        });
         self.0.rebuilding.set(false);
-        if let Err(error) = result {
-            eprintln!("naui-windows: failed to build the list rows: {error}");
-        }
     }
 
     fn build_window_once(&self) -> Result<()> {
@@ -726,6 +734,7 @@ impl List {
         self.0.realized.borrow_mut().clear();
 
         let window = self.0.window.get();
+        let generation = self.0.rows.generation();
         // 高さが分かっていれば、作るときから同じ高さにする (測るまで行が動かない)。
         let min_height = match window.is_complete() || self.0.row_height_stale.get() {
             true => 0.0,
@@ -738,6 +747,10 @@ impl List {
             let Some(row) = self.0.rows.row(index) else {
                 continue;
             };
+            // 差し替えられたら、この行も残りの窓ももう古い。
+            if self.0.rows.generation() != generation {
+                break;
+            }
             // 組み立てに失敗した行は、空の行にする。
             let row = row.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
             let native = ListViewItem::new().map_err(|e| to_error("create the ListViewItem", e))?;

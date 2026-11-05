@@ -152,6 +152,10 @@ const CASES: &[Case] = &[
         list_rows_follow_scrolling,
     ),
     (
+        "行を組み立てる関数の中で行を差し替えても新しい行にそろう",
+        list_builder_can_replace_the_rows,
+    ),
+    (
         "行の多いリストで画面の外の選択が残る",
         list_keeps_the_selection_outside_the_window,
     ),
@@ -5848,6 +5852,113 @@ fn list_rows_follow_scrolling(ui: &Ui) -> Result<()> {
             leading()
         );
         assert!(rows() < 200, "送っても絞られていること: {} 行", rows());
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// Replacing the rows from inside the function that builds a row leaves only the new
+/// rows, in the new window, however far the build had got.
+fn list_builder_can_replace_the_rows(ui: &Ui) -> Result<()> {
+    use naui_core::ListItem;
+    use naui_windows::ListRow;
+
+    /// What the old builder does when it reaches the row it was waiting for.
+    type Replace = Rc<dyn Fn(&naui_windows::List)>;
+
+    const ROWS: usize = 1_000;
+    let window = ui.window("行の差し替え", 240.0, 160.0)?;
+    let list = ui.list()?;
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+    let slot = Rc::new(RefCell::new(None::<Replace>));
+    let fill = |list: &naui_windows::List| {
+        let weak = list.downgrade();
+        let ui = ui.clone();
+        let slot = slot.clone();
+        list.set_row_builder(ROWS, move |index| {
+            // 窓の途中の行で差し替える。
+            if index % 7 == 3 {
+                let replace = slot.borrow_mut().take();
+                if let (Some(replace), Some(list)) = (replace, weak.upgrade()) {
+                    replace(&list);
+                }
+            }
+            Ok(ListRow::new(&ui.label(&format!("古い {index}"))?))
+        });
+    };
+    fill(&list);
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        let scroll = list_scroller(&list);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        let rows = || {
+            list.native_list_view()
+                .Items()
+                .and_then(|items| items.Size())
+                .expect("行の数") as usize
+        };
+
+        // 別の組み立て関数へ。組み立てられるのは新しい窓の行だけで、1 回ずつ。
+        let new_built = Rc::new(RefCell::new(Vec::new()));
+        *slot.borrow_mut() = Some(Rc::new({
+            let ui = ui.clone();
+            let new_built = new_built.clone();
+            move |list: &naui_windows::List| {
+                let ui = ui.clone();
+                let new_built = new_built.clone();
+                list.set_row_builder(2_000, move |index| {
+                    new_built.borrow_mut().push(index);
+                    Ok(ListRow::new(&ui.label(&format!("新しい {index}"))?))
+                });
+            }
+        }));
+        list.refresh();
+        assert_eq!(list.len(), 2_000);
+        assert!(rows() > 0, "行があること");
+        assert_eq!(new_built.borrow().first(), Some(&0));
+        let built = new_built.borrow().clone();
+        assert_eq!(
+            built,
+            (0..built.len()).collect::<Vec<_>>(),
+            "新しい関数は新しい窓の行だけを、1 回ずつ組み立てること"
+        );
+
+        // 窓が動く途中に、行の少ない固定の行へ。
+        fill(&list);
+        list.set_selection(&[1]);
+        *slot.borrow_mut() = Some(Rc::new(|list: &naui_windows::List| {
+            list.set_items(&ListItem::list(["東京", "大阪", "京都"]));
+        }));
+        list.scroll_to_row(800);
+        pump_until(Duration::from_secs(2), || list.len() == 3 && rows() == 3);
+        assert_eq!(list.len(), 3);
+        assert_eq!(rows(), 3, "新しい行の数だけになること");
+        assert!(list.selection().is_empty(), "選択は外れること");
+
+        // 組み立てるたびに差し替える関数でも止まること。
+        fn keep_replacing(list: &naui_windows::List, ui: &Ui) {
+            let weak = list.downgrade();
+            let ui = ui.clone();
+            list.set_row_builder(ROWS, move |index| {
+                if let Some(list) = weak.upgrade() {
+                    keep_replacing(&list, &ui);
+                }
+                Ok(ListRow::new(&ui.label(&index.to_string())?))
+            });
+        }
+        keep_replacing(&list, ui);
+        assert_eq!(list.len(), ROWS);
     }));
     window.close();
     if let Err(panic) = outcome {

@@ -26,6 +26,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use dispatch2::{DispatchQueue, MainThreadBound};
 use naui_core::{
     Align, ListItem, Orientation, Point, Result, RowSource, SelectionMode, Sizing, TextColor,
     TextStyle,
@@ -195,6 +196,8 @@ impl ListRow {
 struct ListRows {
     source: RowSource<ListRow>,
     built: RefCell<HashMap<usize, ListRow>>,
+    /// Whether the app's function is building a row right now.
+    building: Cell<bool>,
 }
 
 impl ListRows {
@@ -212,7 +215,15 @@ impl ListRows {
         self.source.set_builder(count, build);
     }
 
+    /// Whether this is being called from inside the app's function that builds a row.
+    fn is_building(&self) -> bool {
+        self.building.get()
+    }
+
     /// The contents of that row, building it if it is not built yet.
+    ///
+    /// `None` if the rows were replaced while building it: the row belongs to the old
+    /// rows, and the table reloads afterwards ([`List::reload_after_build`]).
     fn row(&self, index: usize) -> Option<ListRow> {
         if !self.source.is_built() {
             return self.source.row(index)?.ok();
@@ -220,11 +231,15 @@ impl ListRows {
         if let Some(row) = self.built.borrow().get(&index) {
             return Some(row.clone());
         }
+        let generation = self.source.generation();
+        let was_building = self.building.replace(true);
+        let row = self.source.row(index);
+        self.building.set(was_building);
+        if self.source.generation() != generation {
+            return None;
+        }
         // 組み立てに失敗した行は、空の行にする。
-        let row = self
-            .source
-            .row(index)?
-            .unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
+        let row = row?.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
         self.built.borrow_mut().insert(index, row.clone());
         Some(row)
     }
@@ -793,6 +808,9 @@ struct ListInner {
     mode: Cell<SelectionMode>,
     handler: SelectionHandler,
     silent: Rc<Cell<bool>>,
+    /// The selection to apply once the table has reloaded, while a reload is waiting for
+    /// a row build to finish ([`List::reload_after_build`]).
+    pending_selection: RefCell<Option<Vec<usize>>>,
     /// Delegates and data sources are weak references, so they are held.
     _source: Retained<ListSource>,
 }
@@ -895,6 +913,7 @@ impl List {
             mode: Cell::new(SelectionMode::Single),
             handler,
             silent,
+            pending_selection: RefCell::new(None),
             _source: source,
         }))
     }
@@ -1001,11 +1020,40 @@ impl List {
     }
 
     fn reload_rows(&self) {
+        // AppKit が行を聞いている最中には読み直せない (再入の警告になる)。
+        if self.0.rows.is_building() {
+            self.reload_after_build();
+            return;
+        }
         self.without_notifying(|this| {
             this.apply_row_height();
             this.0.table.reloadData();
             unsafe { this.0.table.deselectAll(None) };
             this.0.scroll.invalidate_document_size();
+        });
+    }
+
+    /// Reloads the table once the row build in progress has finished, and clears the
+    /// selection. The app can still set a selection until then; it is applied afterwards.
+    fn reload_after_build(&self) {
+        if self.0.pending_selection.replace(Some(Vec::new())).is_some() {
+            return;
+        }
+        let mtm = MainThreadMarker::from(&*self.0.table);
+        let weak = MainThreadBound::new(Rc::downgrade(&self.0), mtm);
+        DispatchQueue::main().exec_async(move || {
+            // メインキューの仕事はメインスレッドで走る。
+            let mtm = MainThreadMarker::new().expect("called outside the main queue");
+            if let Some(inner) = weak.into_inner(mtm).upgrade() {
+                let list = List(inner);
+                let picked = list.0.pending_selection.take().unwrap_or_default();
+                list.without_notifying(|this| {
+                    this.apply_row_height();
+                    this.0.table.reloadData();
+                    this.apply_selection(&picked);
+                    this.0.scroll.invalidate_document_size();
+                });
+            }
         });
     }
 
@@ -1034,7 +1082,7 @@ impl List {
     pub fn set_selection_mode(&self, mode: SelectionMode) {
         self.0.mode.set(mode);
         self.0.table.setAllowsMultipleSelection(mode.is_multiple());
-        self.without_notifying(|this| unsafe { this.0.table.deselectAll(None) });
+        self.without_notifying(|this| this.apply_selection(&[]));
     }
 
     pub fn selection_mode(&self) -> SelectionMode {
@@ -1048,6 +1096,9 @@ impl List {
 
     /// The selected rows (ascending). Zero or one for single selection.
     pub fn selection(&self) -> Vec<usize> {
+        if let Some(picked) = &*self.0.pending_selection.borrow() {
+            return picked.clone();
+        }
         selected_indices(&self.0.table, self.len())
     }
 
@@ -1078,7 +1129,7 @@ impl List {
 
     /// Clears the whole selection without notifying.
     pub fn clear_selection(&self) {
-        self.without_notifying(|this| unsafe { this.0.table.deselectAll(None) });
+        self.without_notifying(|this| this.apply_selection(&[]));
     }
 
     /// Selects one row through the same path as a user's selection (notifies).
@@ -1147,6 +1198,11 @@ impl List {
     }
 
     fn apply_selection(&self, indices: &[usize]) {
+        // テーブルはまだ前の行のままなので、読み直してから当てる。
+        if let Some(pending) = &mut *self.0.pending_selection.borrow_mut() {
+            *pending = indices.to_vec();
+            return;
+        }
         if indices.is_empty() {
             unsafe { self.0.table.deselectAll(None) };
             return;

@@ -40,6 +40,12 @@ pub const ROW_WINDOW_THRESHOLD: usize = 200;
 /// builds more.
 pub const ROW_WINDOW_OVERSCAN: usize = 12;
 
+/// How many times a build starts over because the rows were replaced during it.
+///
+/// A function that replaces the rows every time it is called would otherwise never
+/// finish. The limit only has to be above what an app does on purpose.
+const ROW_REBUILD_LIMIT: usize = 8;
+
 /// The range of rows currently built.
 ///
 /// A half-open range `start..end`; `end` is not included. `count` is the total
@@ -343,6 +349,8 @@ pub struct RowSource<T> {
     built: Cell<bool>,
     count: Cell<usize>,
     selectable: RefCell<Option<RowSelectable>>,
+    /// Counts the replacements, so a build under way can notice one.
+    generation: Cell<u64>,
 }
 
 impl<T> Default for RowSource<T> {
@@ -353,6 +361,7 @@ impl<T> Default for RowSource<T> {
             built: Cell::new(false),
             count: Cell::new(0),
             selectable: RefCell::new(None),
+            generation: Cell::new(0),
         }
     }
 }
@@ -378,6 +387,7 @@ impl<T: Clone> RowSource<T> {
         self.built.set(false);
         self.count.set(rows.len());
         *self.rows.borrow_mut() = rows;
+        self.invalidate();
     }
 
     /// Replaces the rows with `count` rows that `build` makes when they become visible.
@@ -386,6 +396,52 @@ impl<T: Clone> RowSource<T> {
         *self.build.borrow_mut() = Some(Box::new(build));
         self.built.set(true);
         self.count.set(count);
+        self.invalidate();
+    }
+
+    /// Changes whenever the rows are replaced. A row built while this changed belongs
+    /// to the old rows.
+    pub fn generation(&self) -> u64 {
+        self.generation.get()
+    }
+
+    /// Makes a build under way start over, as if the rows had been replaced.
+    pub fn invalidate(&self) {
+        self.generation.set(self.generation.get().wrapping_add(1));
+    }
+
+    /// Runs `build`, and runs it again whenever the rows were replaced during it.
+    ///
+    /// The builder is the app's code, so it can replace the rows itself. `build` receives
+    /// `false` the first time and `true` when starting over, which is when to choose the
+    /// range to build again. It stops after a limited number of attempts, so a builder
+    /// that replaces the rows on every call leaves the last attempt as it is instead of
+    /// hanging.
+    ///
+    /// ```
+    /// # use naui_core::RowSource;
+    /// let rows: RowSource<String> = RowSource::default();
+    /// rows.set_rows(vec!["old".to_string()]);
+    /// let mut attempts = Vec::new();
+    /// rows.build_until_settled(|again| {
+    ///     attempts.push(again);
+    ///     if !again {
+    ///         rows.set_rows(vec!["new".to_string()]);
+    ///     }
+    /// });
+    /// assert_eq!(attempts, [false, true]);
+    /// ```
+    pub fn build_until_settled(&self, mut build: impl FnMut(bool)) {
+        let mut generation = self.generation();
+        build(false);
+        for _ in 0..ROW_REBUILD_LIMIT {
+            let current = self.generation();
+            if current == generation {
+                return;
+            }
+            generation = current;
+            build(true);
+        }
     }
 
     /// The contents of that row. `None` if there is no such row, or if it is asked for
@@ -452,6 +508,39 @@ impl<T: Clone> RowSource<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replacing_the_rows_changes_the_generation() {
+        let rows: RowSource<usize> = RowSource::default();
+        let generation = rows.generation();
+        rows.set_rows(vec![1]);
+        assert_ne!(rows.generation(), generation);
+        let generation = rows.generation();
+        rows.set_builder(1, Ok);
+        assert_ne!(rows.generation(), generation);
+        let generation = rows.generation();
+        rows.row(0);
+        assert_eq!(rows.generation(), generation, "読むだけでは変わらない");
+    }
+
+    #[test]
+    fn a_build_without_a_replacement_runs_once() {
+        let rows: RowSource<usize> = RowSource::default();
+        let mut attempts = 0;
+        rows.build_until_settled(|_| attempts += 1);
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn a_build_that_always_replaces_the_rows_stops() {
+        let rows: RowSource<usize> = RowSource::default();
+        let mut attempts = 0;
+        rows.build_until_settled(|_| {
+            attempts += 1;
+            rows.set_rows(Vec::new());
+        });
+        assert_eq!(attempts, ROW_REBUILD_LIMIT + 1);
+    }
 
     #[test]
     fn small_tables_are_not_windowed() {

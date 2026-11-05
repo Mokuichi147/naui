@@ -557,6 +557,11 @@ impl List {
     fn reset_rows(&self) {
         self.0.selected.borrow_mut().clear();
         self.0.row_height_stale.set(true);
+        // 組み立ての途中で差し替えられたら、組み立てている側が新しい行でやり直す。
+        if self.0.rebuilding.get() {
+            self.0.realized.borrow_mut().clear();
+            return;
+        }
         self.0.window.set(self.compute_window(ROW_WINDOW_OVERSCAN));
         self.build_window();
         // 行の高さが分かったら、その高さで窓を引き直す。
@@ -572,12 +577,18 @@ impl List {
         if self.0.rebuilding.replace(true) {
             return;
         }
-        self.build_window_once();
+        self.0.rows.build_until_settled(|replaced| {
+            if replaced {
+                self.0.window.set(self.compute_window(ROW_WINDOW_OVERSCAN));
+            }
+            self.build_window_once();
+        });
         self.0.rebuilding.set(false);
     }
 
     fn build_window_once(&self) {
         let window = self.0.window.get();
+        let generation = self.0.rows.generation();
         let fixed_height = self.0.fixed_row_height.get();
         let focused = self.focused_row();
         let mut realized = Vec::with_capacity(window.len());
@@ -594,6 +605,10 @@ impl List {
                 let Some(row) = self.0.rows.row(index) else {
                     continue;
                 };
+                // 差し替えられたら、この行も残りの窓ももう古い。
+                if self.0.rows.generation() != generation {
+                    break;
+                }
                 // 組み立てに失敗した行は、空の行にする。
                 let row = row.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
                 let native = build_row(&row, Rc::downgrade(&self.0));

@@ -262,6 +262,10 @@ fn main() {
             list_builder_can_touch_the_list,
         ),
         (
+            "行を組み立てる関数の中で行を差し替えても新しい行にそろう",
+            list_builder_can_replace_the_rows,
+        ),
+        (
             "テーブルが見えている行だけを組み立てる",
             table_builds_only_the_rows_it_shows,
         ),
@@ -8563,6 +8567,52 @@ fn list_builder_can_touch_the_list(ui: &Ui) -> Result<()> {
             .is_some(),
         "組み立ての関数は次の行でも使えること"
     );
+    Ok(())
+}
+
+/// Replacing the rows from inside the function that builds a row reloads the table once
+/// AppKit has finished asking, so only the new rows are left.
+fn list_builder_can_replace_the_rows(ui: &Ui) -> Result<()> {
+    let new_built = Rc::new(RefCell::new(Vec::new()));
+    let list = ui.list()?;
+    let weak = list.downgrade();
+    let ui_for_row = ui.clone();
+    list.set_row_builder(1_000, {
+        let new_built = new_built.clone();
+        move |index| {
+            if index == 2 {
+                let list = weak.upgrade().expect("リストが生きていること");
+                let ui = ui_for_row.clone();
+                let new_built = new_built.clone();
+                list.set_row_builder(5, move |index| {
+                    new_built.borrow_mut().push(index);
+                    Ok(ListRow::new(&ui.label(&index.to_string())?))
+                });
+                // 読み直しを待たずに選んでも、新しい行に当たること。
+                list.set_selection(&[4]);
+                assert_eq!(list.selection(), vec![4]);
+            }
+            Ok(ListRow::new(&ui_for_row.label(&index.to_string())?))
+        }
+    });
+    let native = list.native_table();
+    assert!(
+        native
+            .viewAtColumn_row_makeIfNecessary(0, 2, true)
+            .is_none(),
+        "差し替えの途中で組み立てた古い行は使わないこと"
+    );
+    pump_until(2.0, || native.numberOfRows() == 5);
+    assert_eq!(list.len(), 5);
+    assert_eq!(native.numberOfRows(), 5, "読み直しで新しい行数になること");
+    assert_eq!(list.selection(), vec![4], "読み直しのあとも選択が残ること");
+    assert!(native.selectedRowIndexes().containsIndex(4));
+
+    new_built.borrow_mut().clear();
+    assert!(native
+        .viewAtColumn_row_makeIfNecessary(0, 3, true)
+        .is_some());
+    assert_eq!(*new_built.borrow(), [3], "新しい関数が組み立てること");
     Ok(())
 }
 

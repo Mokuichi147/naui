@@ -880,6 +880,28 @@ impl List {
 
     /// Chooses the body for the current rows and builds it.
     fn rebuild_body(&self) {
+        // 組み立ての途中で呼ばれたら、組み立てている側が中身ごと作り直す。
+        if self.0.rebuilding.get() {
+            self.0.realized.borrow_mut().clear();
+            self.0.rows.invalidate();
+            return;
+        }
+        if self.prepare_body().is_err() {
+            return;
+        }
+        if !matches!(&*self.0.body.borrow(), Body::Listbox { .. }) {
+            return;
+        }
+        let _ = self.build_window();
+        // 行の高さが分かったら、その高さで窓を引き直す。
+        if self.settle_row_height() {
+            self.update_window();
+        }
+    }
+
+    /// Replaces the body with the one the current rows need, and chooses the window.
+    /// A `<select>` is complete after this; a list box still needs its rows built.
+    fn prepare_body(&self) -> Result<()> {
         self.0.row_height_stale.set(true);
         self.0.realized.borrow_mut().clear();
         // `<option>` はテキストしか持てず、作った分だけ重くなり、高さも指定できない。
@@ -890,19 +912,12 @@ impl List {
             && !self.0.rows.any_stored(|row| !row.fits_an_option());
         if plain {
             self.0.window.set(RowWindow::all(self.len()));
-            let _ = self.build_select();
-            return;
+            return self.build_select();
         }
-        if self.build_listbox().is_err() {
-            return;
-        }
+        self.build_listbox()?;
         // 詰め物とスクロールの位置は作り直したばかりなので、先頭から始める。
         self.0.window.set(self.compute_window(ROW_WINDOW_OVERSCAN));
-        let _ = self.build_window();
-        // 行の高さが分かったら、その高さで窓を引き直す。
-        if self.settle_row_height() {
-            self.update_window();
-        }
+        Ok(())
     }
 
     /// Rebuilds the `<li>`s for just the current window.
@@ -915,13 +930,21 @@ impl List {
         if self.0.rebuilding.replace(true) {
             return Ok(());
         }
-        let result = self.build_window_once();
+        let mut result = Ok(());
+        self.0.rows.build_until_settled(|replaced| {
+            let prepared = match replaced {
+                true => self.prepare_body(),
+                false => Ok(()),
+            };
+            result = prepared.and_then(|()| self.build_window_once());
+        });
         self.0.rebuilding.set(false);
         result
     }
 
     fn build_window_once(&self) -> Result<()> {
         let window = self.0.window.get();
+        let generation = self.0.rows.generation();
         // アプリのコードが動く間は、中身の借用を持たない。
         let Some((list, bottom_spacer, old)) = (match &mut *self.0.body.borrow_mut() {
             Body::Listbox {
@@ -950,6 +973,10 @@ impl List {
             let Some(row) = self.0.rows.row(index) else {
                 continue;
             };
+            // 差し替えられたら、この行も残りの窓ももう古い。
+            if self.0.rows.generation() != generation {
+                break;
+            }
             // 組み立てに失敗した行は、空の行にする。
             let row = row.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
             let (option, listener) = self.build_option(&list, index, &row)?;

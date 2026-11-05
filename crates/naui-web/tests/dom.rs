@@ -7421,6 +7421,136 @@ fn list_with_many_rows_leaves_the_select() {
     });
 }
 
+/// Replacing the rows from inside the function that builds a row leaves only the new
+/// rows, in the body and window they need, however far the build had got.
+#[wasm_bindgen_test]
+fn list_builder_can_replace_the_rows() {
+    /// What the old builder does when it reaches the row it was waiting for.
+    type Replace = Rc<dyn Fn(&naui_web::List)>;
+
+    with_ui(|ui| {
+        const ROWS: usize = 1_000;
+        let (list, _mounted) = mounted_list(ui)?;
+        let slot = Rc::new(RefCell::new(None::<Replace>));
+        let fill = |list: &naui_web::List| {
+            let weak = list.downgrade();
+            let ui = ui.clone();
+            let slot = slot.clone();
+            list.set_row_builder(ROWS, move |index| {
+                // 窓の途中の行で差し替える。
+                if index % 7 == 3 {
+                    let replace = slot.borrow_mut().take();
+                    if let (Some(replace), Some(list)) = (replace, weak.upgrade()) {
+                        replace(&list);
+                    }
+                }
+                Ok(ListRow::new(&ui.label(&format!("古い {index}"))?))
+            });
+        };
+        let texts = |list: &naui_web::List| -> Vec<String> {
+            list_rows(list)
+                .iter()
+                .filter_map(|row| row.text_content())
+                .collect()
+        };
+        fill(&list);
+
+        // 別の組み立て関数へ。
+        let new_built = Rc::new(RefCell::new(Vec::new()));
+        *slot.borrow_mut() = Some(Rc::new({
+            let ui = ui.clone();
+            let new_built = new_built.clone();
+            move |list: &naui_web::List| {
+                let ui = ui.clone();
+                let new_built = new_built.clone();
+                list.set_row_builder(2_000, move |index| {
+                    new_built.borrow_mut().push(index);
+                    Ok(ListRow::new(&ui.label(&format!("新しい {index}"))?))
+                });
+            }
+        }));
+        list.refresh();
+        assert_eq!(list.len(), 2_000);
+        let shown = texts(&list);
+        assert!(
+            !shown.is_empty() && shown.iter().all(|text| text.starts_with("新しい ")),
+            "古い行が残らないこと: {shown:?}"
+        );
+        assert_eq!(shown[0], "新しい 0");
+        assert_eq!(
+            *new_built.borrow(),
+            (0..shown.len()).collect::<Vec<_>>(),
+            "新しい関数は新しい窓の行だけを、1 回ずつ組み立てること"
+        );
+        assert!(
+            list_scroller(&list).is_connected(),
+            "新しいリストが文書にあること"
+        );
+
+        // スクロールで窓が動く途中に、`<select>` で足りる行へ。
+        fill(&list);
+        list.set_selection(&[1]);
+        *slot.borrow_mut() = Some(Rc::new(|list: &naui_web::List| {
+            list.set_items(&ListItem::list(["東京", "大阪", "京都"]));
+        }));
+        list.scroll_to_row(800);
+        assert_eq!(list.len(), 3);
+        let select = list.native_select().expect("<select> に戻ること");
+        assert_eq!(select.length(), 3);
+        assert_eq!(
+            select
+                .item(2)
+                .and_then(|option| option.text_content())
+                .as_deref(),
+            Some("京都")
+        );
+        assert!(list.selection().is_empty(), "選択は外れること");
+
+        // 窓が動く途中に、行の多い固定の行へ。
+        fill(&list);
+        *slot.borrow_mut() = Some(Rc::new(|list: &naui_web::List| {
+            list.set_items(&ListItem::list(
+                (0..500).map(|index| format!("固定 {index}")),
+            ));
+        }));
+        list.scroll_to_row(800);
+        assert_eq!(list.len(), 500);
+        let shown = texts(&list);
+        assert!(
+            !shown.is_empty() && shown.iter().all(|text| text.starts_with("固定 ")),
+            "古い行が残らないこと: {shown:?}"
+        );
+        assert!(
+            shown.len() < 200,
+            "窓に絞られていること: {} 行",
+            shown.len()
+        );
+        list.set_selection(&[0]);
+        assert_eq!(
+            list_rows(&list)[0]
+                .get_attribute("aria-selected")
+                .as_deref(),
+            Some("true"),
+            "選択が新しい行に写ること"
+        );
+
+        // 組み立てるたびに差し替える関数でも止まること。
+        fn keep_replacing(list: &naui_web::List, ui: &Ui) {
+            let weak = list.downgrade();
+            let ui = ui.clone();
+            list.set_row_builder(1_000, move |index| {
+                if let Some(list) = weak.upgrade() {
+                    keep_replacing(&list, &ui);
+                }
+                Ok(ListRow::new(&ui.label(&index.to_string())?))
+            });
+        }
+        keep_replacing(&list, ui);
+        assert_eq!(list.len(), 1_000);
+        Ok(())
+    });
+}
+
 /// Rows of widgets are built when they become visible, and every notification carries
 /// the row's place in the whole list.
 #[wasm_bindgen_test]
