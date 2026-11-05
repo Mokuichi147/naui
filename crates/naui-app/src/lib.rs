@@ -522,7 +522,12 @@ impl<P: Program> Inner<P> {
             };
             error::set_current_message(text);
             error::catch(|| {
-                effect.start(self.tasks.as_ref(), &self.dispatch, &self.owner);
+                effect.start(
+                    self.tasks.as_ref(),
+                    &self.dispatch,
+                    &self.owner,
+                    &self.stopped,
+                );
             });
         }
     }

@@ -91,9 +91,10 @@ impl fmt::Display for Report {
 pub enum Decision {
     /// Carry on. After a panic, the model is used as the panic left it.
     GoOn,
-    /// Stop the app: no more messages are handled, the effects of its own model are
-    /// cancelled, what other effects send is dropped, and the UI quits (only [`run`] and
-    /// [`run_with_handler`] know the UI).
+    /// Stop the app: no more messages are handled, an effect that has not started does
+    /// not start (the rest of the same [`batch`](crate::Effect::batch) included), the
+    /// effects of its own model are cancelled, what other effects send is dropped, and
+    /// the UI quits (only [`run`] and [`run_with_handler`] know the UI).
     ///
     /// [`run`]: crate::run
     /// [`run_with_handler`]: crate::run_with_handler

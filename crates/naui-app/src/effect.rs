@@ -1,6 +1,5 @@
 //! Effects: asynchronous work `update` asks for, and the models that own it.
 
-use std::any::Any;
 use std::borrow::Borrow;
 use std::cell::{Cell, RefCell};
 use std::future::Future;
@@ -11,8 +10,7 @@ use std::time::Duration;
 
 use naui::{ChannelCloser, Sender, Task, Tasks, Timer};
 
-use crate::component::attempt;
-use crate::error::{panic_text, report};
+use crate::error::{catch, panic_text, report};
 use crate::{Dispatch, Program, ReportKind};
 
 /// What an [`Effect`] uses to hand back what it produced.
@@ -235,6 +233,10 @@ impl<M: 'static> Node<M> {
                 keys.pop();
             }
             Node::Work(work) => {
+                // 同じバッチの前の要素でハンドラが止めた。
+                if cx.stopped.get() {
+                    return;
+                }
                 // 持ち主はこの効果が始まる前に落とされた。
                 let Some(ledger) = ledger else {
                     return;
@@ -253,8 +255,10 @@ impl<M: 'static> Node<M> {
                     send: Rc::new(move |message| dispatch.send(message)),
                     open: open.clone(),
                 };
-                let Some(handle) = attempt(&mut cx.panicked, || (work.start)(tasks, deliver))
-                else {
+                // ここで受け止めてハンドラへ伝えるので、次の要素の前に答えが分かる。
+                let mut started = None;
+                catch(|| started = Some((work.start)(tasks, deliver)));
+                let Some(handle) = started else {
                     return;
                 };
                 let running = Rc::new(Running {
@@ -273,7 +277,8 @@ impl<M: 'static> Node<M> {
 struct Starting<'a, M: 'static> {
     tasks: Option<&'a Tasks>,
     dispatch: &'a Dispatch<M>,
-    panicked: Option<Box<dyn Any + Send>>,
+    /// Whether the handler has stopped the app, which can happen halfway through.
+    stopped: &'a Cell<bool>,
 }
 
 impl<M> std::fmt::Debug for Node<M> {
@@ -594,19 +599,24 @@ impl<M: 'static> Effect<M> {
         }
     }
 
-    /// Starts what is in here, as `owner`'s. A panic in the code it calls does not stop
-    /// the rest, and carries on once they have started.
-    pub(crate) fn start(self, tasks: Option<&Tasks>, dispatch: &Dispatch<M>, owner: &Owner) {
+    /// Starts what is in here, as `owner`'s, one piece at a time. A panic in the code it
+    /// calls is told to the handler there and then, as a failure is. Unless the answer
+    /// stops the app (`stopped`), the rest starts; once it has, a failure among the rest
+    /// is still reported, since it has happened all the same, and work does not start.
+    pub(crate) fn start(
+        self,
+        tasks: Option<&Tasks>,
+        dispatch: &Dispatch<M>,
+        owner: &Owner,
+        stopped: &Cell<bool>,
+    ) {
         let mut cx = Starting {
             tasks,
             dispatch,
-            panicked: None,
+            stopped,
         };
         self.node
             .start(&mut cx, Some(owner.0.clone()), &mut Vec::new());
-        if let Some(panic) = cx.panicked {
-            resume_unwind(panic);
-        }
     }
 }
 

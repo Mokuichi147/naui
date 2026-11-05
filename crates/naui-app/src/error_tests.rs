@@ -424,6 +424,80 @@ fn failures_still_waiting_when_the_app_stops_are_reported() {
     assert_eq!(seen[1].message(), Some("Plain"));
 }
 
+/// An effect that notes it has started, and asks for nothing more.
+fn noting(started: &Log, name: &'static str) -> Effect<Msg> {
+    let started = started.clone();
+    Effect::channel(move |_: naui::Sender<Msg>| started.borrow_mut().push(name.to_owned()))
+}
+
+#[test]
+fn stopping_on_a_failure_starts_nothing_more_of_the_batch() {
+    let (event_loop, tasks) = Loop::new();
+    let started = Log::default();
+    let noted = started.clone();
+    let (app, _, seen) = app_answering(Some(&tasks), Decision::Stop, move |_| {
+        noting(&noted, "before")
+            .and(Effect::fail("fatal"))
+            .and(noting(&noted, "after"))
+            .and(noting(&noted, "keyed").key("search"))
+            .and(Effect::fail("also happened"))
+    });
+    app.send(Msg::Plain);
+    assert!(app.is_stopped());
+    assert_eq!(taken(&started), ["before"], "fail の後ろは始まらない");
+    let texts: Vec<_> = seen.borrow().iter().map(|r| r.text().to_owned()).collect();
+    assert_eq!(texts, ["fatal", "also happened"], "起きた失敗は伝える");
+    event_loop.run();
+    assert_eq!(app.running(), 0);
+}
+
+#[test]
+fn stopping_on_a_panicking_effect_starts_nothing_more_of_the_batch() {
+    let (event_loop, tasks) = Loop::new();
+    let started = Log::default();
+    let noted = started.clone();
+    let (app, _, seen) = app_answering(Some(&tasks), Decision::Stop, move |_| {
+        Effect::spawn(|_| -> std::future::Ready<Msg> { panic!("start panicked (intended)") })
+            .and(noting(&noted, "after"))
+    });
+    app.send(Msg::Plain);
+    assert!(app.is_stopped());
+    assert!(taken(&started).is_empty(), "panic の後ろは始まらない");
+    assert_eq!(seen.borrow().len(), 1);
+    event_loop.run();
+}
+
+#[test]
+fn going_on_starts_the_rest_of_the_batch() {
+    let (event_loop, tasks) = Loop::new();
+    let started = Log::default();
+    let noted = started.clone();
+    let (app, _, seen) = app_answering(Some(&tasks), Decision::GoOn, move |_| {
+        Effect::fail("not fatal")
+            .and(noting(&noted, "after the failure"))
+            .and(Effect::spawn(|_| -> std::future::Ready<Msg> {
+                panic!("start panicked (intended)")
+            }))
+            .and(noting(&noted, "after the panic"))
+    });
+    app.send(Msg::Plain);
+    assert_eq!(taken(&started), ["after the failure", "after the panic"]);
+    let texts: Vec<_> = seen.borrow().iter().map(|r| r.text().to_owned()).collect();
+    assert_eq!(texts, ["not fatal", "start panicked (intended)"]);
+    event_loop.run();
+}
+
+#[test]
+fn work_after_stopping_does_not_complain_about_missing_tasks() {
+    // Tasks がなければ Work は失敗として報告されるが、始めないものは失敗でもない。
+    let (app, _, seen) = app_answering(None, Decision::Stop, |_| {
+        Effect::fail("fatal").and(Effect::after(Duration::ZERO, Msg::Plain))
+    });
+    app.send(Msg::Plain);
+    let texts: Vec<_> = seen.borrow().iter().map(|r| r.text().to_owned()).collect();
+    assert_eq!(texts, ["fatal"]);
+}
+
 // キューの外の panic
 
 #[test]
