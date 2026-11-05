@@ -941,6 +941,198 @@ fn an_effect_not_started_yet_does_not_start_once_its_wrapper_is_gone() {
     assert_eq!(reported(), ["still reported"]);
 }
 
+/// 親のモデルの外に置いた子。効果を始めるコードからも落とせる。
+type Slot = Rc<RefCell<Option<Scoped<Script<Msg>>>>>;
+
+/// `slot` の子へメッセージを渡すだけのアプリ。
+fn app_of_slot(tasks: &Tasks, log: &Log, slot: &Slot) -> App<Script<Msg>> {
+    let slot = slot.clone();
+    app(tasks, log, move |message| {
+        match slot.borrow_mut().as_mut() {
+            Some(child) => child.update(message),
+            None => Effect::none(),
+        }
+    })
+}
+
+#[test]
+fn a_wrapper_dropped_while_its_task_starts_stops_the_task() {
+    let (event_loop, tasks) = Loop::new();
+    let log = Log::default();
+    let slot = Slot::default();
+    let (holder, inner) = (slot.clone(), log.clone());
+    *slot.borrow_mut() = Some(Scoped::new(script(&log, move |message| match message {
+        Msg::Go => {
+            let holder = holder.clone();
+            let guard = Dropped("task", inner.clone());
+            Effect::spawn(move |_| {
+                holder.borrow_mut().take();
+                async move {
+                    let _guard = guard;
+                    Msg::Done("too late")
+                }
+            })
+        }
+        _ => Effect::none(),
+    })));
+    let app = app_of_slot(&tasks, &log, &slot);
+    app.send(Msg::Go);
+    assert!(slot.borrow().is_none());
+    assert!(
+        log.borrow().iter().any(|line| line == "dropped task"),
+        "{:?}",
+        log.borrow()
+    );
+    taken(&log);
+    event_loop.advance(SECOND);
+    assert!(log.borrow().is_empty(), "{:?}", log.borrow());
+}
+
+#[test]
+fn a_wrapper_dropped_while_its_channel_starts_closes_the_channel() {
+    let (event_loop, tasks) = Loop::new();
+    let log = Log::default();
+    let slot = Slot::default();
+    let saved = Rc::new(RefCell::new(None));
+    let (holder, saved_in) = (slot.clone(), saved.clone());
+    *slot.borrow_mut() = Some(Scoped::new(script(&log, move |message| match message {
+        Msg::Go => {
+            let (holder, saved_in) = (holder.clone(), saved_in.clone());
+            Effect::channel(move |sender| {
+                *saved_in.borrow_mut() = Some(sender);
+                holder.borrow_mut().take();
+            })
+        }
+        _ => Effect::none(),
+    })));
+    let app = app_of_slot(&tasks, &log, &slot);
+    app.send(Msg::Go);
+    taken(&log);
+
+    let sender: naui::Sender<Msg> = saved.borrow_mut().take().expect("handed over");
+    assert!(!sender.is_open());
+    assert!(sender.send(Msg::Done("too late")).is_err());
+    event_loop.settle();
+    assert!(log.borrow().is_empty(), "{:?}", log.borrow());
+}
+
+#[test]
+fn what_follows_in_a_batch_does_not_start_once_its_wrapper_is_gone() {
+    let (event_loop, tasks) = Loop::new();
+    let log = Log::default();
+    let slot = Slot::default();
+    let started = Rc::new(Cell::new(false));
+    let (holder, flag) = (slot.clone(), started.clone());
+    *slot.borrow_mut() = Some(Scoped::new(script(&log, move |message| match message {
+        Msg::Go => {
+            let (holder, flag) = (holder.clone(), flag.clone());
+            Effect::spawn(move |_| {
+                holder.borrow_mut().take();
+                pending::<Msg>()
+            })
+            .and(Effect::spawn(move |_| {
+                flag.set(true);
+                pending::<Msg>()
+            }))
+            .and(Effect::after(SECOND, Msg::Done("too late")))
+            .and(Effect::fail("still reported"))
+        }
+        _ => Effect::none(),
+    })));
+    let app = app_of_slot(&tasks, &log, &slot);
+    reported();
+    app.send(Msg::Go);
+    assert!(!started.get(), "始めてから止めるのではなく、始めない");
+    assert_eq!(reported(), ["still reported"]);
+    taken(&log);
+    event_loop.advance(SECOND * 2);
+    assert!(log.borrow().is_empty(), "{:?}", log.borrow());
+}
+
+#[test]
+fn a_keys_owner_dropped_while_the_effect_starts_stops_it() {
+    let (event_loop, tasks) = Loop::new();
+    let log = Log::default();
+    let slot = Slot::default();
+    // 内側の子は外側のモデルが持っていないので、外側と一緒には消えない。
+    let holder = slot.clone();
+    let guard_log = log.clone();
+    let child = Rc::new(RefCell::new(Scoped::new(script(
+        &log,
+        move |message| match message {
+            Msg::Go => {
+                let holder = holder.clone();
+                let guard = Dropped("task", guard_log.clone());
+                Effect::spawn(move |_| {
+                    holder.borrow_mut().take();
+                    async move {
+                        let _guard = guard;
+                        Msg::Done("too late")
+                    }
+                })
+            }
+            _ => Effect::none(),
+        },
+    ))));
+    let inner = child.clone();
+    *slot.borrow_mut() = Some(Scoped::new(script(&log, move |message| match message {
+        Msg::Go => inner.borrow_mut().update(Msg::Go).key("feed"),
+        _ => Effect::none(),
+    })));
+    let app = app_of_slot(&tasks, &log, &slot);
+    app.send(Msg::Go);
+    assert!(
+        log.borrow().iter().any(|line| line == "dropped task"),
+        "キーの持ち主が消えたときに止まるのと同じ扱い: {:?}",
+        log.borrow()
+    );
+    assert_eq!(child.borrow().running(), 0);
+    taken(&log);
+    event_loop.advance(SECOND);
+    assert!(log.borrow().is_empty(), "{:?}", log.borrow());
+}
+
+#[test]
+fn stopping_an_effect_whose_owner_went_while_starting_can_panic() {
+    /// 捨てられるときに panic する Future。
+    struct PanicsWhenDropped;
+
+    impl Future for PanicsWhenDropped {
+        type Output = Msg;
+
+        fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Msg> {
+            Poll::Pending
+        }
+    }
+
+    impl Drop for PanicsWhenDropped {
+        fn drop(&mut self) {
+            panic!("dropping the future panicked (intended)");
+        }
+    }
+
+    let (_event_loop, tasks) = Loop::new();
+    let log = Log::default();
+    let slot = Slot::default();
+    let holder = slot.clone();
+    *slot.borrow_mut() = Some(Scoped::new(script(&log, move |message| match message {
+        Msg::Go => {
+            let holder = holder.clone();
+            Effect::spawn(move |_| {
+                holder.borrow_mut().take();
+                PanicsWhenDropped
+            })
+            .and(Effect::fail("still reported"))
+        }
+        _ => Effect::none(),
+    })));
+    let app = app_of_slot(&tasks, &log, &slot);
+    reported();
+    let outcome = catch_unwind(AssertUnwindSafe(|| app.send(Msg::Go)));
+    assert!(outcome.is_err(), "panic は止めた後で伝わる");
+    assert_eq!(reported(), ["still reported"], "残りの効果は止まらない");
+}
+
 #[test]
 fn keys_belong_to_a_model() {
     let (event_loop, tasks) = Loop::new();
