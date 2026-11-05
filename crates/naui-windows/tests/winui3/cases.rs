@@ -5438,17 +5438,13 @@ fn table_single_selection_drops_rows_outside_the_window(ui: &Ui) -> Result<()> {
         GetKeyboardState, SetKeyboardState, VK_CONTROL,
     };
 
+    let window = ui.window("表の単一選択", 240.0, 160.0)?;
     let table = ui.table()?;
     table.set_columns(&[TableColumn::new("名前")]);
     let labels: Vec<String> = (0..5_000).map(|i| format!("行 {i}")).collect();
     table.set_rows(&TableRow::list(labels.iter().map(|l| [l.as_str()])));
-    let items = table.native_list_view().Items().expect("Items");
-    let item = |index: u32| {
-        items
-            .GetAt(index)
-            .and_then(|item| item.cast::<ListViewItem>())
-            .expect("行")
-    };
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
 
     // `GetKeyState` はこのスレッドの表を読むので、Ctrl を押した状態を表へ書く。
     let mut keys = [0u8; 256];
@@ -5456,20 +5452,35 @@ fn table_single_selection_drops_rows_outside_the_window(ui: &Ui) -> Result<()> {
     unsafe { GetKeyboardState(&mut keys) }.expect("キーの状態");
     let released = keys;
     keys[usize::from(VK_CONTROL.0)] |= 0x80;
-    // SAFETY: 同上。
-    unsafe { SetKeyboardState(&keys) }.expect("Ctrl を押す");
+
     let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || table.row_height() > 0.0);
+        let items = table.native_list_view().Items().expect("Items");
+        let pick_row_one = || {
+            items
+                .GetAt(1)
+                .and_then(|item| item.cast::<ListViewItem>())
+                .and_then(|item| item.SetIsSelected(true))
+                .expect("行を選ぶ");
+            // 窓に載っていても、通知が同じ呼び出しの中で届くとは限らない。
+            pump_until(Duration::from_secs(2), || table.selection().contains(&1));
+        };
+        // SAFETY: 同上。
+        unsafe { SetKeyboardState(&keys) }.expect("Ctrl を押す");
+
         table.set_selected(4_000);
-        item(1).SetIsSelected(true).expect("SetIsSelected");
+        pick_row_one();
         assert_eq!(table.selection(), vec![1], "1 行だけになること");
 
         table.set_selection_mode(SelectionMode::Multiple);
         table.set_selection(&[4_000]);
-        item(1).SetIsSelected(true).expect("SetIsSelected");
+        pick_row_one();
         assert_eq!(table.selection(), vec![1, 4_000], "足すだけなら残ること");
     }));
     // SAFETY: 同上。
     unsafe { SetKeyboardState(&released) }.expect("Ctrl を離す");
+    window.close();
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
