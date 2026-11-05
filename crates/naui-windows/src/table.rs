@@ -24,20 +24,21 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{
-    keeps_hidden_selection, keeps_row_window, row_window, Align, Result, RowWindow,
+    keeps_row_window, merge_hidden_selection, row_window, Align, Result, RowWindow,
     SelectionGesture, SelectionMode, SortOrder, TableColumn, TableRow, ROW_WINDOW_OVERSCAN,
 };
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Button, ColumnDefinition, Grid as XamlGrid, ListView, ListViewItem, ListViewSelectionMode,
-    RowDefinition, ScrollBarVisibility, ScrollMode, ScrollViewer, ScrollViewerViewChangedEventArgs,
-    SelectionChangedEventHandler, StackPanel, TextBlock,
+    Button, ColumnDefinition, Control, Grid as XamlGrid, ListView, ListViewItem,
+    ListViewSelectionMode, RowDefinition, ScrollBarVisibility, ScrollMode, ScrollViewer,
+    ScrollViewerViewChangedEventArgs, SelectionChangedEventHandler, StackPanel, TextBlock,
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, TappedEventHandler};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::ResourceDictionary;
 use naui_winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, GridLength, GridUnitType, HorizontalAlignment, RoutedEventHandler, Style,
-    TextAlignment, TextWrapping, Thickness, UIElement, VerticalAlignment,
+    FocusState, FrameworkElement, GridLength, GridUnitType, HorizontalAlignment,
+    RoutedEventHandler, Style, TextAlignment, TextWrapping, Thickness, UIElement,
+    VerticalAlignment,
 };
 use windows::Foundation::PropertyValue;
 use windows_core::{IInspectable, Interface, HSTRING};
@@ -667,6 +668,9 @@ struct TableInner {
     rows: Rc<RowsState>,
     /// The range of rows currently built. With many rows, only those around the screen.
     window: Cell<RowWindow>,
+    /// The first row in `row_items`. `window` moves ahead of it just before the rows are
+    /// rebuilt.
+    built_start: Cell<usize>,
     /// Whether rows are being built right now. Prevents nested rebuilds.
     rebuilding: Cell<bool>,
     /// The selected rows (ascending). Rows outside the window are included, so this is
@@ -776,6 +780,7 @@ impl Table {
             columns: RefCell::new(Vec::new()),
             rows: Rc::new(RowsState::default()),
             window: Cell::new(RowWindow::default()),
+            built_start: Cell::new(0),
             rebuilding: Cell::new(false),
             selected: RefCell::new(Vec::new()),
             row_height: Cell::new(0.0),
@@ -1349,6 +1354,7 @@ impl Table {
         let previous_count = children
             .Size()
             .map_err(|e| to_error("get the row count", e))?;
+        let focused = self.focused_row();
         self.0.row_items.borrow_mut().clear();
         self.0.realized.borrow_mut().clear();
 
@@ -1414,6 +1420,7 @@ impl Table {
         }
         *self.0.row_items.borrow_mut() = items;
         *self.0.realized.borrow_mut() = realized;
+        self.0.built_start.set(window.start);
 
         let height = self.0.row_height.get();
         set_spacer_height(&self.0.top_spacer, window.leading(height));
@@ -1426,6 +1433,10 @@ impl Table {
             scroll
                 .UpdateLayout()
                 .map_err(|e| to_error("update the table layout", e))?;
+            // 矢印キーで窓の端まで来たときに組み立て直しても、操作が続けられるように。
+            if let Some((index, state)) = focused {
+                self.restore_focus(&scroll, index, state);
+            }
             // 毎回 ChangeView を呼ぶと、ホイールの進行中の移動まで止めてしまう。
             if (scroll.VerticalOffset().unwrap_or(offset) - offset).abs() < 0.5 {
                 return Ok(());
@@ -1438,6 +1449,36 @@ impl Table {
                 .map_err(|e| to_error("restore the scroll position", e))?;
         }
         Ok(())
+    }
+
+    /// The row holding the keyboard focus itself, and how it got it.
+    fn focused_row(&self) -> Option<(usize, FocusState)> {
+        let rows = self.0.row_items.borrow();
+        rows.iter().enumerate().find_map(|(offset, row)| {
+            let state = row.cast::<Control>().and_then(|c| c.FocusState()).ok()?;
+            (state != FocusState::Unfocused).then_some((self.0.built_start.get() + offset, state))
+        })
+    }
+
+    /// Gives the focus back to a row just rebuilt, if it is on screen.
+    ///
+    /// `Focus` also scrolls the row into view, so a row the wheel is moving away from is
+    /// left alone: the scrolling would be pulled back to it.
+    fn restore_focus(&self, scroll: &ScrollViewer, index: usize, state: FocusState) {
+        let window = self.0.window.get();
+        if !window.contains(index) {
+            return;
+        }
+        let height = self.0.row_height.get();
+        let top = index as f64 * height;
+        let view_top = scroll.VerticalOffset().unwrap_or(0.0);
+        let viewport = scroll.ViewportHeight().unwrap_or(0.0);
+        if top + height < view_top || top > view_top + viewport {
+            return;
+        }
+        if let Some(row) = self.0.row_items.borrow().get(index - window.start) {
+            let _ = row.cast::<Control>().and_then(|row| row.Focus(state));
+        }
     }
 
     /// Attaches the subscription that fires the activation when a row is clicked.
@@ -1609,26 +1650,17 @@ impl Table {
         // ネイティブ側へも書き戻す。
         if picked.iter().any(|&index| !self.is_selectable(index)) {
             picked.retain(|&index| self.is_selectable(index));
+            let kept = self.0.selected.borrow().clone();
             self.write_selection(&picked);
+            *self.0.selected.borrow_mut() = kept;
         }
-        if window.is_complete() {
-            return picked;
-        }
-        // 組み立ててある行の選択しか届かないので、窓の外の選択を残すかどうかを
-        // 修飾キーから決める (`keeps_hidden_selection`)。
+        // 単一選択では、窓の外の行を残すと 2 行選ばれてしまう。
+        let gesture = match self.0.mode.get().is_multiple() {
+            true => selection_gesture(),
+            false => SelectionGesture::Plain,
+        };
         let previous = self.0.selected.borrow().clone();
-        let inside: Vec<usize> = previous
-            .iter()
-            .copied()
-            .filter(|&index| window.contains(index))
-            .collect();
-        if !keeps_hidden_selection(&inside, &picked, selection_gesture()) {
-            return picked;
-        }
-        picked.extend(previous.iter().copied().filter(|&i| !window.contains(i)));
-        picked.sort_unstable();
-        picked.dedup();
-        picked
+        merge_hidden_selection(window, &previous, picked, gesture)
     }
 
     /// Operates with notifications from WinUI stopped.

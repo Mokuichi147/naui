@@ -125,6 +125,12 @@ that shape are covered in
   - naui does not know whether rows it has not built yet can be chosen, so by
     default they are assumed to be choosable (this can be passed with
     `set_row_selectable`).
+  - On Windows and Linux, keyboard movement goes through the native list, which knows
+    only the rows built: Home and End go to the first and last rows built, and the
+    arrow keys continue past them as the rows follow. A Shift range selection also
+    covers only the rows built. macOS and the Web cover every row.
+  - A control inside a row loses the keyboard focus when its row leaves the range
+    built, because the row is rebuilt.
   - Columns with widgets in their cells, if no width is specified, are sized only
     by **the header's width and their share of the leftover space** (so columns do
     not move even when content widths differ per row).

@@ -624,41 +624,13 @@ impl List {
         // 矢印キーで窓の端まで来たときに組み立て直しても、操作が続けられるように。
         // 取り除いた行にフォーカスが残ったままだと、キーがどこにも届かなくなる。
         if let Some(index) = focused {
-            let offset = match window.contains(index) {
-                true => index - window.start,
-                // スクロールバーで遠くへ送ったときは、窓の先頭から続ける。
-                false => 0,
-            };
-            if let Some(row) = self.0.native.row_at_index(offset as i32) {
-                self.grab_focus_in_place(&row);
-            }
+            restore_row_focus(&self.0.native, &self.0.scroller, window, index);
         }
     }
 
     /// The row holding the keyboard focus (itself, or a control inside it).
     fn focused_row(&self) -> Option<usize> {
-        let focus = self.0.native.root()?.focus()?;
-        let row = focus
-            .ancestor(gtk::ListBoxRow::static_type())
-            .and_downcast::<gtk::ListBoxRow>()
-            .filter(|row| row.parent().as_ref() == Some(self.0.native.upcast_ref()))?;
-        let offset = usize::try_from(row.index()).ok()?;
-        Some(self.0.built_start.get() + offset)
-    }
-
-    /// Moves the focus to a row just built, without scrolling.
-    ///
-    /// The row has no position yet, and `GtkViewport` would scroll to where it believes
-    /// the focused widget is (`scroll-to-focus`), jumping to the top of the list.
-    fn grab_focus_in_place(&self, row: &gtk::ListBoxRow) {
-        let viewport = self.0.scroller.child().and_downcast::<gtk::Viewport>();
-        if let Some(viewport) = &viewport {
-            viewport.set_scroll_to_focus(false);
-        }
-        row.grab_focus();
-        if let Some(viewport) = &viewport {
-            viewport.set_scroll_to_focus(true);
-        }
+        Some(self.0.built_start.get() + focused_row_offset(&self.0.native)?)
     }
 
     /// Computes the range of rows to build from the current scroll position.
@@ -817,6 +789,46 @@ impl List {
             false => SelectionGesture::Plain,
         };
         merge_hidden_selection(window, &previous, picked, gesture)
+    }
+}
+
+/// Where the row holding the keyboard focus (itself, or a control inside it) sits among
+/// the rows of `list`.
+pub(crate) fn focused_row_offset(list: &gtk::ListBox) -> Option<usize> {
+    let focus = list.root()?.focus()?;
+    let row = focus
+        .ancestor(gtk::ListBoxRow::static_type())
+        .and_downcast::<gtk::ListBoxRow>()
+        .filter(|row| row.parent().as_ref() == Some(list.upcast_ref()))?;
+    usize::try_from(row.index()).ok()
+}
+
+/// Gives the focus back to the row with that index after the rows were rebuilt, without
+/// scrolling. A row now outside the window hands it to the first row built.
+///
+/// The row has no position yet, and `GtkViewport` would scroll to where it believes the
+/// focused widget is (`scroll-to-focus`), jumping to the top of the list.
+pub(crate) fn restore_row_focus(
+    list: &gtk::ListBox,
+    scroller: &gtk::ScrolledWindow,
+    window: RowWindow,
+    index: usize,
+) {
+    let offset = match window.contains(index) {
+        true => index - window.start,
+        // スクロールバーで遠くへ送ったときは、窓の先頭から続ける。
+        false => 0,
+    };
+    let Some(row) = list.row_at_index(offset as i32) else {
+        return;
+    };
+    let viewport = scroller.child().and_downcast::<gtk::Viewport>();
+    if let Some(viewport) = &viewport {
+        viewport.set_scroll_to_focus(false);
+    }
+    row.grab_focus();
+    if let Some(viewport) = &viewport {
+        viewport.set_scroll_to_focus(true);
     }
 }
 
