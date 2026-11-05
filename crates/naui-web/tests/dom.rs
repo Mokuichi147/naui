@@ -2956,6 +2956,63 @@ fn table_keeps_the_selection_outside_the_window() {
     });
 }
 
+/// `aria-activedescendant` names an element in the document, so it follows the row the
+/// keyboard is on only while that row is built, and the keys carry on from that row.
+#[wasm_bindgen_test]
+fn table_active_descendant_only_names_rows_that_exist() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        let table = ui.table()?;
+        table.set_columns(&TableColumn::list(["名前"]));
+        table.set_sizing(
+            Sizing::new()
+                .width(Length::Fill)
+                .height(Length::Fixed(200.0)),
+        );
+        let _mounted = Mounted::new(&table);
+        table.set_rows(
+            &(0..ROWS)
+                .map(|index| TableRow::new([format!("行 {index}")]))
+                .collect::<Vec<_>>(),
+        );
+        let grid = table.native_table();
+        let press = |key: &str| press_shortcut(grid.as_ref(), key, false, false, false);
+        let named = || {
+            grid.get_attribute("aria-activedescendant").map(|id| {
+                web_sys::window()
+                    .expect("window")
+                    .document()
+                    .expect("document")
+                    .get_element_by_id(&id)
+                    .and_then(|row| row.text_content())
+                    .unwrap_or_else(|| format!("文書に無い行 {id}"))
+            })
+        };
+
+        assert_eq!(named(), None, "まだキーで動かしていないこと");
+        press("ArrowDown");
+        press("ArrowDown");
+        assert_eq!(named().as_deref(), Some("行 1"));
+
+        // 遠くへ送ると、その行は組み立てられなくなるので指さない。
+        table.scroll_to_row(4_000);
+        assert_eq!(named(), None, "文書に無い行を指さないこと");
+
+        // 行が戻ると、また指す。
+        table.scroll_to_row(1);
+        assert_eq!(named().as_deref(), Some("行 1"));
+
+        // 離れていても、キーはその行から続く。窓の端の先の行も指せる。
+        table.scroll_to_row(4_000);
+        press("ArrowDown");
+        assert_eq!(table.selection(), vec![2]);
+        assert_eq!(named().as_deref(), Some("行 2"));
+        press("End");
+        assert_eq!(named().as_deref(), Some("行 4999"));
+        Ok(())
+    });
+}
+
 /// Even in a table with many rows, sorting by clicking a heading still works.
 ///
 /// Sorting is the app's job, so this checks that what is passed again with
