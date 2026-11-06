@@ -178,6 +178,9 @@ struct ListInner {
     /// The selected rows (ascending). **Rows outside the window are included**, so this
     /// is the source of truth, not the `GtkListBox`.
     selected: RefCell<Vec<usize>>,
+    /// The anchor of a Shift range selection. `GtkListBox` remembers it as a row, so it
+    /// forgets it when the rows are rebuilt.
+    anchor: Cell<Option<usize>>,
     /// The height of one row (logical pixels). Either measured or set with
     /// [`List::set_row_height`].
     row_height: Cell<f64>,
@@ -240,6 +243,7 @@ impl List {
             gesture: Cell::new(SelectionGesture::Unknown),
             realized: RefCell::new(Vec::new()),
             selected: RefCell::new(Vec::new()),
+            anchor: Cell::new(None),
             row_height: Cell::new(0.0),
             row_height_stale: Cell::new(false),
             fixed_row_height: Cell::new(None),
@@ -304,6 +308,26 @@ impl List {
                 glib::Propagation::Proceed
             });
             inner.native.add_controller(controller);
+        }
+        // キーでの移動は、クラスのハンドラより先にここへ来る。
+        {
+            let weak = Rc::downgrade(&inner);
+            inner
+                .native
+                .connect_move_cursor(move |native, step, count, extend, modify| {
+                    let Some(inner) = weak.upgrade() else {
+                        return;
+                    };
+                    let list = List(inner);
+                    list.0.gesture.set(match extend {
+                        true => SelectionGesture::Extend,
+                        false => SelectionGesture::Plain,
+                    });
+                    if step == gtk::MovementStep::Pages && list.move_by_pages(count, extend, modify)
+                    {
+                        native.stop_signal_emission_by_name("move-cursor");
+                    }
+                });
         }
         // スクロールと一覧の大きさに合わせて、組み立てる範囲を動かす。
         {
@@ -429,6 +453,7 @@ impl List {
 
     pub fn set_selection_mode(&self, mode: SelectionMode) {
         self.0.selected.borrow_mut().clear();
+        self.0.anchor.set(None);
         let multiple = mode.is_multiple();
         self.0.native.set_selection_mode(if multiple {
             // `Multiple` は「⌘ / Ctrl や Shift を押しながら選ぶ」形。
@@ -510,12 +535,12 @@ impl List {
     /// Replaces the selection without notifying.
     pub fn set_selection(&self, indices: &[usize]) {
         let picked = self.normalize(indices);
-        without_signal(&self.0.native, &self.0.handler, || self.show(&picked));
+        self.replace_selection(&picked);
     }
 
     /// Clears the whole selection without notifying.
     pub fn clear_selection(&self) {
-        without_signal(&self.0.native, &self.0.handler, || self.show(&[]));
+        self.replace_selection(&[]);
     }
 
     /// Selects one row through the same path as a user's selection (notifies).
@@ -526,7 +551,7 @@ impl List {
     /// Replaces the selection through the same path as a user's selection (notifies).
     pub fn select_many(&self, indices: &[usize]) {
         let picked = self.normalize(indices);
-        without_signal(&self.0.native, &self.0.handler, || self.show(&picked));
+        self.replace_selection(&picked);
         self.0.on_select.emit(&picked);
     }
 
@@ -561,6 +586,7 @@ impl List {
     /// cleared too.
     fn reset_rows(&self) {
         self.0.selected.borrow_mut().clear();
+        self.0.anchor.set(None);
         self.0.row_height_stale.set(true);
         // 組み立ての途中で差し替えられたら、組み立てている側が新しい行でやり直す。
         if self.0.rebuilding.get() {
@@ -700,18 +726,65 @@ impl List {
     }
 
     /// Moves the focus to a row just built, without scrolling.
-    ///
-    /// The row has no position yet, and `GtkViewport` would scroll to where it believes
-    /// the focused widget is (`scroll-to-focus`), jumping to the top of the list.
     fn grab_focus_in_place(&self, row: &gtk::ListBoxRow) {
+        self.without_scroll_to_focus(|| {
+            row.grab_focus();
+        });
+    }
+
+    /// Runs `f`, which moves the focus to a row that may have just been built.
+    ///
+    /// Such a row has no position yet, and `GtkViewport` would scroll to where it believes
+    /// the focused widget is (`scroll-to-focus`), jumping to the top of the list.
+    fn without_scroll_to_focus(&self, f: impl FnOnce()) {
         let viewport = self.0.scroller.child().and_downcast::<gtk::Viewport>();
         if let Some(viewport) = &viewport {
             viewport.set_scroll_to_focus(false);
         }
-        row.grab_focus();
+        f();
         if let Some(viewport) = &viewport {
             viewport.set_scroll_to_focus(true);
         }
+    }
+
+    /// Moves the cursor by whole pages, scrolling with it. `false` if `GtkListBox` should
+    /// do it, which is when every row is built or no row has the focus.
+    ///
+    /// `GtkListBox` stops at the last row it has, and with no adjustment to read a page
+    /// from, it moves by a fixed 100 px. It is stopped before it starts, so the rows can be
+    /// rebuilt here, and then it moves the rest of the way to select as usual.
+    fn move_by_pages(&self, pages: i32, extend: bool, modify: bool) -> bool {
+        let height = self.0.row_height.get();
+        if self.0.window.get().is_complete() || height <= 0.0 {
+            return false;
+        }
+        let Some(from) = self.focused_row() else {
+            return false;
+        };
+        let adjustment = self.0.scroller.vadjustment();
+        let page = adjustment.page_size();
+        let distance = (page / height).floor().max(1.0) as usize * pages.unsigned_abs() as usize;
+        let target = match pages < 0 {
+            true => from.saturating_sub(distance),
+            false => from.saturating_add(distance).min(self.len() - 1),
+        };
+        adjustment.set_value(adjustment.value() + page * f64::from(pages));
+        self.reveal_computed(target);
+        self.update_window();
+
+        // 作り直しで元の行が窓から外れると、フォーカスも移っている。
+        let Some(from) = self.focused_row() else {
+            return true;
+        };
+        let window = self.0.window.get();
+        let target = target.clamp(window.start, window.end - 1);
+        let count = i32::try_from(target as i64 - from as i64).unwrap_or(0);
+        self.without_scroll_to_focus(|| {
+            self.0
+                .native
+                .emit_move_cursor(gtk::MovementStep::DisplayLines, count, extend, modify);
+        });
+        true
     }
 
     /// Computes the range of rows to build from the current scroll position.
@@ -865,6 +938,13 @@ impl List {
             })
     }
 
+    /// Replaces the selection from code. A Shift range then starts from its last row, as
+    /// `GtkListBox` does.
+    fn replace_selection(&self, picked: &[usize]) {
+        self.0.anchor.set(picked.last().copied());
+        without_signal(&self.0.native, &self.0.handler, || self.show(picked));
+    }
+
     /// Remembers the selection and applies it to the built rows.
     ///
     /// Rows outside the window have no `GtkListBoxRow`, so it cannot be applied to them.
@@ -888,6 +968,19 @@ impl List {
     /// decided here too.
     fn read_native_selection(&self) -> Vec<usize> {
         let window = self.0.window.get();
+        // `GtkListBox` はカーソルを動かしてから選択を変えるので、フォーカスの行が
+        // いま操作された行になる。
+        let cursor = self.focused_row();
+        let extending =
+            self.selection_mode().is_multiple() && self.0.gesture.get() == SelectionGesture::Extend;
+        if let Some((anchor, cursor)) = self.0.anchor.get().zip(cursor).filter(|_| extending) {
+            let range: Vec<usize> = (anchor.min(cursor)..=anchor.max(cursor)).collect();
+            let picked = self.normalize(&range);
+            // `GtkListBox` が広げた範囲は、覚えている行が起点なので合っているとは限らない。
+            without_signal(&self.0.native, &self.0.handler, || self.show(&picked));
+            return picked;
+        }
+        self.0.anchor.set(cursor);
         let picked = self
             .0
             .native
@@ -960,7 +1053,6 @@ pub(crate) fn apply_caption(label: &gtk::Label) {
     }
 }
 
-/// Builds one row. Both `ListItem`s and custom content go through the same path.
 /// Tells assistive technology a row's place among all the rows and how many there are.
 ///
 /// The `GtkListBox` has only the rows built, so it would answer with those alone.
@@ -971,6 +1063,7 @@ pub(crate) fn report_row_position(row: &gtk::ListBoxRow, index: usize, count: us
     ]);
 }
 
+/// Builds one row. Both `ListItem`s and custom content go through the same path.
 fn build_row(item: &ListRow, list: Weak<ListInner>) -> gtk::ListBoxRow {
     let content: SizeBin = match &item.content {
         ListRowContent::Item(item) => item_content(&item.label, item.detail.as_deref()).size_bin(),

@@ -791,6 +791,18 @@ fn main() {
             list_keeps_rows_that_stay_in_the_window,
         ),
         (
+            "窓の更新を待つ間に隠されたリストも、また窓が動く",
+            list_window_follows_after_being_hidden_during_an_update,
+        ),
+        (
+            "Page Up / Down は窓の端で止まらず 1 ページ動く",
+            list_page_keys_move_a_whole_page,
+        ),
+        (
+            "Shift の範囲選択は窓の外へ出た起点から広がる",
+            list_shift_range_starts_from_a_row_outside_the_window,
+        ),
+        (
             "行の多いリストで指定より高い行があっても窓の位置がずれない",
             list_rows_taller_than_the_height_set_keep_the_window_right,
         ),
@@ -6374,6 +6386,241 @@ fn list_keeps_rows_that_stay_in_the_window(ui: &Ui) -> Result<()> {
         built + 1,
         "`refresh` は作り直すこと"
     );
+    window.close();
+    Ok(())
+}
+
+/// The number in the text of a row of a list filled with "行 {index}".
+fn big_list_row_number(row: &gtk::ListBoxRow) -> usize {
+    row_texts(row)[0]
+        .strip_prefix("行 ")
+        .expect("行の文字")
+        .parse()
+        .expect("行の番号")
+}
+
+/// The number of the row holding the keyboard focus, as in [`big_list_row_number`].
+fn big_list_focused_row(native: &gtk::ListBox) -> usize {
+    let row = native
+        .root()
+        .and_then(|root| root.focus())
+        .and_downcast::<gtk::ListBoxRow>()
+        .expect("行にフォーカスがあること");
+    big_list_row_number(&row)
+}
+
+/// The update waits for a frame, and a hidden list gets none. The update must still
+/// happen, and the list must not stop following the scroll position afterwards.
+fn list_window_follows_after_being_hidden_during_an_update(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    let items = ListItem::list((0..ROWS).map(|index| format!("行 {index}")));
+    let holder = ui.stack(Orientation::Vertical)?;
+    let list = ui.list()?;
+    list.set_sizing(Sizing::fill());
+    holder.append(&list);
+    holder.set_sizing(Sizing::fill());
+    let window = ui.window("隠されたリスト", 300.0, 200.0)?;
+    window.set_child(&holder);
+    window.show();
+    list.set_items(&items);
+    let native = list_box_of(&list);
+    tick(&native);
+    tick(&native);
+    let height = list.row_height();
+    let adjustment = scroller_of(&native)
+        .expect("GtkScrolledWindow")
+        .vadjustment();
+    let assert_follows = |value: f64, context: &str| {
+        adjustment.set_value(value);
+        tick(&native);
+        tick(&native);
+        let first = big_list_row_number(&native.row_at_index(0).expect("行"));
+        let top = (value / height) as usize;
+        assert!(
+            first <= top && top - first <= ROW_WINDOW_OVERSCAN,
+            "{context}: {top} 行目の周りを組み立てること (先頭は {first} 行目)"
+        );
+    };
+
+    // 窓の更新を予約した直後に、窓ごと隠す。
+    adjustment.set_value(height * 100.0);
+    window.native_window().set_visible(false);
+    pump();
+    // 隠れている間も、スクロールは追える。
+    adjustment.set_value(height * 200.0);
+    window.native_window().set_visible(true);
+    assert_follows(height * 200.0, "もう一度出したとき");
+    assert_follows(height * 1_000.0, "そのあとのスクロール");
+
+    // ウィンドウの木から外れると、フレームを刻む時計ごと無くなる。
+    adjustment.set_value(height * 500.0);
+    holder.remove(0);
+    pump();
+    holder.append(&list);
+    assert_follows(height * 500.0, "木へ戻したとき");
+    assert_follows(height * 2_000.0, "木へ戻したあとのスクロール");
+    window.close();
+    Ok(())
+}
+
+/// A window taller than the extra rows built below the screen: `GtkListBox` alone would
+/// stop at the last row it has, or move by a fixed 100 px when it has no adjustment.
+fn list_page_keys_move_a_whole_page(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    let list = ui.list()?;
+    list.set_sizing(Sizing::fill());
+    let window = ui.window("ページ送り", 300.0, 640.0)?;
+    window.set_child(&list);
+    window.show();
+    list.set_items(&ListItem::list(
+        (0..ROWS).map(|index| format!("行 {index}")),
+    ));
+    let native = list_box_of(&list);
+    tick(&native);
+    tick(&native);
+    let adjustment = scroller_of(&native)
+        .expect("GtkScrolledWindow")
+        .vadjustment();
+    let height = list.row_height();
+    let rows_per_page = (adjustment.page_size() / height).floor() as usize;
+    assert!(
+        rows_per_page > ROW_WINDOW_OVERSCAN,
+        "1 ページが窓の余りより長いこと: {rows_per_page}"
+    );
+    let press = |count: i32| {
+        native.emit_by_name::<()>(
+            "move-cursor",
+            &[&gtk::MovementStep::Pages, &count, &false, &false],
+        );
+        tick(&native);
+        tick(&native);
+    };
+    let assert_at = |expected: usize, context: &str| {
+        assert_eq!(list.selection(), vec![expected], "{context}: 選択");
+        assert_eq!(
+            big_list_focused_row(&native),
+            expected,
+            "{context}: フォーカス"
+        );
+        let top = expected as f64 * height;
+        assert!(
+            adjustment.value() <= top + 0.5
+                && top + height <= adjustment.value() + adjustment.page_size() + 0.5,
+            "{context}: {expected} 行目が見えること (位置 {})",
+            adjustment.value()
+        );
+    };
+
+    assert!(native.row_at_index(0).expect("行").grab_focus());
+    list.set_selected(0);
+    let mut expected = 0;
+    for page in 1..=4 {
+        press(1);
+        expected += rows_per_page;
+        assert_at(expected, &format!("{page} ページ下へ"));
+    }
+    for page in 1..=2 {
+        press(-1);
+        expected -= rows_per_page;
+        assert_at(expected, &format!("{page} ページ上へ"));
+    }
+    // 先頭より手前へは行かない。
+    for _ in 0..3 {
+        press(-1);
+    }
+    assert_at(0, "先頭まで");
+    window.close();
+    Ok(())
+}
+
+/// `GtkListBox` remembers the anchor as a row, so it forgets it when that row leaves the
+/// window. The range must still start from it.
+fn list_shift_range_starts_from_a_row_outside_the_window(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    let items = ListItem::list((0..ROWS).map(|index| format!("行 {index}")));
+    let (window, list, native) = shown_big_list(ui, "範囲選択", |list| {
+        list.set_items(&items);
+        list.set_selection_mode(SelectionMode::Multiple);
+    })?;
+    let step = |extend: bool| {
+        native.emit_by_name::<()>(
+            "move-cursor",
+            &[&gtk::MovementStep::DisplayLines, &1i32, &extend, &false],
+        );
+        tick(&native);
+        tick(&native);
+    };
+
+    assert!(native.row_at_index(3).expect("行").grab_focus());
+    step(false);
+    assert_eq!(
+        list.selection(),
+        vec![4],
+        "ふつうに動くと、その行が起点になる"
+    );
+
+    scroll_list_to(&native, list.row_height() * 1_000.0);
+    tick(&native);
+    step(true);
+    let reached = big_list_focused_row(&native);
+    assert!(reached > 900, "遠くの行まで来ていること: {reached}");
+    assert_eq!(
+        list.selection(),
+        (4..=reached).collect::<Vec<_>>(),
+        "窓の外の起点から広がること"
+    );
+    let first = big_list_row_number(&native.row_at_index(0).expect("行"));
+    let shown: Vec<usize> = native
+        .selected_rows()
+        .iter()
+        .map(big_list_row_number)
+        .collect();
+    assert_eq!(
+        shown,
+        (first..=reached).collect::<Vec<_>>(),
+        "組み立てた行のうち範囲の分が選ばれて見えること"
+    );
+
+    step(true);
+    assert_eq!(
+        list.selection(),
+        (4..=reached + 1).collect::<Vec<_>>(),
+        "起点は動かないこと"
+    );
+
+    // ふつうに動いたら、起点もそこへ移る。
+    step(false);
+    assert_eq!(list.selection(), vec![reached + 2]);
+    step(true);
+    assert_eq!(list.selection(), vec![reached + 2, reached + 3]);
+
+    // コードから選び直したら、その行から広がる。
+    list.set_selection(&[reached + 3]);
+    step(true);
+    assert_eq!(list.selection(), vec![reached + 3, reached + 4]);
+
+    // クリックも、選択の通知より先にフォーカスを移すので、その行まで広がる。修飾キーは
+    // テストから送れないが、直前の Shift+矢印の分が残っているので Shift のクリックになる。
+    let row = native.row_at_index(20).expect("行");
+    let clicked = big_list_row_number(&row);
+    let bounds = row.compute_bounds(&native).expect("行の場所");
+    let click = native
+        .observe_controllers()
+        .into_iter()
+        .filter_map(|item| item.ok()?.downcast::<gtk::GestureClick>().ok())
+        .find(|gesture| gesture.button() == gtk::gdk::BUTTON_PRIMARY)
+        .expect("行のクリックを受けるジェスチャー");
+    let (x, y) = (5.0f64, f64::from(bounds.y()) + 2.0);
+    click.emit_by_name::<()>("pressed", &[&1i32, &x, &y]);
+    click.emit_by_name::<()>("released", &[&1i32, &x, &y]);
+    tick(&native);
+    let anchor = reached + 3;
+    assert_eq!(
+        list.selection(),
+        (anchor.min(clicked)..=anchor.max(clicked)).collect::<Vec<_>>(),
+        "起点からクリックした行まで"
+    );
+    assert_eq!(big_list_focused_row(&native), clicked);
     window.close();
     Ok(())
 }

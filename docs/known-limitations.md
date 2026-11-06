@@ -111,8 +111,9 @@ that shape are covered in
     with `set_row_selectable`).
   - On Windows and Linux, keyboard movement goes through the native list, which knows
     only the rows built: Home and End go to the first and last rows built, and the
-    arrow keys continue past them as the rows follow. A Shift range selection also
-    covers only the rows built. macOS and the Web cover every row.
+    arrow keys continue past them as the rows follow. On Windows, Page Up and Page Down
+    and a Shift range selection also cover only the rows built. macOS and the Web cover
+    every row, and on Linux so do those two.
   - A control inside a row loses the keyboard focus when its row leaves the range
     built, because the row is discarded. While the row stays in the range it is left
     as it is, so what the builder returned for it only changes with `refresh`.

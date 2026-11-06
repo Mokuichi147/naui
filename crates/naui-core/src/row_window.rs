@@ -192,7 +192,7 @@ pub fn row_window(
     // 範囲が空にならないよう、最後の行までに抑える。
     let first = ((top / row_height).floor() as usize).min(count - 1);
     // 端が半分だけ見えている分を足して、画面の下端を含む行まで数える。
-    let visible = (viewport / row_height).ceil() as usize + 1;
+    let visible = ((viewport / row_height).ceil() as usize).saturating_add(1);
     let start = first.saturating_sub(overscan);
     let end = first
         .saturating_add(visible)
@@ -710,6 +710,13 @@ mod tests {
             !keeps_row_window(current, needed, next),
             "覆えていても、多く作りすぎていれば作り直す"
         );
+    }
+
+    #[test]
+    fn a_vanishingly_small_row_height_builds_every_row() {
+        // 画面に入る行数が usize に収まらない。
+        let window = row_window(10_000, 0.0, 200.0, f64::MIN_POSITIVE, 5);
+        assert_eq!(window, RowWindow::all(10_000));
     }
 
     #[test]
