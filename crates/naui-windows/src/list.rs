@@ -510,10 +510,10 @@ enum RowMotion {
     Pages(i32),
     /// The up and down arrows, or Space to stay on the row.
     Lines(i32),
-    /// Home. It goes as far as the rows built.
-    FirstBuilt,
-    /// End. It goes as far as the rows built.
-    LastBuilt,
+    /// Home.
+    First,
+    /// End.
+    Last,
 }
 
 impl RowMotion {
@@ -524,8 +524,8 @@ impl RowMotion {
             VirtualKey::Up => Some(Self::Lines(-1)),
             VirtualKey::Down => Some(Self::Lines(1)),
             VirtualKey::Space => Some(Self::Lines(0)),
-            VirtualKey::Home => Some(Self::FirstBuilt),
-            VirtualKey::End => Some(Self::LastBuilt),
+            VirtualKey::Home => Some(Self::First),
+            VirtualKey::End => Some(Self::Last),
             _ => None,
         }
     }
@@ -890,6 +890,11 @@ impl List {
     /// changed.
     pub fn refresh(&self) {
         self.0.row_height_stale.set(true);
+        // 行を組み立てる関数の中から呼ばれたら、組み立てている側が最初からやり直す。
+        if self.0.rebuilding.get() {
+            self.0.rows.invalidate();
+            return;
+        }
         self.build_window();
         // 中身や指定が変わって行の高さが動いていれば、窓の位置も変わる。測った結果が
         // 同じでも窓を引き直す (`set_row_height` は先に高さを書き換えている)。
@@ -1033,8 +1038,17 @@ impl List {
                 break;
             }
             // 組み立てに失敗した行は、空の行にする。
-            let row = row.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
-            let native = match self.new_native_row(index, &row, window.count, min_height) {
+            let mut row = row.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
+            // 行に載せられないウィジェットが返ったときも同じ。行が欠けると、行の位置と
+            // 窓の位置がずれて、選択やフォーカスが別の行へ届く。
+            let built = self
+                .new_native_row(index, &row, window.count, min_height)
+                .or_else(|error| {
+                    eprintln!("naui-windows: failed to build list row {index}: {error}");
+                    row = ListRow::from_item(ListItem::new(""));
+                    self.new_native_row(index, &row, window.count, min_height)
+                });
+            let native = match built {
                 Ok(native) => native,
                 Err(error) => {
                     outcome = Err(error);
@@ -1166,7 +1180,6 @@ impl List {
         }
         let viewport = self.0.scroll.ViewportHeight().unwrap_or(0.0);
         let view_top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
-        let window = self.0.window.get();
         let (target, top) = match motion {
             RowMotion::Pages(pages) => {
                 let distance = (viewport / height).floor().max(1.0) as usize;
@@ -1180,8 +1193,8 @@ impl List {
                 from.saturating_add_signed(lines as isize).min(count - 1),
                 view_top,
             ),
-            RowMotion::FirstBuilt => (window.start, view_top),
-            RowMotion::LastBuilt => (window.end.saturating_sub(1), view_top),
+            RowMotion::First => (0, view_top),
+            RowMotion::Last => (count - 1, view_top),
         };
         let top = self.offset_showing(target, top, viewport);
         // `ChangeView` はすぐには位置へ反映されないので、窓は移る先の位置から決める。
@@ -1220,6 +1233,21 @@ impl List {
                 self.normalize(&[landed])
             }
         };
+        if picked != self.selection() {
+            self.write_selection(&picked);
+            self.0.handler.emit(&picked);
+        }
+        true
+    }
+
+    /// Selects every row for Ctrl + A, including those not built: `ListView` would select
+    /// only the ones it has. `false` if only one row can be selected.
+    fn select_every_row(&self) -> bool {
+        if !self.0.mode.get().is_multiple() {
+            return false;
+        }
+        let every: Vec<usize> = (0..self.len()).collect();
+        let picked = self.normalize(&every);
         if picked != self.selection() {
             self.write_selection(&picked);
             self.0.handler.emit(&picked);
@@ -1482,6 +1510,20 @@ impl List {
             };
             let key = args.Key().unwrap_or(VirtualKey::None);
             let modifiers = crate::keys::modifiers();
+            let plain_ctrl =
+                modifiers.control && !modifiers.shift && !modifiers.alt && !modifiers.meta;
+            if on_row && key == VirtualKey::A && plain_ctrl {
+                let selected = state
+                    .try_with_mut(|weak| {
+                        weak.upgrade()
+                            .is_some_and(|inner| List(inner).select_every_row())
+                    })
+                    .unwrap_or(false);
+                if selected {
+                    let _ = args.SetHandled(true);
+                }
+                return Ok(());
+            }
             if let Some(motion) = RowMotion::of_key(key).filter(|_| on_row) {
                 let moved = !modifiers.alt
                     && !modifiers.meta
@@ -1787,7 +1829,10 @@ impl List {
         };
         if let Some(cursor) = cursor {
             self.0.anchor.set(Some(cursor));
-            self.follow_with_focus(cursor);
+            // 全行を持つリストでは `ListView` のフォーカスはずれない。
+            if self.height_is_limited() {
+                self.follow_with_focus(cursor);
+            }
         }
         merge_hidden_selection(window, &previous, picked, gesture)
     }

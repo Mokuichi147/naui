@@ -163,6 +163,10 @@ const CASES: &[Case] = &[
         list_keeps_rows_that_stay_in_the_window,
     ),
     (
+        "行を組み立てる関数の中の refresh は組み立てをやり直す",
+        list_refresh_inside_the_builder_starts_over,
+    ),
+    (
         "組み立ての途中で失敗しても、残った行を管理し続ける",
         list_keeps_the_rows_a_failed_build_left,
     ),
@@ -7884,6 +7888,25 @@ fn press_nav_key(
     Some(())
 }
 
+/// Presses Ctrl + A with real input. `None`, without sending anything, once the foreground
+/// is not this process.
+fn press_ctrl_a() -> Option<()> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL,
+    };
+
+    if !foreground_is_ours() {
+        println!("     (テストのウィンドウが前面に無いので、キーを送らずに通す)");
+        return None;
+    }
+    let key_a = VIRTUAL_KEY(u16::from(b'A'));
+    with_modifiers(&[VK_CONTROL], || {
+        send_input(key_input(key_a, KEYBD_EVENT_FLAGS(0)));
+        send_input(key_input(key_a, KEYEVENTF_KEYUP));
+    });
+    Some(())
+}
+
 /// The built `ListViewItem` of a row of the whole list.
 fn built_list_row(list: &naui_windows::List, index: usize) -> Option<ListViewItem> {
     use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
@@ -8154,16 +8177,27 @@ fn list_page_keys_move_by_a_page(ui: &Ui) -> Result<()> {
             press_nav_key(&[], VK_PRIOR)?;
             assert_eq!(list.selection(), [0], "{rows} 行: 最初の行で止まる");
 
-            // End は組み立てた行の端まで動き、移った行を見せる。
+            // Home / End は全行の端へ動き、移った行を見せる。
             press_nav_key(&[], VK_END)?;
-            let last = focused_list_row(list).expect("フォーカスの行");
-            assert!(last > 0, "{rows} 行: End で動く");
-            assert_eq!(list.selection(), [last], "{rows} 行: End の選択");
-            assert!(on_screen(last), "{rows} 行: {last} 行目が見えていること");
+            assert_eq!(list.selection(), [rows - 1], "{rows} 行: End の選択");
+            assert_eq!(focused_list_row(list), Some(rows - 1), "{rows} 行: End");
+            assert!(on_screen(rows - 1), "{rows} 行: End の行が見えていること");
             press_nav_key(&[], VK_HOME)?;
-            let first = focused_list_row(list).expect("フォーカスの行");
-            assert_eq!(list.selection(), [first], "{rows} 行: Home の選択");
-            assert!(on_screen(first), "{rows} 行: {first} 行目が見えていること");
+            assert_eq!(list.selection(), [0], "{rows} 行: Home の選択");
+            assert_eq!(focused_list_row(list), Some(0), "{rows} 行: Home");
+            assert!(on_screen(0), "{rows} 行: Home の行が見えていること");
+
+            // Ctrl + A は組み立てていない行も選ぶ。
+            press_ctrl_a()?;
+            let every: Vec<usize> = (0..rows).collect();
+            assert_eq!(list.selection(), every, "{rows} 行: Ctrl + A");
+            assert_eq!(seen.borrow().last().expect("通知"), &every, "通知");
+            assert_eq!(
+                focused_list_row(list),
+                Some(0),
+                "{rows} 行: フォーカスは動かない"
+            );
+            assert!(on_screen(0), "{rows} 行: 表示は動かない");
             Some(())
         })?;
     }
@@ -8239,13 +8273,17 @@ fn list_shift_range_keeps_its_anchor_outside_the_window(ui: &Ui) -> Result<()> {
             "Shift + Page Up"
         );
 
-        // Shift + Home / End は Home / End と同じく、組み立てた行の端まで。
+        // Shift + Home / End は、組み立てていない行を越えて全行の端まで。
         press_nav_key(&[VK_SHIFT], VK_END)?;
-        let last = focused_list_row(list).expect("フォーカスの行");
-        assert_eq!(list.selection(), span(2, last), "Shift + End");
+        assert_eq!(list.selection(), span(2, ROWS - 1), "Shift + End");
+        assert_eq!(
+            focused_list_row(list),
+            Some(ROWS - 1),
+            "Shift + End のフォーカス"
+        );
         press_nav_key(&[VK_SHIFT], VK_HOME)?;
-        let first = focused_list_row(list).expect("フォーカスの行");
-        assert_eq!(list.selection(), span(2, first), "Shift + Home");
+        assert_eq!(list.selection(), span(0, 2), "Shift + Home");
+        assert_eq!(focused_list_row(list), Some(0), "Shift + Home のフォーカス");
 
         // 手前へ戻って選び直すと、起点が変わる。上へ伸ばしても順序は昇順。
         go_to(ROWS - 1);
@@ -8407,6 +8445,72 @@ fn list_arrow_keys_pass_over_disabled_rows(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// A `refresh` from inside the builder makes the build under way start over, so no row keeps
+/// what it was built from before.
+fn list_refresh_inside_the_builder_starts_over(ui: &Ui) -> Result<()> {
+    use naui_windows::ListRow;
+    use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+
+    let window = ui.window("組み立て中の refresh", 240.0, 160.0)?;
+    let list = ui.list()?;
+    let version = Rc::new(Cell::new(1));
+    let refresh_once = Rc::new(Cell::new(false));
+    {
+        let ui = ui.clone();
+        let list_inside = list.clone();
+        let version = version.clone();
+        let refresh_once = refresh_once.clone();
+        list.set_row_builder(1_000, move |index| {
+            let built_from = version.get();
+            if refresh_once.replace(false) {
+                version.set(2);
+                list_inside.refresh();
+            }
+            Ok(ListRow::new(&ui.label(&format!("{built_from}:{index}"))?))
+        });
+    }
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        let scroll = list_scroller(&list);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && list.row_height() > 0.0
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        refresh_once.set(true);
+        list.refresh();
+        let items = list.native_list_view().Items().expect("行");
+        let count = items.Size().expect("行の数");
+        assert!(count > 0, "行があること");
+        for slot in 0..count {
+            let row = items
+                .GetAt(slot)
+                .and_then(|item| item.cast::<ListViewItem>())
+                .expect("行");
+            let index = AutomationProperties::GetPositionInSet(&row).expect("位置") - 1;
+            let text = row
+                .Content()
+                .and_then(|content| content.cast::<Grid>())
+                .and_then(|host| host.Children())
+                .and_then(|children| children.GetAt(0))
+                .and_then(|label| label.cast::<TextBlock>())
+                .and_then(|label| label.Text())
+                .unwrap_or_default()
+                .to_string();
+            assert_eq!(text, format!("2:{index}"), "新しい内容で組み立て直すこと");
+        }
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
 /// A failed build leaves the rows in the `ListView` looked after: their selection still
 /// shows, and the widgets the app keeps can go into new rows on the next build.
 fn list_keeps_the_rows_a_failed_build_left(ui: &Ui) -> Result<()> {
@@ -8473,6 +8577,19 @@ fn list_keeps_the_rows_a_failed_build_left(ui: &Ui) -> Result<()> {
         assert!(reached.get(), "増える行を組み立てようとしたこと");
         let first_kept =
             AutomationProperties::GetPositionInSet(&row_at(0)).expect("位置") as usize - 1;
+
+        // 載せられなかった行は空の行になるので、行が欠けず、番号が順に並ぶ。
+        for slot in 0..rows().Size().expect("行の数") {
+            assert_eq!(
+                AutomationProperties::GetPositionInSet(&row_at(slot)).expect("位置") as usize - 1,
+                first_kept + slot as usize,
+                "行が欠けないこと"
+            );
+        }
+        assert!(
+            built_list_row(&list, built_end).is_some(),
+            "失敗した行も行として残ること"
+        );
 
         // 残った行は管理されたままなので、選択が届く。
         list.set_selection(&[first_kept]);
