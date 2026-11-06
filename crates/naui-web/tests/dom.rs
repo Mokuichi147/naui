@@ -8287,6 +8287,65 @@ async fn list_auto_height_filled_before_it_is_placed_builds_every_row() {
     assert_eq!(list_rows(&list).len(), ROWS, "全行を組み立てること");
 }
 
+/// A row that cannot be built leaves the rows already there in the list's hands: they
+/// still answer clicks, and the next build does not line them up twice.
+#[wasm_bindgen_test]
+async fn list_keeps_its_rows_when_a_row_fails_to_build() {
+    const ROWS: usize = 5_000;
+    let run = |code: &str| {
+        js_sys::Function::new_no_args(code)
+            .call0(&wasm_bindgen::JsValue::NULL)
+            .expect("スクリプトの実行");
+    };
+    let mut kept = None;
+    with_ui(|ui| {
+        let list = ui.list()?;
+        list.set_sizing(Sizing::fixed(240.0, 200.0));
+        list.set_items(&ListItem::list(
+            (0..ROWS).map(|index| format!("行 {index}")),
+        ));
+        kept = Some(list);
+        Ok(())
+    });
+    let list = kept.expect("リスト");
+    let _mounted = Mounted::new(&list);
+    next_frames().await;
+    let height = list.row_height();
+    let scroll_to = |row: f64| list_scroller(&list).set_scroll_top((row * height) as i32);
+
+    // 窓を動かす間だけ `<li>` を作れなくする。前の窓と重なる行は残る。
+    run("const create = document.createElement;
+         document.createElement = function (tag, ...rest) {
+           if (tag === 'li') throw new Error('li を作れない');
+           return create.call(this, tag, ...rest);
+         };");
+    scroll_to(15.0);
+    next_frames().await;
+    run("delete document.createElement;");
+
+    let row = list_rows(&list)
+        .into_iter()
+        .find(|row| row.text_content().as_deref() == Some("行 10"))
+        .expect("窓に残る行");
+    row.click();
+    assert_eq!(list.selection(), vec![10], "残った行のクリックが届くこと");
+
+    scroll_to(30.0);
+    next_frames().await;
+    let numbers: Vec<usize> = list_rows(&list)
+        .iter()
+        .map(|row| {
+            let text = row.text_content().expect("行の文字");
+            text.trim_start_matches("行 ").parse().expect("行の番号")
+        })
+        .collect();
+    assert!(numbers.contains(&30), "次の窓を組み立てること: {numbers:?}");
+    assert!(
+        numbers.windows(2).all(|pair| pair[0] + 1 == pair[1]),
+        "行が二重に並ばないこと: {numbers:?}"
+    );
+}
+
 /// The height set is a minimum. A row that needs more grows, so the spacers and scrolling
 /// must use the real height rather than the one set.
 #[wasm_bindgen_test]

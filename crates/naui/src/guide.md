@@ -2308,7 +2308,9 @@ rows it has not built yet can be chosen, so pass the same decision to
 On the Web, a `<select>` creates every `<option>` it is given and has no place for
 spacers, so with more rows than the threshold the list is built from
 `<ul role="listbox">` even when every row is plain text, and
-`List::native_select` returns `None`.
+`List::native_select` returns `None`. The same goes for rows from
+`set_row_builder` and for a height set with `set_row_height`, so code using
+`native_select` should handle `None` rather than unwrap it.
 
 ### Scrolling to a given row
 

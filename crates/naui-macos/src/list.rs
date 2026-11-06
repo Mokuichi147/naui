@@ -720,7 +720,15 @@ impl ListSource {
 /// Reads the table's selection as an ascending sequence.
 pub(crate) fn selected_indices(table: &NSTableView, len: usize) -> Vec<usize> {
     let indexes = table.selectedRowIndexes();
-    (0..len).filter(|&i| indexes.containsIndex(i)).collect()
+    let mut picked = Vec::with_capacity(indexes.count());
+    // 行ではなく選択をたどる。矢印キーのたびに読むので、全行を見ると重くなる。
+    // 尽きると `NSNotFound` (どの行番号よりも大きい) が返る。
+    let mut index = indexes.firstIndex();
+    while index < len {
+        picked.push(index);
+        index = indexes.indexGreaterThanIndex(index);
+    }
+    picked
 }
 
 /// Supplies the "natural height showing every row" that `NSScrollView` lacks.

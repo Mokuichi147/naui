@@ -151,7 +151,7 @@ impl RowWindow {
 ///   (logical pixels)
 /// - `viewport`: the height in which rows are visible (logical pixels)
 /// - `row_height`: the height of one row (logical pixels); every row is assumed to
-///   be the same height
+///   be the same height, and a height under 1 counts as 1
 /// - `overscan`: rows to build outside the screen as well ([`ROW_WINDOW_OVERSCAN`])
 ///
 /// If the row count is at most [`ROW_WINDOW_THRESHOLD`], every row is returned
@@ -187,6 +187,9 @@ pub fn row_window(
         };
     }
 
+    // 1 ピクセルより低い行は描けない。指定をそのまま使うと、画面に入る行数の見積もりが
+    // 全行に近づいてしまう。実際の行は、組み立てたあとで測った高さになる。
+    let row_height = row_height.max(1.0);
     let top = scroll_top.max(0.0);
     // 行数が減った直後など、いまの位置が表の外を指していることがある。
     // 範囲が空にならないよう、最後の行までに抑える。
@@ -642,6 +645,17 @@ mod tests {
     }
 
     #[test]
+    fn a_tiny_row_height_does_not_build_every_row() {
+        // いちばん小さい値では、画面に入る行数が usize に収まらない。
+        for height in [1e-3, 1e-300, f64::MIN_POSITIVE] {
+            let window = row_window(1_000_000, 0.0, 200.0, height, 5);
+            assert!(window.len() <= 206, "{height}: {window:?}");
+            let window = row_window(1_000_000, 1_000.0, 200.0, height, 5);
+            assert_eq!(window.start, 995, "{height}");
+        }
+    }
+
+    #[test]
     fn window_stays_inside_the_table() {
         // いちばん上。上へはみ出さない。
         let top = row_window(10_000, 0.0, 200.0, 20.0, 5);
@@ -710,13 +724,6 @@ mod tests {
             !keeps_row_window(current, needed, next),
             "覆えていても、多く作りすぎていれば作り直す"
         );
-    }
-
-    #[test]
-    fn a_vanishingly_small_row_height_builds_every_row() {
-        // 画面に入る行数が usize に収まらない。
-        let window = row_window(10_000, 0.0, 200.0, f64::MIN_POSITIVE, 5);
-        assert_eq!(window, RowWindow::all(10_000));
     }
 
     #[test]

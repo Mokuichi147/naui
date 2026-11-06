@@ -594,9 +594,10 @@ collected in [Known limitations](known-limitations.md).
 - **`EditableComboBox`**: `<input list>` and `<datalist>`. naui builds neither the
   visuals nor the narrowing.
 - **`DatePicker`**: Uses `datetime-local` so as not to bring in time zones.
-- **`List`**: Using `ListItem::detail` or `ListRow` (rows of arbitrary content), or
-  having more than 200 rows, switches from `<select>` to an implementation using
-  `<ul role="listbox">`. With a few text-only rows it stays `<select size>`. The
+- **`List`**: Using `ListItem::detail` or `ListRow` (rows of arbitrary content), having
+  more than 200 rows, `set_row_builder` or `set_row_height` switches from `<select>` to
+  an implementation using `<ul role="listbox">`, and `native_select` then returns
+  `None`. With a few text-only rows it stays `<select size>`. The
   content model of `<option>` is text only and can hold neither elements nor line
   breaks, and a `<select>` creates every `<option>` it is given and has no place for
   spacers, so only the composed form can build just the rows on screen. **Having left

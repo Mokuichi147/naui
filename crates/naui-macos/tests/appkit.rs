@@ -272,6 +272,10 @@ fn main() {
             list_reload_takes_over_the_waiting_reload,
         ),
         (
+            "選択を読む時間が行数によらない",
+            list_selection_does_not_visit_every_row,
+        ),
+        (
             "テーブルが見えている行だけを組み立てる",
             table_builds_only_the_rows_it_shows,
         ),
@@ -9053,6 +9057,30 @@ fn list_reload_takes_over_the_waiting_reload(ui: &Ui) -> Result<()> {
         "refresh のあとの解除が残ること"
     );
     assert_eq!(native.selectedRowIndexes().count(), 0);
+    Ok(())
+}
+
+/// Reading the selection follows the rows selected, not the rows in the list: it happens
+/// on every arrow key.
+fn list_selection_does_not_visit_every_row(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 1_000_000;
+    let ui_for_row = ui.clone();
+    let list = ui.list()?;
+    list.set_selection_mode(SelectionMode::Multiple);
+    list.set_row_builder(ROWS, move |index| {
+        Ok(ListRow::new(&ui_for_row.label(&index.to_string())?))
+    });
+    list.set_selection(&[ROWS - 1, 5, 7]);
+
+    let started = Instant::now();
+    for _ in 0..100 {
+        assert_eq!(list.selection(), vec![5, 7, ROWS - 1]);
+    }
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "{ROWS} 行でも選んだ行だけを読むこと: {:?}",
+        started.elapsed()
+    );
     Ok(())
 }
 

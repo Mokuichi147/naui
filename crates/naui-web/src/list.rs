@@ -643,8 +643,16 @@ impl List {
 
     /// The inner `<select>`. Public as a backend-specific escape hatch.
     ///
-    /// When some row has `detail`, or there are more than [`ROW_WINDOW_THRESHOLD`] rows,
-    /// it is a `<ul role="listbox">` instead, so this returns `None`. The frame itself can be obtained from [`Widget::native_element`].
+    /// **Only a list of few text-only rows has one.** The list is a `<ul role="listbox">`
+    /// instead, and this returns `None`, in any of these cases, so it can change whenever
+    /// the rows change:
+    ///
+    /// - there are more than [`ROW_WINDOW_THRESHOLD`] rows
+    /// - some row has `detail` or is a [`ListRow`] of arbitrary content
+    /// - the rows come from [`List::set_row_builder`]
+    /// - a height is set with [`List::set_row_height`]
+    ///
+    /// The frame itself can be obtained from [`Widget::native_element`].
     pub fn native_select(&self) -> Option<HtmlSelectElement> {
         match &*self.0.body.borrow() {
             Body::Select { select, .. } => Some(select.clone()),
@@ -1019,6 +1027,7 @@ impl List {
         // 詰め物は残したまま行だけを入れ替える。
         let first_kept = options.first().cloned();
         let mut before_kept = 0;
+        let mut outcome = Ok(());
         for index in window.indices().filter(|index| !kept.contains(index)) {
             let Some(row) = self.0.rows.row(index) else {
                 continue;
@@ -1029,7 +1038,15 @@ impl List {
             }
             // 組み立てに失敗した行は、空の行にする。
             let row = row.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
-            let (option, listener) = self.build_option(&list, index, &row)?;
+            // 失敗しても、ここまでの行は文書に載っているので、管理から外さない。
+            // 行数が窓と合わないので、次の組み立てで全部作り直す。
+            let (option, listener) = match self.build_option(&list, index, &row) {
+                Ok(built) => built,
+                Err(error) => {
+                    outcome = Err(error);
+                    break;
+                }
+            };
             if index < kept.start {
                 let _ = list.insert_before(&option, first_kept.as_ref().map(|row| row.as_ref()));
                 options.insert(before_kept, option);
@@ -1058,7 +1075,7 @@ impl List {
         // 覚えている選択を、組み立て直した行へ写す。
         let picked = self.selection();
         self.write_selection(&picked);
-        Ok(())
+        outcome
     }
 
     /// Writes the height of the rows outside the window into the spacers.
