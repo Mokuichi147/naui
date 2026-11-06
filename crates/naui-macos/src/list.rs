@@ -983,6 +983,10 @@ impl List {
     /// changed.
     pub fn refresh(&self) {
         let picked = self.selection();
+        // 組み立ての最中は読み直しの結果を AppKit が使えないので、予約を残す。
+        if !self.0.rows.is_building() {
+            self.0.pending_selection.take();
+        }
         self.0.rows.forget_built();
         self.without_notifying(|this| {
             this.apply_row_height();
@@ -1025,6 +1029,8 @@ impl List {
             self.reload_after_build();
             return;
         }
+        // ここで読み直すので、予約した読み直しと、そのときの行へ向けた選択は要らない。
+        self.0.pending_selection.take();
         self.without_notifying(|this| {
             this.apply_row_height();
             this.0.table.reloadData();
@@ -1035,6 +1041,8 @@ impl List {
 
     /// Reloads the table once the row build in progress has finished, and clears the
     /// selection. The app can still set a selection until then; it is applied afterwards.
+    ///
+    /// A reload that happens first takes its place by clearing `pending_selection`.
     fn reload_after_build(&self) {
         if self.0.pending_selection.replace(Some(Vec::new())).is_some() {
             return;
@@ -1046,7 +1054,10 @@ impl List {
             let mtm = MainThreadMarker::new().expect("called outside the main queue");
             if let Some(inner) = weak.into_inner(mtm).upgrade() {
                 let list = List(inner);
-                let picked = list.0.pending_selection.take().unwrap_or_default();
+                // 先に読み直していれば、いまの選択を消さずに終わる。
+                let Some(picked) = list.0.pending_selection.take() else {
+                    return;
+                };
                 list.without_notifying(|this| {
                     this.apply_row_height();
                     this.0.table.reloadData();

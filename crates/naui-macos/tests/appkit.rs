@@ -268,6 +268,10 @@ fn main() {
             list_builder_can_replace_the_rows,
         ),
         (
+            "組み立ての中で予約した読み直しより先に読み直すと、予約した選択は当たらない",
+            list_reload_takes_over_the_waiting_reload,
+        ),
+        (
             "テーブルが見えている行だけを組み立てる",
             table_builds_only_the_rows_it_shows,
         ),
@@ -8981,6 +8985,74 @@ fn list_builder_can_replace_the_rows(ui: &Ui) -> Result<()> {
         .viewAtColumn_row_makeIfNecessary(0, 3, true)
         .is_some());
     assert_eq!(*new_built.borrow(), [3], "新しい関数が組み立てること");
+    Ok(())
+}
+
+/// A reload that happens before the one waiting from inside a row build takes its place:
+/// the selection set for the rows of that time is not applied to later rows.
+fn list_reload_takes_over_the_waiting_reload(ui: &Ui) -> Result<()> {
+    // 組み立ての中で行を差し替えて選び、読み直しを待っている状態にする。
+    let waiting = || -> Result<_> {
+        let list = ui.list()?;
+        let weak = list.downgrade();
+        let ui_for_row = ui.clone();
+        list.set_row_builder(1_000, move |index| {
+            if index == 2 {
+                let list = weak.upgrade().expect("リストが生きていること");
+                let ui = ui_for_row.clone();
+                list.set_row_builder(5, move |index| {
+                    Ok(ListRow::new(&ui.label(&index.to_string())?))
+                });
+                list.set_selection(&[4]);
+            }
+            Ok(ListRow::new(&ui_for_row.label(&index.to_string())?))
+        });
+        let _ = list
+            .native_table()
+            .viewAtColumn_row_makeIfNecessary(0, 2, true);
+        assert_eq!(list.selection(), vec![4]);
+        Ok(list)
+    };
+    let items = ListItem::list(["a", "b", "c", "d", "e", "f"]);
+
+    // 新しい行を渡すと、待っていた選択は当たらない。
+    let list = waiting()?;
+    let native = list.native_table();
+    list.set_items(&items);
+    assert_eq!(list.selection(), Vec::<usize>::new());
+    pump(0.2);
+    assert_eq!(native.numberOfRows(), 6);
+    assert_eq!(
+        list.selection(),
+        Vec::<usize>::new(),
+        "待っていた選択が新しい行に当たらないこと"
+    );
+    assert_eq!(native.selectedRowIndexes().count(), 0);
+
+    // そのあとで選んだ行は、待っていた読み直しで消えない。
+    let list = waiting()?;
+    let native = list.native_table();
+    list.set_items(&items);
+    list.set_selection(&[1]);
+    assert!(native.selectedRowIndexes().containsIndex(1));
+    pump(0.2);
+    assert_eq!(list.selection(), vec![1], "あとから選んだ行が残ること");
+    assert!(native.selectedRowIndexes().containsIndex(1));
+
+    // refresh は選択を残す読み直しなので、待っていた選択はそこで当たる。
+    let list = waiting()?;
+    let native = list.native_table();
+    list.refresh();
+    assert_eq!(native.numberOfRows(), 5);
+    assert!(native.selectedRowIndexes().containsIndex(4));
+    list.clear_selection();
+    pump(0.2);
+    assert_eq!(
+        list.selection(),
+        Vec::<usize>::new(),
+        "refresh のあとの解除が残ること"
+    );
+    assert_eq!(native.selectedRowIndexes().count(), 0);
     Ok(())
 }
 
