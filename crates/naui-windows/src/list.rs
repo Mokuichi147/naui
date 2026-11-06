@@ -555,6 +555,8 @@ struct ListInner {
     /// The first row the `ListView` has now. `window` moves ahead of it just before the
     /// rows are rebuilt.
     built_start: Cell<usize>,
+    /// The range the last build failed on, if it did.
+    failed_window: Cell<Option<RowWindow>>,
     /// Whether rows are being built right now. Prevents nested rebuilds.
     rebuilding: Cell<bool>,
     /// The selected rows (ascending). Rows outside the window are included, so this is
@@ -660,6 +662,7 @@ impl List {
             rows: RowSource::default(),
             window: Cell::new(RowWindow::default()),
             built_start: Cell::new(0),
+            failed_window: Cell::new(None),
             rebuilding: Cell::new(false),
             selected: RefCell::new(Vec::new()),
             anchor: Cell::new(None),
@@ -703,6 +706,20 @@ impl List {
             .map_err(|e| to_error("subscribe to the ListView", e))?;
         this.install_wheel_target()?;
         this.install_window_updates()?;
+
+        let state = UiThreadCell::new(Rc::downgrade(&this.0));
+        let got_focus = RoutedEventHandler::new(move |_, _| {
+            let _ = state.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    List(inner).keep_focus_on_screen();
+                }
+            });
+            Ok(())
+        });
+        this.0
+            .list_view
+            .GotFocus(&got_focus)
+            .map_err(|e| to_error("subscribe to List focus changes", e))?;
 
         // `layout` のホイール補助は、子要素の上でも `ScrollViewer` を動かせる
         // ように、ウィンドウ全体のホイールを先に処理する。List の上では
@@ -1011,8 +1028,8 @@ impl List {
         let mut native_rows = Vec::with_capacity(window.len());
         let mut realized = Vec::with_capacity(window.len());
         // 失敗しても `ListView` に残っている行は、管理から外さない。外すと、次の組み立てで
-        // 中身を取り出せず、アプリが持っているウィジェットを載せ直せなくなる。行数が窓と
-        // 合わなくなるので、次の組み立てで全部作り直される。
+        // 中身を取り出せず、アプリが持っているウィジェットを載せ直せなくなる。窓は実際に
+        // 組み立てた行まで縮めるので、行の番号はずれない。
         let mut outcome = Ok(());
         for (offset, (native, row)) in built.into_iter().zip(built_rows).enumerate() {
             if kept.contains(&(built_start + offset)) {
@@ -1031,8 +1048,16 @@ impl List {
                 realized.push(row);
             }
         }
-        let mut before_kept = 0;
-        for index in window.indices().filter(|index| !kept.contains(index)) {
+        // 残る行から外側へ組み立てるので、途中で失敗しても行は連続している。
+        let mut first = match kept.is_empty() {
+            true => window.start,
+            false => kept.start,
+        };
+        let after_kept = window
+            .indices()
+            .filter(|&index| kept.is_empty() || index >= kept.end);
+        let before_kept = (window.start..kept.start).rev();
+        for index in after_kept.chain(before_kept) {
             if outcome.is_err() {
                 break;
             }
@@ -1064,7 +1089,7 @@ impl List {
             };
             let before = index < kept.start;
             let slot = match before {
-                true => before_kept,
+                true => 0,
                 false => native_rows.len(),
             };
             let placed = native.cast::<IInspectable>().and_then(|element| {
@@ -1085,7 +1110,7 @@ impl List {
             }
             native_rows.insert(slot, native);
             realized.insert(slot, row);
-            before_kept += usize::from(before);
+            first -= usize::from(before);
         }
         for _ in native_rows.len() as u32..replaceable {
             if let Err(error) = self.without_notifying(|_| children.RemoveAtEnd()) {
@@ -1093,10 +1118,22 @@ impl List {
                 break;
             }
         }
+        let built_count = native_rows.len();
         *self.0.native_rows.borrow_mut() = native_rows;
         *self.0.realized.borrow_mut() = realized;
-        self.0.built_start.set(window.start);
+        self.0.built_start.set(first);
         self.0.row_height_pending.set(true);
+        // 同じ窓で何度も失敗しないよう、やり直すのは窓が動くか `refresh` のときにする。
+        self.0.failed_window.set(outcome.is_err().then_some(window));
+        let window = match outcome.is_err() {
+            true => RowWindow {
+                start: first,
+                end: first + built_count,
+                count: window.count,
+            },
+            false => window,
+        };
+        self.0.window.set(window);
 
         let height = self.0.row_height.get();
         set_spacer_height(&self.0.top_spacer, window.leading(height));
@@ -1144,6 +1181,13 @@ impl List {
             None => {}
         }
         let host = row_host(row)?;
+        // 取り込んだウィジェットを、捨てる入れ物に残さない。
+        let in_row = |result: windows_core::Result<()>| {
+            result.map_err(|error| {
+                release_host_content(&host);
+                to_error("set the row content", error)
+            })
+        };
         // スクロールのあとポインターを動かさずに押すと、`PointerEntered` は来ない。
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let pressed = PointerEventHandler::new(move |_, _| {
@@ -1155,9 +1199,7 @@ impl List {
             Ok(())
         });
         let _ = host.PointerPressed(&pressed);
-        native
-            .SetContent(&host)
-            .map_err(|e| to_error("set the row content", e))?;
+        in_row(native.SetContent(&host))?;
         // 選べないだけの行は中のコントロールを押せる必要があるので、
         // 無効にするのは `ListItem::enabled(false)` の行だけ。
         let _ = native.SetIsEnabled(!row.is_disabled_item());
@@ -1207,7 +1249,7 @@ impl List {
         // `ChangeView` はすぐには位置へ反映されないので、窓は移る先の位置から決める。
         self.move_window(top);
         self.scroll_now(top);
-        let Some(landed) = self.focus_nearest(target, from) else {
+        let Some(landed) = self.focus_nearest(target, from, FocusState::Keyboard) else {
             return true;
         };
         // 無効の行を飛ばすと、移った行が画面の外のことがある。
@@ -1289,15 +1331,19 @@ impl List {
 
     /// Focuses row `target`, or if it cannot take the focus (it is disabled), the nearest
     /// row beyond it that can, or else on the way back to `from`. Returns that row.
-    fn focus_nearest(&self, target: usize, from: usize) -> Option<usize> {
+    fn focus_nearest(&self, target: usize, from: usize, state: FocusState) -> Option<usize> {
         let window = self.0.window.get();
-        let target = target.clamp(window.start, window.end.checked_sub(1)?);
+        if window.is_empty() {
+            return None;
+        }
+        let target = target.clamp(window.start, window.end - 1);
         let from = from.clamp(window.start, window.end - 1);
+        let start = self.0.built_start.get();
         let rows = self.0.native_rows.borrow().clone();
         let focus = |index: &usize| {
-            rows.get(index - window.start)
+            rows.get(index - start)
                 .and_then(|row| row.cast::<Control>().ok())
-                .is_some_and(|row| row.Focus(FocusState::Keyboard).unwrap_or(false))
+                .is_some_and(|row| row.Focus(state).unwrap_or(false))
         };
         match target >= from {
             true => (target..window.end)
@@ -1308,6 +1354,34 @@ impl List {
                 .find(focus)
                 .or_else(|| (target + 1..=from).find(focus)),
         }
+    }
+
+    /// Moves a focus that landed on a row off screen to the nearest row on screen.
+    ///
+    /// Focus changes do not scroll a list that scrolls itself (see
+    /// [`List::update_window`]), and `ListView` picks rows without looking at what is on
+    /// screen: Tab can land on the first row built. The next key would then pull the view
+    /// to that row.
+    fn keep_focus_on_screen(&self) {
+        let height = self.0.row_height.get();
+        let viewport = self.0.scroll.ViewportHeight().unwrap_or(0.0);
+        if self.0.rebuilding.get() || !self.height_is_limited() || height <= 0.0 || viewport <= 0.0
+        {
+            return;
+        }
+        let Some((index, state)) = self.focused_row() else {
+            return;
+        };
+        let top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
+        let (row_top, row_bottom) = self.row_span(index);
+        let target = if row_bottom <= top {
+            (top / height).ceil() as usize
+        } else if row_top >= top + viewport {
+            (((top + viewport) / height).floor() as usize).saturating_sub(1)
+        } else {
+            return;
+        };
+        self.focus_nearest(target, index, state);
     }
 
     /// The row holding the keyboard focus itself, and how it got it.
@@ -1328,6 +1402,7 @@ impl List {
         if !window.contains(index) {
             return;
         }
+        let start = self.0.built_start.get();
         let height = self.0.row_height.get();
         let top = index as f64 * height;
         let view_top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
@@ -1335,7 +1410,7 @@ impl List {
         if top + height < view_top || top > view_top + viewport {
             return;
         }
-        if let Some(row) = self.0.native_rows.borrow().get(index - window.start) {
+        if let Some(row) = self.0.native_rows.borrow().get(index - start) {
             let _ = row.cast::<Control>().and_then(|row| row.Focus(state));
         }
     }
@@ -1406,11 +1481,16 @@ impl List {
         let current = self.0.window.get();
         let needed = self.window_at(offset, ROW_WINDOW_OVERSCAN / 2);
         let next = self.window_at(offset, ROW_WINDOW_OVERSCAN);
-        if next == current || keeps_row_window(current, needed, next) {
+        // 前回の組み立てが途中で失敗していたら、残った行は使わずに全部作り直す。
+        // 失敗した窓そのものは、レイアウトのたびにやり直さない。
+        let failed = self.0.failed_window.get();
+        if failed == Some(next)
+            || (failed.is_none() && (next == current || keeps_row_window(current, needed, next)))
+        {
             return;
         }
         self.0.window.set(next);
-        self.build_window_from(Some(current));
+        self.build_window_from(failed.is_none().then_some(current));
         if self.settle_row_height() {
             self.move_window(offset);
         }
@@ -1762,7 +1842,7 @@ impl List {
     /// selection.
     fn write_selection(&self, indices: &[usize]) {
         *self.0.selected.borrow_mut() = indices.to_vec();
-        let start = self.0.window.get().start;
+        let start = self.0.built_start.get();
         self.without_notifying(|this| {
             for (offset, native) in this.0.native_rows.borrow().iter().enumerate() {
                 let _ = native.SetIsSelected(indices.binary_search(&(start + offset)).is_ok());
@@ -1774,6 +1854,7 @@ impl List {
     /// decided here too.
     fn read_native_selection(&self) -> Vec<usize> {
         let window = self.0.window.get();
+        let start = self.0.built_start.get();
         let mut picked: Vec<usize> = self
             .0
             .native_rows
@@ -1781,7 +1862,7 @@ impl List {
             .iter()
             .enumerate()
             .filter(|(_, native)| native.IsSelected().unwrap_or(false))
-            .map(|(offset, _)| window.start + offset)
+            .map(|(offset, _)| start + offset)
             .collect();
         // `ListViewItem` には「選ばせない」指定が無い (`IsEnabled` を落とすと
         // 中のボタンまで効かなくなる) ので、選べない行はここで外し、
@@ -1875,12 +1956,16 @@ impl List {
 /// Letting go of the holder with it still inside leaves the widget "with a parent", and
 /// the next rebuild is rejected with "Element is already the child of another element".
 fn release_row_content(native: &ListViewItem) {
-    let Ok(host) = native
+    if let Ok(host) = native
         .Content()
         .and_then(|content| content.cast::<XamlGrid>())
-    else {
-        return;
-    };
+    {
+        release_host_content(&host);
+    }
+}
+
+/// Takes the content out of a row's holder.
+fn release_host_content(host: &XamlGrid) {
     if let Ok(children) = host.Children() {
         let _ = children.Clear();
     }
@@ -1960,7 +2045,10 @@ fn row_host(row: &ListRow) -> Result<XamlGrid> {
     if !row.is_selectable() {
         // 選べない行は、余白を含めて行の全体を入れ物が受け持ち、押下を止める。
         let _ = host.SetPadding(ROW_PADDING);
-        hold_unselectable_press(&host)?;
+        if let Err(error) = hold_unselectable_press(&host) {
+            release_host_content(&host);
+            return Err(error);
+        }
     }
     Ok(host)
 }

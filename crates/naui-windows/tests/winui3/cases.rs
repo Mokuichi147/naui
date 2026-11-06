@@ -167,6 +167,10 @@ const CASES: &[Case] = &[
         list_refresh_inside_the_builder_starts_over,
     ),
     (
+        "Tab はリストの画面の中の行へ入り、次のキーで表示が飛ばない",
+        list_tab_focuses_a_row_on_screen,
+    ),
+    (
         "組み立ての途中で失敗しても、残った行を管理し続ける",
         list_keeps_the_rows_a_failed_build_left,
     ),
@@ -8443,6 +8447,89 @@ fn list_arrow_keys_pass_over_disabled_rows(ui: &Ui) -> Result<()> {
         assert_eq!(list.selection(), [2], "手前へも飛ばす");
         press_nav_key(&[VK_SHIFT], VK_DOWN)?;
         assert_eq!(list.selection(), [4], "単一選択では Shift でも 1 行");
+        Some(())
+    }));
+    // SAFETY: 引数は値だけ。
+    let _ = unsafe { SetCursorPos(pointer.x, pointer.y) };
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// Tab lands on a row on screen, so the next key does not pull the view elsewhere: focus
+/// changes do not scroll a list that scrolls itself.
+fn list_tab_focuses_a_row_on_screen(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
+    use naui_winui3::Microsoft::UI::Xaml::FocusState;
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_DOWN, VK_TAB};
+    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos};
+
+    let window = ui.window("Tab でリストへ", 300.0, 280.0)?;
+    let stack = ui.stack(Orientation::Vertical)?;
+    let button = ui.button("手前")?;
+    let list = ui.list()?;
+    list.set_items(&naui_core::ListItem::list(
+        (0..1_000).map(|index| format!("行 {index}")),
+    ));
+    list.set_sizing(Sizing::fill());
+    stack.set_sizing(Sizing::fill());
+    stack.append(&button);
+    stack.append(&list);
+    window.set_child(&stack);
+    let mut pointer = POINT::default();
+    // SAFETY: `pointer` はこの関数の中で生きている。
+    let _ = unsafe { GetCursorPos(&mut pointer) };
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Option<()> {
+        window.show();
+        let scroll = list_scroller(&list);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && list.row_height() > 0.0
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return None;
+        }
+        bring_to_front(&window)?;
+        pump_until(Duration::from_millis(500), || false);
+        list.scroll_to_row(500);
+        pump_until(Duration::from_millis(500), || false);
+        let before = scroll.VerticalOffset().expect("位置");
+        let height = list.row_height();
+        let on_screen = |index: usize| {
+            let top = scroll.VerticalOffset().expect("位置");
+            let bottom = top + scroll.ViewportHeight().expect("高さ");
+            (index + 1) as f64 * height > top && (index as f64) * height < bottom
+        };
+
+        let _ = native::<XamlButton>(&button).Focus(FocusState::Keyboard);
+        pump_until(FOCUS_TIMEOUT, || {
+            native::<Control>(&button).FocusState() != Ok(FocusState::Unfocused)
+        });
+        press_nav_key(&[], VK_TAB)?;
+        pump_until(Duration::from_secs(1), || {
+            focused_list_row(&list).is_some_and(on_screen)
+        });
+        let Some(focused) = focused_list_row(&list) else {
+            println!("     (Tab でリストの行へ入らない環境なので、確かめずに通す)");
+            return None;
+        };
+        assert!(
+            on_screen(focused),
+            "Tab で画面の中の行へ入ること: {focused} 行目"
+        );
+        let after_tab = scroll.VerticalOffset().expect("位置");
+        assert!((after_tab - before).abs() < 1.0, "Tab で表示が動かないこと");
+
+        press_nav_key(&[], VK_DOWN)?;
+        let after_key = scroll.VerticalOffset().expect("位置");
+        assert!(
+            (after_key - before).abs() <= height + 1.0,
+            "次のキーで表示が飛ばないこと: {before} → {after_key}"
+        );
+        assert_eq!(list.selection(), [focused + 1], "その行から続くこと");
         Some(())
     }));
     // SAFETY: 引数は値だけ。
