@@ -114,7 +114,8 @@ that shape are covered in
     arrow keys continue past them as the rows follow. A Shift range selection also
     covers only the rows built. macOS and the Web cover every row.
   - A control inside a row loses the keyboard focus when its row leaves the range
-    built, because the row is rebuilt.
+    built, because the row is discarded. While the row stays in the range it is left
+    as it is, so what the builder returned for it only changes with `refresh`.
   - On the Web, such a list is built from `<ul role="listbox">` instead of `<select>`,
     and the same limit on the element height as for `Table` applies.
   - Assistive technology is told each row's position among all the rows and how many

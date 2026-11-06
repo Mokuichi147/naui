@@ -289,8 +289,8 @@ enum Body {
         bottom_spacer: HtmlElement,
         /// The `<li>`s of the built rows, in order from `window.start`.
         options: Vec<HtmlElement>,
-        /// The click subscription per built row. Replaced whenever the rows are rebuilt.
-        row_listeners: Vec<Listener>,
+        /// The click subscription of each built row, in the same order as `options`.
+        row_listeners: Vec<Option<Listener>>,
         /// The subscriptions to the whole list (keys and scrolling).
         _listeners: Vec<Listener>,
     },
@@ -734,6 +734,9 @@ impl List {
         // 行の `offsetTop` がこの要素を基準になるようにする
         // (`reveal_active` がスクロール位置を求めるのに使う)。
         style(&list, "position", "relative");
+        // 窓を動かすと、残る行の上で詰め物と行が入れ替わる。スクロール位置は詰め物の
+        // 高さから求めているので、ブラウザに補正させない。
+        style(&list, "overflow-anchor", "none");
         // 枠と地の色は、ブラウザが入力欄に使うシステム色に任せる。
         // 線は `GrayText` にする。Safari (WebKit) の `ButtonBorder` は明暗
         // どちらの配色でも白に解決されるため、明るい配色では枠が消え、
@@ -942,11 +945,17 @@ impl List {
         Ok(())
     }
 
-    /// Rebuilds the `<li>`s for just the current window.
+    /// Rebuilds every `<li>` of the current window.
     ///
     /// Rows outside the window get no `<li>`; the spacers above and below carry their
     /// height, so the scroll bar's length and position are those of all the rows.
     fn build_window(&self) -> Result<()> {
+        self.build_window_from(None)
+    }
+
+    /// Builds the current window. The rows `previous` has in common with it stay as they
+    /// are, unless the rows are replaced during the build.
+    fn build_window_from(&self, previous: Option<RowWindow>) -> Result<()> {
         // 組み立ての途中でアプリのコードが動くので、そこから呼ばれても
         // 二重に作り直さない。
         if self.0.rebuilding.replace(true) {
@@ -958,40 +967,59 @@ impl List {
                 true => self.prepare_body(),
                 false => Ok(()),
             };
-            result = prepared.and_then(|()| self.build_window_once());
+            result = prepared.and_then(|()| self.build_window_once(previous.filter(|_| !replaced)));
         });
         self.0.rebuilding.set(false);
         result
     }
 
-    fn build_window_once(&self) -> Result<()> {
+    fn build_window_once(&self, previous: Option<RowWindow>) -> Result<()> {
         let window = self.0.window.get();
         let generation = self.0.rows.generation();
         // アプリのコードが動く間は、中身の借用を持たない。
-        let Some((list, bottom_spacer, old)) = (match &mut *self.0.body.borrow_mut() {
+        let Some((list, bottom_spacer, old, old_listeners)) = (match &mut *self.0.body.borrow_mut()
+        {
             Body::Listbox {
                 list,
                 bottom_spacer,
                 options,
                 row_listeners,
                 ..
-            } => {
-                row_listeners.clear();
-                Some((list.clone(), bottom_spacer.clone(), std::mem::take(options)))
-            }
+            } => Some((
+                list.clone(),
+                bottom_spacer.clone(),
+                std::mem::take(options),
+                std::mem::take(row_listeners),
+            )),
             Body::Select { .. } => None,
         }) else {
             return Ok(());
         };
-        // 詰め物は残したまま行だけを入れ替える。
-        for option in &old {
-            option.remove();
-        }
+        // 窓に残る行は触らない。作り直すと、中のコントロールのフォーカスが失われる。
+        // 前回の組み立てが途中で終わっていたら、位置が合わないので全部作り直す。
+        // 全行を組み立てるときも、そろえた高さから行ごとの高さへ戻すために作り直す。
+        let previous =
+            previous.filter(|previous| previous.len() == old.len() && !window.is_complete());
+        let kept = previous.map_or(0..0, |previous| previous.overlap(window));
+        let built_start = previous.map_or(0, |previous| previous.start);
 
         let mut options = Vec::with_capacity(window.len());
         let mut listeners = Vec::with_capacity(window.len());
         let mut realized = Vec::with_capacity(window.len());
-        for index in window.indices() {
+        for (offset, (option, listener)) in old.into_iter().zip(old_listeners).enumerate() {
+            let index = built_start + offset;
+            if !kept.contains(&index) {
+                option.remove();
+                continue;
+            }
+            options.push(option);
+            listeners.push(listener);
+            realized.extend(self.0.realized.borrow().get(offset).cloned());
+        }
+        // 詰め物は残したまま行だけを入れ替える。
+        let first_kept = options.first().cloned();
+        let mut before_kept = 0;
+        for index in window.indices().filter(|index| !kept.contains(index)) {
             let Some(row) = self.0.rows.row(index) else {
                 continue;
             };
@@ -1002,10 +1030,18 @@ impl List {
             // 組み立てに失敗した行は、空の行にする。
             let row = row.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
             let (option, listener) = self.build_option(&list, index, &row)?;
-            let _ = list.insert_before(&option, Some(&bottom_spacer));
-            options.push(option);
-            listeners.extend(listener);
-            realized.push(row);
+            if index < kept.start {
+                let _ = list.insert_before(&option, first_kept.as_ref().map(|row| row.as_ref()));
+                options.insert(before_kept, option);
+                listeners.insert(before_kept, listener);
+                realized.insert(before_kept, row);
+                before_kept += 1;
+            } else {
+                let _ = list.insert_before(&option, Some(&bottom_spacer));
+                options.push(option);
+                listeners.push(listener);
+                realized.push(row);
+            }
         }
         *self.0.realized.borrow_mut() = realized;
         if let Body::Listbox {
@@ -1067,7 +1103,8 @@ impl List {
     /// Moves the built range along with scrolling and resizing.
     ///
     /// Rebuilding for every row scrolled is heavy, so the window is reused until you
-    /// have scrolled through half of the extra rows ([`ROW_WINDOW_OVERSCAN`]).
+    /// have scrolled through half of the extra rows ([`ROW_WINDOW_OVERSCAN`]). Even then,
+    /// only the rows that were not there are built.
     fn update_window(&self) {
         if self.0.rebuilding.get() {
             return;
@@ -1091,7 +1128,7 @@ impl List {
             return;
         }
         self.0.window.set(next);
-        let _ = self.build_window();
+        let _ = self.build_window_from(Some(current));
         if self.settle_row_height() {
             self.update_window();
         }

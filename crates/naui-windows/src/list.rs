@@ -898,8 +898,14 @@ impl List {
         }
     }
 
-    /// Rebuilds the `ListView` rows for just the current window.
+    /// Rebuilds every `ListView` row of the current window.
     fn build_window(&self) {
+        self.build_window_from(None);
+    }
+
+    /// Builds the current window. The rows `previous` has in common with it stay as they
+    /// are, unless the rows are replaced during the build.
+    fn build_window_from(&self, previous: Option<RowWindow>) {
         // 組み立ての途中でアプリのコードが動くので、そこから呼ばれても
         // 二重に作り直さない。
         if self.0.rebuilding.replace(true) {
@@ -909,14 +915,14 @@ impl List {
             if replaced {
                 self.0.window.set(self.compute_window(ROW_WINDOW_OVERSCAN));
             }
-            if let Err(error) = self.build_window_once() {
+            if let Err(error) = self.build_window_once(previous.filter(|_| !replaced)) {
                 eprintln!("naui-windows: failed to build the list rows: {error}");
             }
         });
         self.0.rebuilding.set(false);
     }
 
-    fn build_window_once(&self) -> Result<()> {
+    fn build_window_once(&self, previous: Option<RowWindow>) -> Result<()> {
         // コレクションを空にせず置換し、スクロールのリセットを避ける。
         // 行数が減って位置が補正された場合だけ、レイアウト後に戻す。
         let offset = self.0.scroll.VerticalOffset().ok();
@@ -929,12 +935,22 @@ impl List {
             .Size()
             .map_err(|e| to_error("get the row count", e))?;
         let focused = self.focused_row();
-        self.release_row_contents();
-        self.0.native_rows.borrow_mut().clear();
-        self.0.realized.borrow_mut().clear();
-
         let window = self.0.window.get();
         let generation = self.0.rows.generation();
+        let built = std::mem::take(&mut *self.0.native_rows.borrow_mut());
+        let built_rows = std::mem::take(&mut *self.0.realized.borrow_mut());
+        let built_start = self.0.built_start.get();
+        // 窓に残る行は触らない。作り直すと、中のコントロールのフォーカスが失われる。
+        // 前回の組み立てが途中で終わっていたら、位置が合わないので全部作り直す。
+        // 全行を組み立てるときも、そろえた高さから行ごとの高さへ戻すために作り直す。
+        let kept = previous
+            .filter(|previous| previous.len() == built.len() && !window.is_complete())
+            .map_or(0..0, |previous| previous.overlap(window));
+        // 残る行が無いときは、取り除かずに置き換える (上のコメントのとおり)。
+        let replaceable = match kept.is_empty() {
+            true => previous_count,
+            false => 0,
+        };
         // 高さが分かっていれば、作るときから同じ高さにする (測るまで行が動かない)。
         let min_height = match window.is_complete() || self.0.row_height_stale.get() {
             true => 0.0,
@@ -943,7 +959,21 @@ impl List {
         let fixed_height = self.0.fixed_row_height.get();
         let mut native_rows = Vec::with_capacity(window.len());
         let mut realized = Vec::with_capacity(window.len());
-        for index in window.indices() {
+        for (offset, (native, row)) in built.into_iter().zip(built_rows).enumerate() {
+            if kept.contains(&(built_start + offset)) {
+                native_rows.push(native);
+                realized.push(row);
+                continue;
+            }
+            release_row_content(&native);
+            if !kept.is_empty() {
+                let at = native_rows.len() as u32;
+                self.without_notifying(|_| children.RemoveAt(at))
+                    .map_err(|e| to_error("remove the row", e))?;
+            }
+        }
+        let mut before_kept = 0;
+        for index in window.indices().filter(|index| !kept.contains(index)) {
             let Some(row) = self.0.rows.row(index) else {
                 continue;
             };
@@ -978,9 +1008,17 @@ impl List {
             let element = native
                 .cast::<IInspectable>()
                 .map_err(|e| to_error("convert the row to UIElement", e))?;
+            if index < kept.start {
+                self.without_notifying(|_| children.InsertAt(before_kept as u32, &element))
+                    .map_err(|e| to_error("insert the row", e))?;
+                native_rows.insert(before_kept, native);
+                realized.insert(before_kept, row);
+                before_kept += 1;
+                continue;
+            }
             let slot = native_rows.len() as u32;
             self.without_notifying(|_| {
-                if slot < previous_count {
+                if slot < replaceable {
                     children.SetAt(slot, &element)
                 } else {
                     children.Append(&element)
@@ -990,7 +1028,7 @@ impl List {
             native_rows.push(native);
             realized.push(row);
         }
-        for _ in native_rows.len() as u32..previous_count {
+        for _ in native_rows.len() as u32..replaceable {
             self.without_notifying(|_| children.RemoveAtEnd())
                 .map_err(|e| to_error("remove the extra rows", e))?;
         }
@@ -1012,7 +1050,7 @@ impl List {
             .UpdateLayout()
             .map_err(|e| to_error("update the list layout", e))?;
         // 矢印キーで窓の端まで来たときに組み立て直しても、操作が続けられるように。
-        if let Some((index, state)) = focused {
+        if let Some((index, state)) = focused.filter(|(index, _)| !kept.contains(index)) {
             self.restore_focus(index, state);
         }
         let Some(offset) = offset else {
@@ -1084,7 +1122,8 @@ impl List {
     /// Moves the built range along with scrolling.
     ///
     /// Rebuilding for every row scrolled is heavy, so the window is reused until you
-    /// have scrolled through half of the extra rows ([`ROW_WINDOW_OVERSCAN`]).
+    /// have scrolled through half of the extra rows ([`ROW_WINDOW_OVERSCAN`]). Even then,
+    /// only the rows that were not there are built.
     fn update_window(&self) {
         // UpdateLayout 中の再入では、差し替え途中の位置を読まない。
         if self.0.rebuilding.get() {
@@ -1106,7 +1145,7 @@ impl List {
             return;
         }
         self.0.window.set(next);
-        self.build_window();
+        self.build_window_from(Some(current));
         if self.settle_row_height() {
             self.update_window();
         }
@@ -1178,7 +1217,7 @@ impl List {
 
     /// Receives row activation (double-click, Enter) and context menu requests.
     ///
-    /// Rows are recreated every time the window moves, so the index can be the row's place
+    /// A row stays this row for as long as it is built, so the index can be the row's place
     /// in the whole list at creation. The subscriptions hold the `List` weakly (avoiding the cycle row →
     /// subscription → `List` → row).
     fn listen_row_events(&self, native: &ListViewItem, index: usize) -> Result<()> {
@@ -1253,26 +1292,6 @@ impl List {
             .ContextRequested(&requested)
             .map_err(|e| to_error("subscribe to the row context menu", e))?;
         Ok(())
-    }
-
-    /// Empties the holders of the rows currently laid out.
-    ///
-    /// Custom-content rows place the widget the app holds directly into the holder
-    /// (`Grid`). Letting go of the holder with it still inside leaves the widget "with
-    /// a parent", and the next rebuild is rejected with "Element is already the child of
-    /// another element". So it is always removed here before the holder is discarded.
-    fn release_row_contents(&self) {
-        for native in self.0.native_rows.borrow().iter() {
-            let Ok(host) = native
-                .Content()
-                .and_then(|content| content.cast::<XamlGrid>())
-            else {
-                continue;
-            };
-            if let Ok(children) = host.Children() {
-                let _ = children.Clear();
-            }
-        }
     }
 
     /// The number of rows.
@@ -1483,6 +1502,23 @@ impl List {
         let result = f(self);
         self.0.silent.set(previous);
         result
+    }
+}
+
+/// Empties the holder of a row that is about to be discarded.
+///
+/// Custom-content rows place the widget the app holds directly into the holder (`Grid`).
+/// Letting go of the holder with it still inside leaves the widget "with a parent", and
+/// the next rebuild is rejected with "Element is already the child of another element".
+fn release_row_content(native: &ListViewItem) {
+    let Ok(host) = native
+        .Content()
+        .and_then(|content| content.cast::<XamlGrid>())
+    else {
+        return;
+    };
+    if let Ok(children) = host.Children() {
+        let _ = children.Clear();
     }
 }
 

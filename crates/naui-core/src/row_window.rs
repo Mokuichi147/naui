@@ -112,6 +112,27 @@ impl RowWindow {
         self.count == needed.count && self.start <= needed.start && self.end >= needed.end
     }
 
+    /// The rows that stay built when the window moves to `next`. Empty if there are none.
+    ///
+    /// Rebuilding a row that stays would take the keyboard focus from a control inside it,
+    /// so the window moves by building only the rows that were not there. Windows over a
+    /// different number of rows have nothing in common.
+    ///
+    /// ```
+    /// # use naui_core::RowWindow;
+    /// let built = RowWindow { start: 10, end: 30, count: 100 };
+    /// let next = RowWindow { start: 20, end: 40, count: 100 };
+    /// assert_eq!(built.overlap(next), 20..30);
+    /// ```
+    pub fn overlap(self, next: RowWindow) -> Range<usize> {
+        let start = self.start.max(next.start);
+        let end = self.end.min(next.end);
+        match self.count == next.count && start < end {
+            true => start..end,
+            false => 0..0,
+        }
+    }
+
     /// The height taken by the rows before the range (the top spacer).
     pub fn leading(self, row_height: f64) -> f64 {
         self.start as f64 * row_height.max(0.0)
@@ -881,6 +902,32 @@ mod tests {
         assert!(!rows.is_selectable(5, of_row, || Some(true)));
         assert!(rows.is_selectable(6, of_row, || Some(false)));
         assert!(!rows.is_selectable(10, of_row, || None), "範囲の外");
+    }
+
+    #[test]
+    fn overlap_is_what_both_windows_build() {
+        let window = |start, end| RowWindow {
+            start,
+            end,
+            count: 100,
+        };
+        assert_eq!(window(10, 30).overlap(window(20, 40)), 20..30, "先へ動く");
+        assert_eq!(window(20, 40).overlap(window(10, 30)), 20..30, "手前へ動く");
+        assert_eq!(window(10, 30).overlap(window(15, 25)), 15..25, "狭まる");
+        assert!(
+            window(10, 20).overlap(window(20, 30)).is_empty(),
+            "接するだけ"
+        );
+        assert!(
+            window(10, 20).overlap(window(50, 60)).is_empty(),
+            "離れている"
+        );
+        let other = RowWindow {
+            start: 10,
+            end: 30,
+            count: 99,
+        };
+        assert!(window(10, 30).overlap(other).is_empty(), "行数が違う");
     }
 
     #[test]

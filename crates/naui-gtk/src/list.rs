@@ -399,12 +399,16 @@ impl List {
     /// [`ROW_WINDOW_THRESHOLD`](naui_core::ROW_WINDOW_THRESHOLD), rows off screen are
     /// filled in as "row count × this height", so set it when the rows' heights vary. A
     /// row built later that needs more raises the height for every row.
+    ///
+    /// GTK sizes are whole pixels, so a fraction is rounded up.
     pub fn set_row_height(&self, height: f64) {
+        // 指定は下限なので、切り捨てると指定を下回る。
+        let height = height.max(0.0).ceil();
         self.0
             .fixed_row_height
             .set((height > 0.0).then_some(height as i32));
         // 指定を外したときは、組み立て直した行から測り直す。
-        self.0.row_height.set(height.max(0.0));
+        self.0.row_height.set(height);
         self.refresh();
     }
 
@@ -571,8 +575,14 @@ impl List {
         }
     }
 
-    /// Rebuilds the `GtkListBox` rows for just the current window.
+    /// Rebuilds every `GtkListBox` row of the current window.
     fn build_window(&self) {
+        self.build_window_from(None);
+    }
+
+    /// Builds the current window. The rows `previous` has in common with it stay as they
+    /// are, unless the rows are replaced during the build.
+    fn build_window_from(&self, previous: Option<RowWindow>) {
         // 組み立ての途中でアプリのコードが動くので、そこから呼ばれても
         // 二重に作り直さない。
         if self.0.rebuilding.replace(true) {
@@ -582,27 +592,44 @@ impl List {
             if replaced {
                 self.0.window.set(self.compute_window(ROW_WINDOW_OVERSCAN));
             }
-            self.build_window_once();
+            self.build_window_once(previous.filter(|_| !replaced));
         });
         self.0.rebuilding.set(false);
     }
 
-    fn build_window_once(&self) {
+    fn build_window_once(&self, previous: Option<RowWindow>) {
         let window = self.0.window.get();
         let generation = self.0.rows.generation();
         let fixed_height = self.0.fixed_row_height.get();
         let focused = self.focused_row();
-        let mut realized = Vec::with_capacity(window.len());
+        let built = self.native_rows();
+        let built_start = self.0.built_start.get();
+        // 窓に残る行は触らない。作り直すと、中のコントロールのフォーカスが失われる。
+        // 前回の組み立てが途中で終わっていたら、位置が合わないので全部作り直す。
+        // 全行を組み立てるときも、そろえた高さから行ごとの高さへ戻すために作り直す。
+        let kept = previous
+            .filter(|previous| previous.len() == built.len() && !window.is_complete())
+            .map_or(0..0, |previous| previous.overlap(window));
+        let mut realized: Vec<ListRow> = {
+            let rows = self.0.realized.borrow();
+            let offsets =
+                kept.start.saturating_sub(built_start)..kept.end.saturating_sub(built_start);
+            rows.get(offsets).map_or(Vec::new(), <[ListRow]>::to_vec)
+        };
+        let mut before_kept = 0;
         without_signal(&self.0.native, &self.0.handler, || {
-            while let Some(row) = self.0.native.first_child() {
+            for (offset, row) in built.iter().enumerate() {
+                if kept.contains(&(built_start + offset)) {
+                    continue;
+                }
                 // 中身を先に放す。アプリが持ち続ける行の中身は、次に組み立てるときに
                 // 別の行へ入る。古い行に親として残っていると入れられない。
                 if let Some(row) = row.downcast_ref::<gtk::ListBoxRow>() {
                     row.set_child(gtk::Widget::NONE);
                 }
-                self.0.native.remove(&row);
+                self.0.native.remove(row);
             }
-            for index in window.indices() {
+            for index in window.indices().filter(|index| !kept.contains(index)) {
                 let Some(row) = self.0.rows.row(index) else {
                     continue;
                 };
@@ -617,8 +644,14 @@ impl List {
                     native.set_size_request(-1, height);
                 }
                 report_row_position(&native, index, window.count);
-                self.0.native.append(&native);
-                realized.push(row);
+                if index < kept.start {
+                    self.0.native.insert(&native, before_kept as i32);
+                    realized.insert(before_kept, row);
+                    before_kept += 1;
+                } else {
+                    self.0.native.append(&native);
+                    realized.push(row);
+                }
             }
             self.0.native.unselect_all();
         });
@@ -643,7 +676,7 @@ impl List {
 
         // 矢印キーで窓の端まで来たときに組み立て直しても、操作が続けられるように。
         // 取り除いた行にフォーカスが残ったままだと、キーがどこにも届かなくなる。
-        if let Some(index) = focused {
+        if let Some(index) = focused.filter(|index| !kept.contains(index)) {
             let offset = match window.contains(index) {
                 true => index - window.start,
                 // スクロールバーで遠くへ送ったときは、窓の先頭から続ける。
@@ -729,7 +762,8 @@ impl List {
     /// Moves the built range along with scrolling.
     ///
     /// Rebuilding for every row scrolled is heavy, so the window is reused until you
-    /// have scrolled through half of the extra rows ([`ROW_WINDOW_OVERSCAN`]).
+    /// have scrolled through half of the extra rows ([`ROW_WINDOW_OVERSCAN`]). Even then,
+    /// only the rows that were not there are built.
     fn update_window(&self) {
         if self.0.rebuilding.get() {
             return;
@@ -741,7 +775,7 @@ impl List {
             return;
         }
         self.0.window.set(next);
-        self.build_window();
+        self.build_window_from(Some(current));
         if self.settle_row_height() {
             self.update_window();
         }

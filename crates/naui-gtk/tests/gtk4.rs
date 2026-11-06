@@ -12,6 +12,7 @@
 //! A display (Wayland or X11) is required. Without one, `gtk_init` fails.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::rc::Rc;
@@ -28,6 +29,7 @@ use naui_core::{
     PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode, SidebarItem,
     SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle, Theme, Time,
     ToolbarIcon, ToolbarItem, Track, TreeItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
+    ROW_WINDOW_OVERSCAN,
 };
 use naui_gtk::{run_for_test, ListRow, TableCells, Ui, Widget};
 
@@ -783,6 +785,10 @@ fn main() {
         (
             "行を組み立て直してもフォーカスした行が残る",
             list_keeps_the_focused_row_across_rebuilds,
+        ),
+        (
+            "窓に残る行は作り直さず、中のコントロールがフォーカスを失わない",
+            list_keeps_rows_that_stay_in_the_window,
         ),
         (
             "行の多いリストで指定より高い行があっても窓の位置がずれない",
@@ -6121,6 +6127,12 @@ fn list_row_height_follows_the_setting(ui: &Ui) -> Result<()> {
     assert_eq!(list.row_height(), 64.0);
     assert_eq!(allocated_height(&children(&native)[0]), 64.0);
 
+    // 指定は下限なので、整数へ丸めるときに下回らない。
+    list.set_row_height(64.1);
+    tick(&native);
+    assert_eq!(list.row_height(), 65.0, "小数は切り上げること");
+    assert_eq!(allocated_height(&children(&native)[0]), 65.0);
+
     list.set_row_height(0.0);
     tick(&native);
     assert_eq!(list.row_height(), measured, "0 以下で測り直すこと");
@@ -6245,7 +6257,7 @@ fn list_keeps_the_focused_row_across_rebuilds(ui: &Ui) -> Result<()> {
         .and_then(|root| root.focus())
         .and_downcast::<gtk::ListBoxRow>()
         .expect("組み立て直したあとも行にフォーカスがあること");
-    assert_ne!(focused, row, "組み立て直されていること");
+    assert_eq!(focused, row, "窓に残る行は作り直さないこと");
     assert!(focused.index() < 14, "窓が動いていること");
     assert_eq!(row_texts(&focused), target, "同じ行であること");
     let adjustment = scroller_of(&native)
@@ -6266,6 +6278,102 @@ fn list_keeps_the_focused_row_across_rebuilds(ui: &Ui) -> Result<()> {
         .expect("行にフォーカスがあること");
     assert!(focused.parent().is_some(), "取り除いた行に残らないこと");
     assert_eq!(adjustment.value(), height * 3_000.0);
+    window.close();
+    Ok(())
+}
+
+/// Moving the window leaves the rows in both ranges alone: the builder is not called for
+/// them, and a control inside one keeps the keyboard focus. The rows stay in order
+/// whichever way the window moves.
+fn list_keeps_rows_that_stay_in_the_window(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    let inputs: Rc<RefCell<HashMap<usize, naui_gtk::TextInput>>> = Rc::default();
+    let builds: Rc<RefCell<HashMap<usize, usize>>> = Rc::default();
+    let (window, list, native) = shown_big_list(ui, "窓に残る行", |list| {
+        let ui = ui.clone();
+        let inputs = inputs.clone();
+        let builds = builds.clone();
+        list.set_row_builder(ROWS, move |index| {
+            *builds.borrow_mut().entry(index).or_default() += 1;
+            let row = ui.stack(Orientation::Vertical)?;
+            row.append(&ui.label(&format!("行 {index}"))?);
+            let input = ui.text_input("")?;
+            row.append(&input);
+            inputs.borrow_mut().insert(index, input);
+            Ok(ListRow::new(&row))
+        });
+    })?;
+    let in_order = |context: &str| {
+        let shown: Vec<usize> = children(&native)
+            .iter()
+            .map(|row| {
+                let row = row.downcast_ref::<gtk::ListBoxRow>().expect("行");
+                row_texts(row)[0]
+                    .strip_prefix("行 ")
+                    .expect("行の文字")
+                    .parse()
+                    .expect("行の番号")
+            })
+            .collect();
+        let first = shown[0];
+        let expected: Vec<usize> = (first..first + shown.len()).collect();
+        assert_eq!(shown, expected, "{context}: 行が順に並ぶこと");
+        first
+    };
+
+    let height = list.row_height();
+    scroll_list_to(&native, height * 100.0);
+    let before = in_order("送った先");
+    let target = before + ROW_WINDOW_OVERSCAN;
+    let input = inputs.borrow()[&target].clone();
+    assert!(input.request_focus(), "入力欄にフォーカスを置けること");
+    let entry = input.native_widget();
+    let focused_in_entry = || {
+        native
+            .root()
+            .and_then(|root| root.focus())
+            .is_some_and(|focus| focus.is_ancestor(&entry) || focus == entry)
+    };
+    assert!(focused_in_entry());
+    let built = builds.borrow()[&target];
+
+    // 窓が先へ動いても、入力欄の行は窓の中に残っている。
+    scroll_list_to(&native, height * (100 + ROW_WINDOW_OVERSCAN) as f64);
+    let after = in_order("先へ動かしたあと");
+    assert!(after > before, "窓が動いていること: {before} -> {after}");
+    assert!(after <= target, "行が窓に残っていること");
+    assert!(
+        focused_in_entry(),
+        "先へ動いても入力欄にフォーカスが残ること"
+    );
+    assert_eq!(
+        builds.borrow()[&target],
+        built,
+        "残る行は組み立て直さないこと"
+    );
+
+    // 手前へ戻しても同じ。
+    scroll_list_to(&native, height * 100.0);
+    let back = in_order("手前へ戻したあと");
+    assert!(back < after, "窓が戻っていること: {after} -> {back}");
+    assert!(
+        focused_in_entry(),
+        "手前へ動いても入力欄にフォーカスが残ること"
+    );
+    assert_eq!(
+        builds.borrow()[&target],
+        built,
+        "残る行は組み立て直さないこと"
+    );
+
+    // 組み立て直しの指示では、残る行も新しくする。
+    list.refresh();
+    tick(&native);
+    assert_eq!(
+        builds.borrow()[&target],
+        built + 1,
+        "`refresh` は作り直すこと"
+    );
     window.close();
     Ok(())
 }

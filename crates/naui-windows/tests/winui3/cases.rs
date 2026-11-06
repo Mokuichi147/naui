@@ -159,6 +159,10 @@ const CASES: &[Case] = &[
         list_builder_can_replace_the_rows,
     ),
     (
+        "窓に残る行は作り直さず、中のコントロールがフォーカスを失わない",
+        list_keeps_rows_that_stay_in_the_window,
+    ),
+    (
         "行の多いリストで指定より高い行があっても窓の位置がずれない",
         list_rows_taller_than_the_height_set_keep_the_window_right,
     ),
@@ -5947,6 +5951,84 @@ fn list_builds_only_the_rows_it_needs(ui: &Ui) -> Result<()> {
         Ok(ListRow::new(&label_ui.label(&index.to_string())?))
     });
     assert_eq!(list.len(), 3);
+    Ok(())
+}
+
+/// Moving the window leaves the rows in both ranges alone: the builder is not called for
+/// them, and a control inside one keeps the keyboard focus.
+fn list_keeps_rows_that_stay_in_the_window(ui: &Ui) -> Result<()> {
+    use naui_core::ROW_WINDOW_OVERSCAN;
+    use naui_windows::ListRow;
+    use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
+    use naui_winui3::Microsoft::UI::Xaml::FocusState;
+    use std::collections::HashMap;
+
+    const ROWS: usize = 1_000;
+    const TARGET: usize = 100;
+    let window = ui.window("窓に残る行", 240.0, 160.0)?;
+    let list = ui.list()?;
+    let inputs: Rc<RefCell<HashMap<usize, naui_windows::TextInput>>> = Rc::default();
+    let builds: Rc<RefCell<HashMap<usize, usize>>> = Rc::default();
+    {
+        let ui = ui.clone();
+        let inputs = inputs.clone();
+        let builds = builds.clone();
+        list.set_row_builder(ROWS, move |index| {
+            *builds.borrow_mut().entry(index).or_default() += 1;
+            let input = ui.text_input(&format!("行 {index}"))?;
+            inputs.borrow_mut().insert(index, input.clone());
+            Ok(ListRow::new(&input))
+        });
+    }
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        let scroll = list_scroller(&list);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && list.row_height() > 0.0
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        list.scroll_to_row(TARGET);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            inputs.borrow().contains_key(&TARGET)
+        });
+        let input = inputs.borrow().get(&TARGET).cloned().expect("送った先の行");
+        pump_until(FOCUS_TIMEOUT, || input.request_focus());
+        let focused = || {
+            input
+                .native_element()
+                .cast::<Control>()
+                .and_then(|control| control.FocusState())
+                .is_ok_and(|state| state != FocusState::Unfocused)
+        };
+        if !focused() {
+            println!("     (フォーカスを受けられない環境なので、確かめずに通す)");
+            return;
+        }
+        let built = builds.borrow()[&TARGET];
+
+        // 窓が先へ動いても、入力欄の行は窓の中に残っている。
+        let next = TARGET + ROW_WINDOW_OVERSCAN;
+        list.scroll_to_row(next);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            builds.borrow().contains_key(&next)
+        });
+        assert!(builds.borrow().contains_key(&next), "窓が動いていること");
+        assert!(focused(), "窓が動いても入力欄にフォーカスが残ること");
+        assert_eq!(
+            builds.borrow()[&TARGET],
+            built,
+            "残る行は組み立て直さないこと"
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
     Ok(())
 }
 

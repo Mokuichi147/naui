@@ -19,6 +19,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use naui_core::{
@@ -27,7 +28,7 @@ use naui_core::{
     Pane, Point, PointerButton, PointerPhase, PopupItem, Rect, Result, RichText, ScrollMetrics,
     SelectionMode, SidebarItem, SidebarSection, Sizing, TableColumn, TableRow, TextColor, TextRun,
     TextStyle, Theme, ToolbarIcon, ToolbarItem, WindowPlacement, WindowState,
-    DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_THRESHOLD,
+    DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, WebWidgetExt, Widget};
 use wasm_bindgen::{JsCast, JsValue};
@@ -8088,6 +8089,111 @@ fn list_row_height_follows_the_setting() {
             "指定を外すと <select> へ戻る"
         );
         assert_eq!(list.selection(), vec![1], "選択は残ること");
+        Ok(())
+    });
+}
+
+/// Moving the window leaves the rows in both ranges alone: the builder is not called for
+/// them, and a control inside one keeps the keyboard focus. The rows stay in order
+/// whichever way the window moves.
+#[wasm_bindgen_test]
+fn list_keeps_rows_that_stay_in_the_window() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        const TARGET: usize = 100;
+        let (list, _mounted) = mounted_list(ui)?;
+        let inputs: Rc<RefCell<HashMap<usize, naui_web::TextInput>>> = Rc::default();
+        let builds: Rc<RefCell<HashMap<usize, usize>>> = Rc::default();
+        {
+            let ui = ui.clone();
+            let inputs = inputs.clone();
+            let builds = builds.clone();
+            list.set_row_builder(ROWS, move |index| {
+                *builds.borrow_mut().entry(index).or_default() += 1;
+                let row = ui.stack(Orientation::Vertical)?;
+                row.append(&ui.label(&format!("行 {index}"))?);
+                let input = ui.text_input("")?;
+                row.append(&input);
+                inputs.borrow_mut().insert(index, input);
+                Ok(ListRow::new(&row))
+            });
+        }
+        let in_order = |context: &str| {
+            let shown: Vec<usize> = list_rows(&list)
+                .iter()
+                .map(|row| {
+                    row.text_content()
+                        .expect("行の文字")
+                        .strip_prefix("行 ")
+                        .expect("行の文字")
+                        .parse()
+                        .expect("行の番号")
+                })
+                .collect();
+            let first = shown[0];
+            let expected: Vec<usize> = (first..first + shown.len()).collect();
+            assert_eq!(shown, expected, "{context}: 行が順に並ぶこと");
+            first
+        };
+
+        list.scroll_to_row(TARGET);
+        let before = in_order("送った先");
+        let input = inputs.borrow()[&TARGET].clone();
+        assert!(input.request_focus(), "入力欄にフォーカスを置けること");
+        let element = input.native_element();
+        let focused_in_input = || {
+            let active = element
+                .owner_document()
+                .and_then(|doc| doc.active_element());
+            element.contains(active.as_ref().map(|active| active.as_ref()))
+        };
+        assert!(focused_in_input());
+        let built = builds.borrow()[&TARGET];
+
+        // 窓が先へ動いても、入力欄の行は窓の中に残っている。
+        list.scroll_to_row(TARGET + ROW_WINDOW_OVERSCAN);
+        let after = in_order("先へ動かしたあと");
+        assert!(after > before, "窓が動いていること: {before} -> {after}");
+        assert!(after <= TARGET, "行が窓に残っていること");
+        assert!(
+            focused_in_input(),
+            "先へ動いても入力欄にフォーカスが残ること"
+        );
+        assert_eq!(
+            builds.borrow()[&TARGET],
+            built,
+            "残る行は組み立て直さないこと"
+        );
+
+        // 手前へ戻しても同じ。
+        list.scroll_to_row(before + 1);
+        let back = in_order("手前へ戻したあと");
+        assert!(back < after, "窓が戻っていること: {after} -> {back}");
+        assert!(
+            focused_in_input(),
+            "手前へ動いても入力欄にフォーカスが残ること"
+        );
+        assert_eq!(
+            builds.borrow()[&TARGET],
+            built,
+            "残る行は組み立て直さないこと"
+        );
+
+        // 残る行の押した場所は、窓が動いても同じ行を指す。
+        list_rows(&list)
+            .iter()
+            .find(|row| row.text_content().as_deref() == Some(format!("行 {TARGET}").as_str()))
+            .expect("残った行")
+            .click();
+        assert_eq!(list.selection(), vec![TARGET], "押した行が選ばれること");
+
+        // 組み立て直しの指示では、残る行も新しくする。
+        list.refresh();
+        assert_eq!(
+            builds.borrow()[&TARGET],
+            built + 1,
+            "`refresh` は作り直すこと"
+        );
         Ok(())
     });
 }
