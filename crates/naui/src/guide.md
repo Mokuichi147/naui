@@ -343,7 +343,10 @@ one that does. So while the content fits, a `Fill` child inside takes the leftov
 space, as it would outside a `Scroll`.
 
 An `Auto` height on a [`List`] follows all its rows, so every row is built. To scroll
-many rows within a limited area, specify `Fixed` or `Fill`. [`Tree`], [`Table`], `Scroll`, `SplitView`
+many rows within a limited area, specify `Fixed` or `Fill`; do so for any list that
+may have more than about [`ROW_WINDOW_THRESHOLD`] rows, because on Windows a UI
+Automation client walking that many built rows can make the app stop responding
+(see "Lists with many rows"). [`Tree`], [`Table`], `Scroll`, `SplitView`
 and [`TextArea`] do not decide their height from their content, so you normally
 specify it with `set_sizing`.
 
@@ -2263,6 +2266,12 @@ the number of rows and "a function that returns that row", and it is called only
 the rows on screen. The widgets in a row may be recreated every time it is built, so
 keep per-row state on the app's data side, and rebuild with [`List::refresh`] when the
 content changes.
+
+With an `Auto` height every row is built whichever way the rows are passed. Besides
+the time this takes, on Windows a UI Automation client (a testing tool, and possibly a
+screen reader) that walks the rows can make the app stop responding: the cost grows
+steeply with the rows WinUI's `ListView` has built, and at thousands of rows it does
+not finish in any useful time. Limit the height of a list that may grow this long.
 
 ```no_run
 # use naui::{ListRow, Result, Sizing, Ui};

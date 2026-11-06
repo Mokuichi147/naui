@@ -117,6 +117,16 @@ that shape are covered in
     built, because the row is rebuilt.
   - On the Web, such a list is built from `<ul role="listbox">` instead of `<select>`,
     and the same limit on the element height as for `Table` applies.
+- On Windows, an `Auto` height on a `List` with many rows can make the app stop
+  responding when a UI Automation client (a testing tool, and possibly a screen
+  reader) walks its rows. Mouse and keyboard use are not affected. The cost grows
+  steeply with the rows the `ListView` has built and comes from WinUI's `ListView`,
+  which a plain `ListView` without naui shows too. On a development machine, listing
+  every element took about 1.3 seconds at 200 rows and 9 seconds at 400. At 5000 rows
+  each step to the next row took about 3.6 seconds, and listing every element timed
+  out and left the app unresponsive for more than five minutes. With `Fixed` or `Fill`
+  only the rows on screen are built, so the same 5000 rows are listed in under 0.1
+  seconds: **use one of those for a list that may have more than about 200 rows.**
 - Sorting by pressing a `Table` header only goes as far as notifying "which column,
   in which direction"; **sorting the rows is the app's job**.
 - A `Table` with more than 200 rows builds only the range shown on screen (with

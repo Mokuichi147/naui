@@ -543,7 +543,10 @@ struct ListInner {
 /// A vertical list of selectable rows (`ListView`).
 ///
 /// Its height follows its rows; to fix it regardless of the number of rows, specify it
-/// with `set_sizing`.
+/// with `set_sizing`. Do so for a list that may have more than about
+/// [`ROW_WINDOW_THRESHOLD`](naui_core::ROW_WINDOW_THRESHOLD) rows: following the rows
+/// builds all of them, and a UI Automation client walking them can make the app stop
+/// responding, because the cost in WinUI's `ListView` grows steeply with the rows built.
 #[derive(Clone)]
 pub struct List(Rc<ListInner>);
 impl_widget!(List, native);
