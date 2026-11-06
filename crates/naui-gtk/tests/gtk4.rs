@@ -765,6 +765,10 @@ fn main() {
             list_auto_height_builds_every_row,
         ),
         (
+            "リストの行は全行の中の位置と全行数を支援技術へ伝える",
+            list_rows_report_their_place_among_all_rows,
+        ),
+        (
             "リストは行を組み立てずに選べるかどうかを答える",
             list_row_selectable_answers_without_building,
         ),
@@ -5947,6 +5951,74 @@ fn list_auto_height_builds_every_row(ui: &Ui) -> Result<()> {
         tick(&native);
     }
     assert_eq!(children(&native).len(), ROWS, "指定を外すと全行へ戻ること");
+    window.close();
+    Ok(())
+}
+
+/// Whether a relation holding a number has this value.
+fn number_relation_is(
+    widget: &gtk::Widget,
+    relation: gtk::AccessibleRelation,
+    expected: i32,
+) -> bool {
+    use glib::translate::{IntoGlib, ToGlibPtr};
+
+    let accessible = widget.upcast_ref::<gtk::Accessible>();
+    // 値まで読む束縛が無いので、GTK のテスト用の関数を直に呼ぶ。一致すれば NULL が返る。
+    unsafe {
+        let mismatch = gtk::ffi::gtk_test_accessible_check_relation(
+            accessible.to_glib_none().0,
+            relation.into_glib(),
+            expected,
+        );
+        let matches = mismatch.is_null();
+        glib::ffi::g_free(mismatch.cast());
+        matches
+    }
+}
+
+/// The `GtkListBox` has only the rows around the screen, so assistive technology is told
+/// each row's place among all the rows and how many there are.
+fn list_rows_report_their_place_among_all_rows(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    let items: Vec<ListItem> = (0..ROWS)
+        .map(|index| ListItem::new(format!("行 {index}")))
+        .collect();
+    let (window, list, native) = shown_big_list(ui, "行の位置", |list| list.set_items(&items))?;
+    // どの行も位置と全行数を伝えていることを確かめ、組み立てた先頭の番号を返す。
+    let check = |count: usize| {
+        let rows = children(&native);
+        assert!(rows.len() < 200, "絞られていること: {} 行", rows.len());
+        let index_of = |row: &gtk::Widget| {
+            labels_in(row)[0]
+                .text()
+                .trim_start_matches("行 ")
+                .parse::<i32>()
+                .expect("行の番号")
+        };
+        for row in &rows {
+            let index = index_of(row);
+            assert!(
+                number_relation_is(row, gtk::AccessibleRelation::PosInSet, index + 1),
+                "全行の中の位置であること: {index} 行目"
+            );
+            assert!(
+                number_relation_is(row, gtk::AccessibleRelation::SetSize, count as i32),
+                "組み立てた行の数ではなく全行数であること: {index} 行目"
+            );
+        }
+        index_of(&rows[0])
+    };
+    assert_eq!(check(ROWS), 0, "最初は先頭から組み立てている");
+
+    // 送っても、窓の中の位置にならない。
+    scroll_list_to(&native, list.row_height() * 2_500.0);
+    assert!(check(ROWS) > 0, "組み立てる範囲が付いてくること");
+
+    // 行数が変わったら、新しい全行数を伝える。
+    list.set_items(&items[..1_000]);
+    tick(&native);
+    check(1_000);
     window.close();
     Ok(())
 }

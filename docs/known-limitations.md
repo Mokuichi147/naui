@@ -117,6 +117,10 @@ that shape are covered in
     built, because the row is rebuilt.
   - On the Web, such a list is built from `<ul role="listbox">` instead of `<select>`,
     and the same limit on the element height as for `Table` applies.
+  - Assistive technology is told each row's position among all the rows and how many
+    there are, because the native list knows only the rows built. On Linux the values
+    are set on every GTK version, but GTK sends them over AT-SPI only from 4.20; with
+    an earlier GTK, assistive technology sees just the rows built.
 - On Windows, an `Auto` height on a `List` with many rows can make the app stop
   responding when a UI Automation client (a testing tool, and possibly a screen
   reader) walks its rows. Mouse and keyboard use are not affected. The cost grows

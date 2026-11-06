@@ -35,6 +35,7 @@ use naui_core::{
     Result, RowSource, RowWindow, SelectionGesture, SelectionMode, Sizing, TextColor, TextStyle,
     ROW_WINDOW_OVERSCAN,
 };
+use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Border, Control, Grid as XamlGrid, ListView, ListViewItem, ListViewSelectionMode,
     ScrollBarVisibility, ScrollMode, ScrollViewer, ScrollViewerViewChangedEventArgs,
@@ -961,6 +962,16 @@ impl List {
             // 選べないだけの行は中のコントロールを押せる必要があるので、
             // 無効にするのは `ListItem::enabled(false)` の行だけ。
             let _ = native.SetIsEnabled(!row.is_disabled_item());
+            // `ListView` が知っているのは組み立てた行だけなので、支援技術には
+            // 全行の中の位置と全行数をこちらから伝える。
+            let _ = AutomationProperties::SetPositionInSet(
+                &native,
+                i32::try_from(index + 1).unwrap_or(i32::MAX),
+            );
+            let _ = AutomationProperties::SetSizeOfSet(
+                &native,
+                i32::try_from(window.count).unwrap_or(i32::MAX),
+            );
             // 無効の行には入力が届かないので、起動も文脈メニューも出ない。
             self.listen_row_events(&native, index)?;
 
