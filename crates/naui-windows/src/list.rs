@@ -563,7 +563,7 @@ struct ListInner {
     /// The anchor of a Shift range selection, as a row number: `ListView` keeps it as a
     /// place among the rows it has, so it means another row once the window moves.
     anchor: Cell<Option<usize>>,
-    /// The row the pointer last went over.
+    /// The row the pointer last went over or pressed.
     pointer_row: Cell<Option<usize>>,
     /// The height of one row (logical pixels). Either measured or set with
     /// [`List::set_row_height`].
@@ -1141,6 +1141,17 @@ impl List {
             None => {}
         }
         let host = row_host(row)?;
+        // スクロールのあとポインターを動かさずに押すと、`PointerEntered` は来ない。
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let pressed = PointerEventHandler::new(move |_, _| {
+            let _ = state.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.pointer_row.set(Some(index));
+                }
+            });
+            Ok(())
+        });
+        let _ = host.PointerPressed(&pressed);
         native
             .SetContent(&host)
             .map_err(|e| to_error("set the row content", e))?;
@@ -1525,8 +1536,8 @@ impl List {
             .KeyDown(&keyed)
             .map_err(|e| to_error("subscribe to row key presses", e))?;
 
-        // Shift クリックの先の行は `SelectionChanged` では分からない。押下は `ListViewItem`
-        // が止めるので、ポインターが乗った行を覚えておく。
+        // Shift クリックの先の行は `SelectionChanged` では分からない。行の余白の押下は
+        // `ListViewItem` が止めるので、ポインターが乗った行も覚えておく。
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let entered = PointerEventHandler::new(move |_, _| {
             let _ = state.try_with_mut(|weak| {
@@ -1786,7 +1797,8 @@ impl List {
                 let range: Vec<usize> = (anchor.min(clicked)..=anchor.max(clicked)).collect();
                 let picked = self.normalize(&range);
                 self.write_selection(&picked);
-                self.follow_with_focus(clicked);
+                // 押した行のはずなので、フォーカスが行の外へ出ていても移す。
+                self.focus_row_at(clicked);
                 return picked;
             }
         }
@@ -1811,10 +1823,14 @@ impl List {
     fn follow_with_focus(&self, index: usize) {
         if self
             .focused_row()
-            .is_none_or(|(focused, _)| focused == index)
+            .is_some_and(|(focused, _)| focused != index)
         {
-            return;
+            self.focus_row_at(index);
         }
+    }
+
+    /// Gives the focus to a built row, as a click would.
+    fn focus_row_at(&self, index: usize) {
         let row = index
             .checked_sub(self.0.built_start.get())
             .and_then(|offset| self.0.native_rows.borrow().get(offset).cloned());

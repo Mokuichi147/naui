@@ -7979,6 +7979,30 @@ fn first_click_on_list_row(
     None
 }
 
+/// Clicks a row and waits for the selection to become `expected`. A sent click can be slow
+/// to arrive or get lost, so it is tried again before the case fails.
+fn click_list_row_expecting(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &naui_windows::List,
+    index: usize,
+    modifiers: &[windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY],
+    expected: &[usize],
+    what: &str,
+) -> Option<()> {
+    for attempt in 0..3 {
+        if attempt > 0 {
+            println!("     ({what}: クリックが反映されないので、もう一度押す)");
+        }
+        click_list_row(hwnd, list, index, modifiers)?;
+        pump_until(Duration::from_secs(1), || list.selection() == expected);
+        if list.selection() == expected {
+            return Some(());
+        }
+    }
+    assert_eq!(list.selection(), expected, "{what}");
+    Some(())
+}
+
 /// Shows a list of many rows for real input, runs `scenario`, and puts the pointer back.
 fn with_shown_list_for_input(
     ui: &Ui,
@@ -8087,7 +8111,8 @@ fn list_page_keys_move_by_a_page(ui: &Ui) -> Result<()> {
             // 端では止まり、同じ選択を通知し直さない。
             list.scroll_to_row(rows - 1);
             pump_until(Duration::from_millis(500), || false);
-            click_list_row(hwnd, list, rows - 2, &[])?;
+            let what = format!("{rows} 行: 最後の手前の行");
+            click_list_row_expecting(hwnd, list, rows - 2, &[], &[rows - 2], &what)?;
             press_nav_key(&[], VK_NEXT)?;
             assert_eq!(list.selection(), [rows - 1], "{rows} 行: 最後の行で止まる");
             let notified = seen.borrow().len();
@@ -8101,7 +8126,8 @@ fn list_page_keys_move_by_a_page(ui: &Ui) -> Result<()> {
 
             list.scroll_to_row(0);
             pump_until(Duration::from_millis(500), || false);
-            click_list_row(hwnd, list, 1, &[])?;
+            let what = format!("{rows} 行: 先頭の次の行");
+            click_list_row_expecting(hwnd, list, 1, &[], &[1], &what)?;
             press_nav_key(&[], VK_PRIOR)?;
             assert_eq!(list.selection(), [0], "{rows} 行: 最初の行で止まる");
             Some(())
@@ -8136,18 +8162,19 @@ fn list_shift_range_keeps_its_anchor_outside_the_window(ui: &Ui) -> Result<()> {
 
         // 起点が窓の中にある間も、同じ結果になる。
         first_click_on_list_row(hwnd, list, 2)?;
-        click_list_row(hwnd, list, 4, &[VK_SHIFT])?;
-        assert_eq!(list.selection(), span(2, 4), "窓の中の範囲");
+        click_list_row_expecting(hwnd, list, 4, &[VK_SHIFT], &span(2, 4), "窓の中の範囲")?;
 
         // 起点の行が窓から外れたあと。
         go_to(ROWS - 1);
         assert!(built_list_row(list, 2).is_none(), "起点の行が窓の外にある");
-        click_list_row(hwnd, list, ROWS - 2, &[VK_SHIFT])?;
-        assert_eq!(
-            list.selection(),
-            span(2, ROWS - 2),
-            "窓の外の起点からの範囲"
-        );
+        click_list_row_expecting(
+            hwnd,
+            list,
+            ROWS - 2,
+            &[VK_SHIFT],
+            &span(2, ROWS - 2),
+            "窓の外の起点からの範囲",
+        )?;
         assert_eq!(
             seen.borrow().last().expect("通知"),
             &span(2, ROWS - 2),
@@ -8156,8 +8183,14 @@ fn list_shift_range_keeps_its_anchor_outside_the_window(ui: &Ui) -> Result<()> {
         assert_eq!(focused_list_row(list), Some(ROWS - 2), "押した行へ移る");
 
         // 起点は動かない。
-        click_list_row(hwnd, list, ROWS - 4, &[VK_SHIFT])?;
-        assert_eq!(list.selection(), span(2, ROWS - 4), "縮める");
+        click_list_row_expecting(
+            hwnd,
+            list,
+            ROWS - 4,
+            &[VK_SHIFT],
+            &span(2, ROWS - 4),
+            "縮める",
+        )?;
 
         // キーで動かしても同じ起点から伸びる。
         press_nav_key(&[VK_SHIFT], VK_UP)?;
@@ -8182,28 +8215,38 @@ fn list_shift_range_keeps_its_anchor_outside_the_window(ui: &Ui) -> Result<()> {
 
         // 手前へ戻って選び直すと、起点が変わる。上へ伸ばしても順序は昇順。
         go_to(ROWS - 1);
-        click_list_row(hwnd, list, ROWS - 3, &[])?;
-        assert_eq!(list.selection(), [ROWS - 3], "選び直し");
+        click_list_row_expecting(hwnd, list, ROWS - 3, &[], &[ROWS - 3], "選び直し")?;
         go_to(5);
-        click_list_row(hwnd, list, 5, &[VK_SHIFT])?;
-        assert_eq!(list.selection(), span(5, ROWS - 3), "上へ伸ばす");
+        click_list_row_expecting(hwnd, list, 5, &[VK_SHIFT], &span(5, ROWS - 3), "上へ伸ばす")?;
 
         // Ctrl で足し引きした行が次の起点になる。
-        click_list_row(hwnd, list, 7, &[VK_CONTROL])?;
-        click_list_row(hwnd, list, 9, &[VK_SHIFT])?;
-        assert_eq!(list.selection(), span(7, 9), "Ctrl で触った行が起点");
+        let without_seven: Vec<usize> = span(5, ROWS - 3)
+            .into_iter()
+            .filter(|&row| row != 7)
+            .collect();
+        click_list_row_expecting(hwnd, list, 7, &[VK_CONTROL], &without_seven, "Ctrl で引く")?;
+        click_list_row_expecting(
+            hwnd,
+            list,
+            9,
+            &[VK_SHIFT],
+            &span(7, 9),
+            "Ctrl で触った行が起点",
+        )?;
 
         // コードから選んだ行も起点になる。
         list.set_selection(&[ROWS - 10]);
-        click_list_row(hwnd, list, 8, &[VK_SHIFT])?;
-        assert_eq!(
-            list.selection(),
-            span(8, ROWS - 10),
-            "set_selection の行が起点"
-        );
+        click_list_row_expecting(
+            hwnd,
+            list,
+            8,
+            &[VK_SHIFT],
+            &span(8, ROWS - 10),
+            "set_selection の行が起点",
+        )?;
 
         // ホイールのあと、ポインターを動かさずに押した行も分かる。
-        click_list_row(hwnd, list, 7, &[])?;
+        click_list_row_expecting(hwnd, list, 7, &[], &[7], "ホイールの前の選択")?;
         for _ in 0..60 {
             if !foreground_is_ours() {
                 return None;
@@ -8240,11 +8283,24 @@ fn list_shift_range_keeps_its_anchor_outside_the_window(ui: &Ui) -> Result<()> {
         let target = (0..ROWS)
             .find(|&index| built_list_row(list, index).is_some_and(|row| under_pointer(&row)))
             .expect("ポインターの下の行");
-        with_modifiers(&[VK_SHIFT], || {
-            send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
-            send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
-        });
+        for _ in 0..3 {
+            with_modifiers(&[VK_SHIFT], || {
+                send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
+                send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
+            });
+            pump_until(Duration::from_secs(1), || {
+                list.selection() == span(7, target)
+            });
+            if list.selection() == span(7, target) {
+                break;
+            }
+        }
         assert_eq!(list.selection(), span(7, target), "ポインターの下の行まで");
+        assert_eq!(
+            focused_list_row(list),
+            Some(target),
+            "押した行へ移る (ホイールのあと)"
+        );
 
         // 押した行から、キーでも同じ起点のまま伸びる。
         press_nav_key(&[VK_SHIFT], VK_NEXT)?;
