@@ -276,6 +276,14 @@ fn main() {
             list_selection_does_not_visit_every_row,
         ),
         (
+            "行を組み立てる関数の中の refresh は問い合わせのあとで読み直す",
+            list_refresh_inside_the_builder_waits,
+        ),
+        (
+            "行が多くても一覧の自然高を読むのに待たされない",
+            list_natural_height_does_not_visit_every_row,
+        ),
+        (
             "テーブルが見えている行だけを組み立てる",
             table_builds_only_the_rows_it_shows,
         ),
@@ -8796,16 +8804,27 @@ fn list_with_many_rows_scrolls_and_selects(ui: &Ui) -> Result<()> {
     );
     assert!(list.row_height() > 0.0, "行の高さが分かること");
 
-    // 画面の外の行も選べて、残る。組み立てていない行は選べる扱い。
+    // 画面の外の行も選べて、残る。組み立てていない行は選べる扱い。一度組み立てて
+    // 画面から出た 3 行目は、選べないと答えたことを覚えている。
     list.set_selection(&[3, target, ROWS - 1]);
-    assert_eq!(list.selection(), vec![3, target, ROWS - 1]);
+    assert_eq!(list.selection(), vec![target, ROWS - 1]);
     list.scroll_to_row(0);
     content.layoutSubtreeIfNeeded();
     assert_eq!(
         list.selection(),
-        vec![3, target, ROWS - 1],
+        vec![target, ROWS - 1],
         "スクロールで落ちない"
     );
+    // 組み立てずに聞いても同じ (矢印キーで動くときの問い合わせ)。
+    list.scroll_to_row(target);
+    content.layoutSubtreeIfNeeded();
+    unsafe { content.display() };
+    list.set_selection(&[3]);
+    assert!(list.selection().is_empty(), "画面の外の行も答えを保つこと");
+    list.refresh();
+    list.set_selection(&[3]);
+    assert_eq!(list.selection(), vec![3], "refresh で答えを忘れること");
+    list.clear_selection();
     window.close();
     Ok(())
 }
@@ -9057,6 +9076,97 @@ fn list_reload_takes_over_the_waiting_reload(ui: &Ui) -> Result<()> {
         "refresh のあとの解除が残ること"
     );
     assert_eq!(native.selectedRowIndexes().count(), 0);
+    Ok(())
+}
+
+/// A `refresh` from inside the builder cannot reload while AppKit is asking for a row. It
+/// reloads afterwards, and the row being built does not stay.
+fn list_refresh_inside_the_builder_waits(ui: &Ui) -> Result<()> {
+    let version = Rc::new(Cell::new(1));
+    let list = ui.list()?;
+    let weak = list.downgrade();
+    let ui_for_row = ui.clone();
+    let refresh_on = Rc::new(Cell::new(None));
+    list.set_row_builder(1_000, {
+        let version = version.clone();
+        let refresh_on = refresh_on.clone();
+        move |index| {
+            let built_from = version.get();
+            if refresh_on.get() == Some(index) {
+                refresh_on.set(None);
+                version.set(2);
+                let list = weak.upgrade().expect("リストが生きていること");
+                list.refresh();
+                assert_eq!(list.selection(), vec![4], "読み直しまでも選択は残ること");
+            }
+            Ok(ListRow::new(
+                &ui_for_row.label(&format!("{built_from}:{index}"))?,
+            ))
+        }
+    });
+    list.set_selection(&[4]);
+    refresh_on.set(Some(2));
+    let native = list.native_table();
+    assert!(
+        native
+            .viewAtColumn_row_makeIfNecessary(0, 2, true)
+            .is_none(),
+        "読み直す前の行は使わないこと"
+    );
+    assert_eq!(version.get(), 2);
+    pump(0.2);
+    let cell = native
+        .viewAtColumn_row_makeIfNecessary(0, 2, true)
+        .expect("読み直したあとは行があること");
+    let shown = cell
+        .subviews()
+        .iter()
+        .flat_map(|view| view.subviews().to_vec())
+        .chain(cell.subviews().to_vec())
+        .filter_map(|view| view.downcast::<objc2_app_kit::NSTextField>().ok())
+        .map(|field| field.stringValue().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(shown, ["2:2"], "新しい内容で組み立てること");
+    assert_eq!(list.selection(), vec![4], "読み直しのあとも選択が残ること");
+    assert!(native.selectedRowIndexes().containsIndex(4));
+    Ok(())
+}
+
+/// `NSScrollView` reads the table's natural height even when the list's height is fixed, so
+/// it must not depend on measuring every row.
+fn list_natural_height_does_not_visit_every_row(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 100_000;
+    let built = Rc::new(Cell::new(0usize));
+    let ui_for_row = ui.clone();
+    let list = ui.list()?;
+    list.set_row_builder(ROWS, {
+        let built = built.clone();
+        move |index| {
+            built.set(built.get() + 1);
+            Ok(ListRow::new(&ui_for_row.label(&index.to_string())?))
+        }
+    });
+    list.set_sizing(Sizing::new().height(Length::Fixed(200.0)));
+    let window = ui.window("自然高", 300.0, 240.0)?;
+    window.set_child(&list);
+    window.show();
+    let content = window.native_window().contentView().expect("contentView");
+    content.layoutSubtreeIfNeeded();
+    let native = list.native_table();
+    let started = Instant::now();
+    let height = native.intrinsicContentSize().height;
+    let elapsed = started.elapsed();
+    let scroll = native.enclosingScrollView().expect("NSScrollView");
+    let started = Instant::now();
+    let _ = scroll.intrinsicContentSize();
+    let elapsed_scroll = started.elapsed();
+    println!("     (10 万行の自然高 {height}: 表 {elapsed:?} / スクロール {elapsed_scroll:?})");
+    assert!(
+        elapsed < Duration::from_millis(500) && elapsed_scroll < Duration::from_millis(500),
+        "{elapsed:?} / {elapsed_scroll:?}"
+    );
+    assert!(built.get() < 200, "全行を組み立てないこと: {}", built.get());
+    window.close();
     Ok(())
 }
 

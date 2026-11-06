@@ -240,6 +240,7 @@ impl ListRows {
         }
         // 組み立てに失敗した行は、空の行にする。
         let row = row?.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
+        self.source.note_selectable(index, row.is_selectable());
         self.built.borrow_mut().insert(index, row.clone());
         Some(row)
     }
@@ -253,10 +254,7 @@ impl ListRows {
     }
 
     fn is_selectable(&self, index: usize) -> bool {
-        self.source
-            .is_selectable(index, ListRow::is_selectable, || {
-                self.read(index, ListRow::is_selectable)
-            })
+        self.source.is_selectable(index, ListRow::is_selectable)
     }
 
     fn is_disabled_item(&self, index: usize) -> bool {
@@ -977,10 +975,12 @@ impl List {
     /// For rows built with [`List::set_row_builder`], naui does not know whether rows
     /// not yet built can be selected. With this function, [`List::set_selection`] can
     /// keep its promise of "removing rows that cannot be selected" even for rows off
-    /// screen. Without it, built rows follow [`ListRow::selectable`] and rows not yet
-    /// built are treated as selectable.
+    /// screen. Without it, rows follow the [`ListRow::selectable`] they were last built
+    /// with, even after leaving the screen, and rows not built since the rows were passed
+    /// or refreshed are treated as selectable.
     ///
-    /// Its answers must match the [`ListRow::selectable`] returned by `build`.
+    /// Its answers must match the [`ListRow::selectable`] returned by `build`. It stays when
+    /// the rows are replaced, so pass a new one if its answers change.
     pub fn set_row_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
         self.0.rows.source.set_selectable(selectable);
     }
@@ -991,11 +991,17 @@ impl List {
     /// changed.
     pub fn refresh(&self) {
         let picked = self.selection();
-        // 組み立ての最中は読み直しの結果を AppKit が使えないので、予約を残す。
-        if !self.0.rows.is_building() {
-            self.0.pending_selection.take();
-        }
         self.0.rows.forget_built();
+        self.0.rows.source.forget_selectable();
+        // AppKit が行を聞いている最中には読み直せない。いま組み立てている行も古い。
+        if self.0.rows.is_building() {
+            self.0.rows.source.invalidate();
+            self.reload_after_build();
+            self.without_notifying(|this| this.apply_selection(&picked));
+            return;
+        }
+        // ここで読み直すので、予約した読み直しは要らない。
+        self.0.pending_selection.take();
         self.without_notifying(|this| {
             this.apply_row_height();
             this.0.table.reloadData();

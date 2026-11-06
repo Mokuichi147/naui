@@ -318,6 +318,12 @@ struct ListInner {
     /// Whether `row_height` is from rows that are gone, so the next measurement replaces
     /// it instead of only growing it.
     row_height_stale: Cell<bool>,
+    /// The row [`List::scroll_to_row`] asked for while the list could not scroll to it
+    /// (hidden, or not measured). It goes there once it can.
+    pending_reveal: Cell<Option<usize>>,
+    /// Whether the last build stopped at a row it could not create, so the rows are
+    /// incomplete even though the window has not moved.
+    build_failed: Cell<bool>,
     /// The row height decided by the app. If absent, it is measured from the built rows.
     fixed_row_height: Cell<Option<f64>>,
     /// Moves the window when the list gets its size or it changes.
@@ -382,6 +388,8 @@ impl List {
             realized: RefCell::new(Vec::new()),
             row_height: Cell::new(0.0),
             row_height_stale: Cell::new(false),
+            pending_reveal: Cell::new(None),
+            build_failed: Cell::new(false),
             fixed_row_height: Cell::new(None),
             resize_observer: RefCell::new(None),
             resize_callback: RefCell::new(None),
@@ -457,10 +465,12 @@ impl List {
     /// For rows built with [`List::set_row_builder`], naui does not know whether rows
     /// not yet built can be selected. With this function, [`List::set_selection`] can
     /// keep its promise of "removing rows that cannot be selected" even for rows off
-    /// screen. Without it, built rows follow [`ListRow::selectable`] and rows not yet
-    /// built are treated as selectable.
+    /// screen. Without it, rows follow the [`ListRow::selectable`] they were last built
+    /// with, even after leaving the screen, and rows not built since the rows were passed
+    /// or refreshed are treated as selectable.
     ///
-    /// Its answers must match the [`ListRow::selectable`] returned by `build`.
+    /// Its answers must match the [`ListRow::selectable`] returned by `build`. It stays when
+    /// the rows are replaced, so pass a new one if its answers change.
     pub fn set_row_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
         self.0.rows.set_selectable(selectable);
     }
@@ -475,6 +485,12 @@ impl List {
             return;
         }
         self.0.row_height_stale.set(true);
+        self.0.rows.forget_selectable();
+        // 行を組み立てる関数の中から呼ばれたら、組み立てている側が最初からやり直す。
+        if self.0.rebuilding.get() {
+            self.0.rows.invalidate();
+            return;
+        }
         let _ = self.build_window();
         // 中身や指定が変わって行の高さが動いていれば、窓の位置も変わる。測った結果が
         // 同じでも窓を引き直す (`set_row_height` は先に高さを書き換えている)。
@@ -497,14 +513,10 @@ impl List {
         // 指定を外したときは、組み立て直した行から測り直す。
         self.0.row_height.set(height.max(0.0));
         if changes_body {
-            // 選択と表示位置は残す。`set_rows` と違って行の意味は変わらない。
+            // 選択も残す。`set_rows` と違って行の意味は変わらない。
             let picked = self.selection();
-            let top = self.scroll_top();
             self.rebuild_body();
             self.write_selection(&picked);
-            // 作り直した要素は先頭にある。詰め物の高さが決まってから戻し、そこの行を
-            // 組み立てる。
-            self.set_scroll_top(top);
             self.update_window();
         } else {
             self.refresh();
@@ -527,10 +539,13 @@ impl List {
         }
     }
 
-    /// The row height (logical pixels). 0 if no row has been built yet.
+    /// The row height (logical pixels). 0 if there are no rows or none has been built yet.
     ///
     /// With few rows and no height set, rows may differ, and this is the tallest built.
     pub fn row_height(&self) -> f64 {
+        if self.is_empty() && self.0.fixed_row_height.get().is_none() {
+            return 0.0;
+        }
         if matches!(&*self.0.body.borrow(), Body::Select { .. }) {
             self.settle_row_height();
         }
@@ -902,16 +917,17 @@ impl List {
 
     // ------------------------------------------------------- 行を絞る窓
 
-    /// Rebuilds the rows and moves the window back to the start. The selection is
-    /// cleared too.
+    /// Rebuilds the rows where the list is scrolled to. The selection is cleared.
     fn reset_rows(&self) {
         self.0.selected.borrow_mut().clear();
         self.0.active.set(None);
         self.0.anchor.set(None);
+        self.0.pending_reveal.set(None);
         self.rebuild_body();
     }
 
-    /// Chooses the body for the current rows and builds it.
+    /// Chooses the body for the current rows and builds it, keeping the scroll position
+    /// as the other platforms do.
     fn rebuild_body(&self) {
         // 組み立ての途中で呼ばれたら、組み立てている側が中身ごと作り直す。
         if self.0.rebuilding.get() {
@@ -919,22 +935,24 @@ impl List {
             self.0.rows.invalidate();
             return;
         }
-        if self.prepare_body().is_err() {
+        let top = self.scroll_top();
+        if self.prepare_body(top).is_err() {
             return;
         }
-        if !matches!(&*self.0.body.borrow(), Body::Listbox { .. }) {
-            return;
+        if matches!(&*self.0.body.borrow(), Body::Listbox { .. }) {
+            let _ = self.build_window();
+            self.settle_row_height();
         }
-        let _ = self.build_window();
-        // 行の高さが分かったら、その高さで窓を引き直す。
-        if self.settle_row_height() {
-            self.update_window();
-        }
+        // 作り直した要素は先頭にある。詰め物の高さが決まってから戻し、そこの行を
+        // 組み立てる。
+        self.set_scroll_top(top);
+        self.update_window();
     }
 
     /// Replaces the body with the one the current rows need, and chooses the window.
-    /// A `<select>` is complete after this; a list box still needs its rows built.
-    fn prepare_body(&self) -> Result<()> {
+    /// A `<select>` is complete after this; a list box still needs its rows built, for the
+    /// window at `top`, where the caller scrolls it once it is tall enough.
+    fn prepare_body(&self, top: i32) -> Result<()> {
         self.0.row_height_stale.set(true);
         self.0.realized.borrow_mut().clear();
         // `<option>` はテキストしか持てず、作った分だけ重くなり、高さも指定できない。
@@ -948,8 +966,9 @@ impl List {
             return self.build_select();
         }
         self.build_listbox()?;
-        // 詰め物とスクロールの位置は作り直したばかりなので、先頭から始める。
-        self.0.window.set(self.compute_window(ROW_WINDOW_OVERSCAN));
+        self.0
+            .window
+            .set(self.compute_window_at(top, ROW_WINDOW_OVERSCAN));
         Ok(())
     }
 
@@ -969,15 +988,22 @@ impl List {
         if self.0.rebuilding.replace(true) {
             return Ok(());
         }
+        let top = self.scroll_top();
+        let mut started_over = false;
         let mut result = Ok(());
         self.0.rows.build_until_settled(|replaced| {
+            started_over |= replaced;
             let prepared = match replaced {
-                true => self.prepare_body(),
+                true => self.prepare_body(top),
                 false => Ok(()),
             };
             result = prepared.and_then(|()| self.build_window_once(previous.filter(|_| !replaced)));
         });
         self.0.rebuilding.set(false);
+        // 組み立て直すと要素ごと新しくなり、先頭に戻っている。
+        if started_over {
+            self.set_scroll_top(top);
+        }
         result
     }
 
@@ -1038,6 +1064,7 @@ impl List {
             }
             // 組み立てに失敗した行は、空の行にする。
             let row = row.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
+            self.0.rows.note_selectable(index, row.is_selectable());
             // 失敗しても、ここまでの行は文書に載っているので、管理から外さない。
             // 行数が窓と合わないので、次の組み立てで全部作り直す。
             let (option, listener) = match self.build_option(&list, index, &row) {
@@ -1075,6 +1102,7 @@ impl List {
         // 覚えている選択を、組み立て直した行へ写す。
         let picked = self.selection();
         self.write_selection(&picked);
+        self.0.build_failed.set(outcome.is_err());
         outcome
     }
 
@@ -1095,8 +1123,13 @@ impl List {
 
     /// Computes the range of rows to build from the current scroll position.
     fn compute_window(&self, overscan: usize) -> RowWindow {
-        let (top, viewport) = match &*self.0.body.borrow() {
-            Body::Listbox { list, .. } => (list.scroll_top(), list.client_height()),
+        self.compute_window_at(self.scroll_top(), overscan)
+    }
+
+    /// Computes the range of rows to build at the scroll position `top`.
+    fn compute_window_at(&self, top: i32, overscan: usize) -> RowWindow {
+        let viewport = match &*self.0.body.borrow() {
+            Body::Listbox { list, .. } => list.client_height(),
             Body::Select { .. } => return RowWindow::all(self.len()),
         };
         let limited = crate::layout::height_is_limited(&self.0.root);
@@ -1138,10 +1171,16 @@ impl List {
         if self.0.row_height.get() <= 0.0 {
             self.settle_row_height();
         }
+        if let Some(index) = self.0.pending_reveal.take() {
+            self.reveal_row(index);
+        }
         let current = self.0.window.get();
         let needed = self.compute_window(ROW_WINDOW_OVERSCAN / 2);
         let next = self.compute_window(ROW_WINDOW_OVERSCAN);
-        if next == current || keeps_row_window(current, needed, next) {
+        // 前回の組み立てが途中で失敗していたら、窓が動かなくても組み立て直す。
+        if !self.0.build_failed.get()
+            && (next == current || keeps_row_window(current, needed, next))
+        {
             return;
         }
         self.0.window.set(next);
@@ -1385,11 +1424,7 @@ impl List {
 
     /// Whether the row can be selected.
     fn is_selectable(&self, index: usize) -> bool {
-        self.0
-            .rows
-            .is_selectable(index, ListRow::is_selectable, || {
-                self.read_row(index, ListRow::is_selectable)
-            })
+        self.0.rows.is_selectable(index, ListRow::is_selectable)
     }
 
     /// Remembers the selection and writes it into the body as is (no notification).
@@ -1584,7 +1619,12 @@ impl List {
         // 絞っている間は、まだ無い行へ送れるように位置を行の高さから求める。
         // 載せた直後はまだ測っていないので、先に測る。
         self.settle_row_height();
-        let height = self.0.row_height.get().max(1.0);
+        let height = self.0.row_height.get();
+        // 隠れていると位置を動かせず、測っていなければ行き先も分からない。
+        if height <= 0.0 || list.client_height() <= 0 {
+            self.0.pending_reveal.set(Some(index));
+            return;
+        }
         let top = index as f64 * height;
         reveal_range(&list, top, top + height);
         // スクロールの通知を待たずに、指した行を組み立てておく。

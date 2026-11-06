@@ -323,11 +323,37 @@ impl List {
                         true => SelectionGesture::Extend,
                         false => SelectionGesture::Plain,
                     });
-                    if step == gtk::MovementStep::Pages && list.move_by_pages(count, extend, modify)
-                    {
+                    let moved = match step {
+                        gtk::MovementStep::Pages => list.move_by_pages(count, extend, modify),
+                        gtk::MovementStep::BufferEnds => {
+                            list.move_to_the_end(count, extend, modify)
+                        }
+                        _ => false,
+                    };
+                    if moved {
                         native.stop_signal_emission_by_name("move-cursor");
                     }
                 });
+        }
+        // Ctrl + A と Ctrl + Shift + A。`GtkListBox` は持っている行しか扱えない。
+        {
+            let weak = Rc::downgrade(&inner);
+            inner.native.connect_select_all(move |native| {
+                if let Some(inner) = weak.upgrade() {
+                    List(inner).select_every_row();
+                }
+                native.stop_signal_emission_by_name("select-all");
+            });
+            let weak = Rc::downgrade(&inner);
+            inner.native.connect_unselect_all(move |native| {
+                let Some(list) = weak.upgrade().map(List) else {
+                    return;
+                };
+                if list.selection_mode().is_multiple() {
+                    list.change_selection(&[]);
+                    native.stop_signal_emission_by_name("unselect-all");
+                }
+            });
         }
         // スクロールと一覧の大きさに合わせて、組み立てる範囲を動かす。
         {
@@ -395,10 +421,12 @@ impl List {
     /// For rows built with [`List::set_row_builder`], naui does not know whether rows
     /// not yet built can be selected. With this function, [`List::set_selection`] can
     /// keep its promise of "removing rows that cannot be selected" even for rows off
-    /// screen. Without it, built rows follow [`ListRow::selectable`] and rows not yet
-    /// built are treated as selectable.
+    /// screen. Without it, rows follow the [`ListRow::selectable`] they were last built
+    /// with, even after leaving the screen, and rows not built since the rows were passed
+    /// or refreshed are treated as selectable.
     ///
-    /// Its answers must match the [`ListRow::selectable`] returned by `build`.
+    /// Its answers must match the [`ListRow::selectable`] returned by `build`. It stays when
+    /// the rows are replaced, so pass a new one if its answers change.
     pub fn set_row_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
         self.0.rows.set_selectable(selectable);
     }
@@ -409,6 +437,12 @@ impl List {
     /// changed.
     pub fn refresh(&self) {
         self.0.row_height_stale.set(true);
+        self.0.rows.forget_selectable();
+        // 行を組み立てる関数の中から呼ばれたら、組み立てている側が最初からやり直す。
+        if self.0.rebuilding.get() {
+            self.0.rows.invalidate();
+            return;
+        }
         self.build_window();
         // 中身や指定が変わって行の高さが動いていれば、窓の位置も変わる。測った結果が
         // 同じでも窓を引き直す (`set_row_height` は先に高さを書き換えている)。
@@ -436,10 +470,13 @@ impl List {
         self.refresh();
     }
 
-    /// The row height (logical pixels). 0 if no row has been built yet.
+    /// The row height (logical pixels). 0 if there are no rows or none has been built yet.
     ///
     /// With few rows and no height set, rows may differ, and this is the tallest built.
     pub fn row_height(&self) -> f64 {
+        if self.is_empty() && self.0.fixed_row_height.get().is_none() {
+            return 0.0;
+        }
         self.0.row_height.get()
     }
 
@@ -665,6 +702,7 @@ impl List {
                 }
                 // 組み立てに失敗した行は、空の行にする。
                 let row = row.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
+                self.0.rows.note_selectable(index, row.is_selectable());
                 let native = build_row(&row, Rc::downgrade(&self.0));
                 if let Some(height) = fixed_height {
                     native.set_size_request(-1, height);
@@ -769,22 +807,74 @@ impl List {
             false => from.saturating_add(distance).min(self.len() - 1),
         };
         adjustment.set_value(adjustment.value() + page * f64::from(pages));
+        self.land_cursor(from, target, extend, modify);
+        true
+    }
+
+    /// Moves the cursor to the first or last of all the rows for Home and End. `false` if
+    /// `GtkListBox` should do it, which is when every row is built or no row has the focus.
+    fn move_to_the_end(&self, count: i32, extend: bool, modify: bool) -> bool {
+        if self.0.window.get().is_complete() || self.0.row_height.get() <= 0.0 {
+            return false;
+        }
+        let Some(from) = self.focused_row() else {
+            return false;
+        };
+        let target = match count < 0 {
+            true => 0,
+            false => self.len() - 1,
+        };
+        self.land_cursor(from, target, extend, modify);
+        true
+    }
+
+    /// Scrolls to `target`, builds the rows there, and lets `GtkListBox` move the rest of
+    /// the way to select as usual.
+    fn land_cursor(&self, from: usize, target: usize, extend: bool, modify: bool) {
+        // 範囲の起点は、選択を変える前の行。
+        if extend && self.0.anchor.get().is_none() {
+            self.0.anchor.set(Some(from));
+        }
         self.reveal_computed(target);
         self.update_window();
 
         // 作り直しで元の行が窓から外れると、フォーカスも移っている。
         let Some(from) = self.focused_row() else {
-            return true;
+            return;
         };
         let window = self.0.window.get();
         let target = target.clamp(window.start, window.end - 1);
         let count = i32::try_from(target as i64 - from as i64).unwrap_or(0);
+        // すでにその行にいると、`GtkListBox` は動いた先が無いとみなして何も選ばない。
+        if count == 0 {
+            if !extend && !modify {
+                let picked = self.normalize(&[target]);
+                self.change_selection(&picked);
+            }
+            return;
+        }
         self.without_scroll_to_focus(|| {
             self.0
                 .native
                 .emit_move_cursor(gtk::MovementStep::DisplayLines, count, extend, modify);
         });
-        true
+    }
+
+    /// Selects every row for Ctrl + A, including those not built.
+    fn select_every_row(&self) {
+        if self.selection_mode().is_multiple() {
+            let every: Vec<usize> = (0..self.len()).collect();
+            let picked = self.normalize(&every);
+            self.change_selection(&picked);
+        }
+    }
+
+    /// Changes the selection for an operation of the user's, notifying if it changed.
+    fn change_selection(&self, picked: &[usize]) {
+        if picked != self.selection() {
+            self.replace_selection(picked);
+            self.0.on_select.emit(picked);
+        }
     }
 
     /// Computes the range of rows to build from the current scroll position.
@@ -926,16 +1016,7 @@ impl List {
 
     /// Whether the row can be selected.
     fn is_selectable(&self, index: usize) -> bool {
-        self.0
-            .rows
-            .is_selectable(index, ListRow::is_selectable, || {
-                let offset = index.checked_sub(self.0.window.get().start)?;
-                self.0
-                    .realized
-                    .borrow()
-                    .get(offset)
-                    .map(ListRow::is_selectable)
-            })
+        self.0.rows.is_selectable(index, ListRow::is_selectable)
     }
 
     /// Replaces the selection from code. A Shift range then starts from its last row, as
@@ -986,7 +1067,7 @@ impl List {
             .native
             .selected_rows()
             .iter()
-            .map(|row| window.start + row.index().max(0) as usize)
+            .map(|row| self.0.built_start.get() + row.index().max(0) as usize)
             .collect();
         let previous = self.0.selected.borrow().clone();
         // 単一選択では、窓の外の行を残すと 2 行選ばれてしまう。

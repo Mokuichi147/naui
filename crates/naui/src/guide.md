@@ -2302,8 +2302,9 @@ The selection is remembered by index, so rows off screen can be selected too
 rows stay selected follows the modifier keys, as in a [`Table`]: adding and removing
 with ⌘ / Ctrl keeps them, and a plain click or a Shift range selection drops them as
 a fresh selection. For rows built with `set_row_builder`, naui does not know whether
-rows it has not built yet can be chosen, so pass the same decision to
-[`List::set_row_selectable`] if some cannot.
+rows it has not built yet can be chosen, and treats them as choosable, so a Shift range
+or `set_selection` can reach a heading that has never been on screen. Pass the same
+decision to [`List::set_row_selectable`] if some rows cannot be chosen.
 
 On the Web, a `<select>` creates every `<option>` it is given and has no place for
 spacers, so with more rows than the threshold the list is built from

@@ -7740,7 +7740,12 @@ fn list_builder_can_replace_the_rows() {
             "窓に絞られていること: {} 行",
             shown.len()
         );
-        list.set_selection(&[0]);
+        // 差し替えてもスクロール位置は保つので、先頭の行とは限らない。
+        let first: usize = shown[0]
+            .trim_start_matches("固定 ")
+            .parse()
+            .expect("行の番号");
+        list.set_selection(&[first]);
         assert_eq!(
             list_rows(&list)[0]
                 .get_attribute("aria-selected")
@@ -8292,6 +8297,12 @@ async fn list_auto_height_filled_before_it_is_placed_builds_every_row() {
 #[wasm_bindgen_test]
 async fn list_keeps_its_rows_when_a_row_fails_to_build() {
     const ROWS: usize = 5_000;
+    const BREAK: &str = "const create = document.createElement;
+         document.createElement = function (tag, ...rest) {
+           if (tag === 'li') throw new Error('li を作れない');
+           return create.call(this, tag, ...rest);
+         };";
+    const REPAIR: &str = "delete document.createElement;";
     let run = |code: &str| {
         js_sys::Function::new_no_args(code)
             .call0(&wasm_bindgen::JsValue::NULL)
@@ -8314,14 +8325,10 @@ async fn list_keeps_its_rows_when_a_row_fails_to_build() {
     let scroll_to = |row: f64| list_scroller(&list).set_scroll_top((row * height) as i32);
 
     // 窓を動かす間だけ `<li>` を作れなくする。前の窓と重なる行は残る。
-    run("const create = document.createElement;
-         document.createElement = function (tag, ...rest) {
-           if (tag === 'li') throw new Error('li を作れない');
-           return create.call(this, tag, ...rest);
-         };");
+    run(BREAK);
     scroll_to(15.0);
     next_frames().await;
-    run("delete document.createElement;");
+    run(REPAIR);
 
     let row = list_rows(&list)
         .into_iter()
@@ -8330,20 +8337,215 @@ async fn list_keeps_its_rows_when_a_row_fails_to_build() {
     row.click();
     assert_eq!(list.selection(), vec![10], "残った行のクリックが届くこと");
 
+    let numbers = || -> Vec<usize> {
+        list_rows(&list)
+            .iter()
+            .map(|row| {
+                let text = row.text_content().expect("行の文字");
+                text.trim_start_matches("行 ").parse().expect("行の番号")
+            })
+            .collect()
+    };
     scroll_to(30.0);
     next_frames().await;
-    let numbers: Vec<usize> = list_rows(&list)
-        .iter()
-        .map(|row| {
-            let text = row.text_content().expect("行の文字");
-            text.trim_start_matches("行 ").parse().expect("行の番号")
-        })
-        .collect();
-    assert!(numbers.contains(&30), "次の窓を組み立てること: {numbers:?}");
+    let built = numbers();
+    assert!(built.contains(&30), "次の窓を組み立てること: {built:?}");
     assert!(
-        numbers.windows(2).all(|pair| pair[0] + 1 == pair[1]),
-        "行が二重に並ばないこと: {numbers:?}"
+        built.windows(2).all(|pair| pair[0] + 1 == pair[1]),
+        "行が二重に並ばないこと: {built:?}"
     );
+
+    // 窓が動かなくても、次の機会に欠けた行を組み立てる。
+    run(BREAK);
+    scroll_to(45.0);
+    next_frames().await;
+    run(REPAIR);
+    let built = numbers();
+    let missing = built.last().expect("残った行") + 1;
+    assert!(built.contains(&45), "前の窓と重なる行は残ること: {built:?}");
+    let scroller = list_scroller(&list);
+    scroller.set_scroll_top(scroller.scroll_top() + 1);
+    next_frames().await;
+    let built = numbers();
+    assert!(
+        built.contains(&missing),
+        "欠けた行を組み立てること: {built:?}"
+    );
+    assert!(
+        built.windows(2).all(|pair| pair[0] + 1 == pair[1]),
+        "行が並ぶこと: {built:?}"
+    );
+}
+
+/// A row is discarded when it leaves the window, and what it said goes on counting.
+#[wasm_bindgen_test]
+async fn list_remembers_rows_that_cannot_be_selected() {
+    const ROWS: usize = 5_000;
+    const HEADING: usize = 2;
+    let mut kept = None;
+    with_ui(|ui| {
+        let list = ui.list()?;
+        list.set_sizing(Sizing::fixed(240.0, 200.0));
+        list.set_selection_mode(SelectionMode::Multiple);
+        let ui = ui.clone();
+        list.set_row_builder(ROWS, move |index| {
+            let row = ListRow::new(&ui.label(&index.to_string())?);
+            Ok(row.selectable(index != HEADING))
+        });
+        kept = Some(list);
+        Ok(())
+    });
+    let list = kept.expect("リスト");
+    let _mounted = Mounted::new(&list);
+    next_frames().await;
+    list_scroller(&list).set_scroll_top((2_000.0 * list.row_height()) as i32);
+    next_frames().await;
+    assert!(
+        !list_rows(&list)
+            .iter()
+            .any(|row| row.text_content().as_deref() == Some("2")),
+        "見出しの行が窓から出ていること"
+    );
+
+    list.set_selection(&[HEADING, HEADING + 1]);
+    assert_eq!(list.selection(), vec![HEADING + 1], "窓の外でも選べない");
+
+    list.refresh();
+    list.set_selection(&[HEADING]);
+    assert_eq!(
+        list.selection(),
+        vec![HEADING],
+        "refresh で答えを忘れること"
+    );
+}
+
+/// A `refresh` from inside the builder makes the build under way start over, so no row keeps
+/// the old contents, and the list stays where it was.
+#[wasm_bindgen_test]
+async fn list_refresh_inside_the_builder_starts_over() {
+    let version = Rc::new(Cell::new(1));
+    let refresh_once = Rc::new(Cell::new(false));
+    let mut kept = None;
+    with_ui(|ui| {
+        let list = ui.list()?;
+        list.set_sizing(Sizing::fixed(240.0, 200.0));
+        let inside = list.downgrade();
+        let version = version.clone();
+        let refresh_once = refresh_once.clone();
+        let ui = ui.clone();
+        list.set_row_builder(1_000, move |index| {
+            let built_from = version.get();
+            if refresh_once.replace(false) {
+                version.set(2);
+                inside.upgrade().expect("リスト").refresh();
+            }
+            Ok(ListRow::new(&ui.label(&format!("{built_from}:{index}"))?))
+        });
+        kept = Some(list);
+        Ok(())
+    });
+    let list = kept.expect("リスト");
+    let _mounted = Mounted::new(&list);
+    next_frames().await;
+    list_scroller(&list).set_scroll_top(1_000);
+    next_frames().await;
+
+    refresh_once.set(true);
+    list.refresh();
+    let top = list_scroller(&list).scroll_top();
+    assert!((top - 1_000).abs() <= 1, "位置を保つこと: {top}");
+    let rows = list_rows(&list);
+    assert!(!rows.is_empty(), "行があること");
+    for row in rows {
+        let text = row.text_content().unwrap_or_default();
+        assert!(text.starts_with("2:"), "古い内容の行が残らないこと: {text}");
+    }
+}
+
+/// Replacing the rows keeps the scroll position, as on the other platforms: the elements are
+/// new, but the list is not.
+#[wasm_bindgen_test]
+fn list_replacing_the_rows_keeps_the_scroll_position() {
+    with_ui(|ui| {
+        const TOP: i32 = 3_000;
+        let (list, _mounted) = mounted_list(ui)?;
+        let items = |word: &str| ListItem::list((0..5_000).map(|index| format!("{word} {index}")));
+        list.set_items(&items("行"));
+        list_scroller(&list).set_scroll_top(TOP);
+
+        list.set_items(&items("新"));
+        let top = list_scroller(&list).scroll_top();
+        assert!((top - TOP).abs() <= 1, "set_items で位置を保つこと: {top}");
+        let number = TOP as f64 / list.row_height();
+        let row = format!("新 {}", number.floor() as usize);
+        assert!(
+            list_rows(&list)
+                .iter()
+                .any(|built| built.text_content().as_deref() == Some(row.as_str())),
+            "その位置の行を組み立てること: {row}"
+        );
+
+        let ui = ui.clone();
+        list.set_row_builder(5_000, move |index| {
+            Ok(ListRow::new(&ui.label(&index.to_string())?))
+        });
+        let top = list_scroller(&list).scroll_top();
+        assert!(
+            (top - TOP).abs() <= 1,
+            "set_row_builder で位置を保つこと: {top}"
+        );
+
+        // 行が減れば、ブラウザが範囲の中へ収める。
+        list.set_items(&items("短")[..300]);
+        let scroller = list_scroller(&list);
+        assert!(scroller.scroll_top() <= scroller.scroll_height());
+        assert!(!list_rows(&list).is_empty(), "行があること");
+        Ok(())
+    });
+}
+
+/// A hidden list cannot scroll, and it has not measured its rows: it goes there once it can.
+#[wasm_bindgen_test]
+async fn list_scroll_to_row_waits_until_it_can_scroll() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let list = ui.list()?;
+        list.set_sizing(Sizing::fixed(240.0, 200.0));
+        list.set_items(&ListItem::list(
+            (0..5_000).map(|index| format!("行 {index}")),
+        ));
+        list.scroll_to_row(1_000);
+        kept = Some(list);
+        Ok(())
+    });
+    let list = kept.expect("リスト");
+    let _mounted = Mounted::new(&list);
+    next_frames().await;
+    let row = list_rows(&list)
+        .into_iter()
+        .find(|row| row.text_content().as_deref() == Some("行 1000"))
+        .expect("指した行が組み立てられること");
+    assert!(
+        is_within(&list_scroller(&list), &row),
+        "指した行が見えること"
+    );
+}
+
+/// With no rows there is no height, whatever the last rows measured.
+#[wasm_bindgen_test]
+fn list_without_rows_has_no_row_height() {
+    with_ui(|ui| {
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_items(&ListItem::list(
+            (0..1_000).map(|index| format!("行 {index}")),
+        ));
+        assert!(list.row_height() > 0.0);
+        list.set_items(&[]);
+        assert_eq!(list.row_height(), 0.0);
+        list.set_row_height(30.0);
+        assert_eq!(list.row_height(), 30.0, "指定はそのまま返すこと");
+        Ok(())
+    });
 }
 
 /// The height set is a minimum. A row that needs more grows, so the spacers and scrolling

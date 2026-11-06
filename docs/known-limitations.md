@@ -109,10 +109,6 @@ that shape are covered in
   - naui does not know whether rows it has not built yet can be chosen, so with
     `set_row_builder` they are assumed to be choosable by default (this can be passed
     with `set_row_selectable`).
-  - On Linux, Home and End go to the first and last rows built, with or without Shift,
-    and Ctrl + A selects only those rows. The arrow keys continue past them as the rows
-    follow, and Page Up, Page Down and a Shift range selection cover every row. Home and
-    End cover every row on Windows, macOS and the Web, and so does Ctrl + A on Windows.
   - A control inside a row loses the keyboard focus when its row leaves the range
     built, because the row is discarded. While the row stays in the range it is left
     as it is, so what the builder returned for it only changes with `refresh`.

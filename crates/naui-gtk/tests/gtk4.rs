@@ -799,6 +799,18 @@ fn main() {
             list_page_keys_move_a_whole_page,
         ),
         (
+            "Home / End と全選択は組み立てていない行まで届く",
+            list_home_end_and_select_all_reach_every_row,
+        ),
+        (
+            "画面から出た行も選べないと答えたことを覚えている",
+            list_remembers_rows_that_cannot_be_selected,
+        ),
+        (
+            "行を組み立てる関数の中の refresh は組み立てをやり直す",
+            list_refresh_inside_the_builder_starts_over,
+        ),
+        (
             "Shift の範囲選択は窓の外へ出た起点から広がる",
             list_shift_range_starts_from_a_row_outside_the_window,
         ),
@@ -6459,6 +6471,147 @@ fn list_window_follows_after_being_hidden_during_an_update(ui: &Ui) -> Result<()
     holder.append(&list);
     assert_follows(height * 500.0, "木へ戻したとき");
     assert_follows(height * 2_000.0, "木へ戻したあとのスクロール");
+    window.close();
+    Ok(())
+}
+
+/// `GtkListBox` knows only the rows it has, so its Home, End and Ctrl + A stop there.
+fn list_home_end_and_select_all_reach_every_row(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    let (window, list, native) = shown_big_list(ui, "Home と End", |list| {
+        list.set_selection_mode(SelectionMode::Multiple);
+        list.set_items(&ListItem::list(
+            (0..ROWS).map(|index| format!("行 {index}")),
+        ));
+    })?;
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    list.on_select({
+        let seen = seen.clone();
+        move |picked| seen.borrow_mut().push(picked.len())
+    });
+    let press = |count: i32, extend: bool| {
+        native.emit_by_name::<()>(
+            "move-cursor",
+            &[&gtk::MovementStep::BufferEnds, &count, &extend, &false],
+        );
+        tick(&native);
+        tick(&native);
+    };
+    assert!(native.row_at_index(0).expect("行").grab_focus());
+    list.set_selected(0);
+
+    press(1, false);
+    assert_eq!(list.selection(), vec![ROWS - 1], "End");
+    assert_eq!(big_list_focused_row(&native), ROWS - 1);
+    press(-1, false);
+    assert_eq!(list.selection(), vec![0], "Home");
+    assert_eq!(big_list_focused_row(&native), 0);
+    // すでに先頭にいても、その行だけを選び直す。
+    list.clear_selection();
+    press(-1, false);
+    assert_eq!(list.selection(), vec![0], "先頭で Home");
+
+    press(1, true);
+    assert_eq!(list.selection().len(), ROWS, "Shift + End は全行に届く");
+    press(-1, false);
+    assert_eq!(list.selection(), vec![0]);
+
+    seen.borrow_mut().clear();
+    native.emit_by_name::<()>("select-all", &[]);
+    tick(&native);
+    assert_eq!(list.selection().len(), ROWS, "Ctrl + A は全行に届く");
+    assert_eq!(*seen.borrow(), [ROWS], "1 回だけ通知すること");
+    native.emit_by_name::<()>("select-all", &[]);
+    assert_eq!(*seen.borrow(), [ROWS], "変わらなければ通知しない");
+
+    // 画面の外の行の選択も外れる。
+    native.emit_by_name::<()>("unselect-all", &[]);
+    tick(&native);
+    assert!(list.selection().is_empty(), "Ctrl + Shift + A は全行を外す");
+    assert_eq!(*seen.borrow(), [ROWS, 0]);
+    assert!(native.selected_rows().is_empty());
+
+    // 単一選択では GtkListBox と同じく何もしない。
+    list.set_selection_mode(SelectionMode::Single);
+    list.set_selected(3);
+    native.emit_by_name::<()>("select-all", &[]);
+    assert_eq!(list.selection(), vec![3]);
+    window.close();
+    Ok(())
+}
+
+/// A row is discarded when it leaves the window, and what it said goes on counting.
+fn list_remembers_rows_that_cannot_be_selected(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    const HEADING: usize = 2;
+    let ui_for_row = ui.clone();
+    let (window, list, native) = shown_big_list(ui, "見出しの行", move |list| {
+        list.set_selection_mode(SelectionMode::Multiple);
+        list.set_row_builder(ROWS, move |index| {
+            let row = ListRow::new(&ui_for_row.label(&format!("行 {index}"))?);
+            Ok(row.selectable(index != HEADING))
+        });
+    })?;
+    scroll_list_to(&native, list.row_height() * 2_000.0);
+    tick(&native);
+    let first = native.row_at_index(0).expect("行");
+    assert_ne!(big_list_row_number(&first), 0, "窓が動いていること");
+
+    list.set_selection(&[HEADING, HEADING + 1]);
+    assert_eq!(list.selection(), vec![HEADING + 1], "窓の外でも選べない");
+
+    list.refresh();
+    list.set_selection(&[HEADING]);
+    assert_eq!(
+        list.selection(),
+        vec![HEADING],
+        "refresh で答えを忘れること"
+    );
+    window.close();
+    Ok(())
+}
+
+/// A `refresh` from inside the builder makes the build under way start over, so no row keeps
+/// the old contents.
+fn list_refresh_inside_the_builder_starts_over(ui: &Ui) -> Result<()> {
+    let version = Rc::new(Cell::new(1));
+    let refresh_once = Rc::new(Cell::new(false));
+    let ui_for_row = ui.clone();
+    let (window, list, native) = shown_big_list(ui, "組み立て中の refresh", {
+        let version = version.clone();
+        let refresh_once = refresh_once.clone();
+        move |list| {
+            let inside = list.downgrade();
+            list.set_row_builder(1_000, move |index| {
+                let built_from = version.get();
+                if refresh_once.replace(false) {
+                    version.set(2);
+                    inside.upgrade().expect("リスト").refresh();
+                }
+                Ok(ListRow::new(
+                    &ui_for_row.label(&format!("{built_from}:{index}"))?,
+                ))
+            });
+        }
+    })?;
+    refresh_once.set(true);
+    list.refresh();
+    tick(&native);
+    let mut child = native.first_child();
+    let mut rows = 0;
+    while let Some(row) = child {
+        let texts: Vec<String> = labels_in(&row)
+            .iter()
+            .map(|label| label.text().to_string())
+            .collect();
+        assert!(
+            texts.iter().all(|text| text.starts_with("2:")),
+            "古い内容の行が残らないこと: {texts:?}"
+        );
+        rows += 1;
+        child = row.next_sibling();
+    }
+    assert!(rows > 0, "行があること");
     window.close();
     Ok(())
 }

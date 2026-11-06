@@ -876,10 +876,12 @@ impl List {
     /// For rows built with [`List::set_row_builder`], naui does not know whether rows
     /// not yet built can be selected. With this function, [`List::set_selection`] can
     /// keep its promise of "removing rows that cannot be selected" even for rows off
-    /// screen. Without it, built rows follow [`ListRow::selectable`] and rows not yet
-    /// built are treated as selectable.
+    /// screen. Without it, rows follow the [`ListRow::selectable`] they were last built
+    /// with, even after leaving the screen, and rows not built since the rows were passed
+    /// or refreshed are treated as selectable.
     ///
-    /// Its answers must match the [`ListRow::selectable`] returned by `build`.
+    /// Its answers must match the [`ListRow::selectable`] returned by `build`. It stays when
+    /// the rows are replaced, so pass a new one if its answers change.
     pub fn set_row_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
         self.0.rows.set_selectable(selectable);
     }
@@ -890,6 +892,7 @@ impl List {
     /// changed.
     pub fn refresh(&self) {
         self.0.row_height_stale.set(true);
+        self.0.rows.forget_selectable();
         // 行を組み立てる関数の中から呼ばれたら、組み立てている側が最初からやり直す。
         if self.0.rebuilding.get() {
             self.0.rows.invalidate();
@@ -918,10 +921,13 @@ impl List {
         self.refresh();
     }
 
-    /// The row height (logical pixels). 0 if no row has been built yet.
+    /// The row height (logical pixels). 0 if there are no rows or none has been built yet.
     ///
     /// With few rows and no height set, rows may differ, and this is the tallest built.
     pub fn row_height(&self) -> f64 {
+        if self.is_empty() && self.0.fixed_row_height.get().is_none() {
+            return 0.0;
+        }
         self.0.row_height.get()
     }
 
@@ -1048,6 +1054,7 @@ impl List {
                     row = ListRow::from_item(ListItem::new(""));
                     self.new_native_row(index, &row, window.count, min_height)
                 });
+            self.0.rows.note_selectable(index, row.is_selectable());
             let native = match built {
                 Ok(native) => native,
                 Err(error) => {
@@ -1745,16 +1752,7 @@ impl List {
 
     /// Whether the row can be selected.
     fn is_selectable(&self, index: usize) -> bool {
-        self.0
-            .rows
-            .is_selectable(index, ListRow::is_selectable, || {
-                let offset = index.checked_sub(self.0.window.get().start)?;
-                self.0
-                    .realized
-                    .borrow()
-                    .get(offset)
-                    .map(ListRow::is_selectable)
-            })
+        self.0.rows.is_selectable(index, ListRow::is_selectable)
     }
 
     /// Remembers the selection and writes it into the built rows (no notification).

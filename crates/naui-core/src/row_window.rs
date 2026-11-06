@@ -21,6 +21,7 @@
 //! ```
 
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeSet;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -407,6 +408,8 @@ pub struct RowSource<T> {
     built: Cell<bool>,
     count: Cell<usize>,
     selectable: RefCell<Option<RowSelectable>>,
+    /// The built rows that said they cannot be selected, kept after they leave the window.
+    unselectable: RefCell<BTreeSet<usize>>,
     /// Counts the replacements, so a build under way can notice one.
     generation: Cell<u64>,
 }
@@ -419,6 +422,7 @@ impl<T> Default for RowSource<T> {
             built: Cell::new(false),
             count: Cell::new(0),
             selectable: RefCell::new(None),
+            unselectable: RefCell::new(BTreeSet::new()),
             generation: Cell::new(0),
         }
     }
@@ -445,6 +449,7 @@ impl<T: Clone> RowSource<T> {
         self.built.set(false);
         self.count.set(rows.len());
         *self.rows.borrow_mut() = rows;
+        self.forget_selectable();
         self.invalidate();
     }
 
@@ -454,6 +459,7 @@ impl<T: Clone> RowSource<T> {
         *self.build.borrow_mut() = Some(Box::new(build));
         self.built.set(true);
         self.count.set(count);
+        self.forget_selectable();
         self.invalidate();
     }
 
@@ -533,22 +539,36 @@ impl<T: Clone> RowSource<T> {
     }
 
     /// Passes a function that answers whether a row can be selected without building it.
+    ///
+    /// It stays when the rows are replaced, so pass a new one if its answers change.
     pub fn set_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
         *self.selectable.borrow_mut() = Some(Rc::new(selectable));
+    }
+
+    /// Remembers what a row said when it was built, so the answer outlives the row.
+    ///
+    /// A row is discarded when it leaves the window, and a list can go on asking about it
+    /// (a Shift range, [`RowSource::is_selectable`] for an arrow key).
+    pub fn note_selectable(&self, index: usize, selectable: bool) {
+        let mut unselectable = self.unselectable.borrow_mut();
+        match selectable {
+            true => unselectable.remove(&index),
+            false => unselectable.insert(index),
+        };
+    }
+
+    /// Forgets what the rows said when built, for when they may answer differently.
+    pub fn forget_selectable(&self) {
+        self.unselectable.borrow_mut().clear();
     }
 
     /// Whether the row can be selected.
     ///
     /// Rows that already exist answer with `of_row`. For built rows, the function from
-    /// [`RowSource::set_selectable`] answers first, then `realized` (what the row said
-    /// when it was built, if it is built now). Rows nobody can answer for are assumed
+    /// [`RowSource::set_selectable`] answers first, then what the row said when it was
+    /// built ([`RowSource::note_selectable`]). Rows nobody can answer for are assumed
     /// selectable. No borrow is held while the app's function runs.
-    pub fn is_selectable(
-        &self,
-        index: usize,
-        of_row: impl FnOnce(&T) -> bool,
-        realized: impl FnOnce() -> Option<bool>,
-    ) -> bool {
+    pub fn is_selectable(&self, index: usize, of_row: impl FnOnce(&T) -> bool) -> bool {
         if index >= self.len() {
             return false;
         }
@@ -558,7 +578,7 @@ impl<T: Clone> RowSource<T> {
         let answer = self.selectable.borrow().clone();
         match answer {
             Some(answer) => answer(index),
-            None => realized().unwrap_or(true),
+            None => !self.unselectable.borrow().contains(&index),
         }
     }
 }
@@ -642,6 +662,30 @@ mod tests {
         assert!(!window.is_complete());
         assert!(window.contains(50));
         assert!(!window.contains(44));
+    }
+
+    #[test]
+    fn a_built_row_still_answers_after_it_is_gone() {
+        let rows: RowSource<bool> = RowSource::default();
+        rows.set_builder(100, |index| Ok(index != 7));
+        let selectable = |index| rows.is_selectable(index, |row| *row);
+        assert!(selectable(7), "組み立てる前は分からない");
+
+        let row = rows.row(7).unwrap().unwrap();
+        rows.note_selectable(7, row);
+        assert!(!selectable(7), "組み立てたときの答えを覚えている");
+        assert!(selectable(6));
+
+        rows.note_selectable(7, true);
+        assert!(selectable(7), "組み立て直した答えに変わる");
+
+        rows.note_selectable(7, false);
+        rows.forget_selectable();
+        assert!(selectable(7), "忘れたあとは分からない扱い");
+
+        rows.note_selectable(7, false);
+        rows.set_builder(100, |_| Ok(true));
+        assert!(selectable(7), "行を差し替えると答えも消える");
     }
 
     #[test]
@@ -901,21 +945,23 @@ mod tests {
         let of_row = |row: &bool| *row;
         // 持っている行は、その行が答える。関数があっても優先しない。
         rows.set_selectable(|_| false);
-        assert!(rows.is_selectable(0, of_row, || None));
-        assert!(!rows.is_selectable(1, of_row, || Some(true)));
-        assert!(!rows.is_selectable(2, of_row, || Some(true)), "範囲の外");
+        assert!(rows.is_selectable(0, of_row));
+        assert!(!rows.is_selectable(1, of_row));
+        assert!(!rows.is_selectable(2, of_row), "範囲の外");
 
         let rows: RowSource<bool> = RowSource::default();
         rows.set_builder(10, |_| Ok(true));
-        // 誰も答えられない行は、選べる扱い。
-        assert!(rows.is_selectable(5, of_row, || None));
+        // 誰も答えられなければ、選べる扱い。
+        assert!(rows.is_selectable(5, of_row));
         // 組み立て済みなら、その行の答え。
-        assert!(!rows.is_selectable(5, of_row, || Some(false)));
+        rows.note_selectable(5, false);
+        assert!(!rows.is_selectable(5, of_row));
         // 組み立てずに答える関数があれば、それが先。
+        rows.note_selectable(6, false);
         rows.set_selectable(|index| index != 5);
-        assert!(!rows.is_selectable(5, of_row, || Some(true)));
-        assert!(rows.is_selectable(6, of_row, || Some(false)));
-        assert!(!rows.is_selectable(10, of_row, || None), "範囲の外");
+        assert!(!rows.is_selectable(5, of_row));
+        assert!(rows.is_selectable(6, of_row));
+        assert!(!rows.is_selectable(10, of_row), "範囲の外");
     }
 
     #[test]
