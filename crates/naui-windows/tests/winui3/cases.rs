@@ -6350,27 +6350,42 @@ fn list_rows_report_their_place_among_all_rows(ui: &Ui) -> Result<()> {
     let window = ui.window("リストの行の位置", 240.0, 160.0)?;
     let list = ui.list()?;
     list.set_sizing(Sizing::fill());
-    // 組み立てた順の番号。末尾の行数分が、いま `ListView` にある行。
-    let built: Rc<RefCell<Vec<usize>>> = Rc::default();
     let fill = |count: usize| {
-        let built = built.clone();
         let ui = ui.clone();
         list.set_row_builder(count, move |index| {
-            built.borrow_mut().push(index);
             Ok(ListRow::new(&ui.label(&format!("行 {index}"))?))
         });
     };
-    // どの行も位置と全行数を伝えていることを確かめ、組み立てた先頭の番号を返す。
+    // 行の番号は中の文字から読む。窓に残る行は組み立て直さないので、組み立てた順の
+    // 記録からは、いま `ListView` にある行が分からない。
+    let index_of = |row: &ListViewItem| {
+        row.Content()
+            .and_then(|content| content.cast::<Grid>())
+            .and_then(|host| host.Children())
+            .and_then(|children| children.GetAt(0))
+            .and_then(|label| label.cast::<TextBlock>())
+            .and_then(|label| label.Text())
+            .expect("行の文字")
+            .to_string()
+            .trim_start_matches("行 ")
+            .parse::<usize>()
+            .expect("行の番号")
+    };
+    // どの行も位置と全行数を伝えていることを確かめ、行の数と先頭の番号を返す。
     let check = |count: usize| {
         let items = list.native_list_view().Items().expect("行");
         let size = items.Size().expect("行の数") as usize;
-        let built = built.borrow();
-        let current = &built[built.len() - size..];
-        for (slot, &index) in current.iter().enumerate() {
+        let mut first = 0;
+        for slot in 0..size {
             let row = items
                 .GetAt(slot as u32)
                 .and_then(|item| item.cast::<ListViewItem>())
                 .expect("行");
+            let index = index_of(&row);
+            if slot == 0 {
+                first = index;
+            }
+            assert_eq!(index, first + slot, "番号の順に並んでいること");
             assert_eq!(
                 AutomationProperties::GetPositionInSet(&row).expect("位置"),
                 index as i32 + 1,
@@ -6382,7 +6397,7 @@ fn list_rows_report_their_place_among_all_rows(ui: &Ui) -> Result<()> {
                 "組み立てた行の数ではなく全行数であること"
             );
         }
-        (size, current[0])
+        (size, first)
     };
     fill(1000);
     window.set_child(&list);
