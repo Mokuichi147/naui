@@ -2,8 +2,7 @@
 //!
 //! WinUI's standard `ListView` is used as is. Rows are `ListViewItem`s, holding
 //! either a `TextBlock` placed in a transparent `Grid` or any prebuilt widget. Rows
-//! that cannot be used get `IsEnabled = false`, and multiple selection and keyboard
-//! navigation are done by `ListView`.
+//! that cannot be used get `IsEnabled = false`.
 //!
 //! The row look (rounded corners, light fill, the accent-colored indicator on the
 //! left) comes from `ListView`'s standard template. Only a frame is missing, so
@@ -20,6 +19,12 @@
 //! selection is held here, because `ListView` knows only the rows it has. That
 //! `ScrollViewer` is registered with the window-wide wheel helper ([`crate::layout`]).
 //!
+//! For the same reason, in a list that scrolls itself the arrow keys, Page Up and Page
+//! Down, and anything with Shift are handled here: `ListView` takes all its rows as the
+//! page, and it keeps its keyboard position and the Shift anchor as places among the rows
+//! it has, which mean other rows once the window moves. The rest, such as clicks and Home
+//! and End, are left to it, as is everything in a list whose height follows its rows.
+//!
 //! Row activation is received through the `ListViewItem`'s `DoubleTapped` and
 //! Enter's `KeyDown`. Right-clicks are received through `ContextRequested`, the
 //! context menu request WinUI fires not only for right-clicks but also for touch
@@ -31,9 +36,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{
-    keeps_row_window, list_row_window, merge_hidden_selection, Align, ListItem, Orientation, Point,
-    Result, RowSource, RowWindow, SelectionGesture, SelectionMode, Sizing, TextColor, TextStyle,
-    ROW_WINDOW_OVERSCAN,
+    keeps_row_window, list_row_window, merge_hidden_selection, Align, ListItem, Modifiers,
+    Orientation, Point, Result, RowSource, RowWindow, SelectionGesture, SelectionMode, Sizing,
+    TextColor, TextStyle, ROW_WINDOW_OVERSCAN,
 };
 use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
@@ -498,6 +503,34 @@ impl SelectionHandler {
     }
 }
 
+/// A movement of the keyboard cursor that [`List::move_cursor`] may do itself.
+#[derive(Clone, Copy)]
+enum RowMotion {
+    /// Page Up and Page Down.
+    Pages(i32),
+    /// Shift with the up and down arrows, or Space to stay on the row.
+    Lines(i32),
+    /// Shift + Home. Like Home, it goes as far as the rows built.
+    FirstBuilt,
+    /// Shift + End. Like End, it goes as far as the rows built.
+    LastBuilt,
+}
+
+impl RowMotion {
+    fn of_key(key: VirtualKey) -> Option<Self> {
+        match key {
+            VirtualKey::PageUp => Some(Self::Pages(-1)),
+            VirtualKey::PageDown => Some(Self::Pages(1)),
+            VirtualKey::Up => Some(Self::Lines(-1)),
+            VirtualKey::Down => Some(Self::Lines(1)),
+            VirtualKey::Space => Some(Self::Lines(0)),
+            VirtualKey::Home => Some(Self::FirstBuilt),
+            VirtualKey::End => Some(Self::LastBuilt),
+            _ => None,
+        }
+    }
+}
+
 struct ListInner {
     native: Border,
     list_view: ListView,
@@ -527,6 +560,11 @@ struct ListInner {
     /// The selected rows (ascending). Rows outside the window are included, so this is
     /// the source of truth, not the `ListView`.
     selected: RefCell<Vec<usize>>,
+    /// The anchor of a Shift range selection, as a row number: `ListView` keeps it as a
+    /// place among the rows it has, so it means another row once the window moves.
+    anchor: Cell<Option<usize>>,
+    /// The row the pointer last went over.
+    pointer_row: Cell<Option<usize>>,
     /// The height of one row (logical pixels). Either measured or set with
     /// [`List::set_row_height`].
     row_height: Cell<f64>,
@@ -624,6 +662,8 @@ impl List {
             built_start: Cell::new(0),
             rebuilding: Cell::new(false),
             selected: RefCell::new(Vec::new()),
+            anchor: Cell::new(None),
+            pointer_row: Cell::new(None),
             row_height: Cell::new(0.0),
             row_height_stale: Cell::new(false),
             row_height_pending: Cell::new(false),
@@ -663,6 +703,24 @@ impl List {
             .map_err(|e| to_error("subscribe to the ListView", e))?;
         this.install_wheel_target()?;
         this.install_window_updates()?;
+
+        // 行どうしの移動ではなくリストの外へ出たら、戻ってくるときに見せられるように。
+        let state = UiThreadCell::new(Rc::downgrade(&this.0));
+        let lost = RoutedEventHandler::new(move |_, _| {
+            let _ = state.try_with_mut(|weak| {
+                let Some(list) = weak.upgrade().map(List) else {
+                    return;
+                };
+                if list.focused_row().is_none() {
+                    list.allow_focus_scrolling();
+                }
+            });
+            Ok(())
+        });
+        this.0
+            .list_view
+            .LostFocus(&lost)
+            .map_err(|e| to_error("subscribe to List focus changes", e))?;
 
         // `layout` のホイール補助は、子要素の上でも `ScrollViewer` を動かせる
         // ように、ウィンドウ全体のホイールを先に処理する。List の上では
@@ -886,6 +944,7 @@ impl List {
     /// cleared too.
     fn reset_rows(&self) {
         self.0.selected.borrow_mut().clear();
+        self.0.anchor.set(None);
         self.0.row_height_stale.set(true);
         // 組み立ての途中で差し替えられたら、組み立てている側が新しい行でやり直す。
         if self.0.rebuilding.get() {
@@ -956,9 +1015,12 @@ impl List {
             true => 0.0,
             false => self.0.row_height.get(),
         };
-        let fixed_height = self.0.fixed_row_height.get();
         let mut native_rows = Vec::with_capacity(window.len());
         let mut realized = Vec::with_capacity(window.len());
+        // 失敗しても `ListView` に残っている行は、管理から外さない。外すと、次の組み立てで
+        // 中身を取り出せず、アプリが持っているウィジェットを載せ直せなくなる。行数が窓と
+        // 合わなくなるので、次の組み立てで全部作り直される。
+        let mut outcome = Ok(());
         for (offset, (native, row)) in built.into_iter().zip(built_rows).enumerate() {
             if kept.contains(&(built_start + offset)) {
                 native_rows.push(native);
@@ -966,14 +1028,21 @@ impl List {
                 continue;
             }
             release_row_content(&native);
-            if !kept.is_empty() {
-                let at = native_rows.len() as u32;
-                self.without_notifying(|_| children.RemoveAt(at))
-                    .map_err(|e| to_error("remove the row", e))?;
+            if kept.is_empty() {
+                continue;
+            }
+            let at = native_rows.len() as u32;
+            if let Err(error) = self.without_notifying(|_| children.RemoveAt(at)) {
+                outcome = Err(to_error("remove the row", error));
+                native_rows.push(native);
+                realized.push(row);
             }
         }
         let mut before_kept = 0;
         for index in window.indices().filter(|index| !kept.contains(index)) {
+            if outcome.is_err() {
+                break;
+            }
             let Some(row) = self.0.rows.row(index) else {
                 continue;
             };
@@ -983,54 +1052,43 @@ impl List {
             }
             // 組み立てに失敗した行は、空の行にする。
             let row = row.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
-            let native = new_row_item()?;
-            let _ = native.SetPadding(item_padding(row.is_selectable()));
-            match fixed_height {
-                Some(height) => {
-                    let _ = native.SetMinHeight(height);
+            let native = match self.new_native_row(index, &row, window.count, min_height) {
+                Ok(native) => native,
+                Err(error) => {
+                    outcome = Err(error);
+                    break;
                 }
-                None if min_height > 0.0 => {
-                    let _ = native.SetMinHeight(min_height);
-                }
-                None => {}
+            };
+            let before = index < kept.start;
+            let slot = match before {
+                true => before_kept,
+                false => native_rows.len(),
+            };
+            let placed = native.cast::<IInspectable>().and_then(|element| {
+                self.without_notifying(|_| {
+                    if before {
+                        children.InsertAt(slot as u32, &element)
+                    } else if (slot as u32) < replaceable {
+                        children.SetAt(slot as u32, &element)
+                    } else {
+                        children.Append(&element)
+                    }
+                })
+            });
+            if let Err(error) = placed {
+                release_row_content(&native);
+                outcome = Err(to_error("place the row", error));
+                break;
             }
-            let host = row_host(&row)?;
-            native
-                .SetContent(&host)
-                .map_err(|e| to_error("set the row content", e))?;
-            // 選べないだけの行は中のコントロールを押せる必要があるので、
-            // 無効にするのは `ListItem::enabled(false)` の行だけ。
-            let _ = native.SetIsEnabled(!row.is_disabled_item());
-            report_row_position(&native, index, window.count);
-            // 無効の行には入力が届かないので、起動も文脈メニューも出ない。
-            self.listen_row_events(&native, index)?;
-
-            let element = native
-                .cast::<IInspectable>()
-                .map_err(|e| to_error("convert the row to UIElement", e))?;
-            if index < kept.start {
-                self.without_notifying(|_| children.InsertAt(before_kept as u32, &element))
-                    .map_err(|e| to_error("insert the row", e))?;
-                native_rows.insert(before_kept, native);
-                realized.insert(before_kept, row);
-                before_kept += 1;
-                continue;
-            }
-            let slot = native_rows.len() as u32;
-            self.without_notifying(|_| {
-                if slot < replaceable {
-                    children.SetAt(slot, &element)
-                } else {
-                    children.Append(&element)
-                }
-            })
-            .map_err(|e| to_error("replace the row", e))?;
-            native_rows.push(native);
-            realized.push(row);
+            native_rows.insert(slot, native);
+            realized.insert(slot, row);
+            before_kept += usize::from(before);
         }
         for _ in native_rows.len() as u32..replaceable {
-            self.without_notifying(|_| children.RemoveAtEnd())
-                .map_err(|e| to_error("remove the extra rows", e))?;
+            if let Err(error) = self.without_notifying(|_| children.RemoveAtEnd()) {
+                outcome = Err(to_error("remove the extra rows", error));
+                break;
+            }
         }
         *self.0.native_rows.borrow_mut() = native_rows;
         *self.0.realized.borrow_mut() = realized;
@@ -1054,13 +1112,185 @@ impl List {
             self.restore_focus(index, state);
         }
         let Some(offset) = offset else {
-            return Ok(());
+            return outcome;
         };
         // 毎回 ChangeView を呼ぶと、ホイールの進行中の移動まで止めてしまう。
         if (self.0.scroll.VerticalOffset().unwrap_or(offset) - offset).abs() < 0.5 {
-            return Ok(());
+            return outcome;
         }
-        self.change_view(offset)
+        outcome.and(self.change_view(offset))
+    }
+
+    /// Creates the `ListViewItem` of one row.
+    fn new_native_row(
+        &self,
+        index: usize,
+        row: &ListRow,
+        count: usize,
+        min_height: f64,
+    ) -> Result<ListViewItem> {
+        let native = new_row_item()?;
+        let _ = native.SetPadding(item_padding(row.is_selectable()));
+        match self.0.fixed_row_height.get() {
+            Some(height) => {
+                let _ = native.SetMinHeight(height);
+            }
+            None if min_height > 0.0 => {
+                let _ = native.SetMinHeight(min_height);
+            }
+            None => {}
+        }
+        let host = row_host(row)?;
+        native
+            .SetContent(&host)
+            .map_err(|e| to_error("set the row content", e))?;
+        // 選べないだけの行は中のコントロールを押せる必要があるので、
+        // 無効にするのは `ListItem::enabled(false)` の行だけ。
+        let _ = native.SetIsEnabled(!row.is_disabled_item());
+        report_row_position(&native, index, count);
+        // 無効の行には入力が届かないので、起動も文脈メニューも出ない。
+        if let Err(error) = self.listen_row_events(&native, index) {
+            release_row_content(&native);
+            return Err(error);
+        }
+        Ok(native)
+    }
+
+    /// Moves the keyboard cursor from row `from`, as `ListView` would if it had every row.
+    /// `false` if `ListView` should do it.
+    ///
+    /// `ListView` knows only the rows it has, and it takes those as the page because the
+    /// scrolling is outside it: Page Down goes straight to the last one even in a short
+    /// list. It also keeps the Shift anchor as a place among those rows. So the movements
+    /// that depend on either are done here, before it sees the key.
+    fn move_cursor(&self, from: usize, motion: RowMotion, modifiers: Modifiers) -> bool {
+        let height = self.0.row_height.get();
+        let count = self.len();
+        let extending = modifiers.shift && self.0.mode.get().is_multiple();
+        // 高さが行に従うリストは全行を持ち、スクロールするのは親なので、任せたままでよい。
+        if height <= 0.0 || count == 0 || !self.height_is_limited() {
+            return false;
+        }
+        let viewport = self.0.scroll.ViewportHeight().unwrap_or(0.0);
+        let view_top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
+        let window = self.0.window.get();
+        let (target, top) = match motion {
+            RowMotion::Pages(pages) => {
+                let distance = (viewport / height).floor().max(1.0) as usize;
+                let target = match pages < 0 {
+                    true => from.saturating_sub(distance),
+                    false => from.saturating_add(distance).min(count - 1),
+                };
+                (target, view_top + viewport * f64::from(pages))
+            }
+            RowMotion::Lines(lines) => (
+                from.saturating_add_signed(lines as isize).min(count - 1),
+                view_top,
+            ),
+            _ if !extending => return false,
+            RowMotion::FirstBuilt => (window.start, view_top),
+            RowMotion::LastBuilt => (window.end.saturating_sub(1), view_top),
+        };
+        let top = self.offset_showing(target, top, viewport);
+        // `ChangeView` はすぐには位置へ反映されないので、窓は移る先の位置から決める。
+        self.move_window(top);
+        // フォーカスも行を見せようとスクロールするので、先に位置を決めておく。
+        self.scroll_now(top);
+        // 移った行は見えている。フォーカスの自動スクロールは、行を入れ替えたあとだと
+        // メッセージが一巡してから別の位置へ動かすことがある。次に `ListView` へ任せる
+        // 操作が来るまで止めておく (`allow_focus_scrolling`)。
+        let _ = self.0.scroll.SetBringIntoViewOnFocusChange(false);
+        let Some(landed) = self.focus_nearest(target, from) else {
+            return true;
+        };
+        // 無効の行を飛ばすと、移った行が画面の外のことがある。
+        if landed != target {
+            self.scroll_now(self.offset_showing(landed, top, viewport));
+        }
+        let picked = match (extending, modifiers.control) {
+            (true, _) => {
+                let anchor = self.0.anchor.get().unwrap_or(from);
+                self.0.anchor.set(Some(anchor));
+                let range: Vec<usize> = (anchor.min(landed)..=anchor.max(landed)).collect();
+                self.normalize(&range)
+            }
+            // Ctrl + Space は足し引きする。
+            (false, true) if matches!(motion, RowMotion::Lines(0)) => {
+                self.0.anchor.set(Some(landed));
+                let mut picked = self.selection();
+                match picked.binary_search(&landed) {
+                    Ok(at) => {
+                        picked.remove(at);
+                    }
+                    Err(at) => picked.insert(at, landed),
+                }
+                self.normalize(&picked)
+            }
+            // Ctrl はフォーカスだけを動かす。
+            (false, true) => return true,
+            (false, false) => {
+                self.0.anchor.set(Some(landed));
+                self.normalize(&[landed])
+            }
+        };
+        if picked != self.selection() {
+            self.write_selection(&picked);
+            self.0.handler.emit(&picked);
+        }
+        true
+    }
+
+    /// Whether the app limited the height (`Fixed` or `Fill`), so the list scrolls itself.
+    fn height_is_limited(&self) -> bool {
+        crate::layout::height_is_limited(&self.native_element())
+    }
+
+    /// Lets a focus change scroll the list again, after [`List::move_cursor`] stopped it.
+    fn allow_focus_scrolling(&self) {
+        let _ = self.0.scroll.SetBringIntoViewOnFocusChange(true);
+    }
+
+    /// The scroll position nearest `top` that shows row `index`.
+    fn offset_showing(&self, index: usize, top: f64, viewport: f64) -> f64 {
+        let (row_top, row_bottom) = self.row_span(index);
+        if row_top < top {
+            row_top
+        } else if row_bottom > top + viewport {
+            row_bottom - viewport
+        } else {
+            top
+        }
+    }
+
+    /// Moves the scroll position, in place by the time this returns.
+    fn scroll_now(&self, offset: f64) {
+        let current = self.0.scroll.VerticalOffset().unwrap_or(offset);
+        if (offset - current).abs() >= 0.5 && self.change_view(offset).is_ok() {
+            let _ = self.0.scroll.UpdateLayout();
+        }
+    }
+
+    /// Focuses row `target`, or if it cannot take the focus (it is disabled), the nearest
+    /// row beyond it that can, or else on the way back to `from`. Returns that row.
+    fn focus_nearest(&self, target: usize, from: usize) -> Option<usize> {
+        let window = self.0.window.get();
+        let target = target.clamp(window.start, window.end.checked_sub(1)?);
+        let from = from.clamp(window.start, window.end - 1);
+        let rows = self.0.native_rows.borrow().clone();
+        let focus = |index: &usize| {
+            rows.get(index - window.start)
+                .and_then(|row| row.cast::<Control>().ok())
+                .is_some_and(|row| row.Focus(FocusState::Keyboard).unwrap_or(false))
+        };
+        match target >= from {
+            true => (target..window.end)
+                .find(focus)
+                .or_else(|| (from..target).rev().find(focus)),
+            false => (window.start..=target)
+                .rev()
+                .find(focus)
+                .or_else(|| (target + 1..=from).find(focus)),
+        }
     }
 
     /// The row holding the keyboard focus itself, and how it got it.
@@ -1107,12 +1337,17 @@ impl List {
 
     /// Computes the range of rows to build from the current scroll position.
     fn compute_window(&self, overscan: usize) -> RowWindow {
+        self.window_at(self.0.scroll.VerticalOffset().unwrap_or(0.0), overscan)
+    }
+
+    /// Computes the range of rows to build at a scroll position.
+    fn window_at(&self, offset: f64, overscan: usize) -> RowWindow {
         // 詰め物が窓の外の行と同じ高さを持つので、表示位置は
         // 「全行を入れたとき」と同じ座標になる。
         list_row_window(
             crate::layout::height_is_limited(&self.native_element()),
             self.len(),
-            self.0.scroll.VerticalOffset().unwrap_or(0.0),
+            offset,
             self.0.scroll.ViewportHeight().unwrap_or(0.0),
             self.0.row_height.get(),
             overscan,
@@ -1138,16 +1373,21 @@ impl List {
         if self.0.scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 && !self.is_empty() {
             return;
         }
+        self.move_window(self.0.scroll.VerticalOffset().unwrap_or(0.0));
+    }
+
+    /// Moves the built range for a scroll position, unless the rows built are enough.
+    fn move_window(&self, offset: f64) {
         let current = self.0.window.get();
-        let needed = self.compute_window(ROW_WINDOW_OVERSCAN / 2);
-        let next = self.compute_window(ROW_WINDOW_OVERSCAN);
+        let needed = self.window_at(offset, ROW_WINDOW_OVERSCAN / 2);
+        let next = self.window_at(offset, ROW_WINDOW_OVERSCAN);
         if next == current || keeps_row_window(current, needed, next) {
             return;
         }
         self.0.window.set(next);
         self.build_window_from(Some(current));
         if self.settle_row_height() {
-            self.update_window();
+            self.move_window(offset);
         }
     }
 
@@ -1239,19 +1479,38 @@ impl List {
             .map_err(|e| to_error("subscribe to row double clicks", e))?;
 
         let activate = self.0.row_activate.clone();
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let keyed = KeyEventHandler::new(move |sender, args| {
             let Some(args) = args.as_ref() else {
                 return Ok(());
             };
-            // 行の中の入力欄やボタンが受けた Enter は、そのコントロールのもの。
-            // 行そのものにフォーカスがあるときだけ起動にする。
+            // 行の中の入力欄やボタンが受けたキーは、そのコントロールのもの。
+            // 行そのものにフォーカスがあるときだけ行の操作にする。
             let on_row = match (args.OriginalSource(), sender.as_ref()) {
                 (Ok(source), Some(sender)) => &source == sender,
                 _ => false,
             };
+            let key = args.Key().unwrap_or(VirtualKey::None);
             let modifiers = crate::keys::modifiers();
+            let moved = state.try_with_mut(|weak| {
+                let Some(list) = weak.upgrade().map(List) else {
+                    return false;
+                };
+                let motion = RowMotion::of_key(key).filter(|_| on_row);
+                let moved = motion.is_some_and(|motion| {
+                    !modifiers.alt && !modifiers.meta && list.move_cursor(index, motion, modifiers)
+                });
+                if !moved {
+                    list.allow_focus_scrolling();
+                }
+                moved
+            });
+            if moved == Some(true) {
+                let _ = args.SetHandled(true);
+                return Ok(());
+            }
             let modified = modifiers.shift || modifiers.control || modifiers.alt || modifiers.meta;
-            if !on_row || args.Key().unwrap_or(VirtualKey::None) != VirtualKey::Enter || modified {
+            if !on_row || key != VirtualKey::Enter || modified {
                 return Ok(());
             }
             // 受け取り手がいないときは止めず、親のキー処理へ渡す。
@@ -1265,6 +1524,22 @@ impl List {
         native
             .KeyDown(&keyed)
             .map_err(|e| to_error("subscribe to row key presses", e))?;
+
+        // Shift クリックの先の行は `SelectionChanged` では分からない。押下は `ListViewItem`
+        // が止めるので、ポインターが乗った行を覚えておく。
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let entered = PointerEventHandler::new(move |_, _| {
+            let _ = state.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.pointer_row.set(Some(index));
+                    List(inner).allow_focus_scrolling();
+                }
+            });
+            Ok(())
+        });
+        native
+            .PointerEntered(&entered)
+            .map_err(|e| to_error("subscribe to row pointer events", e))?;
 
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let requested = TypedEventHandler::new(
@@ -1316,7 +1591,7 @@ impl List {
             ListViewSelectionMode::Single
         };
         let _ = self.without_notifying(|this| this.0.list_view.SetSelectionMode(native));
-        self.write_selection(&[]);
+        self.clear_selection();
     }
 
     pub fn selection_mode(&self) -> SelectionMode {
@@ -1360,7 +1635,8 @@ impl List {
         } else {
             return;
         };
-        let _ = self.change_view(target);
+        // 位置を先に動かさないと、窓が古い位置で決まる。
+        self.scroll_now(target);
         self.update_window();
     }
 
@@ -1375,11 +1651,13 @@ impl List {
     /// selection only the first remains ([`SelectionMode::normalize`]).
     pub fn set_selection(&self, indices: &[usize]) {
         let picked = self.normalize(indices);
+        self.0.anchor.set(picked.last().copied());
         self.write_selection(&picked);
     }
 
     /// Clears the whole selection without notifying.
     pub fn clear_selection(&self) {
+        self.0.anchor.set(None);
         self.write_selection(&[]);
     }
 
@@ -1493,7 +1771,56 @@ impl List {
             false => SelectionGesture::Plain,
         };
         let previous = self.0.selected.borrow().clone();
+        // Shift のキー操作は `move_cursor` が受けるので、ここへ来る Shift はクリック。
+        // `ListView` の範囲は持っている行の中で決まるので、覚えている起点から引き直す。
+        // 高さが行に従うリストはキーも `ListView` に任せていて、全行を持っているので
+        // 範囲はそのままで正しい。
+        if gesture == SelectionGesture::Extend && self.height_is_limited() {
+            let clicked = self
+                .0
+                .pointer_row
+                .get()
+                .filter(|row| picked.binary_search(row).is_ok())
+                .or_else(|| picked.last().copied());
+            if let Some((anchor, clicked)) = self.0.anchor.get().zip(clicked) {
+                let range: Vec<usize> = (anchor.min(clicked)..=anchor.max(clicked)).collect();
+                let picked = self.normalize(&range);
+                self.write_selection(&picked);
+                self.follow_with_focus(clicked);
+                return picked;
+            }
+        }
+        let cursor = match gesture {
+            // 足し引きした行だけが、前の選択と違う。
+            SelectionGesture::Toggle => window.indices().rfind(|index| {
+                previous.binary_search(index).is_ok() != picked.binary_search(index).is_ok()
+            }),
+            _ => picked.last().copied(),
+        };
+        if let Some(cursor) = cursor {
+            self.0.anchor.set(Some(cursor));
+            self.follow_with_focus(cursor);
+        }
         merge_hidden_selection(window, &previous, picked, gesture)
+    }
+
+    /// Moves the focus to the row the selection just changed on, if it is on another row.
+    ///
+    /// Once the window has moved, `ListView` can leave it where it was, and the next key
+    /// would then start from that row.
+    fn follow_with_focus(&self, index: usize) {
+        if self
+            .focused_row()
+            .is_none_or(|(focused, _)| focused == index)
+        {
+            return;
+        }
+        let row = index
+            .checked_sub(self.0.built_start.get())
+            .and_then(|offset| self.0.native_rows.borrow().get(offset).cloned());
+        if let Some(row) = row.and_then(|row| row.cast::<Control>().ok()) {
+            let _ = row.Focus(FocusState::Pointer);
+        }
     }
 
     /// Operates with notifications from WinUI stopped.

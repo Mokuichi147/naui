@@ -109,11 +109,10 @@ that shape are covered in
   - naui does not know whether rows it has not built yet can be chosen, so with
     `set_row_builder` they are assumed to be choosable by default (this can be passed
     with `set_row_selectable`).
-  - On Windows and Linux, keyboard movement goes through the native list, which knows
-    only the rows built: Home and End go to the first and last rows built, and the
-    arrow keys continue past them as the rows follow. On Windows, Page Up and Page Down
-    and a Shift range selection also cover only the rows built. macOS and the Web cover
-    every row, and on Linux so do those two.
+  - On Windows and Linux, Home and End go to the first and last rows built, with or
+    without Shift. The arrow keys continue past them as the rows follow, and Page Up,
+    Page Down and a Shift range selection cover every row. On macOS and the Web, Home
+    and End cover every row too.
   - A control inside a row loses the keyboard focus when its row leaves the range
     built, because the row is discarded. While the row stays in the range it is left
     as it is, so what the builder returned for it only changes with `refresh`.
