@@ -1805,12 +1805,14 @@ impl List {
         // 高さが行に従うリストはキーも `ListView` に任せていて、全行を持っているので
         // 範囲はそのままで正しい。
         if gesture == SelectionGesture::Extend && self.height_is_limited() {
-            let clicked = self
-                .0
-                .pointer_row
-                .get()
-                .filter(|row| picked.binary_search(row).is_ok())
-                .or_else(|| picked.last().copied());
+            // 押した行は `ListView` の範囲の端にある。覚えている行は、スクロールのあと
+            // ポインターを動かさずに押すと古いことがあるので、近いほうの端を選ぶ。
+            let clicked = picked.first().zip(picked.last()).map(|(&first, &last)| {
+                match self.0.pointer_row.get() {
+                    Some(row) if row.abs_diff(first) < row.abs_diff(last) => first,
+                    _ => last,
+                }
+            });
             if let Some((anchor, clicked)) = self.0.anchor.get().zip(clicked) {
                 let range: Vec<usize> = (anchor.min(clicked)..=anchor.max(clicked)).collect();
                 let picked = self.normalize(&range);

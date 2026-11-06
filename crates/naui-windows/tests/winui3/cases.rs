@@ -8333,6 +8333,15 @@ fn list_shift_range_keeps_its_anchor_outside_the_window(ui: &Ui) -> Result<()> {
             built_list_row(list, 7).is_none(),
             "ホイールで窓が動いている"
         );
+        // ホイールのスクロールは少しのあいだ続くので、止まってから押す行を決める。
+        let mut settled = scroll.VerticalOffset().expect("位置");
+        pump_until(Duration::from_secs(3), || {
+            pump_until(Duration::from_millis(300), || false);
+            let now = scroll.VerticalOffset().expect("位置");
+            let still = (now - settled).abs() < 0.5;
+            settled = now;
+            still
+        });
         let mut pointer = POINT::default();
         // SAFETY: `pointer` はこの関数の中で生きている。
         let _ = unsafe { GetCursorPos(&mut pointer) };
