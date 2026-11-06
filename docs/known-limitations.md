@@ -143,6 +143,8 @@ that shape are covered in
   - Columns with widgets in their cells, if no width is specified, are sized only
     by **the header's width and their share of the leftover space** (so columns do
     not move even when content widths differ per row).
+  - Assistive technology is told each row's position among all the rows and how many
+    there are, with the same limit on GTK versions as for `List`.
   - On the Web, when the number of rows × the row height exceeds the element height
     the browser can handle (about 33 million px in Chromium), the mapping between
     the scroll bar position and rows drifts (around 1 million rows for 30 px rows).

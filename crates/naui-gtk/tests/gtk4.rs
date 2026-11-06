@@ -733,6 +733,10 @@ fn main() {
             table_builds_only_the_visible_rows,
         ),
         (
+            "テーブルの行は全行の中の位置と全行数を支援技術へ伝える",
+            table_rows_report_their_place_among_all_rows,
+        ),
+        (
             "テーブルのセルにウィジェットを置ける",
             table_widget_cells_are_native,
         ),
@@ -6687,6 +6691,58 @@ fn table_builds_only_the_visible_rows(ui: &Ui) -> Result<()> {
     );
     let selected: Vec<i32> = list.selected_rows().iter().map(|row| row.index()).collect();
     assert_eq!(selected.len(), 1, "見えている行としても選ばれること");
+    window.close();
+    Ok(())
+}
+
+/// The `GtkListBox` has only the rows around the screen, so assistive technology is told
+/// each row's place among all the rows and how many there are.
+fn table_rows_report_their_place_among_all_rows(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    let rows: Vec<TableRow> = (0..ROWS)
+        .map(|index| TableRow::new([index.to_string()]))
+        .collect();
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["番号"]));
+    table.set_sizing(Sizing::fill());
+    let window = ui.window("表の行の位置", 400.0, 200.0)?;
+    window.set_child(&table);
+    window.show();
+    table.set_rows(&rows);
+    let list = table.native_list_box();
+    tick(&list);
+    // どの行も位置と全行数を伝えていることを確かめ、組み立てた先頭の番号を返す。
+    let check = |count: usize| {
+        let built = children(&list);
+        assert!(built.len() < 200, "絞られていること: {} 行", built.len());
+        let index_of = |row: &gtk::Widget| table_cells(row)[0].parse::<i32>().expect("番号");
+        for row in &built {
+            let index = index_of(row);
+            assert!(
+                number_relation_is(row, gtk::AccessibleRelation::PosInSet, index + 1),
+                "全行の中の位置であること: {index} 行目"
+            );
+            assert!(
+                number_relation_is(row, gtk::AccessibleRelation::SetSize, count as i32),
+                "組み立てた行の数ではなく全行数であること: {index} 行目"
+            );
+        }
+        index_of(&built[0])
+    };
+    assert_eq!(check(ROWS), 0, "最初は先頭から組み立てている");
+
+    // 送っても、窓の中の位置にならない。
+    scroller_of(&list)
+        .expect("GtkScrolledWindow")
+        .vadjustment()
+        .set_value(table.row_height() * 2_500.0);
+    tick(&list);
+    assert!(check(ROWS) > 0, "組み立てる範囲が付いてくること");
+
+    // 行数が変わったら、新しい全行数を伝える。
+    table.set_rows(&rows[..1_000]);
+    tick(&list);
+    check(1_000);
     window.close();
     Ok(())
 }

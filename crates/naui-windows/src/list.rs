@@ -226,6 +226,15 @@ const ROW_ITEM_XAML: &str = r##"<ListViewItem
     </ListViewItem.ContentTransitions>
 </ListViewItem>"##;
 
+/// Tells assistive technology a row's place among all the rows and how many there are.
+///
+/// The `ListView` has only the rows built, so it would answer with those alone.
+pub(crate) fn report_row_position(row: &ListViewItem, index: usize, count: usize) {
+    let _ =
+        AutomationProperties::SetPositionInSet(row, i32::try_from(index + 1).unwrap_or(i32::MAX));
+    let _ = AutomationProperties::SetSizeOfSet(row, i32::try_from(count).unwrap_or(i32::MAX));
+}
+
 /// Creates one row container. Falls back to a plain `ListViewItem` if the XAML cannot
 /// be read.
 pub(crate) fn new_row_item() -> Result<ListViewItem> {
@@ -962,16 +971,7 @@ impl List {
             // 選べないだけの行は中のコントロールを押せる必要があるので、
             // 無効にするのは `ListItem::enabled(false)` の行だけ。
             let _ = native.SetIsEnabled(!row.is_disabled_item());
-            // `ListView` が知っているのは組み立てた行だけなので、支援技術には
-            // 全行の中の位置と全行数をこちらから伝える。
-            let _ = AutomationProperties::SetPositionInSet(
-                &native,
-                i32::try_from(index + 1).unwrap_or(i32::MAX),
-            );
-            let _ = AutomationProperties::SetSizeOfSet(
-                &native,
-                i32::try_from(window.count).unwrap_or(i32::MAX),
-            );
+            report_row_position(&native, index, window.count);
             // 無効の行には入力が届かないので、起動も文脈メニューも出ない。
             self.listen_row_events(&native, index)?;
 

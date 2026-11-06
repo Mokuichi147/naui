@@ -462,6 +462,10 @@ const CASES: &[Case] = &[
         table_rows_follow_scrolling,
     ),
     (
+        "表の行は全行の中の位置と全行数を支援技術へ伝える",
+        table_rows_report_their_place_among_all_rows,
+    ),
+    (
         "編集できるコンボボックスの Enter で文字が残り、Esc で書いた値へ戻る",
         editable_combo_box_commits_and_reverts_text,
     ),
@@ -5336,6 +5340,80 @@ fn scroll_notifies_only_moves(ui: &Ui) -> Result<()> {
         settle();
         assert_eq!(*seen.borrow(), vec![55.0, 50.0]);
         assert_eq!(scroll.metrics().y, 50.0);
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// The `ListView` has only the rows around the screen, so assistive technology is told
+/// each row's place among all the rows and how many there are.
+fn table_rows_report_their_place_among_all_rows(ui: &Ui) -> Result<()> {
+    use naui_core::TableColumn;
+    use naui_windows::TableCells;
+    use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+
+    let window = ui.window("表の行の位置", 240.0, 160.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[TableColumn::new("名前")]);
+    table.set_sizing(Sizing::fill());
+    // 組み立てた順の番号。末尾の行数分が、いま `ListView` にある行。
+    let built: Rc<RefCell<Vec<usize>>> = Rc::default();
+    let fill = |count: usize| {
+        let built = built.clone();
+        table.set_row_builder(count, move |index| {
+            built.borrow_mut().push(index);
+            Ok(TableCells::default())
+        });
+    };
+    // どの行も位置と全行数を伝えていることを確かめ、行の数と組み立てた先頭の番号を返す。
+    let check = |count: usize| {
+        let items = table.native_list_view().Items().expect("行");
+        let size = items.Size().expect("行の数") as usize;
+        let built = built.borrow();
+        let current = &built[built.len() - size..];
+        for (slot, &index) in current.iter().enumerate() {
+            let row = items
+                .GetAt(slot as u32)
+                .and_then(|item| item.cast::<ListViewItem>())
+                .expect("行");
+            assert_eq!(
+                AutomationProperties::GetPositionInSet(&row).expect("位置"),
+                index as i32 + 1,
+                "全行の中の位置であること"
+            );
+            assert_eq!(
+                AutomationProperties::GetSizeOfSet(&row).expect("全行数"),
+                count as i32,
+                "組み立てた行の数ではなく全行数であること"
+            );
+        }
+        (size, current[0])
+    };
+    fill(1000);
+    window.set_child(&table);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || check(1000).0 < 200);
+        let (size, first) = check(1000);
+        if size >= 200 {
+            println!("     (表に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        assert_eq!(first, 0, "最初は先頭から組み立てている");
+
+        // 送っても、窓の中の位置にならない。
+        table.scroll_to_row(800);
+        pump_until(Duration::from_secs(2), || check(1000).1 > 0);
+        let (size, first) = check(1000);
+        assert!(first > 0, "組み立てる範囲が付いてくること");
+        assert!(size < 200, "絞られていること: {size} 行");
+
+        // 行数が変わったら、新しい全行数を伝える。
+        fill(500);
+        check(500);
     }));
     window.close();
     if let Err(panic) = outcome {

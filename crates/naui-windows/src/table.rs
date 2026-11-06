@@ -44,8 +44,8 @@ use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
 use crate::list::{
-    hold_unselectable_press, item_padding, new_row_item, text_block, transparent_grid,
-    ActivationHandler, SelectionHandler,
+    hold_unselectable_press, item_padding, new_row_item, report_row_position, text_block,
+    transparent_grid, ActivationHandler, SelectionHandler,
 };
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
@@ -1411,6 +1411,7 @@ impl Table {
                 .map_err(|e| to_error("set the row content", e))?;
             // 文字だけの行で `enabled` が `false` のときは、行ごと操作できない。
             let _ = item.SetIsEnabled(!cells.dimmed);
+            report_row_position(&item, index, window.count);
             self.attach_row_click(&item, index)?;
 
             let element = item

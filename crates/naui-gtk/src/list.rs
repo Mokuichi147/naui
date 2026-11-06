@@ -616,16 +616,7 @@ impl List {
                 if let Some(height) = fixed_height {
                     native.set_size_request(-1, height);
                 }
-                // `GtkListBox` が持つのは組み立てた行だけなので、支援技術には
-                // 全行の中の位置と全行数をこちらから伝える。
-                native.update_relation(&[
-                    gtk::accessible::Relation::PosInSet(
-                        i32::try_from(index + 1).unwrap_or(i32::MAX),
-                    ),
-                    gtk::accessible::Relation::SetSize(
-                        i32::try_from(window.count).unwrap_or(i32::MAX),
-                    ),
-                ]);
+                report_row_position(&native, index, window.count);
                 self.0.native.append(&native);
                 realized.push(row);
             }
@@ -936,6 +927,16 @@ pub(crate) fn apply_caption(label: &gtk::Label) {
 }
 
 /// Builds one row. Both `ListItem`s and custom content go through the same path.
+/// Tells assistive technology a row's place among all the rows and how many there are.
+///
+/// The `GtkListBox` has only the rows built, so it would answer with those alone.
+pub(crate) fn report_row_position(row: &gtk::ListBoxRow, index: usize, count: usize) {
+    row.update_relation(&[
+        gtk::accessible::Relation::PosInSet(i32::try_from(index + 1).unwrap_or(i32::MAX)),
+        gtk::accessible::Relation::SetSize(i32::try_from(count).unwrap_or(i32::MAX)),
+    ]);
+}
+
 fn build_row(item: &ListRow, list: Weak<ListInner>) -> gtk::ListBoxRow {
     let content: SizeBin = match &item.content {
         ListRowContent::Item(item) => item_content(&item.label, item.detail.as_deref()).size_bin(),

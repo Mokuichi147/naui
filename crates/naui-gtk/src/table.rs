@@ -876,6 +876,7 @@ impl Table {
                 if let Some(height) = fixed_height {
                     row.set_size_request(-1, height);
                 }
+                crate::list::report_row_position(&row, index, window.count);
                 self.0.list.append(&row);
                 realized.push(cells);
             }
