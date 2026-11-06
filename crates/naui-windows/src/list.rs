@@ -19,11 +19,11 @@
 //! selection is held here, because `ListView` knows only the rows it has. That
 //! `ScrollViewer` is registered with the window-wide wheel helper ([`crate::layout`]).
 //!
-//! For the same reason, in a list that scrolls itself the arrow keys, Page Up and Page
-//! Down, and anything with Shift are handled here: `ListView` takes all its rows as the
-//! page, and it keeps its keyboard position and the Shift anchor as places among the rows
-//! it has, which mean other rows once the window moves. The rest, such as clicks and Home
-//! and End, are left to it, as is everything in a list whose height follows its rows.
+//! For the same reason, in a list that scrolls itself the movement keys and anything with
+//! Shift are handled here: `ListView` takes all its rows as the page, and it keeps its
+//! keyboard position and the Shift anchor as places among the rows it has, which mean other
+//! rows once the window moves. Clicks are left to it, as is everything in a list whose
+//! height follows its rows.
 //!
 //! Row activation is received through the `ListViewItem`'s `DoubleTapped` and
 //! Enter's `KeyDown`. Right-clicks are received through `ContextRequested`, the
@@ -508,11 +508,11 @@ impl SelectionHandler {
 enum RowMotion {
     /// Page Up and Page Down.
     Pages(i32),
-    /// Shift with the up and down arrows, or Space to stay on the row.
+    /// The up and down arrows, or Space to stay on the row.
     Lines(i32),
-    /// Shift + Home. Like Home, it goes as far as the rows built.
+    /// Home. It goes as far as the rows built.
     FirstBuilt,
-    /// Shift + End. Like End, it goes as far as the rows built.
+    /// End. It goes as far as the rows built.
     LastBuilt,
 }
 
@@ -703,24 +703,6 @@ impl List {
             .map_err(|e| to_error("subscribe to the ListView", e))?;
         this.install_wheel_target()?;
         this.install_window_updates()?;
-
-        // 行どうしの移動ではなくリストの外へ出たら、戻ってくるときに見せられるように。
-        let state = UiThreadCell::new(Rc::downgrade(&this.0));
-        let lost = RoutedEventHandler::new(move |_, _| {
-            let _ = state.try_with_mut(|weak| {
-                let Some(list) = weak.upgrade().map(List) else {
-                    return;
-                };
-                if list.focused_row().is_none() {
-                    list.allow_focus_scrolling();
-                }
-            });
-            Ok(())
-        });
-        this.0
-            .list_view
-            .LostFocus(&lost)
-            .map_err(|e| to_error("subscribe to List focus changes", e))?;
 
         // `layout` のホイール補助は、子要素の上でも `ScrollViewer` を動かせる
         // ように、ウィンドウ全体のホイールを先に処理する。List の上では
@@ -1198,19 +1180,13 @@ impl List {
                 from.saturating_add_signed(lines as isize).min(count - 1),
                 view_top,
             ),
-            _ if !extending => return false,
             RowMotion::FirstBuilt => (window.start, view_top),
             RowMotion::LastBuilt => (window.end.saturating_sub(1), view_top),
         };
         let top = self.offset_showing(target, top, viewport);
         // `ChangeView` はすぐには位置へ反映されないので、窓は移る先の位置から決める。
         self.move_window(top);
-        // フォーカスも行を見せようとスクロールするので、先に位置を決めておく。
         self.scroll_now(top);
-        // 移った行は見えている。フォーカスの自動スクロールは、行を入れ替えたあとだと
-        // メッセージが一巡してから別の位置へ動かすことがある。次に `ListView` へ任せる
-        // 操作が来るまで止めておく (`allow_focus_scrolling`)。
-        let _ = self.0.scroll.SetBringIntoViewOnFocusChange(false);
         let Some(landed) = self.focus_nearest(target, from) else {
             return true;
         };
@@ -1254,11 +1230,6 @@ impl List {
     /// Whether the app limited the height (`Fixed` or `Fill`), so the list scrolls itself.
     fn height_is_limited(&self) -> bool {
         crate::layout::height_is_limited(&self.native_element())
-    }
-
-    /// Lets a focus change scroll the list again, after [`List::move_cursor`] stopped it.
-    fn allow_focus_scrolling(&self) {
-        let _ = self.0.scroll.SetBringIntoViewOnFocusChange(true);
     }
 
     /// The scroll position nearest `top` that shows row `index`.
@@ -1375,6 +1346,14 @@ impl List {
         if self.0.rebuilding.get() {
             return;
         }
+        // 自分でスクロールするリストでは、フォーカスの自動スクロールを止める。フォーカスの
+        // 行が窓から外れると XAML が画面の外の行へフォーカスを移し、遅れてそこへ飛ぶので、
+        // 押下と解放の間だとクリックまで失われる。キーで移るときの位置は `move_cursor` が
+        // 決める。高さが行に従うリストをスクロールするのは親なので、そのまま任せる。
+        let _ = self
+            .0
+            .scroll
+            .SetBringIntoViewOnFocusChange(!self.height_is_limited());
         // 行の追加直後は ActualHeight が 0 のことがある。レイアウトのあとで測り、
         // 全行分のスクロール領域を確保する。
         if self.0.row_height_pending.get() {
@@ -1503,21 +1482,19 @@ impl List {
             };
             let key = args.Key().unwrap_or(VirtualKey::None);
             let modifiers = crate::keys::modifiers();
-            let moved = state.try_with_mut(|weak| {
-                let Some(list) = weak.upgrade().map(List) else {
-                    return false;
-                };
-                let motion = RowMotion::of_key(key).filter(|_| on_row);
-                let moved = motion.is_some_and(|motion| {
-                    !modifiers.alt && !modifiers.meta && list.move_cursor(index, motion, modifiers)
-                });
-                if !moved {
-                    list.allow_focus_scrolling();
+            if let Some(motion) = RowMotion::of_key(key).filter(|_| on_row) {
+                let moved = !modifiers.alt
+                    && !modifiers.meta
+                    && state
+                        .try_with_mut(|weak| {
+                            weak.upgrade().is_some_and(|inner| {
+                                List(inner).move_cursor(index, motion, modifiers)
+                            })
+                        })
+                        .unwrap_or(false);
+                if moved {
+                    let _ = args.SetHandled(true);
                 }
-                moved
-            });
-            if moved == Some(true) {
-                let _ = args.SetHandled(true);
                 return Ok(());
             }
             let modified = modifiers.shift || modifiers.control || modifiers.alt || modifiers.meta;
@@ -1543,7 +1520,6 @@ impl List {
             let _ = state.try_with_mut(|weak| {
                 if let Some(inner) = weak.upgrade() {
                     inner.pointer_row.set(Some(index));
-                    List(inner).allow_focus_scrolling();
                 }
             });
             Ok(())

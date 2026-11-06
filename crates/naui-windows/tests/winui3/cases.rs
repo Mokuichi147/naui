@@ -7758,7 +7758,9 @@ fn foreground_is_ours() -> bool {
 /// Brings the window to the front for real input. `None` if it does not get there, and
 /// the case then passes without checking.
 fn bring_to_front(window: &naui_windows::Window) -> Option<windows::Win32::Foundation::HWND> {
-    use windows::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SetForegroundWindow, SetWindowPos, HWND_TOPMOST, SWP_NOMOVE, SWP_NOSIZE,
+    };
 
     let native = window
         .native_window()
@@ -7768,6 +7770,19 @@ fn bring_to_front(window: &naui_windows::Window) -> Option<windows::Win32::Found
     let hwnd = unsafe { native.WindowHandle() }.expect("HWND");
     // SAFETY: 上の HWND を渡すだけ。前面に出せなければ下で分かる。
     let _ = unsafe { SetForegroundWindow(hwnd) };
+    // ほかのウィンドウが重なると、押す位置が他へ渡ってしまう。
+    // SAFETY: 上の HWND を渡すだけ。ウィンドウごとテストの最後に閉じる。
+    let _ = unsafe {
+        SetWindowPos(
+            hwnd,
+            Some(HWND_TOPMOST),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE,
+        )
+    };
     pump_until(Duration::from_millis(300), || false);
     if !foreground_is_ours() {
         println!("     (テストのウィンドウを前面に出せないので、入力を送らずに通す)");
@@ -7989,12 +8004,20 @@ fn click_list_row_expecting(
     expected: &[usize],
     what: &str,
 ) -> Option<()> {
+    let scroll = list_scroller(list);
+    let before = scroll.VerticalOffset().expect("位置");
     for attempt in 0..3 {
         if attempt > 0 {
             println!("     ({what}: クリックが反映されないので、もう一度押す)");
         }
         click_list_row(hwnd, list, index, modifiers)?;
         pump_until(Duration::from_secs(1), || list.selection() == expected);
+        // フォーカスの自動スクロールで飛ぶと、押下と解放の間ならクリックごと失われる。
+        let now = scroll.VerticalOffset().expect("位置");
+        assert!(
+            (now - before).abs() < 1.0,
+            "{what}: クリックで表示が動かないこと: {before} → {now}"
+        );
         if list.selection() == expected {
             return Some(());
         }
@@ -8051,7 +8074,7 @@ fn with_shown_list_for_input(
 /// `ListView` scrolls nothing itself, so it would take all the rows it has as the page.
 fn list_page_keys_move_by_a_page(ui: &Ui) -> Result<()> {
     use windows::Win32::UI::Input::KeyboardAndMouse::{
-        VK_CONTROL, VK_DOWN, VK_NEXT, VK_PRIOR, VK_SHIFT,
+        VK_CONTROL, VK_DOWN, VK_END, VK_HOME, VK_NEXT, VK_PRIOR, VK_SHIFT,
     };
 
     for rows in [1_000, 100] {
@@ -8130,6 +8153,17 @@ fn list_page_keys_move_by_a_page(ui: &Ui) -> Result<()> {
             click_list_row_expecting(hwnd, list, 1, &[], &[1], &what)?;
             press_nav_key(&[], VK_PRIOR)?;
             assert_eq!(list.selection(), [0], "{rows} 行: 最初の行で止まる");
+
+            // End は組み立てた行の端まで動き、移った行を見せる。
+            press_nav_key(&[], VK_END)?;
+            let last = focused_list_row(list).expect("フォーカスの行");
+            assert!(last > 0, "{rows} 行: End で動く");
+            assert_eq!(list.selection(), [last], "{rows} 行: End の選択");
+            assert!(on_screen(last), "{rows} 行: {last} 行目が見えていること");
+            press_nav_key(&[], VK_HOME)?;
+            let first = focused_list_row(list).expect("フォーカスの行");
+            assert_eq!(list.selection(), [first], "{rows} 行: Home の選択");
+            assert!(on_screen(first), "{rows} 行: {first} 行目が見えていること");
             Some(())
         })?;
     }
