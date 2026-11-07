@@ -207,6 +207,14 @@ const CASES: &[Case] = &[
         table_keys_pass_over_rows_that_cannot_be_selected,
     ),
     (
+        "リストのビルダーだけが知る長い選べない行もキーで越える",
+        list_keys_pass_over_long_runs_only_the_builder_knows,
+    ),
+    (
+        "表のビルダーだけが知る長い選べない行もキーで越える",
+        table_keys_pass_over_long_runs_only_the_builder_knows,
+    ),
+    (
         "表のフォーカスが画面の外にあっても表示が動かない",
         table_view_stays_when_the_focus_is_off_screen,
     ),
@@ -8081,15 +8089,22 @@ fn aim_at_list_row(
     });
     let scroll = list.scroller();
     let middle = (row.ActualHeight().expect("行の高さ") / 2.0) as f32;
-    let at = row
-        .TransformToVisual(None)
-        .and_then(|to| to.TransformPoint(XamlPoint { X: 40.0, Y: middle }))
-        .expect("行の位置");
+    let row_at = || {
+        row.TransformToVisual(None)
+            .and_then(|to| to.TransformPoint(XamlPoint { X: 40.0, Y: middle }))
+            .expect("行の位置")
+    };
     let view = scroll
         .TransformToVisual(None)
         .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
         .expect("表示領域の位置");
     let viewport = scroll.ViewportHeight().expect("表示領域の高さ") as f32;
+    // 直前のケースでキーが行を動かしていると、行の位置はスクロールに遅れて付いてくる。
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+        let at = row_at();
+        at.Y > view.Y && at.Y < view.Y + viewport
+    });
+    let at = row_at();
     assert!(
         at.Y > view.Y && at.Y < view.Y + viewport,
         "見えている行だけを押す: {index} 行目は {} (表示領域 {}〜{})",
@@ -8687,7 +8702,10 @@ fn table_view_stays_when_the_focus_is_off_screen(ui: &Ui) -> Result<()> {
         }
         hold_and_release(first_in_view(), "画面の外にフォーカスがあるとき")?;
 
-        // ホイールでフォーカスの行を窓の外へ出す。
+        // ホイールでフォーカスの行を窓の外へ出す。端に着かないよう、先の行を残して始める。
+        table.scroll_to_row(300);
+        pump_until(Duration::from_millis(500), || false);
+        hold_and_release(first_in_view(), "ホイールの前")?;
         for round in 0..2 {
             let what = format!("ホイール {round} 回目");
             let left = table.selection()[0];
@@ -9097,6 +9115,94 @@ fn table_keys_pass_over_rows_that_cannot_be_selected(ui: &Ui) -> Result<()> {
     run_shown_for_input(&window, &table, keys_over_unselectable_rows_scenario)
 }
 
+/// Whether a row of [`keys_over_long_unknown_runs_scenario`] can be selected. The runs are
+/// longer than the rows built, and nothing says so before they are built.
+fn is_selectable_in_long_runs(index: usize) -> bool {
+    !(20..=300).contains(&index) && !(350..=480).contains(&index) && index < 900
+}
+
+/// Without `set_row_selectable`, a row is known not to be selectable only once built. A run
+/// of those longer than the rows built is still passed over, in one key press.
+fn list_keys_pass_over_long_runs_only_the_builder_knows(ui: &Ui) -> Result<()> {
+    use naui_windows::ListRow;
+
+    let window = ui.window("長く続く選べない行", 300.0, 240.0)?;
+    let list = ui.list()?;
+    {
+        let ui = ui.clone();
+        list.set_row_builder(1_000, move |index| {
+            Ok(ListRow::new(&ui.label(&format!("行 {index}"))?)
+                .selectable(is_selectable_in_long_runs(index)))
+        });
+    }
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+    run_shown_for_input(&window, &list, keys_over_long_unknown_runs_scenario)
+}
+
+/// [`list_keys_pass_over_long_runs_only_the_builder_knows`] on a `Table`.
+fn table_keys_pass_over_long_runs_only_the_builder_knows(ui: &Ui) -> Result<()> {
+    use naui_windows::TableCells;
+
+    let window = ui.window("表の長く続く選べない行", 300.0, 240.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[naui_core::TableColumn::new("名前")]);
+    table.set_row_builder(1_000, |index| {
+        Ok(TableCells::new()
+            .text(format!("行 {index}"))
+            .selectable(is_selectable_in_long_runs(index)))
+    });
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
+    run_shown_for_input(&window, &table, keys_over_long_unknown_runs_scenario)
+}
+
+fn keys_over_long_unknown_runs_scenario(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+) -> Option<()> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_DOWN, VK_END, VK_UP};
+
+    let scroll = list.scroller();
+    let height = list.row_height();
+    let on_screen = |index: usize| {
+        let top = scroll.VerticalOffset().expect("位置");
+        let bottom = top + scroll.ViewportHeight().expect("高さ");
+        index as f64 * height >= top - 1.0 && (index + 1) as f64 * height <= bottom + 1.0
+    };
+    let check = |expected: usize, what: &str| {
+        assert_eq!(list.selection(), [expected], "{what}: 選択");
+        assert_eq!(focused_list_row(list), Some(expected), "{what}: フォーカス");
+        assert!(
+            on_screen(expected),
+            "{what}: {expected} 行目が見えていること"
+        );
+    };
+
+    // 先へ: 組み立てた行の端を越えて続く。
+    list.scroll_to_row(19);
+    pump_until(Duration::from_millis(500), || false);
+    click_list_row_expecting(hwnd, list, 19, &[], &[19], "長い行の手前")?;
+    press_nav_key(&[], VK_DOWN)?;
+    check(301, "↓ で先の選べる行へ");
+    press_nav_key(&[], VK_UP)?;
+    check(19, "↑ で手前の選べる行へ");
+
+    // 手前へ: まだ組み立てていない行を越える。
+    list.scroll_to_row(481);
+    pump_until(Duration::from_millis(500), || false);
+    click_list_row_expecting(hwnd, list, 481, &[], &[481], "手前へ越える行")?;
+    press_nav_key(&[], VK_UP)?;
+    check(349, "↑ で手前の選べる行へ (未構築)");
+
+    // 最後まで選べない行が続くときは、その手前で止まる。
+    press_nav_key(&[], VK_END)?;
+    check(899, "End は選べる最後の行へ");
+    press_nav_key(&[], VK_DOWN)?;
+    check(899, "その先に選べる行が無ければ動かない");
+    Some(())
+}
+
 fn keys_over_unselectable_rows_scenario(
     hwnd: windows::Win32::Foundation::HWND,
     list: &impl RowsForInput,
@@ -9233,7 +9339,8 @@ fn tab_focus_scenario(ui: &Ui, list: &(impl RowsForInput + Widget)) -> Result<()
             native::<Control>(&button).FocusState() != Ok(FocusState::Unfocused)
         });
         press_nav_key(&[], VK_TAB)?;
-        pump_until(Duration::from_secs(1), || {
+        // 直前のケースでキーが行を動かしていると、`GotFocus` も遅れて届く。
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
             focused_list_row(list).is_some_and(on_screen)
         });
         let Some(focused) = focused_list_row(list) else {
