@@ -19,8 +19,8 @@ use crate::automation;
 use naui_winui3::Microsoft::UI::Windowing::TitleBarTheme;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Border, Button as XamlButton, Canvas as XamlCanvas, CheckBox as XamlCheckBox,
-    ComboBox as XamlComboBox, Grid, Image as XamlImage, ListViewItem, MenuFlyoutItem, ProgressRing,
-    ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock, TextBox, ToggleSwitch,
+    ComboBox as XamlComboBox, Grid, Image as XamlImage, ListView, ListViewItem, MenuFlyoutItem,
+    ProgressRing, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock, TextBox, ToggleSwitch,
 };
 use naui_winui3::Microsoft::UI::Xaml::Documents::{Hyperlink, Inline, Run};
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::{BitmapImage, SvgImageSource};
@@ -189,6 +189,54 @@ const CASES: &[Case] = &[
     (
         "Shift の範囲選択は窓の外へ出た起点から伸びる",
         list_shift_range_keeps_its_anchor_outside_the_window,
+    ),
+    (
+        "表の組み立ての途中で失敗しても、残った行を管理し続ける",
+        table_keeps_the_rows_a_failed_build_left,
+    ),
+    (
+        "Page Up / Down は表を 1 ページずつ動かす",
+        table_page_keys_move_by_a_page,
+    ),
+    (
+        "表の Shift の範囲選択は窓の外へ出た起点から伸びる",
+        table_shift_range_keeps_its_anchor_outside_the_window,
+    ),
+    (
+        "選択を動かすキーは表の選べない行を飛ばし、Ctrl は止まれる",
+        table_keys_pass_over_rows_that_cannot_be_selected,
+    ),
+    (
+        "表のフォーカスが画面の外にあっても表示が動かない",
+        table_view_stays_when_the_focus_is_off_screen,
+    ),
+    (
+        "表へ Tab で入ると画面の中の行へフォーカスが付く",
+        table_tab_focuses_a_row_on_screen,
+    ),
+    (
+        "表の行を組み立てる関数の中の refresh は組み立てをやり直す",
+        table_refresh_inside_the_builder_starts_over,
+    ),
+    (
+        "表の矢印キーは組み立てた行の端を越える",
+        table_arrow_keys_go_past_the_rows_built,
+    ),
+    (
+        "表のキーは自分でスクロールするかどうかで決まる",
+        table_keys_depend_on_whether_it_scrolls,
+    ),
+    (
+        "表の単一選択は修飾キーがあっても 1 行",
+        table_single_selection_stays_one_row,
+    ),
+    (
+        "表の窓を動かしても残る行は組み立て直さない",
+        table_keeps_rows_that_stay_in_the_window,
+    ),
+    (
+        "表の行を組み立てる関数の中で行を差し替えられる",
+        table_builder_can_replace_the_rows,
     ),
     (
         "行の多いリストで指定より高い行があっても窓の位置がずれない",
@@ -799,8 +847,9 @@ const ASYNC_CASES: &[AsyncCase] = &[
 ];
 
 /// If it enters `Application::Start` and never returns, CI stays stuck until it gives
-/// up. After allowing time for every case, it always ends.
-const WATCHDOG: Duration = Duration::from_secs(180);
+/// up. After allowing time for every case, it always ends. The cases sending real input
+/// wait for it to arrive, and together take a few minutes.
+const WATCHDOG: Duration = Duration::from_secs(420);
 
 pub(crate) fn run() {
     std::thread::spawn(|| {
@@ -5203,7 +5252,11 @@ fn show_and_measure(window: &naui_windows::Window, scroll: &naui_windows::Scroll
 }
 
 /// The maximum time to wait for the scroll view to get an actual size.
-const SCROLL_LAYOUT_TIMEOUT: Duration = Duration::from_secs(3);
+///
+/// It is long because a window opened right after keys moved through the rows of a
+/// `ListView` is laid out late, by seconds (see `docs/known-limitations.md`). A case that
+/// gives up waiting passes without checking anything.
+const SCROLL_LAYOUT_TIMEOUT: Duration = Duration::from_secs(20);
 
 fn scroll_measures_and_moves(ui: &Ui) -> Result<()> {
     let (window, scroll, _pane) = tall_scroll(ui, 40)?;
@@ -5392,37 +5445,31 @@ fn table_rows_report_their_place_among_all_rows(ui: &Ui) -> Result<()> {
     table.set_columns(&[TableColumn::new("名前")]);
     table.set_sizing(Sizing::fill());
     // 組み立てた順の番号。末尾の行数分が、いま `ListView` にある行。
-    let built: Rc<RefCell<Vec<usize>>> = Rc::default();
     let fill = |count: usize| {
-        let built = built.clone();
-        table.set_row_builder(count, move |index| {
-            built.borrow_mut().push(index);
-            Ok(TableCells::default())
-        });
+        table.set_row_builder(count, |_| Ok(TableCells::default()));
     };
     // どの行も位置と全行数を伝えていることを確かめ、行の数と組み立てた先頭の番号を返す。
     let check = |count: usize| {
         let items = table.native_list_view().Items().expect("行");
         let size = items.Size().expect("行の数") as usize;
-        let built = built.borrow();
-        let current = &built[built.len() - size..];
-        for (slot, &index) in current.iter().enumerate() {
+        let mut first = 0;
+        for slot in 0..size {
             let row = items
                 .GetAt(slot as u32)
                 .and_then(|item| item.cast::<ListViewItem>())
                 .expect("行");
-            assert_eq!(
-                AutomationProperties::GetPositionInSet(&row).expect("位置"),
-                index as i32 + 1,
-                "全行の中の位置であること"
-            );
+            let position = AutomationProperties::GetPositionInSet(&row).expect("位置") as usize;
+            if slot == 0 {
+                first = position - 1;
+            }
+            assert_eq!(position, first + slot + 1, "全行の中の位置であること");
             assert_eq!(
                 AutomationProperties::GetSizeOfSet(&row).expect("全行数"),
                 count as i32,
                 "組み立てた行の数ではなく全行数であること"
             );
         }
-        (size, current[0])
+        (size, first)
     };
     fill(1000);
     window.set_child(&table);
@@ -5471,10 +5518,7 @@ fn table_rows_follow_scrolling(ui: &Ui) -> Result<()> {
     window.set_child(&table);
     let outcome = catch_unwind(AssertUnwindSafe(|| {
         window.show();
-        let children = native::<Grid>(&table).Children().expect("表の子");
-        let scroll = (0..children.Size().expect("表の子の数"))
-            .find_map(|i| children.GetAt(i).ok()?.cast::<ScrollViewer>().ok())
-            .expect("表の ScrollViewer");
+        let scroll = table_scroller(&table);
         pump_until(SCROLL_LAYOUT_TIMEOUT, || {
             scroll.ViewportHeight().unwrap_or(0.0) > 0.0
         });
@@ -6066,6 +6110,14 @@ fn list_scroller(list: &naui_windows::List) -> ScrollViewer {
         .Child()
         .and_then(|child| child.cast::<ScrollViewer>())
         .expect("リストの ScrollViewer")
+}
+
+/// The `ScrollViewer` of a table.
+fn table_scroller(table: &naui_windows::Table) -> ScrollViewer {
+    let children = native::<Grid>(table).Children().expect("表の子");
+    (0..children.Size().expect("表の子の数"))
+        .find_map(|i| children.GetAt(i).ok()?.cast::<ScrollViewer>().ok())
+        .expect("表の ScrollViewer")
 }
 
 fn list_rows_follow_scrolling(ui: &Ui) -> Result<()> {
@@ -7643,6 +7695,10 @@ fn editable_combo_box_commits_and_reverts_text(ui: &Ui) -> Result<()> {
             println!("     (テンプレートの入力欄が無い環境なので、確かめずに通す)");
             return;
         };
+        // 前のケースのウィンドウが閉じると、前面はほかのアプリへ移っている。
+        if bring_to_front(&window).is_none() {
+            return;
+        }
         if !text_box.Focus(FocusState::Programmatic).unwrap_or(false) {
             println!("     (入力欄へフォーカスを移せない環境なので、確かめずに通す)");
             return;
@@ -7915,11 +7971,53 @@ fn press_ctrl_a() -> Option<()> {
     Some(())
 }
 
+/// What the real-input cases use, which a `List` and a `Table` both have: they are built
+/// the same way, so the same scenario has to hold on both.
+trait RowsForInput {
+    fn list_view(&self) -> ListView;
+    fn scroller(&self) -> ScrollViewer;
+    fn row_height(&self) -> f64;
+    fn selection(&self) -> Vec<usize>;
+    fn set_selection(&self, indices: &[usize]);
+    fn scroll_to_row(&self, index: usize);
+    fn on_select(&self, f: impl FnMut(&[usize]) + 'static);
+}
+
+macro_rules! rows_for_input {
+    ($widget:ty, $scroller:path) => {
+        impl RowsForInput for $widget {
+            fn list_view(&self) -> ListView {
+                self.native_list_view()
+            }
+            fn scroller(&self) -> ScrollViewer {
+                $scroller(self)
+            }
+            fn row_height(&self) -> f64 {
+                self.row_height()
+            }
+            fn selection(&self) -> Vec<usize> {
+                self.selection()
+            }
+            fn set_selection(&self, indices: &[usize]) {
+                self.set_selection(indices)
+            }
+            fn scroll_to_row(&self, index: usize) {
+                self.scroll_to_row(index)
+            }
+            fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
+                self.on_select(f)
+            }
+        }
+    };
+}
+rows_for_input!(naui_windows::List, list_scroller);
+rows_for_input!(naui_windows::Table, table_scroller);
+
 /// The built `ListViewItem` of a row of the whole list.
-fn built_list_row(list: &naui_windows::List, index: usize) -> Option<ListViewItem> {
+fn built_list_row(list: &impl RowsForInput, index: usize) -> Option<ListViewItem> {
     use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
 
-    let items = list.native_list_view().Items().ok()?;
+    let items = list.list_view().Items().ok()?;
     (0..items.Size().ok()?).find_map(|slot| {
         let row = items.GetAt(slot).ok()?.cast::<ListViewItem>().ok()?;
         (AutomationProperties::GetPositionInSet(&row).ok()? == index as i32 + 1).then_some(row)
@@ -7927,12 +8025,12 @@ fn built_list_row(list: &naui_windows::List, index: usize) -> Option<ListViewIte
 }
 
 /// Which row of the whole list has the keyboard focus.
-fn focused_list_row(list: &naui_windows::List) -> Option<usize> {
+fn focused_list_row(list: &impl RowsForInput) -> Option<usize> {
     use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
     use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
     use naui_winui3::Microsoft::UI::Xaml::FocusState;
 
-    let items = list.native_list_view().Items().ok()?;
+    let items = list.list_view().Items().ok()?;
     (0..items.Size().ok()?).find_map(|slot| {
         let row = items.GetAt(slot).ok()?.cast::<ListViewItem>().ok()?;
         let state = row.cast::<Control>().ok()?.FocusState().ok()?;
@@ -7946,25 +8044,42 @@ fn focused_list_row(list: &naui_windows::List) -> Option<usize> {
 /// on the screen.
 fn click_list_row(
     hwnd: windows::Win32::Foundation::HWND,
-    list: &naui_windows::List,
+    list: &impl RowsForInput,
     index: usize,
     modifiers: &[windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY],
+) -> Option<()> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP};
+
+    aim_at_list_row(hwnd, list, index)?;
+    with_modifiers(modifiers, || {
+        send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
+        send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
+    });
+    Some(())
+}
+
+/// Puts the pointer over a row on screen. `None`, without moving it, if the point is not in
+/// this process's window. A row out of view fails the case: its point could be anywhere on
+/// the screen.
+fn aim_at_list_row(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+    index: usize,
 ) -> Option<()> {
     use windows::Foundation::Point as XamlPoint;
     use windows::Win32::Foundation::POINT;
     use windows::Win32::Graphics::Gdi::ClientToScreen;
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
-    use windows::Win32::UI::Input::KeyboardAndMouse::{MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP};
     use windows::Win32::UI::WindowsAndMessaging::{
         GetWindowThreadProcessId, SetCursorPos, WindowFromPoint,
     };
 
     let row = built_list_row(list, index).unwrap_or_else(|| {
-        let first = list.native_list_view().Items().ok().and_then(|items| items.GetAt(0).ok());
+        let first = list.list_view().Items().ok().and_then(|items| items.GetAt(0).ok());
         let first = first.and_then(|item| item.cast::<ListViewItem>().ok()).map(|row| naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties::GetPositionInSet(&row));
-        panic!("{index} 行目が組み立てられていない: 先頭 {first:?} 位置 {:?}", list_scroller(list).VerticalOffset())
+        panic!("{index} 行目が組み立てられていない: 先頭 {first:?} 位置 {:?}", list.scroller().VerticalOffset())
     });
-    let scroll = list_scroller(list);
+    let scroll = list.scroller();
     let middle = (row.ActualHeight().expect("行の高さ") / 2.0) as f32;
     let at = row
         .TransformToVisual(None)
@@ -8000,10 +8115,6 @@ fn click_list_row(
     // SAFETY: 引数は値だけ。
     let _ = unsafe { SetCursorPos(point.x, point.y) };
     pump_until(Duration::from_millis(150), || false);
-    with_modifiers(modifiers, || {
-        send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
-        send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
-    });
     Some(())
 }
 
@@ -8011,7 +8122,7 @@ fn click_list_row(
 /// it is tried again, and if none arrives the case passes without checking.
 fn first_click_on_list_row(
     hwnd: windows::Win32::Foundation::HWND,
-    list: &naui_windows::List,
+    list: &impl RowsForInput,
     index: usize,
 ) -> Option<()> {
     for _ in 0..3 {
@@ -8029,13 +8140,13 @@ fn first_click_on_list_row(
 /// to arrive or get lost, so it is tried again before the case fails.
 fn click_list_row_expecting(
     hwnd: windows::Win32::Foundation::HWND,
-    list: &naui_windows::List,
+    list: &impl RowsForInput,
     index: usize,
     modifiers: &[windows::Win32::UI::Input::KeyboardAndMouse::VIRTUAL_KEY],
     expected: &[usize],
     what: &str,
 ) -> Option<()> {
-    let scroll = list_scroller(list);
+    let scroll = list.scroller();
     let before = scroll.VerticalOffset().expect("位置");
     for attempt in 0..3 {
         if attempt > 0 {
@@ -8063,9 +8174,6 @@ fn with_shown_list_for_input(
     rows: usize,
     scenario: impl FnOnce(windows::Win32::Foundation::HWND, &naui_windows::List) -> Option<()>,
 ) -> Result<()> {
-    use windows::Win32::Foundation::POINT;
-    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos};
-
     let window = ui.window("リストへの実際の入力", 300.0, 240.0)?;
     let list = ui.list()?;
     list.set_selection_mode(naui_core::SelectionMode::Multiple);
@@ -8074,22 +8182,57 @@ fn with_shown_list_for_input(
     ));
     list.set_sizing(Sizing::fill());
     window.set_child(&list);
+    run_shown_for_input(&window, &list, scenario)
+}
+
+/// Shows a table of many rows for real input, runs `scenario`, and puts the pointer back.
+fn with_shown_table_for_input(
+    ui: &Ui,
+    rows: usize,
+    scenario: impl FnOnce(windows::Win32::Foundation::HWND, &naui_windows::Table) -> Option<()>,
+) -> Result<()> {
+    let window = ui.window("表への実際の入力", 300.0, 240.0)?;
+    let table = ui.table()?;
+    table.set_selection_mode(naui_core::SelectionMode::Multiple);
+    table.set_columns(&[
+        naui_core::TableColumn::new("名前"),
+        naui_core::TableColumn::new("値"),
+    ]);
+    table.set_row_builder(rows, |index| {
+        Ok(naui_windows::TableCells::new()
+            .text(format!("行 {index}"))
+            .text(format!("{index}")))
+    });
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
+    run_shown_for_input(&window, &table, scenario)
+}
+
+/// Shows the window, brings it to the front, runs `scenario`, and puts the pointer back.
+fn run_shown_for_input<R: RowsForInput>(
+    window: &naui_windows::Window,
+    rows: &R,
+    scenario: impl FnOnce(windows::Win32::Foundation::HWND, &R) -> Option<()>,
+) -> Result<()> {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos};
+
     let mut pointer = POINT::default();
     // SAFETY: `pointer` はこの関数の中で生きている。
     let _ = unsafe { GetCursorPos(&mut pointer) };
     let outcome = catch_unwind(AssertUnwindSafe(|| {
         window.show();
-        let scroll = list_scroller(&list);
+        let scroll = rows.scroller();
         pump_until(SCROLL_LAYOUT_TIMEOUT, || {
-            scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && list.row_height() > 0.0
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && rows.row_height() > 0.0
         });
         if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
             println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
             return;
         }
-        if let Some(hwnd) = bring_to_front(&window) {
+        if let Some(hwnd) = bring_to_front(window) {
             pump_until(Duration::from_millis(500), || false);
-            let _ = scenario(hwnd, &list);
+            let _ = scenario(hwnd, rows);
         }
     }));
     // SAFETY: 引数は値だけ。
@@ -8104,117 +8247,152 @@ fn with_shown_list_for_input(
 /// Page Up and Page Down move by what is on screen, whether or not every row is built:
 /// `ListView` scrolls nothing itself, so it would take all the rows it has as the page.
 fn list_page_keys_move_by_a_page(ui: &Ui) -> Result<()> {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        VK_CONTROL, VK_DOWN, VK_END, VK_HOME, VK_NEXT, VK_PRIOR, VK_SHIFT,
-    };
-
     for rows in [1_000, 100] {
-        with_shown_list_for_input(ui, rows, |hwnd, list| {
-            let scroll = list_scroller(list);
-            let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::default();
-            {
-                let seen = seen.clone();
-                list.on_select(move |picked: &[usize]| seen.borrow_mut().push(picked.to_vec()));
-            }
-            let height = list.row_height();
-            let page = (scroll.ViewportHeight().expect("高さ") / height).floor() as usize;
-            let on_screen = |index: usize| {
-                let top = scroll.VerticalOffset().expect("位置");
-                let bottom = top + scroll.ViewportHeight().expect("高さ");
-                index as f64 * height >= top - 1.0 && (index + 1) as f64 * height <= bottom + 1.0
-            };
+        with_shown_list_for_input(ui, rows, |hwnd, list| page_keys_scenario(hwnd, list, rows))?;
+    }
+    Ok(())
+}
 
-            first_click_on_list_row(hwnd, list, 1)?;
-
-            // 組み立てた行の端を越えて、1 ページずつ進む。
-            let mut at = 1;
-            for _ in 0..8 {
-                press_nav_key(&[], VK_NEXT)?;
-                at += page;
-                assert_eq!(list.selection(), [at], "{rows} 行: Page Down の選択");
-                assert_eq!(focused_list_row(list), Some(at), "{rows} 行: フォーカス");
-                assert!(on_screen(at), "{rows} 行: {at} 行目が見えていること");
-                assert_eq!(seen.borrow().last().expect("通知"), &[at], "通知");
-            }
-            for _ in 0..3 {
-                press_nav_key(&[], VK_PRIOR)?;
-                at -= page;
-                assert_eq!(list.selection(), [at], "{rows} 行: Page Up の選択");
-                assert_eq!(focused_list_row(list), Some(at), "{rows} 行: フォーカス");
-                assert!(on_screen(at), "{rows} 行: {at} 行目が見えていること");
-            }
-
-            // 矢印キーは `ListView` のまま、移った行から続く。
-            press_nav_key(&[], VK_DOWN)?;
-            at += 1;
-            assert_eq!(list.selection(), [at], "{rows} 行: 移った行から続く");
-
-            // Shift は移った行までの範囲、Ctrl はフォーカスだけ。
-            press_nav_key(&[VK_SHIFT], VK_NEXT)?;
-            let range: Vec<usize> = (at..=at + page).collect();
-            assert_eq!(list.selection(), range, "{rows} 行: Shift + Page Down");
-            assert_eq!(focused_list_row(list), Some(at + page), "{rows} 行");
-            press_nav_key(&[VK_CONTROL], VK_NEXT)?;
-            assert_eq!(
-                list.selection(),
-                range,
-                "{rows} 行: Ctrl で選択は変わらない"
-            );
-            assert_eq!(focused_list_row(list), Some(at + page * 2), "{rows} 行");
-
-            // 端では止まり、同じ選択を通知し直さない。
-            list.scroll_to_row(rows - 1);
-            pump_until(Duration::from_millis(500), || false);
-            let what = format!("{rows} 行: 最後の手前の行");
-            click_list_row_expecting(hwnd, list, rows - 2, &[], &[rows - 2], &what)?;
-            press_nav_key(&[], VK_NEXT)?;
-            assert_eq!(list.selection(), [rows - 1], "{rows} 行: 最後の行で止まる");
-            let notified = seen.borrow().len();
-            press_nav_key(&[], VK_NEXT)?;
-            assert_eq!(list.selection(), [rows - 1]);
-            assert_eq!(
-                seen.borrow().len(),
-                notified,
-                "{rows} 行: 変わらなければ黙る"
-            );
-
-            list.scroll_to_row(0);
-            pump_until(Duration::from_millis(500), || false);
-            let what = format!("{rows} 行: 先頭の次の行");
-            click_list_row_expecting(hwnd, list, 1, &[], &[1], &what)?;
-            press_nav_key(&[], VK_PRIOR)?;
-            assert_eq!(list.selection(), [0], "{rows} 行: 最初の行で止まる");
-
-            // Home / End は全行の端へ動き、移った行を見せる。
-            press_nav_key(&[], VK_END)?;
-            assert_eq!(list.selection(), [rows - 1], "{rows} 行: End の選択");
-            assert_eq!(focused_list_row(list), Some(rows - 1), "{rows} 行: End");
-            assert!(on_screen(rows - 1), "{rows} 行: End の行が見えていること");
-            press_nav_key(&[], VK_HOME)?;
-            assert_eq!(list.selection(), [0], "{rows} 行: Home の選択");
-            assert_eq!(focused_list_row(list), Some(0), "{rows} 行: Home");
-            assert!(on_screen(0), "{rows} 行: Home の行が見えていること");
-
-            // Ctrl + A は組み立てていない行も選ぶ。
-            press_ctrl_a()?;
-            let every: Vec<usize> = (0..rows).collect();
-            assert_eq!(list.selection(), every, "{rows} 行: Ctrl + A");
-            assert_eq!(seen.borrow().last().expect("通知"), &every, "通知");
-            assert_eq!(
-                focused_list_row(list),
-                Some(0),
-                "{rows} 行: フォーカスは動かない"
-            );
-            assert!(on_screen(0), "{rows} 行: 表示は動かない");
-            Some(())
+/// [`list_page_keys_move_by_a_page`] on a `Table`, built the same way.
+fn table_page_keys_move_by_a_page(ui: &Ui) -> Result<()> {
+    for rows in [1_000, 100] {
+        with_shown_table_for_input(ui, rows, |hwnd, table| {
+            page_keys_scenario(hwnd, table, rows)
         })?;
     }
     Ok(())
 }
 
+fn page_keys_scenario(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+    rows: usize,
+) -> Option<()> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        VK_CONTROL, VK_DOWN, VK_END, VK_HOME, VK_NEXT, VK_PRIOR, VK_SHIFT,
+    };
+
+    let scroll = list.scroller();
+    let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::default();
+    {
+        let seen = seen.clone();
+        list.on_select(move |picked: &[usize]| seen.borrow_mut().push(picked.to_vec()));
+    }
+    let height = list.row_height();
+    let page = (scroll.ViewportHeight().expect("高さ") / height).floor() as usize;
+    let on_screen = |index: usize| {
+        let top = scroll.VerticalOffset().expect("位置");
+        let bottom = top + scroll.ViewportHeight().expect("高さ");
+        index as f64 * height >= top - 1.0 && (index + 1) as f64 * height <= bottom + 1.0
+    };
+
+    first_click_on_list_row(hwnd, list, 1)?;
+
+    // 組み立てた行の端を越えて、1 ページずつ進む。
+    let mut at = 1;
+    for _ in 0..8 {
+        press_nav_key(&[], VK_NEXT)?;
+        at += page;
+        assert_eq!(list.selection(), [at], "{rows} 行: Page Down の選択");
+        assert_eq!(focused_list_row(list), Some(at), "{rows} 行: フォーカス");
+        assert!(on_screen(at), "{rows} 行: {at} 行目が見えていること");
+        assert_eq!(seen.borrow().last().expect("通知"), &[at], "通知");
+    }
+    for _ in 0..3 {
+        press_nav_key(&[], VK_PRIOR)?;
+        at -= page;
+        assert_eq!(list.selection(), [at], "{rows} 行: Page Up の選択");
+        assert_eq!(focused_list_row(list), Some(at), "{rows} 行: フォーカス");
+        assert!(on_screen(at), "{rows} 行: {at} 行目が見えていること");
+    }
+
+    // 矢印キーは `ListView` のまま、移った行から続く。
+    press_nav_key(&[], VK_DOWN)?;
+    at += 1;
+    assert_eq!(list.selection(), [at], "{rows} 行: 移った行から続く");
+
+    // Shift は移った行までの範囲、Ctrl はフォーカスだけ。
+    press_nav_key(&[VK_SHIFT], VK_NEXT)?;
+    let range: Vec<usize> = (at..=at + page).collect();
+    assert_eq!(list.selection(), range, "{rows} 行: Shift + Page Down");
+    assert_eq!(focused_list_row(list), Some(at + page), "{rows} 行");
+    press_nav_key(&[VK_CONTROL], VK_NEXT)?;
+    assert_eq!(
+        list.selection(),
+        range,
+        "{rows} 行: Ctrl で選択は変わらない"
+    );
+    assert_eq!(focused_list_row(list), Some(at + page * 2), "{rows} 行");
+
+    // 端では止まり、同じ選択を通知し直さない。
+    list.scroll_to_row(rows - 1);
+    pump_until(Duration::from_millis(500), || false);
+    let what = format!("{rows} 行: 最後の手前の行");
+    click_list_row_expecting(hwnd, list, rows - 2, &[], &[rows - 2], &what)?;
+    press_nav_key(&[], VK_NEXT)?;
+    assert_eq!(list.selection(), [rows - 1], "{rows} 行: 最後の行で止まる");
+    let notified = seen.borrow().len();
+    press_nav_key(&[], VK_NEXT)?;
+    assert_eq!(list.selection(), [rows - 1]);
+    assert_eq!(
+        seen.borrow().len(),
+        notified,
+        "{rows} 行: 変わらなければ黙る"
+    );
+
+    list.scroll_to_row(0);
+    pump_until(Duration::from_millis(500), || false);
+    let what = format!("{rows} 行: 先頭の次の行");
+    click_list_row_expecting(hwnd, list, 1, &[], &[1], &what)?;
+    press_nav_key(&[], VK_PRIOR)?;
+    assert_eq!(list.selection(), [0], "{rows} 行: 最初の行で止まる");
+
+    // Home / End は全行の端へ動き、移った行を見せる。
+    press_nav_key(&[], VK_END)?;
+    assert_eq!(list.selection(), [rows - 1], "{rows} 行: End の選択");
+    assert_eq!(focused_list_row(list), Some(rows - 1), "{rows} 行: End");
+    assert!(on_screen(rows - 1), "{rows} 行: End の行が見えていること");
+    press_nav_key(&[], VK_HOME)?;
+    assert_eq!(list.selection(), [0], "{rows} 行: Home の選択");
+    assert_eq!(focused_list_row(list), Some(0), "{rows} 行: Home");
+    assert!(on_screen(0), "{rows} 行: Home の行が見えていること");
+
+    // Ctrl + A は組み立てていない行も選ぶ。
+    press_ctrl_a()?;
+    let every: Vec<usize> = (0..rows).collect();
+    assert_eq!(list.selection(), every, "{rows} 行: Ctrl + A");
+    assert_eq!(seen.borrow().last().expect("通知"), &every, "通知");
+    assert_eq!(
+        focused_list_row(list),
+        Some(0),
+        "{rows} 行: フォーカスは動かない"
+    );
+    assert!(on_screen(0), "{rows} 行: 表示は動かない");
+    Some(())
+}
+
 /// A Shift range starts from the row the last selection ended on, even after that row has
 /// left the range built: `ListView` remembers it only as a place among the rows it has.
 fn list_shift_range_keeps_its_anchor_outside_the_window(ui: &Ui) -> Result<()> {
+    with_shown_list_for_input(ui, SHIFT_RANGE_ROWS, |hwnd, list| {
+        shift_range_scenario(hwnd, list)
+    })
+}
+
+/// [`list_shift_range_keeps_its_anchor_outside_the_window`] on a `Table`.
+fn table_shift_range_keeps_its_anchor_outside_the_window(ui: &Ui) -> Result<()> {
+    with_shown_table_for_input(ui, SHIFT_RANGE_ROWS, |hwnd, table| {
+        shift_range_scenario(hwnd, table)
+    })
+}
+
+/// How many rows [`shift_range_scenario`] runs over.
+const SHIFT_RANGE_ROWS: usize = 1_000;
+
+fn shift_range_scenario(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+) -> Option<()> {
     use windows::Win32::Foundation::POINT;
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_WHEEL, VK_CONTROL, VK_DOWN, VK_END,
@@ -8222,10 +8400,10 @@ fn list_shift_range_keeps_its_anchor_outside_the_window(ui: &Ui) -> Result<()> {
     };
     use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
 
-    const ROWS: usize = 1_000;
+    const ROWS: usize = SHIFT_RANGE_ROWS;
     let span = |from: usize, to: usize| (from..=to).collect::<Vec<usize>>();
-    with_shown_list_for_input(ui, ROWS, |hwnd, list| {
-        let scroll = list_scroller(list);
+    {
+        let scroll = list.scroller();
         let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::default();
         {
             let seen = seen.clone();
@@ -8414,7 +8592,412 @@ fn list_shift_range_keeps_its_anchor_outside_the_window(ui: &Ui) -> Result<()> {
         press_nav_key(&[VK_CONTROL], VK_SPACE)?;
         assert_eq!(list.selection(), [cursor], "Ctrl + Space で引く");
         Some(())
+    }
+}
+
+/// Once scrolling has taken the focused row out of the rows built, XAML puts the focus on a
+/// row off screen. That must not move the view, by itself or when a press comes: a press
+/// and its release have to land on the same row, or the click is lost.
+fn table_view_stays_when_the_focus_is_off_screen(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+    use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
+    use naui_winui3::Microsoft::UI::Xaml::FocusState;
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_WHEEL,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+    with_shown_table_for_input(ui, 1_000, |hwnd, table| {
+        let scroll = table.scroller();
+        let height = table.row_height();
+        let position = || scroll.VerticalOffset().expect("位置");
+        let first_in_view = || (position() / height).ceil() as usize + 1;
+        // 送ったクリックは表示と関係なく失われることがあるので、押し直してよい。押している
+        // 間に表示が動くことだけは許さない。解放が別の行へ届いてしまう。
+        let hold_and_release = |index: usize, what: &str| -> Option<()> {
+            for attempt in 0..3 {
+                if attempt > 0 {
+                    println!("     ({what}: クリックが反映されないので、もう一度押す)");
+                }
+                aim_at_list_row(hwnd, table, index)?;
+                let before = position();
+                send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
+                pump_until(Duration::from_millis(400), || false);
+                let during = position();
+                send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
+                assert!(
+                    (during - before).abs() < 1.0,
+                    "{what}: 押している間に表示が動かないこと: {before} → {during}"
+                );
+                pump_until(Duration::from_secs(1), || table.selection() == [index]);
+                if table.selection() == [index] {
+                    break;
+                }
+            }
+            assert_eq!(table.selection(), [index], "{what}: クリックが届くこと");
+            assert_eq!(focused_list_row(table), Some(index), "{what}: フォーカス");
+            Some(())
+        };
+
+        first_click_on_list_row(hwnd, table, 2)?;
+
+        // XAML がするのと同じく、組み立て済みで画面の外にある行へフォーカスを移す。
+        table.scroll_to_row(900);
+        pump_until(Duration::from_millis(500), || false);
+        let off_screen = table
+            .list_view()
+            .Items()
+            .and_then(|items| items.GetAt(0))
+            .and_then(|item| item.cast::<ListViewItem>())
+            .expect("組み立てた先頭の行");
+        let index = AutomationProperties::GetPositionInSet(&off_screen).expect("位置") as usize - 1;
+        let before = position();
+        assert!(
+            ((index + 1) as f64) * height <= before,
+            "{index} 行目は表示 {before} より上にあること"
+        );
+        for state in [
+            FocusState::Programmatic,
+            FocusState::Keyboard,
+            FocusState::Pointer,
+        ] {
+            // 同じ行のままだと動きが起きないので、いったん見えている行へ移す。
+            built_list_row(table, first_in_view())
+                .expect("見えている行")
+                .cast::<Control>()
+                .and_then(|row| row.Focus(FocusState::Programmatic))
+                .expect("フォーカス");
+            pump_until(Duration::from_millis(200), || false);
+            let focused = off_screen
+                .cast::<Control>()
+                .and_then(|row| row.Focus(state))
+                .expect("フォーカス");
+            assert!(focused, "画面の外の行がフォーカスを受けること");
+            pump_until(Duration::from_secs(1), || false);
+            assert!(
+                (position() - before).abs() < 1.0,
+                "{state:?} のフォーカスで表示が動かないこと: {before} → {}",
+                position()
+            );
+        }
+        hold_and_release(first_in_view(), "画面の外にフォーカスがあるとき")?;
+
+        // ホイールでフォーカスの行を窓の外へ出す。
+        for round in 0..2 {
+            let what = format!("ホイール {round} 回目");
+            let left = table.selection()[0];
+            // ホイールは表の上にあるポインターにしか効かない。
+            aim_at_list_row(hwnd, table, first_in_view())?;
+            let start = position();
+            let pointer = || {
+                let mut at = POINT::default();
+                // SAFETY: `at` はこの関数の中で生きている。
+                let _ = unsafe { GetCursorPos(&mut at) };
+                (at.x, at.y)
+            };
+            let aimed = pointer();
+            for _ in 0..60 {
+                if !foreground_is_ours() {
+                    println!("     (テストのウィンドウが前面に無いので、ホイールを送らずに通す)");
+                    return None;
+                }
+                if built_list_row(table, left).is_none() {
+                    break;
+                }
+                send_input(mouse_input(MOUSEEVENTF_WHEEL, (-480_i32) as u32));
+            }
+            if pointer() != aimed {
+                println!("     (ポインターがほかから動かされたので、確かめずに通す)");
+                return None;
+            }
+            assert!(
+                built_list_row(table, left).is_none(),
+                "{what}: フォーカスの行から離れられること: 位置 {start} → {} ポインター {aimed:?}",
+                position()
+            );
+            pump_until(Duration::from_millis(1_500), || false);
+            let settled = position();
+            pump_until(Duration::from_millis(500), || false);
+            assert!(
+                (position() - settled).abs() < 1.0,
+                "{what}: 遅れて表示が動かないこと: {settled} → {}",
+                position()
+            );
+            hold_and_release(first_in_view(), &what)?;
+        }
+
+        // `scroll_to_row` でフォーカスの行を窓の外へ出す。
+        for round in 0..4 {
+            let what = format!("scroll_to_row {round} 回目");
+            table.scroll_to_row(if round % 2 == 0 { 300 } else { 900 });
+            pump_until(Duration::from_millis(500), || false);
+            hold_and_release(first_in_view() + round % 3, &what)?;
+        }
+        Some(())
     })
+}
+
+/// The arrow keys carry on past the rows built, as the rows follow.
+fn table_arrow_keys_go_past_the_rows_built(ui: &Ui) -> Result<()> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_DOWN, VK_UP};
+
+    with_shown_table_for_input(ui, 1_000, |hwnd, table| {
+        let scroll = table.scroller();
+        let height = table.row_height();
+        let on_screen = |index: usize| {
+            let top = scroll.VerticalOffset().expect("位置");
+            let bottom = top + scroll.ViewportHeight().expect("高さ");
+            index as f64 * height >= top - 1.0 && (index + 1) as f64 * height <= bottom + 1.0
+        };
+        first_click_on_list_row(hwnd, table, 0)?;
+        let built = table.list_view().Items().expect("行").Size().expect("行数") as usize;
+        for at in 1..=built + 6 {
+            press_nav_key(&[], VK_DOWN)?;
+            assert_eq!(table.selection(), [at], "↓");
+            assert_eq!(focused_list_row(table), Some(at), "↓ のフォーカス");
+            assert!(on_screen(at), "{at} 行目が見えていること");
+        }
+        press_nav_key(&[], VK_UP)?;
+        assert_eq!(table.selection(), [built + 5], "↑");
+        Some(())
+    })
+}
+
+/// A table with an `Auto` height whose parent gives it no more room than that scrolls
+/// itself, so the keys are the same as with a height set. One with nowhere to scroll leaves
+/// them to `ListView`.
+fn table_keys_depend_on_whether_it_scrolls(ui: &Ui) -> Result<()> {
+    use naui_core::{TableColumn, TableRow};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_DOWN, VK_NEXT};
+
+    let window = ui.window("Auto の高さの表", 300.0, 240.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[TableColumn::new("名前")]);
+    let labels: Vec<String> = (0..1_000).map(|index| format!("行 {index}")).collect();
+    table.set_rows(&TableRow::list(labels.iter().map(|l| [l.as_str()])));
+    window.set_child(&table);
+    run_shown_for_input(&window, &table, |hwnd, table| {
+        let scroll = table.scroller();
+        assert!(scroll.ScrollableHeight().expect("高さ") > 0.0, "自分で動く");
+        let page = (scroll.ViewportHeight().expect("高さ") / table.row_height()).floor() as usize;
+        first_click_on_list_row(hwnd, table, 1)?;
+        press_nav_key(&[], VK_NEXT)?;
+        assert_eq!(table.selection(), [1 + page], "Auto の高さの Page Down");
+        Some(())
+    })?;
+
+    let window = ui.window("スクロールしない表", 300.0, 400.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[TableColumn::new("名前")]);
+    table.set_rows(&TableRow::list(labels[..4].iter().map(|l| [l.as_str()])));
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
+    run_shown_for_input(&window, &table, |hwnd, table| {
+        let scroll = table.scroller();
+        assert_eq!(scroll.ScrollableHeight().expect("高さ"), 0.0, "動かない");
+        first_click_on_list_row(hwnd, table, 0)?;
+        press_nav_key(&[], VK_DOWN)?;
+        assert_eq!(table.selection(), [1], "↓");
+        press_nav_key(&[], VK_NEXT)?;
+        assert_eq!(table.selection(), [3], "Page Down は最後の行まで");
+        Some(())
+    })
+}
+
+/// A disabled row is passed over, and a single selection stays one row whatever the
+/// modifier keys, even with the row selected before out of the rows built.
+fn table_single_selection_stays_one_row(ui: &Ui) -> Result<()> {
+    use naui_core::{TableColumn, TableRow};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_CONTROL, VK_DOWN, VK_SHIFT, VK_UP};
+
+    let window = ui.window("単一選択の表", 300.0, 240.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[TableColumn::new("名前")]);
+    let rows: Vec<TableRow> = (0..1_000)
+        .map(|index| TableRow::new([format!("行 {index}")]).enabled(index != 3))
+        .collect();
+    table.set_rows(&rows);
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
+    run_shown_for_input(&window, &table, |hwnd, table| {
+        first_click_on_list_row(hwnd, table, 1)?;
+        press_nav_key(&[], VK_DOWN)?;
+        assert_eq!(table.selection(), [2], "↓");
+        press_nav_key(&[], VK_DOWN)?;
+        assert_eq!(table.selection(), [4], "無効の行を飛ばす");
+        press_nav_key(&[], VK_UP)?;
+        assert_eq!(table.selection(), [2], "手前へも飛ばす");
+        press_nav_key(&[VK_SHIFT], VK_DOWN)?;
+        assert_eq!(table.selection(), [4], "単一選択では Shift でも 1 行");
+
+        table.scroll_to_row(800);
+        pump_until(Duration::from_millis(500), || false);
+        assert!(built_list_row(table, 4).is_none(), "選んだ行が窓の外にある");
+        click_list_row_expecting(hwnd, table, 799, &[VK_CONTROL], &[799], "Ctrl クリック")
+    })
+}
+
+/// [`list_keeps_rows_that_stay_in_the_window`] on a `Table`.
+fn table_keeps_rows_that_stay_in_the_window(ui: &Ui) -> Result<()> {
+    use naui_core::ROW_WINDOW_OVERSCAN;
+    use naui_windows::TableCells;
+    use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
+    use naui_winui3::Microsoft::UI::Xaml::FocusState;
+    use std::collections::HashMap;
+
+    const ROWS: usize = 1_000;
+    const TARGET: usize = 100;
+    let window = ui.window("表の窓に残る行", 240.0, 160.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[naui_core::TableColumn::new("名前")]);
+    let inputs: Rc<RefCell<HashMap<usize, naui_windows::TextInput>>> = Rc::default();
+    let builds: Rc<RefCell<HashMap<usize, usize>>> = Rc::default();
+    {
+        let ui = ui.clone();
+        let inputs = inputs.clone();
+        let builds = builds.clone();
+        table.set_row_builder(ROWS, move |index| {
+            *builds.borrow_mut().entry(index).or_default() += 1;
+            let input = ui.text_input(&format!("行 {index}"))?;
+            inputs.borrow_mut().insert(index, input.clone());
+            Ok(TableCells::new().cell(&input))
+        });
+    }
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        let scroll = table_scroller(&table);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && table.row_height() > 0.0
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        table.scroll_to_row(TARGET);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            inputs.borrow().contains_key(&TARGET)
+        });
+        let input = inputs.borrow().get(&TARGET).cloned().expect("送った先の行");
+        pump_until(FOCUS_TIMEOUT, || input.request_focus());
+        let focused = || {
+            input
+                .native_element()
+                .cast::<Control>()
+                .and_then(|control| control.FocusState())
+                .is_ok_and(|state| state != FocusState::Unfocused)
+        };
+        if !focused() {
+            println!("     (フォーカスを受けられない環境なので、確かめずに通す)");
+            return;
+        }
+        let built = builds.borrow()[&TARGET];
+
+        // 窓が先へ動いても、入力欄の行は窓の中に残っている。
+        let next = TARGET + ROW_WINDOW_OVERSCAN;
+        table.scroll_to_row(next);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            builds.borrow().contains_key(&next)
+        });
+        assert!(builds.borrow().contains_key(&next), "窓が動いていること");
+        assert!(focused(), "窓が動いても入力欄にフォーカスが残ること");
+        assert_eq!(
+            builds.borrow()[&TARGET],
+            built,
+            "残る行は組み立て直さないこと"
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// Replacing the rows from inside the function that builds a row leaves only the new rows,
+/// however far the build had got. The rows kept from before must not stay behind.
+fn table_builder_can_replace_the_rows(ui: &Ui) -> Result<()> {
+    use naui_windows::TableCells;
+    use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+
+    /// What the old builder does when it reaches a row, once.
+    type Replace = Box<dyn FnOnce()>;
+
+    let window = ui.window("表の行の差し替え", 240.0, 160.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[naui_core::TableColumn::new("名前")]);
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
+    let replace: Rc<RefCell<Option<Replace>>> = Rc::default();
+    {
+        let replace = replace.clone();
+        table.set_row_builder(1_000, move |index| {
+            let pending = replace.borrow_mut().take();
+            if let Some(pending) = pending {
+                pending();
+            }
+            Ok(TableCells::new().text(format!("古い {index}")))
+        });
+    }
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        let scroll = table_scroller(&table);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && table.row_height() > 0.0
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        pump_until(Duration::from_millis(300), || false);
+        *replace.borrow_mut() = Some(Box::new({
+            let table = table.clone();
+            move || {
+                table.set_row_builder(2_000, |index| {
+                    Ok(TableCells::new().text(format!("新しい {index}")))
+                });
+            }
+        }));
+        // 窓が動いて増える行の組み立ての中で、差し替わる。
+        let built = table.list_view().Items().expect("行").Size().expect("行数") as usize;
+        table.scroll_to_row(built + 2);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || table.len() == 2_000);
+        assert_eq!(table.len(), 2_000, "差し替わること");
+        pump_until(Duration::from_millis(300), || false);
+
+        let items = table.list_view().Items().expect("行");
+        let count = items.Size().expect("行数");
+        assert!(count > 0, "行があること");
+        for slot in 0..count {
+            let row = items
+                .GetAt(slot)
+                .and_then(|item| item.cast::<ListViewItem>())
+                .expect("行");
+            assert_eq!(
+                AutomationProperties::GetSizeOfSet(&row).expect("全行数"),
+                2_000,
+                "古い行が残らないこと"
+            );
+            let index = AutomationProperties::GetPositionInSet(&row).expect("位置") - 1;
+            let text = row
+                .Content()
+                .and_then(|content| content.cast::<Grid>())
+                .and_then(|grid| grid.Children())
+                .and_then(|children| children.GetAt(0))
+                .and_then(|cell| cell.cast::<TextBlock>())
+                .and_then(|cell| cell.Text())
+                .unwrap_or_default()
+                .to_string();
+            assert_eq!(text, format!("新しい {index}"), "新しい行の中身");
+        }
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
 }
 
 /// What `ListView` did along the arrows is kept where naui moves the cursor: a disabled row
@@ -8462,143 +9045,166 @@ fn list_arrow_keys_pass_over_disabled_rows(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// How many rows [`keys_over_unselectable_rows_scenario`] runs over.
+const UNSELECTABLE_ROWS: usize = 1_000;
+
+/// Whether a row of [`keys_over_unselectable_rows_scenario`] can be selected.
+fn is_selectable_in_scenario(index: usize) -> bool {
+    index != 0 && index != 3 && !(20..=80).contains(&index) && index != UNSELECTABLE_ROWS - 1
+}
+
 /// Moving the selection passes over rows that cannot be selected, such as headings, so it
 /// never ends up empty. Ctrl moves only the focus, so it can still stop on them.
 fn list_keys_pass_over_rows_that_cannot_be_selected(ui: &Ui) -> Result<()> {
     use naui_windows::ListRow;
-    use windows::Win32::Foundation::POINT;
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        VK_CONTROL, VK_DOWN, VK_END, VK_HOME, VK_NEXT, VK_SHIFT, VK_SPACE, VK_UP,
-    };
-    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos};
 
-    const ROWS: usize = 1_000;
-    let selectable =
-        |index: usize| index != 0 && index != 3 && !(20..=80).contains(&index) && index != ROWS - 1;
     let window = ui.window("選べない行とキー", 300.0, 240.0)?;
     let list = ui.list()?;
     list.set_selection_mode(naui_core::SelectionMode::Multiple);
     {
         let ui = ui.clone();
-        list.set_row_builder(ROWS, move |index| {
-            Ok(ListRow::new(&ui.label(&format!("行 {index}"))?).selectable(selectable(index)))
+        list.set_row_builder(UNSELECTABLE_ROWS, move |index| {
+            Ok(ListRow::new(&ui.label(&format!("行 {index}"))?)
+                .selectable(is_selectable_in_scenario(index)))
         });
     }
-    list.set_row_selectable(selectable);
+    list.set_row_selectable(is_selectable_in_scenario);
     list.set_sizing(Sizing::fill());
     window.set_child(&list);
-    let mut pointer = POINT::default();
-    // SAFETY: `pointer` はこの関数の中で生きている。
-    let _ = unsafe { GetCursorPos(&mut pointer) };
-    let outcome = catch_unwind(AssertUnwindSafe(|| -> Option<()> {
-        window.show();
-        let scroll = list_scroller(&list);
-        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
-            scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && list.row_height() > 0.0
-        });
-        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
-            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
-            return None;
-        }
-        let hwnd = bring_to_front(&window)?;
-        pump_until(Duration::from_millis(500), || false);
+    run_shown_for_input(&window, &list, keys_over_unselectable_rows_scenario)
+}
 
-        first_click_on_list_row(hwnd, &list, 2)?;
-        press_nav_key(&[], VK_DOWN)?;
-        assert_eq!(list.selection(), [4], "↓ は選べない行を飛ばす");
-        assert_eq!(focused_list_row(&list), Some(4), "フォーカスも飛ばす");
-        press_nav_key(&[], VK_UP)?;
-        assert_eq!(list.selection(), [2], "↑ も選べない行を飛ばす");
-        press_nav_key(&[], VK_HOME)?;
-        assert_eq!(list.selection(), [1], "Home は選べる最初の行へ");
+/// [`list_keys_pass_over_rows_that_cannot_be_selected`] on a `Table`.
+fn table_keys_pass_over_rows_that_cannot_be_selected(ui: &Ui) -> Result<()> {
+    use naui_windows::TableCells;
 
-        // Ctrl はフォーカスだけなので止まれる。その上の Space は選択を変えない。
-        press_nav_key(&[VK_CONTROL], VK_DOWN)?;
-        press_nav_key(&[VK_CONTROL], VK_DOWN)?;
-        assert_eq!(
-            focused_list_row(&list),
-            Some(3),
-            "Ctrl は選べない行にも止まる"
-        );
-        assert_eq!(list.selection(), [1], "選択は変わらない");
-        press_nav_key(&[], VK_SPACE)?;
-        assert_eq!(list.selection(), [1], "選べない行の上の Space は何もしない");
-        press_nav_key(&[], VK_DOWN)?;
-        assert_eq!(list.selection(), [4], "そこから次の選べる行へ");
+    let window = ui.window("表の選べない行とキー", 300.0, 240.0)?;
+    let table = ui.table()?;
+    table.set_selection_mode(naui_core::SelectionMode::Multiple);
+    table.set_columns(&[naui_core::TableColumn::new("名前")]);
+    table.set_row_builder(UNSELECTABLE_ROWS, |index| {
+        Ok(TableCells::new()
+            .text(format!("行 {index}"))
+            .selectable(is_selectable_in_scenario(index)))
+    });
+    table.set_row_selectable(is_selectable_in_scenario);
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
+    run_shown_for_input(&window, &table, keys_over_unselectable_rows_scenario)
+}
 
-        // Shift も止まらない。範囲に選べない行は入らない。
-        click_list_row_expecting(hwnd, &list, 2, &[], &[2], "Shift の前の選択")?;
-        press_nav_key(&[VK_SHIFT], VK_DOWN)?;
-        assert_eq!(list.selection(), [2, 4], "Shift + ↓");
-        assert_eq!(focused_list_row(&list), Some(4), "Shift + ↓ のフォーカス");
+fn keys_over_unselectable_rows_scenario(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+) -> Option<()> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        VK_CONTROL, VK_DOWN, VK_END, VK_HOME, VK_NEXT, VK_SHIFT, VK_SPACE, VK_UP,
+    };
 
-        // 窓より長く続く選べない行も越える。
-        list.scroll_to_row(19);
-        pump_until(Duration::from_millis(500), || false);
-        click_list_row_expecting(hwnd, &list, 19, &[], &[19], "長い選べない行の手前")?;
-        press_nav_key(&[], VK_DOWN)?;
-        assert_eq!(list.selection(), [81], "窓より先の選べる行へ");
-        assert_eq!(focused_list_row(&list), Some(81), "移った行にフォーカス");
-        press_nav_key(&[], VK_UP)?;
-        assert_eq!(list.selection(), [19], "手前へも越える");
-        press_nav_key(&[], VK_NEXT)?;
-        assert!(
-            selectable(list.selection()[0]),
-            "Page Down も選べる行で止まる"
-        );
+    const ROWS: usize = UNSELECTABLE_ROWS;
+    first_click_on_list_row(hwnd, list, 2)?;
+    press_nav_key(&[], VK_DOWN)?;
+    assert_eq!(list.selection(), [4], "↓ は選べない行を飛ばす");
+    assert_eq!(focused_list_row(list), Some(4), "フォーカスも飛ばす");
+    press_nav_key(&[], VK_UP)?;
+    assert_eq!(list.selection(), [2], "↑ も選べない行を飛ばす");
+    press_nav_key(&[], VK_HOME)?;
+    assert_eq!(list.selection(), [1], "Home は選べる最初の行へ");
 
-        // 端の行が選べないときは、その手前で止まる。
-        press_nav_key(&[], VK_END)?;
-        assert_eq!(list.selection(), [ROWS - 2], "End は選べる最後の行へ");
-        press_nav_key(&[], VK_DOWN)?;
-        assert_eq!(
-            list.selection(),
-            [ROWS - 2],
-            "その先に選べる行が無ければ動かない"
-        );
-        assert_eq!(
-            focused_list_row(&list),
-            Some(ROWS - 2),
-            "フォーカスも動かない"
-        );
-        Some(())
-    }));
-    // SAFETY: 引数は値だけ。
-    let _ = unsafe { SetCursorPos(pointer.x, pointer.y) };
-    window.close();
-    if let Err(panic) = outcome {
-        std::panic::resume_unwind(panic);
-    }
-    Ok(())
+    // Ctrl はフォーカスだけなので止まれる。その上の Space は選択を変えない。
+    press_nav_key(&[VK_CONTROL], VK_DOWN)?;
+    press_nav_key(&[VK_CONTROL], VK_DOWN)?;
+    assert_eq!(
+        focused_list_row(list),
+        Some(3),
+        "Ctrl は選べない行にも止まる"
+    );
+    assert_eq!(list.selection(), [1], "選択は変わらない");
+    press_nav_key(&[], VK_SPACE)?;
+    assert_eq!(list.selection(), [1], "選べない行の上の Space は何もしない");
+    press_nav_key(&[], VK_DOWN)?;
+    assert_eq!(list.selection(), [4], "そこから次の選べる行へ");
+
+    // Shift も止まらない。範囲に選べない行は入らない。
+    click_list_row_expecting(hwnd, list, 2, &[], &[2], "Shift の前の選択")?;
+    press_nav_key(&[VK_SHIFT], VK_DOWN)?;
+    assert_eq!(list.selection(), [2, 4], "Shift + ↓");
+    assert_eq!(focused_list_row(list), Some(4), "Shift + ↓ のフォーカス");
+
+    // 窓より長く続く選べない行も越える。
+    list.scroll_to_row(19);
+    pump_until(Duration::from_millis(500), || false);
+    click_list_row_expecting(hwnd, list, 19, &[], &[19], "長い選べない行の手前")?;
+    press_nav_key(&[], VK_DOWN)?;
+    assert_eq!(list.selection(), [81], "窓より先の選べる行へ");
+    assert_eq!(focused_list_row(list), Some(81), "移った行にフォーカス");
+    press_nav_key(&[], VK_UP)?;
+    assert_eq!(list.selection(), [19], "手前へも越える");
+    press_nav_key(&[], VK_NEXT)?;
+    assert!(
+        is_selectable_in_scenario(list.selection()[0]),
+        "Page Down も選べる行で止まる"
+    );
+
+    // 端の行が選べないときは、その手前で止まる。
+    press_nav_key(&[], VK_END)?;
+    assert_eq!(list.selection(), [ROWS - 2], "End は選べる最後の行へ");
+    press_nav_key(&[], VK_DOWN)?;
+    assert_eq!(
+        list.selection(),
+        [ROWS - 2],
+        "その先に選べる行が無ければ動かない"
+    );
+    assert_eq!(
+        focused_list_row(list),
+        Some(ROWS - 2),
+        "フォーカスも動かない"
+    );
+    Some(())
 }
 
 /// Tab lands on a row on screen, so the next key does not pull the view elsewhere: focus
 /// changes do not scroll a list that scrolls itself.
 fn list_tab_focuses_a_row_on_screen(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    list.set_items(&naui_core::ListItem::list(
+        (0..1_000).map(|index| format!("行 {index}")),
+    ));
+    list.set_sizing(Sizing::fill());
+    tab_focus_scenario(ui, &list)
+}
+
+/// [`list_tab_focuses_a_row_on_screen`] on a `Table`.
+fn table_tab_focuses_a_row_on_screen(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    table.set_columns(&[naui_core::TableColumn::new("名前")]);
+    table.set_row_builder(1_000, |index| {
+        Ok(naui_windows::TableCells::new().text(format!("行 {index}")))
+    });
+    table.set_sizing(Sizing::fill());
+    tab_focus_scenario(ui, &table)
+}
+
+fn tab_focus_scenario(ui: &Ui, list: &(impl RowsForInput + Widget)) -> Result<()> {
     use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
     use naui_winui3::Microsoft::UI::Xaml::FocusState;
     use windows::Win32::Foundation::POINT;
     use windows::Win32::UI::Input::KeyboardAndMouse::{VK_DOWN, VK_TAB};
     use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos};
 
-    let window = ui.window("Tab でリストへ", 300.0, 280.0)?;
+    let window = ui.window("Tab で行へ", 300.0, 280.0)?;
     let stack = ui.stack(Orientation::Vertical)?;
     let button = ui.button("手前")?;
-    let list = ui.list()?;
-    list.set_items(&naui_core::ListItem::list(
-        (0..1_000).map(|index| format!("行 {index}")),
-    ));
-    list.set_sizing(Sizing::fill());
     stack.set_sizing(Sizing::fill());
     stack.append(&button);
-    stack.append(&list);
+    stack.append(list);
     window.set_child(&stack);
     let mut pointer = POINT::default();
     // SAFETY: `pointer` はこの関数の中で生きている。
     let _ = unsafe { GetCursorPos(&mut pointer) };
     let outcome = catch_unwind(AssertUnwindSafe(|| -> Option<()> {
         window.show();
-        let scroll = list_scroller(&list);
+        let scroll = list.scroller();
         pump_until(SCROLL_LAYOUT_TIMEOUT, || {
             scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && list.row_height() > 0.0
         });
@@ -8624,10 +9230,10 @@ fn list_tab_focuses_a_row_on_screen(ui: &Ui) -> Result<()> {
         });
         press_nav_key(&[], VK_TAB)?;
         pump_until(Duration::from_secs(1), || {
-            focused_list_row(&list).is_some_and(on_screen)
+            focused_list_row(list).is_some_and(on_screen)
         });
-        let Some(focused) = focused_list_row(&list) else {
-            println!("     (Tab でリストの行へ入らない環境なので、確かめずに通す)");
+        let Some(focused) = focused_list_row(list) else {
+            println!("     (Tab で行へ入らない環境なので、確かめずに通す)");
             return None;
         };
         assert!(
@@ -8648,6 +9254,71 @@ fn list_tab_focuses_a_row_on_screen(ui: &Ui) -> Result<()> {
     }));
     // SAFETY: 引数は値だけ。
     let _ = unsafe { SetCursorPos(pointer.x, pointer.y) };
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// [`list_refresh_inside_the_builder_starts_over`] on a `Table`.
+fn table_refresh_inside_the_builder_starts_over(ui: &Ui) -> Result<()> {
+    use naui_windows::TableCells;
+    use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+
+    let window = ui.window("表の組み立て中の refresh", 240.0, 160.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[naui_core::TableColumn::new("名前")]);
+    let version = Rc::new(Cell::new(1));
+    let refresh_once = Rc::new(Cell::new(false));
+    {
+        let inside = table.clone();
+        let version = version.clone();
+        let refresh_once = refresh_once.clone();
+        table.set_row_builder(1_000, move |index| {
+            let built_from = version.get();
+            if refresh_once.replace(false) {
+                version.set(2);
+                inside.refresh();
+            }
+            Ok(TableCells::new().text(format!("{built_from}:{index}")))
+        });
+    }
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        let scroll = table_scroller(&table);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && table.row_height() > 0.0
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        refresh_once.set(true);
+        table.refresh();
+        let items = table.native_list_view().Items().expect("行");
+        let count = items.Size().expect("行の数");
+        assert!(count > 0, "行があること");
+        for slot in 0..count {
+            let row = items
+                .GetAt(slot)
+                .and_then(|item| item.cast::<ListViewItem>())
+                .expect("行");
+            let index = AutomationProperties::GetPositionInSet(&row).expect("位置") - 1;
+            let text = row
+                .Content()
+                .and_then(|content| content.cast::<Grid>())
+                .and_then(|grid| grid.Children())
+                .and_then(|children| children.GetAt(0))
+                .and_then(|cell| cell.cast::<TextBlock>())
+                .and_then(|cell| cell.Text())
+                .unwrap_or_default()
+                .to_string();
+            assert_eq!(text, format!("2:{index}"), "新しい内容で組み立て直すこと");
+        }
+    }));
     window.close();
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
@@ -8712,6 +9383,122 @@ fn list_refresh_inside_the_builder_starts_over(ui: &Ui) -> Result<()> {
                 .unwrap_or_default()
                 .to_string();
             assert_eq!(text, format!("2:{index}"), "新しい内容で組み立て直すこと");
+        }
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// [`list_keeps_the_rows_a_failed_build_left`] on a `Table`.
+fn table_keeps_the_rows_a_failed_build_left(ui: &Ui) -> Result<()> {
+    use naui_windows::TableCells;
+    use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+    use std::collections::HashMap;
+
+    const ROWS: usize = 1_000;
+    let window = ui.window("表の組み立ての失敗", 240.0, 160.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[naui_core::TableColumn::new("名前")]);
+    // ほかの親に載っているので、行へは入れられない。
+    let holder = ui.stack(Orientation::Vertical)?;
+    let outsider = ui.label("外")?;
+    holder.append(&outsider);
+    let first_bad = Rc::new(Cell::new(usize::MAX));
+    let reached = Rc::new(Cell::new(false));
+    let labels: Rc<RefCell<HashMap<usize, naui_windows::Label>>> = Rc::default();
+    {
+        let ui = ui.clone();
+        let first_bad = first_bad.clone();
+        let reached = reached.clone();
+        let labels = labels.clone();
+        table.set_row_builder(ROWS, move |index| {
+            if index >= first_bad.get() {
+                reached.set(true);
+                return Ok(TableCells::new().cell(&outsider));
+            }
+            if let Some(label) = labels.borrow().get(&index) {
+                return Ok(TableCells::new().cell(label));
+            }
+            let label = ui.label(&format!("{index}"))?;
+            labels.borrow_mut().insert(index, label.clone());
+            Ok(TableCells::new().cell(&label))
+        });
+    }
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        let scroll = table_scroller(&table);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && table.row_height() > 0.0
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        let rows = || table.native_list_view().Items().expect("行");
+        let row_at = |slot: u32| {
+            rows()
+                .GetAt(slot)
+                .and_then(|item| item.cast::<ListViewItem>())
+                .expect("行")
+        };
+        pump_until(Duration::from_millis(500), || false);
+        let built_end = rows().Size().expect("行の数") as usize;
+
+        // 窓が動いて増える行で失敗する。窓に残る行があるところまでだけ動かす。
+        first_bad.set(built_end);
+        table.scroll_to_row(built_end + 1);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || reached.get());
+        assert!(reached.get(), "増える行を組み立てようとしたこと");
+        pump_until(Duration::from_millis(300), || false);
+        let first_kept =
+            AutomationProperties::GetPositionInSet(&row_at(0)).expect("位置") as usize - 1;
+
+        // 載せられなかった行は空の行になるので、行が欠けず、番号が順に並ぶ。
+        for slot in 0..rows().Size().expect("行の数") {
+            assert_eq!(
+                AutomationProperties::GetPositionInSet(&row_at(slot)).expect("位置") as usize - 1,
+                first_kept + slot as usize,
+                "行が欠けないこと"
+            );
+        }
+        assert!(
+            built_list_row(&table, built_end).is_some(),
+            "失敗した行も行として残ること"
+        );
+
+        // 残った行は管理されたままなので、選択が届く。
+        table.set_selection(&[first_kept]);
+        assert!(
+            row_at(0).IsSelected().expect("IsSelected"),
+            "失敗のあとも残った行へ選択が届くこと ({first_kept} 行目)"
+        );
+
+        // 失敗の原因が無くなると、同じウィジェットの行を組み立て直せる。
+        first_bad.set(usize::MAX);
+        table.refresh();
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            built_list_row(&table, built_end).is_some()
+        });
+        let count = rows().Size().expect("行の数");
+        assert!(count > 0, "行があること");
+        for slot in 0..count {
+            let row = row_at(slot);
+            let index = AutomationProperties::GetPositionInSet(&row).expect("位置") - 1;
+            let text = row
+                .Content()
+                .and_then(|content| content.cast::<Grid>())
+                .and_then(|host| host.Children())
+                .and_then(|children| children.GetAt(0))
+                .and_then(|label| label.cast::<TextBlock>())
+                .and_then(|label| label.Text())
+                .unwrap_or_default()
+                .to_string();
+            assert_eq!(text, index.to_string(), "{index} 行目の中身があること");
         }
     }));
     window.close();
