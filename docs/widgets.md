@@ -602,7 +602,8 @@ collected in [Known limitations](known-limitations.md).
   breaks, and a `<select>` creates every `<option>` it is given and has no place for
   spacers, so only the composed form can build just the rows on screen. **Having left
   `<select>`, naui adds selection, focus and keyboard operation (arrows, Home / End,
-  Space) as it does for `Table`.** The current row is indicated with
+  Page Up / Down, Ctrl / ⌘ + A, Space, and typing to jump to a row) as it does for
+  `Table`.** The current row is indicated with
   `aria-activedescendant`, and pressing a row itself moves focus to the list
   (`<ul tabindex="0">`) so keyboard use can continue. Buttons and input fields
   placed inside rows own their events, so clicks and keys that reach them are not

@@ -82,6 +82,9 @@ impl Clone for ListRowContent {
     }
 }
 
+/// How long the letters typed to jump to a row add up (milliseconds).
+const TYPE_AHEAD_MILLIS: f64 = 1_000.0;
+
 /// One row to put in a list.
 ///
 /// [`ListItem`] is a convenience API for lists that need only strings. Rows that
@@ -321,6 +324,9 @@ struct ListInner {
     /// The row [`List::scroll_to_row`] asked for while the list could not scroll to it
     /// (hidden, or not measured). It goes there once it can.
     pending_reveal: Cell<Option<usize>>,
+    /// What has been typed to jump to a row, and when ([`List::type_ahead`]).
+    typed: RefCell<String>,
+    typed_at: Cell<f64>,
     /// Whether the last build stopped at a row it could not create, so the rows are
     /// incomplete even though the window has not moved.
     build_failed: Cell<bool>,
@@ -389,6 +395,8 @@ impl List {
             row_height: Cell::new(0.0),
             row_height_stale: Cell::new(false),
             pending_reveal: Cell::new(None),
+            typed: RefCell::new(String::new()),
+            typed_at: Cell::new(0.0),
             build_failed: Cell::new(false),
             fixed_row_height: Cell::new(None),
             resize_observer: RefCell::new(None),
@@ -1040,9 +1048,12 @@ impl List {
         let mut options = Vec::with_capacity(window.len());
         let mut listeners = Vec::with_capacity(window.len());
         let mut realized = Vec::with_capacity(window.len());
+        let focused = self.0.document.active_element();
+        let mut lost_focus = false;
         for (offset, (option, listener)) in old.into_iter().zip(old_listeners).enumerate() {
             let index = built_start + offset;
             if !kept.contains(&index) {
+                lost_focus |= option.contains(focused.as_ref().map(|focused| focused.as_ref()));
                 option.remove();
                 continue;
             }
@@ -1103,6 +1114,10 @@ impl List {
         let picked = self.selection();
         self.write_selection(&picked);
         self.0.build_failed.set(outcome.is_err());
+        // 行といっしょにフォーカスが消えると、キーがどこにも届かなくなる。
+        if lost_focus {
+            let _ = list.focus();
+        }
         outcome
     }
 
@@ -1506,6 +1521,22 @@ impl List {
             "ArrowUp" => self.step(current, -1),
             "Home" => self.first_enabled(0, 1),
             "End" => self.first_enabled(len as isize - 1, -1),
+            "PageDown" => self.page(current, 1),
+            "PageUp" => self.page(current, -1),
+            "a" | "A"
+                if (event.ctrl_key() || event.meta_key())
+                    && !event.shift_key()
+                    && !event.alt_key()
+                    && self.0.mode.get().is_multiple() =>
+            {
+                let every: Vec<usize> = (0..len).collect();
+                let picked = self.normalize(&every);
+                if picked != self.selection() {
+                    self.write_selection(&picked);
+                    self.0.handler.emit(&picked);
+                }
+                return true;
+            }
             // 複数選択では Space で、いま指している行を入れたり外したりする。
             " " if self.0.mode.get().is_multiple() => {
                 let Some(index) = current else {
@@ -1514,7 +1545,16 @@ impl List {
                 self.on_row_activated(index, true, false);
                 return true;
             }
-            _ => return false,
+            _ => {
+                let Some(target) = self.type_ahead(event, current) else {
+                    return false;
+                };
+                // Shift は大文字を打つためのもので、範囲を選ぶためではない。
+                self.0.active.set(Some(target));
+                self.0.anchor.set(Some(target));
+                self.commit(&[target]);
+                return true;
+            }
         };
         let Some(target) = target else {
             return false;
@@ -1529,6 +1569,84 @@ impl List {
             self.commit(&[target]);
         }
         true
+    }
+
+    /// The row a page away from `from` for Page Up and Page Down, or the nearest selectable
+    /// one.
+    fn page(&self, from: Option<usize>, step: isize) -> Option<usize> {
+        let height = self.0.row_height.get();
+        let viewport = match &*self.0.body.borrow() {
+            Body::Listbox { list, .. } => f64::from(list.client_height()),
+            Body::Select { .. } => 0.0,
+        };
+        let rows = match height > 0.0 {
+            true => (viewport / height).floor().max(1.0) as isize,
+            false => 1,
+        };
+        let last = self.len() as isize - 1;
+        let start = match from {
+            Some(index) => (index as isize + step * rows).clamp(0, last),
+            None if step > 0 => 0,
+            None => last,
+        };
+        self.first_enabled(start, step)
+            .or_else(|| self.first_enabled(start, -step))
+    }
+
+    /// The row whose text starts with what has been typed, as in a `<select>`: letters
+    /// typed within a second add up, and one letter repeated goes through the rows
+    /// starting with it.
+    ///
+    /// Rows from [`List::set_row_builder`] have no text until they are built.
+    fn type_ahead(&self, event: &KeyboardEvent, current: Option<usize>) -> Option<usize> {
+        let key = event.key();
+        if key.chars().count() != 1
+            || event.ctrl_key()
+            || event.meta_key()
+            || event.alt_key()
+            || event.is_composing()
+            || self.0.rows.is_built()
+        {
+            return None;
+        }
+        let now = event.time_stamp();
+        let mut typed = self.0.typed.borrow_mut();
+        if now - self.0.typed_at.get() > TYPE_AHEAD_MILLIS {
+            typed.clear();
+        }
+        // 打ち始めの Space は文字ではない。
+        if typed.is_empty() && key == " " {
+            return None;
+        }
+        self.0.typed_at.set(now);
+        typed.push_str(&key.to_lowercase());
+        let needle = match typed.chars().next() {
+            Some(first) if typed.chars().all(|letter| letter == first) => first.to_string(),
+            _ => typed.clone(),
+        };
+        drop(typed);
+        // 1 文字なら次の行から探す。続けて打っている間は、いまの行のままで合えばよい。
+        let len = self.len();
+        let start = match (current, needle.chars().count()) {
+            (Some(index), 1) => index + 1,
+            (Some(index), _) => index,
+            (None, _) => 0,
+        };
+        (0..len)
+            .map(|offset| (start + offset) % len)
+            .find(|&index| {
+                self.is_selectable(index)
+                    && self
+                        .0
+                        .rows
+                        .with_stored(index, |row| match &row.content {
+                            ListRowContent::Item(item) => {
+                                item.label.to_lowercase().starts_with(&needle)
+                            }
+                            ListRowContent::Custom(_) => false,
+                        })
+                        .unwrap_or(false)
+            })
     }
 
     /// Looks for the next selectable row from `from` in the direction of `step`.

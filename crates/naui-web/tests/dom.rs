@@ -8377,6 +8377,102 @@ async fn list_keeps_its_rows_when_a_row_fails_to_build() {
     );
 }
 
+/// A `<ul>` has to do what a `<select>` gives for free: paging, selecting everything, and
+/// jumping to a row by typing.
+#[wasm_bindgen_test]
+fn list_with_many_rows_keeps_the_keys_of_a_select() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_selection_mode(SelectionMode::Multiple);
+        let mut names: Vec<String> = (0..ROWS).map(|index| format!("行 {index}")).collect();
+        names[3_000] = "Apple".to_string();
+        names[4_000] = "Apricot".to_string();
+        list.set_items(&ListItem::list(names));
+        let scroller = list_scroller(&list);
+        let press = |key: &str| press_shortcut(scroller.as_ref(), key, false, false, false);
+
+        assert!(press("PageDown"), "処理したキーは既定の動作を止める");
+        let start = list.selection()[0];
+        assert!(press("PageDown"));
+        let page = list.selection()[0] - start;
+        assert!(page > 1, "1 ページ分動くこと: {page}");
+        assert_eq!(list.selection(), vec![start + page]);
+        assert!(press("PageUp"));
+        assert_eq!(list.selection(), vec![start]);
+        // Shift で範囲が伸びる。
+        assert!(press_shortcut(
+            scroller.as_ref(),
+            "PageDown",
+            false,
+            true,
+            false
+        ));
+        assert_eq!(list.selection().len(), page + 1);
+        // 端で止まる。
+        press("End");
+        press("PageDown");
+        assert_eq!(list.selection(), vec![ROWS - 1]);
+
+        // 全選択は窓の外まで届き、位置は動かさない。
+        let top = scroller.scroll_top();
+        assert!(press_shortcut(scroller.as_ref(), "a", true, false, false));
+        assert_eq!(list.selection().len(), ROWS);
+        assert_eq!(scroller.scroll_top(), top);
+
+        // 文字で飛ぶ。
+        press("Home");
+        assert!(press("a"));
+        assert_eq!(list.selection(), vec![3_000], "打った文字で始まる行へ");
+        assert!(press("p"));
+        assert_eq!(list.selection(), vec![3_000], "続けて打つと今の行のまま");
+        assert!(press("r"));
+        assert_eq!(list.selection(), vec![4_000], "打ち足すと絞られる");
+        assert!(!press("z"), "当たらなければ何もしない");
+        assert_eq!(list.selection(), vec![4_000]);
+        Ok(())
+    });
+}
+
+/// When a row with the focus inside leaves the window, the focus goes to the list, so the
+/// keys still reach something.
+#[wasm_bindgen_test]
+async fn list_takes_the_focus_of_a_row_that_leaves_the_window() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let list = ui.list()?;
+        list.set_sizing(Sizing::fixed(240.0, 200.0));
+        let ui = ui.clone();
+        list.set_row_builder(5_000, move |_| Ok(ListRow::new(&ui.text_input("")?)));
+        kept = Some(list);
+        Ok(())
+    });
+    let list = kept.expect("リスト");
+    let _mounted = Mounted::new(&list);
+    next_frames().await;
+    let document = web_sys::window()
+        .expect("window")
+        .document()
+        .expect("document");
+    let input: HtmlElement = list_rows(&list)[1]
+        .query_selector("input")
+        .expect("検索")
+        .expect("行の入力欄")
+        .unchecked_into();
+    input.focus().expect("フォーカス");
+    let element: Element = input.clone().into();
+    assert_eq!(document.active_element(), Some(element));
+
+    // WebKit はフォーカスした要素を見える位置へ送る処理を遅らせるので、終わるのを待つ。
+    next_frames().await;
+    let scroller = list_scroller(&list);
+    scroller.set_scroll_top((2_000.0 * list.row_height()) as i32);
+    next_frames().await;
+    assert!(!input.is_connected(), "入力欄の行が窓から出ていること");
+    let element: Element = scroller.clone().into();
+    assert_eq!(document.active_element(), Some(element), "リストへ移ること");
+}
+
 /// A row is discarded when it leaves the window, and what it said goes on counting.
 #[wasm_bindgen_test]
 async fn list_remembers_rows_that_cannot_be_selected() {

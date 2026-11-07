@@ -803,6 +803,10 @@ fn main() {
             list_home_end_and_select_all_reach_every_row,
         ),
         (
+            "フォーカスの行が窓から出たら見えている行へ移る",
+            list_focus_moves_to_a_row_on_screen,
+        ),
+        (
             "画面から出た行も選べないと答えたことを覚えている",
             list_remembers_rows_that_cannot_be_selected,
         ),
@@ -6536,6 +6540,35 @@ fn list_home_end_and_select_all_reach_every_row(ui: &Ui) -> Result<()> {
     list.set_selected(3);
     native.emit_by_name::<()>("select-all", &[]);
     assert_eq!(list.selection(), vec![3]);
+    window.close();
+    Ok(())
+}
+
+/// When the focused row leaves the window, the focus goes where the list is showing: the
+/// next key then carries on from there, instead of jumping back above the screen.
+fn list_focus_moves_to_a_row_on_screen(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    let (window, list, native) = shown_big_list(ui, "フォーカスの行", |list| {
+        list.set_items(&ListItem::list(
+            (0..ROWS).map(|index| format!("行 {index}")),
+        ));
+    })?;
+    assert!(native.row_at_index(0).expect("行").grab_focus());
+    let height = list.row_height();
+    scroll_list_to(&native, height * 2_000.0);
+    tick(&native);
+
+    let adjustment = scroller_of(&native)
+        .expect("GtkScrolledWindow")
+        .vadjustment();
+    let focused = big_list_focused_row(&native);
+    let top = focused as f64 * height;
+    assert!(
+        adjustment.value() <= top + 0.5
+            && top + height <= adjustment.value() + adjustment.page_size() + 0.5,
+        "{focused} 行目が見えること (位置 {})",
+        adjustment.value()
+    );
     window.close();
     Ok(())
 }

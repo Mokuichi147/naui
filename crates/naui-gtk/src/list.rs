@@ -743,13 +743,25 @@ impl List {
         if let Some(index) = focused.filter(|index| !kept.contains(index)) {
             let offset = match window.contains(index) {
                 true => index - window.start,
-                // スクロールバーで遠くへ送ったときは、窓の先頭から続ける。
-                false => 0,
+                // スクロールバーで遠くへ送ったときは、見えている先頭の行から続ける。窓の
+                // 先頭は画面より上にあり、次のキーでそこまで戻ってしまう。
+                false => self.first_visible_row().saturating_sub(window.start),
             };
             if let Some(row) = self.0.native.row_at_index(offset as i32) {
                 self.grab_focus_in_place(&row);
             }
         }
+    }
+
+    /// The first row wholly on screen, as far as the window has it.
+    fn first_visible_row(&self) -> usize {
+        let window = self.0.window.get();
+        let height = self.0.row_height.get();
+        if height <= 0.0 || window.is_empty() {
+            return window.start;
+        }
+        let top = self.0.scroller.vadjustment().value();
+        ((top / height).ceil() as usize).clamp(window.start, window.end - 1)
     }
 
     /// The row holding the keyboard focus (itself, or a control inside it).
@@ -1230,7 +1242,7 @@ fn pressed_row(
         .widget()
         .and_downcast::<gtk::ListBoxRow>()
         .filter(|row| row.is_sensitive())?;
-    let index = inner.window.get().start + usize::try_from(row.index()).ok()?;
+    let index = inner.built_start.get() + usize::try_from(row.index()).ok()?;
     Some((inner, row, index))
 }
 
@@ -1266,7 +1278,7 @@ fn enter_controller(list: Weak<ListInner>) -> gtk::EventControllerKey {
             .filter(|row| row.parent().as_ref() == Some(inner.native.upcast_ref()));
         if let Some(row) = focused.filter(|row| row.is_sensitive()) {
             if let Ok(offset) = usize::try_from(row.index()) {
-                inner.row_activate.emit(inner.window.get().start + offset);
+                inner.row_activate.emit(inner.built_start.get() + offset);
             }
         }
         glib::Propagation::Proceed

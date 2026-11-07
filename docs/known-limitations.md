@@ -113,7 +113,9 @@ that shape are covered in
     built, because the row is discarded. While the row stays in the range it is left
     as it is, so what the builder returned for it only changes with `refresh`.
   - On the Web, such a list is built from `<ul role="listbox">` instead of `<select>`,
-    and the same limit on the element height as for `Table` applies.
+    and the same limit on the element height as for `Table` applies. naui handles the
+    keys of a `<select>` itself, but typing to jump to a row works only for rows passed
+    as text: rows from `set_row_builder` have no text until they are built.
   - Assistive technology is told each row's position among all the rows and how many
     there are, because the native list knows only the rows built. On Linux the values
     are set on every GTK version, but GTK sends them over AT-SPI only from 4.20; with
