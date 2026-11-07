@@ -8540,6 +8540,14 @@ fn shift_range_scenario(
 
         // ホイールのあと、ポインターを動かさずに押した行も分かる。
         click_list_row_expecting(hwnd, list, 7, &[], &[7], "ホイールの前の選択")?;
+        let pointer_at = || {
+            let mut at = POINT::default();
+            // SAFETY: `at` はこの関数の中で生きている。
+            let _ = unsafe { GetCursorPos(&mut at) };
+            (at.x, at.y)
+        };
+        let aimed = pointer_at();
+        let start = scroll.VerticalOffset().expect("位置");
         for _ in 0..60 {
             if !foreground_is_ours() {
                 return None;
@@ -8550,9 +8558,15 @@ fn shift_range_scenario(
             send_input(mouse_input(MOUSEEVENTF_WHEEL, (-480_i32) as u32));
         }
         pump_until(Duration::from_millis(500), || false);
+        // ホイールもこの先のクリックも、ポインターの下へ届く。
+        if pointer_at() != aimed {
+            println!("     (ポインターがほかから動かされたので、確かめずに通す)");
+            return None;
+        }
         assert!(
             built_list_row(list, 7).is_none(),
-            "ホイールで窓が動いている"
+            "ホイールで窓が動いている: 位置 {start} → {} ポインター {aimed:?}",
+            scroll.VerticalOffset().expect("位置")
         );
         // ホイールのスクロールは少しのあいだ続くので、止まってから押す行を決める。
         let mut settled = scroll.VerticalOffset().expect("位置");
@@ -8596,6 +8610,10 @@ fn shift_range_scenario(
             if list.selection() == span(7, target) {
                 break;
             }
+        }
+        if pointer_at() != aimed {
+            println!("     (ポインターがほかから動かされたので、確かめずに通す)");
+            return None;
         }
         assert_eq!(list.selection(), span(7, target), "ポインターの下の行まで");
         // 選択は押した時点で変わる。フォーカスはそのあとで届くことがあるので待つ。
