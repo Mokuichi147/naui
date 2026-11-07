@@ -570,6 +570,14 @@ const CASES: &[Case] = &[
         table_rows_report_their_place_among_all_rows,
     ),
     (
+        "行の多い表は、窓が動いてもフォーカスのある行を保つ",
+        table_keeps_the_focused_row_across_rebuilds,
+    ),
+    (
+        "行の多い表は、単一選択で Ctrl を押していても窓の外の行を残さない",
+        table_single_selection_drops_rows_outside_the_window,
+    ),
+    (
         "編集できるコンボボックスの Enter で文字が残り、Esc で書いた値へ戻る",
         editable_combo_box_commits_and_reverts_text,
     ),
@@ -5578,6 +5586,159 @@ fn table_rows_follow_scrolling(ui: &Ui) -> Result<()> {
             leading()
         );
     }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// The row with the focus stays focused when the window moves and rows are rebuilt,
+/// as long as it is still on screen.
+fn table_keeps_the_focused_row_across_rebuilds(ui: &Ui) -> Result<()> {
+    use naui_core::{TableColumn, TableRow};
+    use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
+    use naui_winui3::Microsoft::UI::Xaml::FocusState;
+
+    // 窓が動く分 (`ROW_WINDOW_OVERSCAN` の半分) より多くの行が見える高さにする。
+    let window = ui.window("表のフォーカス", 240.0, 640.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[TableColumn::new("名前")]);
+    let labels: Vec<String> = (0..5_000).map(|i| format!("行 {i}")).collect();
+    table.set_rows(&TableRow::list(labels.iter().map(|l| [l.as_str()])));
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        let children = native::<Grid>(&table).Children().expect("表の子");
+        let scroll = (0..children.Size().expect("表の子の数"))
+            .find_map(|i| children.GetAt(i).ok()?.cast::<ScrollViewer>().ok())
+            .expect("表の ScrollViewer");
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && table.row_height() > 0.0
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 || table.row_height() <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        let body = scroll
+            .Content()
+            .and_then(|content| content.cast::<StackPanel>())
+            .expect("表の本体");
+        let top_spacer = body
+            .Children()
+            .and_then(|children| children.GetAt(0))
+            .and_then(|spacer| spacer.cast::<FrameworkElement>())
+            .expect("先頭の詰め物");
+        let items = table.native_list_view().Items().expect("Items");
+        let height = table.row_height();
+        let first_built = || (top_spacer.Height().unwrap_or(0.0) / height).round() as usize;
+        let scroll_to = |row: usize| {
+            let offset = PropertyValue::CreateDouble(row as f64 * height)
+                .and_then(|value| value.cast::<windows::Foundation::IReference<f64>>())
+                .expect("送り先");
+            scroll
+                .ChangeViewWithOptionalAnimation(None, &offset, None, true)
+                .expect("表のスクロール");
+        };
+        let item = |offset: usize| {
+            items
+                .GetAt(offset as u32)
+                .and_then(|item| item.cast::<ListViewItem>())
+                .expect("行")
+        };
+        // 窓の中でフォーカスのある行の、全体での番号。
+        let focused = || {
+            (0..items.Size().expect("行数") as usize).find_map(|offset| {
+                let state = item(offset).cast::<Control>().ok()?.FocusState().ok()?;
+                (state != FocusState::Unfocused).then_some(first_built() + offset)
+            })
+        };
+
+        scroll_to(100);
+        pump_until(Duration::from_secs(2), || first_built() > 0);
+        let visible = (scroll.ViewportHeight().expect("表の高さ") / height) as usize;
+        assert!(
+            visible > 8,
+            "窓を動かしても見えたままにできる高さ: {visible} 行"
+        );
+        // 見えている範囲の下のほうの行。下へ送っても画面に残る。
+        let target = 100 + visible - 1;
+        let target_item = item(target - first_built());
+        let control = target_item.cast::<Control>().expect("Control");
+        pump_until(FOCUS_TIMEOUT, || {
+            control.Focus(FocusState::Programmatic).unwrap_or(false)
+        });
+        assert_eq!(focused(), Some(target), "行にフォーカスを置けること");
+
+        let moved_from = first_built();
+        scroll_to(100 + 7);
+        pump_until(Duration::from_secs(2), || first_built() != moved_from);
+        assert_ne!(first_built(), moved_from, "窓が動いていること");
+        assert_eq!(focused(), Some(target), "組み立て直しても同じ行にあること");
+        let offset = scroll.VerticalOffset().expect("表の位置");
+        assert!(
+            (offset - 107.0 * height).abs() <= height,
+            "フォーカスを戻しても位置が飛ばないこと: {offset}"
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// With single selection, a row off screen must not stay selected next to the row
+/// just picked, even with Ctrl held. Multiple selection keeps it.
+fn table_single_selection_drops_rows_outside_the_window(ui: &Ui) -> Result<()> {
+    use naui_core::{SelectionMode, TableColumn, TableRow};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetKeyboardState, SetKeyboardState, VK_CONTROL,
+    };
+
+    let window = ui.window("表の単一選択", 240.0, 160.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[TableColumn::new("名前")]);
+    let labels: Vec<String> = (0..5_000).map(|i| format!("行 {i}")).collect();
+    table.set_rows(&TableRow::list(labels.iter().map(|l| [l.as_str()])));
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
+
+    // `GetKeyState` はこのスレッドの表を読むので、Ctrl を押した状態を表へ書く。
+    let mut keys = [0u8; 256];
+    // SAFETY: 配列はこの関数の中で生きており、大きさは 256 バイトで決まっている。
+    unsafe { GetKeyboardState(&mut keys) }.expect("キーの状態");
+    let released = keys;
+    keys[usize::from(VK_CONTROL.0)] |= 0x80;
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || table.row_height() > 0.0);
+        let items = table.native_list_view().Items().expect("Items");
+        let pick_row_one = || {
+            items
+                .GetAt(1)
+                .and_then(|item| item.cast::<ListViewItem>())
+                .and_then(|item| item.SetIsSelected(true))
+                .expect("行を選ぶ");
+            // 窓に載っていても、通知が同じ呼び出しの中で届くとは限らない。
+            pump_until(Duration::from_secs(2), || table.selection().contains(&1));
+        };
+        // SAFETY: 同上。
+        unsafe { SetKeyboardState(&keys) }.expect("Ctrl を押す");
+
+        table.set_selected(4_000);
+        pick_row_one();
+        assert_eq!(table.selection(), vec![1], "1 行だけになること");
+
+        table.set_selection_mode(SelectionMode::Multiple);
+        table.set_selection(&[4_000]);
+        pick_row_one();
+        assert_eq!(table.selection(), vec![1, 4_000], "足すだけなら残ること");
+    }));
+    // SAFETY: 同上。
+    unsafe { SetKeyboardState(&released) }.expect("Ctrl を離す");
     window.close();
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);

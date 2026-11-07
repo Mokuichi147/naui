@@ -23,8 +23,11 @@ use naui_core::{
     keeps_row_window, row_window, Align, Result, RowWindow, SelectionMode, SortOrder, TableColumn,
     TableRow, ROW_WINDOW_OVERSCAN,
 };
-use wasm_bindgen::JsCast;
-use web_sys::{Document, Element, HtmlElement, HtmlTableElement, KeyboardEvent, MouseEvent};
+use wasm_bindgen::prelude::Closure;
+use wasm_bindgen::{JsCast, JsValue};
+use web_sys::{
+    Document, Element, HtmlElement, HtmlTableElement, KeyboardEvent, MouseEvent, ResizeObserver,
+};
 
 use crate::list::{control_was_targeted, ActivationHandler};
 use crate::widgets::{create, impl_widget, Listener, Widget};
@@ -387,8 +390,20 @@ struct TableInner {
     _keys: RefCell<Option<Listener>>,
     /// The scroll subscription. Used to move the window.
     _scroll: RefCell<Option<Listener>>,
+    /// Watches the size, which is unknown until the table is placed in the document.
+    resize_observer: RefCell<Option<ResizeObserver>>,
+    resize_callback: RefCell<Option<Closure<dyn FnMut(JsValue)>>>,
     /// `on_file_drop`.
     file_drop: crate::file_drop::FileDrop,
+}
+
+impl Drop for TableInner {
+    fn drop(&mut self) {
+        // 捨てたあとに通知が届くと、解放した `Closure` を呼んでしまう。
+        if let Some(observer) = self.resize_observer.borrow_mut().take() {
+            observer.disconnect();
+        }
+    }
 }
 
 /// A table with column headings (`<table>`).
@@ -471,6 +486,8 @@ impl Table {
             row_listeners: RefCell::new(Vec::new()),
             _keys: RefCell::new(None),
             _scroll: RefCell::new(None),
+            resize_observer: RefCell::new(None),
+            resize_callback: RefCell::new(None),
             file_drop: Default::default(),
         }));
         this.apply_mode();
@@ -500,7 +517,25 @@ impl Table {
             }
         })?;
         *this.0._scroll.borrow_mut() = Some(scroll);
+        this.observe_size()?;
         Ok(this)
+    }
+
+    /// Moves the window when the table gets its size (it has none until it is placed in
+    /// the document) or its size changes.
+    fn observe_size(&self) -> Result<()> {
+        let weak = Rc::downgrade(&self.0);
+        let callback = Closure::<dyn FnMut(JsValue)>::new(move |_entries: JsValue| {
+            if let Some(inner) = weak.upgrade() {
+                Table(inner).update_window();
+            }
+        });
+        let observer = ResizeObserver::new(callback.as_ref().unchecked_ref())
+            .map_err(|e| crate::to_error("create the ResizeObserver", e))?;
+        observer.observe(self.0.root.as_ref());
+        *self.0.resize_observer.borrow_mut() = Some(observer);
+        *self.0.resize_callback.borrow_mut() = Some(callback);
+        Ok(())
     }
 
     /// Rebuilds the columns. Rows and selection stay; only the cells are rearranged.
@@ -988,11 +1023,19 @@ impl Table {
         )
     }
 
-    /// Moves the built range along with scrolling.
+    /// Moves the built range along with scrolling and resizing.
     ///
     /// Rebuilding for every row scrolled is heavy, so the window is reused until you
     /// have scrolled through half of the extra rows ([`ROW_WINDOW_OVERSCAN`]).
     fn update_window(&self) {
+        // 隠れている間は位置も大きさも読めないので、組み立てた行をそのまま残す。
+        if self.0.root.client_height() <= 0 {
+            return;
+        }
+        // 文書に載る前に組み立てた行は、ここで初めて測れる。
+        if self.0.row_height.get() <= 0.0 {
+            self.measure_row_height();
+        }
         let current = self.0.window.get();
         let needed = self.compute_window(ROW_WINDOW_OVERSCAN / 2);
         let next = self.compute_window(ROW_WINDOW_OVERSCAN);
