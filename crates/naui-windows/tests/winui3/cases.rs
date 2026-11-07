@@ -167,6 +167,10 @@ const CASES: &[Case] = &[
         list_refresh_inside_the_builder_starts_over,
     ),
     (
+        "選択を動かすキーはリストの選べない行を飛ばし、Ctrl は止まれる",
+        list_keys_pass_over_rows_that_cannot_be_selected,
+    ),
+    (
         "Tab はリストの画面の中の行へ入り、次のキーで表示が飛ばない",
         list_tab_focuses_a_row_on_screen,
     ),
@@ -8447,6 +8451,116 @@ fn list_arrow_keys_pass_over_disabled_rows(ui: &Ui) -> Result<()> {
         assert_eq!(list.selection(), [2], "手前へも飛ばす");
         press_nav_key(&[VK_SHIFT], VK_DOWN)?;
         assert_eq!(list.selection(), [4], "単一選択では Shift でも 1 行");
+        Some(())
+    }));
+    // SAFETY: 引数は値だけ。
+    let _ = unsafe { SetCursorPos(pointer.x, pointer.y) };
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// Moving the selection passes over rows that cannot be selected, such as headings, so it
+/// never ends up empty. Ctrl moves only the focus, so it can still stop on them.
+fn list_keys_pass_over_rows_that_cannot_be_selected(ui: &Ui) -> Result<()> {
+    use naui_windows::ListRow;
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        VK_CONTROL, VK_DOWN, VK_END, VK_HOME, VK_NEXT, VK_SHIFT, VK_SPACE, VK_UP,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetCursorPos, SetCursorPos};
+
+    const ROWS: usize = 1_000;
+    let selectable =
+        |index: usize| index != 0 && index != 3 && !(20..=80).contains(&index) && index != ROWS - 1;
+    let window = ui.window("選べない行とキー", 300.0, 240.0)?;
+    let list = ui.list()?;
+    list.set_selection_mode(naui_core::SelectionMode::Multiple);
+    {
+        let ui = ui.clone();
+        list.set_row_builder(ROWS, move |index| {
+            Ok(ListRow::new(&ui.label(&format!("行 {index}"))?).selectable(selectable(index)))
+        });
+    }
+    list.set_row_selectable(selectable);
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+    let mut pointer = POINT::default();
+    // SAFETY: `pointer` はこの関数の中で生きている。
+    let _ = unsafe { GetCursorPos(&mut pointer) };
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Option<()> {
+        window.show();
+        let scroll = list_scroller(&list);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && list.row_height() > 0.0
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return None;
+        }
+        let hwnd = bring_to_front(&window)?;
+        pump_until(Duration::from_millis(500), || false);
+
+        first_click_on_list_row(hwnd, &list, 2)?;
+        press_nav_key(&[], VK_DOWN)?;
+        assert_eq!(list.selection(), [4], "↓ は選べない行を飛ばす");
+        assert_eq!(focused_list_row(&list), Some(4), "フォーカスも飛ばす");
+        press_nav_key(&[], VK_UP)?;
+        assert_eq!(list.selection(), [2], "↑ も選べない行を飛ばす");
+        press_nav_key(&[], VK_HOME)?;
+        assert_eq!(list.selection(), [1], "Home は選べる最初の行へ");
+
+        // Ctrl はフォーカスだけなので止まれる。その上の Space は選択を変えない。
+        press_nav_key(&[VK_CONTROL], VK_DOWN)?;
+        press_nav_key(&[VK_CONTROL], VK_DOWN)?;
+        assert_eq!(
+            focused_list_row(&list),
+            Some(3),
+            "Ctrl は選べない行にも止まる"
+        );
+        assert_eq!(list.selection(), [1], "選択は変わらない");
+        press_nav_key(&[], VK_SPACE)?;
+        assert_eq!(list.selection(), [1], "選べない行の上の Space は何もしない");
+        press_nav_key(&[], VK_DOWN)?;
+        assert_eq!(list.selection(), [4], "そこから次の選べる行へ");
+
+        // Shift も止まらない。範囲に選べない行は入らない。
+        click_list_row_expecting(hwnd, &list, 2, &[], &[2], "Shift の前の選択")?;
+        press_nav_key(&[VK_SHIFT], VK_DOWN)?;
+        assert_eq!(list.selection(), [2, 4], "Shift + ↓");
+        assert_eq!(focused_list_row(&list), Some(4), "Shift + ↓ のフォーカス");
+
+        // 窓より長く続く選べない行も越える。
+        list.scroll_to_row(19);
+        pump_until(Duration::from_millis(500), || false);
+        click_list_row_expecting(hwnd, &list, 19, &[], &[19], "長い選べない行の手前")?;
+        press_nav_key(&[], VK_DOWN)?;
+        assert_eq!(list.selection(), [81], "窓より先の選べる行へ");
+        assert_eq!(focused_list_row(&list), Some(81), "移った行にフォーカス");
+        press_nav_key(&[], VK_UP)?;
+        assert_eq!(list.selection(), [19], "手前へも越える");
+        press_nav_key(&[], VK_NEXT)?;
+        assert!(
+            selectable(list.selection()[0]),
+            "Page Down も選べる行で止まる"
+        );
+
+        // 端の行が選べないときは、その手前で止まる。
+        press_nav_key(&[], VK_END)?;
+        assert_eq!(list.selection(), [ROWS - 2], "End は選べる最後の行へ");
+        press_nav_key(&[], VK_DOWN)?;
+        assert_eq!(
+            list.selection(),
+            [ROWS - 2],
+            "その先に選べる行が無ければ動かない"
+        );
+        assert_eq!(
+            focused_list_row(&list),
+            Some(ROWS - 2),
+            "フォーカスも動かない"
+        );
         Some(())
     }));
     // SAFETY: 引数は値だけ。

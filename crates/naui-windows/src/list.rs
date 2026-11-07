@@ -32,6 +32,7 @@
 //! position, so the row's left edge is passed.
 
 use std::cell::{Cell, RefCell};
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -1245,11 +1246,25 @@ impl List {
             RowMotion::First => (0, view_top),
             RowMotion::Last => (count - 1, view_top),
         };
+        // 選択を動かす移動は、選べない行 (見出しなど) へ止まらない。止まると選択が空になる。
+        // Ctrl はフォーカスだけなので、行の中のコントロールへ入れるように止まる。Space は
+        // その行のままなので探さない。
+        let selecting = (extending || !modifiers.control) && !matches!(motion, RowMotion::Lines(0));
+        let target = match selecting {
+            true => {
+                match self.nearest_row(target, from, 0..count, |row| self.is_selectable(*row)) {
+                    Some(target) => target,
+                    None => return true,
+                }
+            }
+            false => target,
+        };
         let top = self.offset_showing(target, top, viewport);
         // `ChangeView` はすぐには位置へ反映されないので、窓は移る先の位置から決める。
         self.move_window(top);
         self.scroll_now(top);
-        let Some(landed) = self.focus_nearest(target, from, FocusState::Keyboard) else {
+        // ビルダーの行は、組み立てて初めて選べないと分かることがある。
+        let Some(landed) = self.focus_nearest(target, from, FocusState::Keyboard, selecting) else {
             return true;
         };
         // 無効の行を飛ばすと、移った行が画面の外のことがある。
@@ -1277,6 +1292,8 @@ impl List {
             }
             // Ctrl はフォーカスだけを動かす。
             (false, true) => return true,
+            // 選べない行の上の Space は何もしない。
+            (false, false) if !self.is_selectable(landed) => return true,
             (false, false) => {
                 self.0.anchor.set(Some(landed));
                 self.normalize(&[landed])
@@ -1329,9 +1346,36 @@ impl List {
         }
     }
 
-    /// Focuses row `target`, or if it cannot take the focus (it is disabled), the nearest
-    /// row beyond it that can, or else on the way back to `from`. Returns that row.
-    fn focus_nearest(&self, target: usize, from: usize, state: FocusState) -> Option<usize> {
+    /// The nearest row in `rows` that `accepts`, looking on from `target` in the direction
+    /// of travel from `from`, or else back toward `from`.
+    fn nearest_row(
+        &self,
+        target: usize,
+        from: usize,
+        rows: Range<usize>,
+        accepts: impl FnMut(&usize) -> bool,
+    ) -> Option<usize> {
+        let mut accepts = accepts;
+        match target >= from {
+            true => (target..rows.end)
+                .find(&mut accepts)
+                .or_else(|| (from..target).rev().find(&mut accepts)),
+            false => (rows.start..=target)
+                .rev()
+                .find(&mut accepts)
+                .or_else(|| (target + 1..=from).find(&mut accepts)),
+        }
+    }
+
+    /// Focuses row `target`, or if it cannot take the focus (it is disabled) or
+    /// `selectable_only` rules it out, the nearest built row that fits. Returns that row.
+    fn focus_nearest(
+        &self,
+        target: usize,
+        from: usize,
+        state: FocusState,
+        selectable_only: bool,
+    ) -> Option<usize> {
         let window = self.0.window.get();
         if window.is_empty() {
             return None;
@@ -1340,20 +1384,13 @@ impl List {
         let from = from.clamp(window.start, window.end - 1);
         let start = self.0.built_start.get();
         let rows = self.0.native_rows.borrow().clone();
-        let focus = |index: &usize| {
-            rows.get(index - start)
-                .and_then(|row| row.cast::<Control>().ok())
-                .is_some_and(|row| row.Focus(state).unwrap_or(false))
-        };
-        match target >= from {
-            true => (target..window.end)
-                .find(focus)
-                .or_else(|| (from..target).rev().find(focus)),
-            false => (window.start..=target)
-                .rev()
-                .find(focus)
-                .or_else(|| (target + 1..=from).find(focus)),
-        }
+        self.nearest_row(target, from, window.start..window.end, |index| {
+            (!selectable_only || self.is_selectable(*index))
+                && rows
+                    .get(index - start)
+                    .and_then(|row| row.cast::<Control>().ok())
+                    .is_some_and(|row| row.Focus(state).unwrap_or(false))
+        })
     }
 
     /// Moves a focus that landed on a row off screen to the nearest row on screen.
@@ -1381,7 +1418,7 @@ impl List {
         } else {
             return;
         };
-        self.focus_nearest(target, index, state);
+        self.focus_nearest(target, index, state, false);
     }
 
     /// The row holding the keyboard focus itself, and how it got it.
