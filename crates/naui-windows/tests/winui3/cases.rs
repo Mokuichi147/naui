@@ -8385,6 +8385,10 @@ fn list_shift_range_keeps_its_anchor_outside_the_window(ui: &Ui) -> Result<()> {
             }
         }
         assert_eq!(list.selection(), span(7, target), "ポインターの下の行まで");
+        // 選択は押した時点で変わる。フォーカスはそのあとで届くことがあるので待つ。
+        pump_until(Duration::from_secs(1), || {
+            focused_list_row(list) == Some(target)
+        });
         assert_eq!(
             focused_list_row(list),
             Some(target),
