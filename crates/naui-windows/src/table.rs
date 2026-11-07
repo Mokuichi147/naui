@@ -1827,14 +1827,33 @@ impl Table {
     ) -> Option<(usize, f64)> {
         let mut target = target;
         loop {
-            target =
-                self.nearest_row(target, from, 0..self.len(), |row| self.is_selectable(*row))?;
+            let found =
+                self.nearest_row(target, from, 0..self.len(), |row| self.is_selectable(*row));
+            let Some(found) = found else {
+                self.give_up_finding(from);
+                return None;
+            };
+            target = found;
             let top = self.offset_showing(target, top, viewport);
             self.move_window(top);
+            // 組み立てられなかった行は、選べるかどうか分からない。選べない行を選ぶより、
+            // 動かないほうがよい (キーを受けている行は取り除けないことがある)。
+            if self.0.failed_window.get().is_some() {
+                self.give_up_finding(from);
+                return None;
+            }
             if self.is_selectable(target) {
                 return Some((target, top));
             }
         }
+    }
+
+    /// Puts back what [`Table::find_selectable_row`] moved while looking: the rows built where
+    /// the view is, which would otherwise be left out, and the focus on row `from`, which the
+    /// search may have rebuilt.
+    fn give_up_finding(&self, from: usize) {
+        self.move_window(self.0.scroll.VerticalOffset().unwrap_or(0.0));
+        self.focus_built_row(from, FocusState::Keyboard);
     }
 
     /// The nearest row in `rows` that `accepts`, looking on from `target` in the direction

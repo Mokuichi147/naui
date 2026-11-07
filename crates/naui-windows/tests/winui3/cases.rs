@@ -247,6 +247,14 @@ const CASES: &[Case] = &[
         table_shift_click_in_the_margin_after_a_scroll,
     ),
     (
+        "先に選べる行が無くても、リストの見えている行は組み立てたまま",
+        list_keeps_its_rows_when_no_row_ahead_can_be_selected,
+    ),
+    (
+        "先に選べる行が無くても、表の見えている行は組み立てたまま",
+        table_keeps_its_rows_when_no_row_ahead_can_be_selected,
+    ),
+    (
         "表のフォーカスが画面の外にあっても表示が動かない",
         table_view_stays_when_the_focus_is_off_screen,
     ),
@@ -9898,6 +9906,97 @@ fn table_keys_pass_over_long_runs_only_the_builder_knows(ui: &Ui) -> Result<()> 
     table.set_sizing(Sizing::fill());
     window.set_child(&table);
     run_shown_for_input(&window, &table, keys_over_long_unknown_runs_scenario)
+}
+
+/// When no row ahead can be selected, a key moving the selection leaves the view and the rows
+/// built where they were. Looking for one builds rows far away, and they must not stay built
+/// in place of the rows on screen.
+fn list_keeps_its_rows_when_no_row_ahead_can_be_selected(ui: &Ui) -> Result<()> {
+    use naui_windows::ListRow;
+
+    let window = ui.window("先に選べる行が無いリスト", 300.0, 240.0)?;
+    let list = ui.list()?;
+    {
+        let ui = ui.clone();
+        list.set_row_builder(1_000, move |index| {
+            Ok(ListRow::new(&ui.label(&format!("行 {index}"))?).selectable(index < 300))
+        });
+    }
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+    run_shown_for_input(&window, &list, no_row_ahead_scenario)
+}
+
+/// [`list_keeps_its_rows_when_no_row_ahead_can_be_selected`] on a `Table`.
+fn table_keeps_its_rows_when_no_row_ahead_can_be_selected(ui: &Ui) -> Result<()> {
+    use naui_windows::TableCells;
+
+    let window = ui.window("先に選べる行が無い表", 300.0, 240.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[naui_core::TableColumn::new("名前")]);
+    table.set_row_builder(1_000, |index| {
+        Ok(TableCells::new()
+            .text(format!("行 {index}"))
+            .selectable(index < 300))
+    });
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
+    run_shown_for_input(&window, &table, no_row_ahead_scenario)
+}
+
+fn no_row_ahead_scenario(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+) -> Option<()> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_CONTROL, VK_DOWN, VK_UP};
+
+    let scroll = list.scroller();
+    let height = list.row_height();
+    // 画面に見えている行が、どれも組み立ててあること。
+    let missing_on_screen = || {
+        let top = scroll.VerticalOffset().expect("位置");
+        let bottom = top + scroll.ViewportHeight().expect("高さ");
+        let first = (top / height).floor() as usize;
+        let last = ((bottom / height).ceil() as usize).min(999);
+        (first..=last)
+            .filter(|&index| built_list_row(list, index).is_none())
+            .collect::<Vec<usize>>()
+    };
+
+    list.scroll_to_row(299);
+    pump_until(Duration::from_millis(500), || false);
+    click_list_row_expecting(hwnd, list, 299, &[], &[299], "最後の選べる行")?;
+    // Ctrl はフォーカスだけなので、選べない行へ移れる。
+    press_nav_key(&[VK_CONTROL], VK_DOWN)?;
+    assert_eq!(focused_list_row(list), Some(300), "Ctrl + ↓ で選べない行へ");
+    let before = scroll.VerticalOffset().expect("位置");
+
+    // その先は最後まで選べない。探しても見つからない。
+    press_nav_key(&[], VK_DOWN)?;
+    assert_eq!(list.selection(), [299], "選択は変わらない");
+    assert_eq!(focused_list_row(list), Some(300), "フォーカスも動かない");
+    assert_eq!(
+        scroll.VerticalOffset().expect("位置"),
+        before,
+        "表示は動かない"
+    );
+    assert_eq!(
+        missing_on_screen(),
+        Vec::<usize>::new(),
+        "キーのすぐあとも、見えている行が組み立ててあること"
+    );
+    pump_until(Duration::from_millis(500), || false);
+    assert_eq!(
+        missing_on_screen(),
+        Vec::<usize>::new(),
+        "見えている行が組み立ててあること"
+    );
+
+    // 次のキーもその行から続く。
+    press_nav_key(&[], VK_UP)?;
+    assert_eq!(list.selection(), [299], "↑ で手前の選べる行へ");
+    assert_eq!(focused_list_row(list), Some(299), "↑ のフォーカス");
+    Some(())
 }
 
 fn keys_over_long_unknown_runs_scenario(
