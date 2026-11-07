@@ -9247,6 +9247,7 @@ fn shift_click_in_margin_scenario(
     hwnd: windows::Win32::Foundation::HWND,
     list: &impl RowsForInput,
 ) -> Option<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
     use windows::Foundation::Point as XamlPoint;
     use windows::Win32::Foundation::POINT;
     use windows::Win32::Graphics::Gdi::ClientToScreen;
@@ -9317,17 +9318,20 @@ fn shift_click_in_margin_scenario(
     // SAFETY: `origin` はこの関数の中で生きている。
     let _ = unsafe { ClientToScreen(hwnd, &mut origin) };
     let y = (aimed.y - origin.y) as f32 / scale;
-    let target = (0..1_000)
-        .find(|&index| {
-            built_list_row(list, index).is_some_and(|row| {
-                let top = row
-                    .TransformToVisual(None)
-                    .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
-                    .expect("行の位置");
-                y >= top.Y && y < top.Y + row.ActualHeight().unwrap_or(0.0) as f32
-            })
+    let row_under_pointer = || {
+        let items = list.list_view().Items().ok()?;
+        (0..items.Size().ok()?).find_map(|slot| {
+            let row = items.GetAt(slot).ok()?.cast::<ListViewItem>().ok()?;
+            let top = row
+                .TransformToVisual(None)
+                .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+                .ok()?;
+            let bottom = top.Y + row.ActualHeight().ok()? as f32;
+            (y >= top.Y && y < bottom)
+                .then(|| AutomationProperties::GetPositionInSet(&row).expect("位置") as usize - 1)
         })
-        .expect("ポインターの下の行");
+    };
+    let target = row_under_pointer().expect("ポインターの下の行");
 
     let range: Vec<usize> = (2..=target).collect();
     click(
@@ -9357,18 +9361,16 @@ fn shift_click_in_margin_scenario(
     for (round, to) in [400, 800, 200, 600].into_iter().enumerate() {
         let anchor = list.selection()[0];
         list.scroll_to_row(to);
-        pump_until(Duration::from_millis(100), || false);
-        let under = (0..1_000)
-            .find(|&index| {
-                built_list_row(list, index).is_some_and(|row| {
-                    let top = row
-                        .TransformToVisual(None)
-                        .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
-                        .expect("行の位置");
-                    y >= top.Y && y < top.Y + row.ActualHeight().unwrap_or(0.0) as f32
-                })
-            })
-            .expect("ポインターの下の行");
+        // 行の位置はスクロールに遅れて付いてくる。特に GPU の無い環境で遅い。
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            row_under_pointer().is_some_and(|row| row.abs_diff(to) <= 10)
+        });
+        let under = row_under_pointer().expect("ポインターの下の行");
+        assert!(
+            under.abs_diff(to) <= 10,
+            "{round} 回目: {to} 行目の近くへ送られること: {under} 行目 位置 {:?}",
+            scroll.VerticalOffset()
+        );
         let range: Vec<usize> = (anchor.min(under)..=anchor.max(under)).collect();
         click(
             "スクロールのあとの Shift クリック",
@@ -9408,21 +9410,14 @@ fn shift_click_in_margin_scenario(
     scroll
         .ChangeViewWithOptionalAnimation(None, &offset, None, true)
         .expect("スクロール");
-    pump_until(Duration::from_millis(500), || false);
-    let under = (0..1_000)
-        .find(|&index| {
-            built_list_row(list, index).is_some_and(|row| {
-                let top = row
-                    .TransformToVisual(None)
-                    .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
-                    .expect("行の位置");
-                y >= top.Y && y < top.Y + row.ActualHeight().unwrap_or(0.0) as f32
-            })
-        })
-        .expect("ポインターの下の行");
+    pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+        row_under_pointer().is_some_and(|row| row < anchor)
+    });
+    let under = row_under_pointer().expect("ポインターの下の行");
     assert!(
         under < anchor,
-        "起点より上の行を押すこと: {under} / {anchor}"
+        "起点より上の行を押すこと: {under} / {anchor} 位置 {view} → {:?}",
+        scroll.VerticalOffset()
     );
     let range: Vec<usize> = (under..=anchor).collect();
     click(
