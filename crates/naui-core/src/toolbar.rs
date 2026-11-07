@@ -124,7 +124,8 @@ impl ToolbarIcon {
             ToolbarIcon::Redo => "edit-redo-symbolic",
             ToolbarIcon::Search => "system-search-symbolic",
             ToolbarIcon::Refresh => "view-refresh-symbolic",
-            ToolbarIcon::Share => "emblem-shared-symbolic",
+            // `emblem-shared-symbolic` は Adwaita の新しい版 (51 で確認) から消えた。
+            ToolbarIcon::Share => "send-to-symbolic",
             ToolbarIcon::Settings => "preferences-system-symbolic",
             ToolbarIcon::Back => "go-previous-symbolic",
             ToolbarIcon::Forward => "go-next-symbolic",

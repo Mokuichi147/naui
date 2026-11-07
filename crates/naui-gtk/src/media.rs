@@ -42,9 +42,30 @@ fn to_file(source: &str) -> gio::File {
 }
 
 /// Whether a content type is SVG (plain or gzip-compressed).
+///
+/// A content type is not always a MIME type (GIO on macOS uses UTIs), so the MIME
+/// types are converted before comparing.
 fn is_svg_type(content_type: &str) -> bool {
-    gio::content_type_is_a(content_type, "image/svg+xml")
-        || gio::content_type_is_a(content_type, "image/svg+xml-compressed")
+    ["image/svg+xml", "image/svg+xml-compressed"]
+        .into_iter()
+        .filter_map(gio::content_type_from_mime_type)
+        .any(|svg| gio::content_type_is_a(content_type, &svg))
+}
+
+/// Whether the contents of an image file are an SVG.
+///
+/// Asks gdk-pixbuf, which draws it: GIO's guess from contents needs the MIME database
+/// (shared-mime-info). Only the start is handed over, which is what gdk-pixbuf looks at
+/// to choose the format, so closing it early fails and that is ignored.
+fn is_svg_bytes(bytes: &[u8]) -> bool {
+    const SNIFF_BYTES: usize = 4096;
+    let loader = gtk::gdk_pixbuf::PixbufLoader::new();
+    let _ = loader.write(&bytes[..bytes.len().min(SNIFF_BYTES)]);
+    let _ = loader.close();
+    loader
+        .format()
+        .and_then(|format| format.name())
+        .is_some_and(|name| name == "svg")
 }
 
 // ------------------------------------------------------------ SvgPaintable
@@ -269,9 +290,9 @@ impl Image {
     /// drawn again at the size it is shown at, so it stays sharp when enlarged.
     pub fn set_bytes(&self, bytes: &[u8]) {
         self.0.source.borrow_mut().clear();
-        let (content_type, _) = gio::content_type_guess(None::<&str>, bytes);
+        let is_svg = is_svg_bytes(bytes);
         let bytes = glib::Bytes::from(bytes);
-        if is_svg_type(&content_type) {
+        if is_svg {
             if let Ok(svg) = SvgPaintable::new(&bytes) {
                 self.show_svg(&svg);
                 return;
