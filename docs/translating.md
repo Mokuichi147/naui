@@ -30,7 +30,7 @@ into a string: only steps 1 to 3 change.
 
 ```toml
 [dependencies]
-naui = "0.15"
+naui = "0.16"
 fluent = "0.17"
 fluent-langneg = "0.13"
 unic-langid = { version = "0.9", features = ["macros"] }
