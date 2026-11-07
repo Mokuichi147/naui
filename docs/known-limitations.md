@@ -131,9 +131,9 @@ that shape are covered in
   only the rows on screen are built, so the same 5000 rows are listed in under 0.1
   seconds: **use one of those for a list that may have more than about 200 rows.**
 - On Windows, a window opened right after the keyboard moved through the rows of a
-  `List` or `Table` can take seconds to lay out for the first time. The wait grows with
-  the number of moves and is gone within a few seconds; the UI thread is not blocked
-  meanwhile. It comes from WinUI's `ListView`, which a plain `ListView` without naui shows
+  `List` or `Table` can take seconds to lay out for the first time, and to show a scroll
+  and report a focus change. The wait grows with the number of moves and is gone within a
+  few seconds; the UI thread is not blocked meanwhile. It comes from WinUI's `ListView`, which a plain `ListView` without naui shows
   too. On a development machine, 20 presses of an arrow key delayed the next window by
   about 2.4 seconds in a `Table` and 0.7 seconds in a plain `ListView`.
 - Sorting by pressing a `Table` header only goes as far as notifying "which column,

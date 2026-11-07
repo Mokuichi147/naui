@@ -911,7 +911,8 @@ impl Table {
     /// keep its promise of "removing rows that cannot be selected" even for rows off
     /// screen. Without it, rows follow the [`TableCells::selectable`] they were last built
     /// with, even after leaving the screen, and rows not built since the rows were passed
-    /// or refreshed are treated as selectable.
+    /// or refreshed are treated as selectable, so a key press passing over a long run of
+    /// rows that cannot be selected builds them all to find that out.
     ///
     /// Its answers must match the [`TableCells::selectable`] returned by `build`. It stays
     /// when the rows are replaced, so pass a new one if its answers change.
@@ -1698,20 +1699,16 @@ impl Table {
         // フォーカスだけなので、行の中のコントロールへ入れるように止まる。Space はその行の
         // ままなので探さない。
         let selecting = (extending || !modifiers.control) && !matches!(motion, RowMotion::Lines(0));
-        let target = match selecting {
-            true => {
-                match self.nearest_row(target, from, 0..count, |row| self.is_selectable(*row)) {
-                    Some(target) => target,
-                    None => return true,
-                }
-            }
-            false => target,
+        let (target, top) = match selecting {
+            true => match self.find_selectable_row(target, from, top, viewport) {
+                Some(found) => found,
+                None => return true,
+            },
+            false => (target, self.offset_showing(target, top, viewport)),
         };
-        let top = self.offset_showing(target, top, viewport);
         // `ChangeView` はすぐには位置へ反映されないので、窓は移る先の位置から決める。
         self.move_window(top);
         self.scroll_now(top);
-        // ビルダーの行は、組み立てて初めて選べないと分かることがある。
         let Some(landed) = self.focus_nearest(target, from, FocusState::Keyboard, selecting) else {
             return true;
         };
@@ -1794,6 +1791,32 @@ impl Table {
         let current = self.0.scroll.VerticalOffset().unwrap_or(offset);
         if (offset - current).abs() >= 0.5 && self.change_view(offset).is_ok() {
             let _ = self.0.scroll.UpdateLayout();
+        }
+    }
+
+    /// The row a key moving the selection lands on, and the scroll position showing it.
+    /// `None` if no row can be selected.
+    ///
+    /// Rows from a builder count as selectable until they are built, and may turn out not to
+    /// be, in a run longer than the rows built. So it builds its way along until the row is
+    /// one it knows. Each row that disappoints is remembered, so this ends. The view does not
+    /// move meanwhile.
+    fn find_selectable_row(
+        &self,
+        target: usize,
+        from: usize,
+        top: f64,
+        viewport: f64,
+    ) -> Option<(usize, f64)> {
+        let mut target = target;
+        loop {
+            target =
+                self.nearest_row(target, from, 0..self.len(), |row| self.is_selectable(*row))?;
+            let top = self.offset_showing(target, top, viewport);
+            self.move_window(top);
+            if self.is_selectable(target) {
+                return Some((target, top));
+            }
         }
     }
 
