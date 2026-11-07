@@ -130,21 +130,29 @@ that shape are covered in
   out and left the app unresponsive for more than five minutes. With `Fixed` or `Fill`
   only the rows on screen are built, so the same 5000 rows are listed in under 0.1
   seconds: **use one of those for a list that may have more than about 200 rows.**
+- On Windows, a window opened right after the keyboard moved through the rows of a
+  `List` or `Table` can take seconds to lay out for the first time, and to show a scroll
+  and report a focus change. The wait grows with the number of moves and is gone within a
+  few seconds; the UI thread is not blocked meanwhile. It comes from WinUI's `ListView`, which a plain `ListView` without naui shows
+  too. On a development machine, 20 presses of an arrow key delayed the next window by
+  about 2.4 seconds in a `Table` and 0.7 seconds in a plain `ListView`.
 - Sorting by pressing a `Table` header only goes as far as notifying "which column,
   in which direction"; **sorting the rows is the app's job**.
 - A `Table` with more than 200 rows builds only the range shown on screen (with
   either `set_rows` or `set_row_builder`). This leads to the following rules.
   - **All rows are assumed to have the same height.** If needed, set it with
-    `set_row_height`.
+    `set_row_height`. On Windows rows are given the tallest height built so far, so a
+    taller row appearing later moves the scroll position once.
   - naui does not know whether rows it has not built yet can be chosen, so by
     default they are assumed to be choosable (this can be passed with
     `set_row_selectable`).
-  - On Windows and Linux, keyboard movement goes through the native list, which knows
-    only the rows built: Home and End go to the first and last rows built, and the
-    arrow keys continue past them as the rows follow. A Shift range selection also
-    covers only the rows built. macOS and the Web cover every row.
+  - On Linux, keyboard movement goes through the native list, which knows only the
+    rows built: Home and End go to the first and last rows built, and the arrow keys
+    continue past them as the rows follow. A Shift range selection also covers only
+    the rows built. Windows, macOS and the Web cover every row.
   - A control inside a row loses the keyboard focus when its row leaves the range
-    built, because the row is rebuilt.
+    built, because the row is rebuilt. On Windows, while the row stays in the range it
+    is left as it is, so what the builder returned for it only changes with `refresh`.
   - Columns with widgets in their cells, if no width is specified, are sized only
     by **the header's width and their share of the leftover space** (so columns do
     not move even when content widths differ per row).

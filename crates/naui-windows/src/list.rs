@@ -506,7 +506,7 @@ impl SelectionHandler {
 
 /// A movement of the keyboard cursor that [`List::move_cursor`] may do itself.
 #[derive(Clone, Copy)]
-enum RowMotion {
+pub(crate) enum RowMotion {
     /// Page Up and Page Down.
     Pages(i32),
     /// The up and down arrows, or Space to stay on the row.
@@ -518,7 +518,7 @@ enum RowMotion {
 }
 
 impl RowMotion {
-    fn of_key(key: VirtualKey) -> Option<Self> {
+    pub(crate) fn of_key(key: VirtualKey) -> Option<Self> {
         match key {
             VirtualKey::PageUp => Some(Self::Pages(-1)),
             VirtualKey::PageDown => Some(Self::Pages(1)),
@@ -896,7 +896,8 @@ impl List {
     /// keep its promise of "removing rows that cannot be selected" even for rows off
     /// screen. Without it, rows follow the [`ListRow::selectable`] they were last built
     /// with, even after leaving the screen, and rows not built since the rows were passed
-    /// or refreshed are treated as selectable.
+    /// or refreshed are treated as selectable, so a key press passing over a long run of
+    /// rows that cannot be selected builds them all to find that out.
     ///
     /// Its answers must match the [`ListRow::selectable`] returned by `build`. It stays when
     /// the rows are replaced, so pass a new one if its answers change.
@@ -1233,14 +1234,10 @@ impl List {
         let viewport = self.0.scroll.ViewportHeight().unwrap_or(0.0);
         let view_top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
         let (target, top) = match motion {
-            RowMotion::Pages(pages) => {
-                let distance = (viewport / height).floor().max(1.0) as usize;
-                let target = match pages < 0 {
-                    true => from.saturating_sub(distance),
-                    false => from.saturating_add(distance).min(count - 1),
-                };
-                (target, view_top + viewport * f64::from(pages))
-            }
+            RowMotion::Pages(pages) => (
+                self.row_a_page_from(from, pages < 0, viewport),
+                view_top + viewport * f64::from(pages),
+            ),
             RowMotion::Lines(lines) => (
                 from.saturating_add_signed(lines as isize).min(count - 1),
                 view_top,
@@ -1252,20 +1249,16 @@ impl List {
         // Ctrl はフォーカスだけなので、行の中のコントロールへ入れるように止まる。Space は
         // その行のままなので探さない。
         let selecting = (extending || !modifiers.control) && !matches!(motion, RowMotion::Lines(0));
-        let target = match selecting {
-            true => {
-                match self.nearest_row(target, from, 0..count, |row| self.is_selectable(*row)) {
-                    Some(target) => target,
-                    None => return true,
-                }
-            }
-            false => target,
+        let (target, top) = match selecting {
+            true => match self.find_selectable_row(target, from, top, viewport) {
+                Some(found) => found,
+                None => return true,
+            },
+            false => (target, self.offset_showing(target, top, viewport)),
         };
-        let top = self.offset_showing(target, top, viewport);
         // `ChangeView` はすぐには位置へ反映されないので、窓は移る先の位置から決める。
         self.move_window(top);
         self.scroll_now(top);
-        // ビルダーの行は、組み立てて初めて選べないと分かることがある。
         let Some(landed) = self.focus_nearest(target, from, FocusState::Keyboard, selecting) else {
             return true;
         };
@@ -1348,6 +1341,51 @@ impl List {
         }
     }
 
+    /// The row a key moving the selection lands on, and the scroll position showing it.
+    /// `None` if no row can be selected.
+    ///
+    /// Rows from a builder count as selectable until they are built, and may turn out not to
+    /// be, in a run longer than the rows built. So it builds its way along until the row is
+    /// one it knows. Each row that disappoints is remembered, so this ends. The view does not
+    /// move meanwhile.
+    fn find_selectable_row(
+        &self,
+        target: usize,
+        from: usize,
+        top: f64,
+        viewport: f64,
+    ) -> Option<(usize, f64)> {
+        let mut target = target;
+        loop {
+            let found =
+                self.nearest_row(target, from, 0..self.len(), |row| self.is_selectable(*row));
+            let Some(found) = found else {
+                self.give_up_finding(from);
+                return None;
+            };
+            target = found;
+            let top = self.offset_showing(target, top, viewport);
+            self.move_window(top);
+            // 組み立てられなかった行は、選べるかどうか分からない。選べない行を選ぶより、
+            // 動かないほうがよい (キーを受けている行は取り除けないことがある)。
+            if self.0.failed_window.get().is_some() {
+                self.give_up_finding(from);
+                return None;
+            }
+            if self.is_selectable(target) {
+                return Some((target, top));
+            }
+        }
+    }
+
+    /// Puts back what [`List::find_selectable_row`] moved while looking: the rows built where
+    /// the view is, which would otherwise be left out, and the focus on row `from`, which the
+    /// search may have rebuilt.
+    fn give_up_finding(&self, from: usize) {
+        self.move_window(self.0.scroll.VerticalOffset().unwrap_or(0.0));
+        self.focus_built_row(from, FocusState::Keyboard);
+    }
+
     /// The nearest row in `rows` that `accepts`, looking on from `target` in the direction
     /// of travel from `from`, or else back toward `from`.
     fn nearest_row(
@@ -1413,10 +1451,11 @@ impl List {
         };
         let top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
         let (row_top, row_bottom) = self.row_span(index);
+        // どちらも少しでも見えている行になるので、ここへ戻ってきても動かない。
         let target = if row_bottom <= top {
-            (top / height).ceil() as usize
+            self.row_ending_below(top)
         } else if row_top >= top + viewport {
-            (((top + viewport) / height).floor() as usize).saturating_sub(1)
+            self.row_ending_below(top + viewport - 1.0)
         } else {
             return;
         };
@@ -1442,11 +1481,11 @@ impl List {
             return;
         }
         let start = self.0.built_start.get();
-        let height = self.0.row_height.get();
-        let top = index as f64 * height;
+        // 全行があるときの行の高さはまちまちなので、行そのものの位置で決める。
+        let (top, bottom) = self.row_span(index);
         let view_top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
         let viewport = self.0.scroll.ViewportHeight().unwrap_or(0.0);
-        if top + height < view_top || top > view_top + viewport {
+        if bottom < view_top || top > view_top + viewport {
             return;
         }
         if let Some(row) = self.0.native_rows.borrow().get(index - start) {
@@ -1517,22 +1556,60 @@ impl List {
 
     /// Moves the built range for a scroll position, unless the rows built are enough.
     fn move_window(&self, offset: f64) {
-        let current = self.0.window.get();
-        let needed = self.window_at(offset, ROW_WINDOW_OVERSCAN / 2);
-        let next = self.window_at(offset, ROW_WINDOW_OVERSCAN);
-        // 前回の組み立てが途中で失敗していたら、残った行は使わずに全部作り直す。
-        // 失敗した窓そのものは、レイアウトのたびにやり直さない。
-        let failed = self.0.failed_window.get();
-        if failed == Some(next)
-            || (failed.is_none() && (next == current || keeps_row_window(current, needed, next)))
-        {
-            return;
+        // 行の高さが変わると窓も変わる。高さは増えるだけなので、この繰り返しは止まる
+        // (`settle_row_height`)。
+        loop {
+            let current = self.0.window.get();
+            let needed = self.window_at(offset, ROW_WINDOW_OVERSCAN / 2);
+            let next = self.window_at(offset, ROW_WINDOW_OVERSCAN);
+            // 前回の組み立てが途中で失敗していたら、残った行は使わずに全部作り直す。
+            // 失敗した窓そのものは、レイアウトのたびにやり直さない。
+            let failed = self.0.failed_window.get();
+            if failed == Some(next)
+                || (failed.is_none()
+                    && (next == current || keeps_row_window(current, needed, next)))
+            {
+                return;
+            }
+            self.0.window.set(next);
+            self.build_window_from(failed.is_none().then_some(current));
+            if !self.settle_row_height() {
+                return;
+            }
         }
-        self.0.window.set(next);
-        self.build_window_from(failed.is_none().then_some(current));
-        if self.settle_row_height() {
-            self.move_window(offset);
+    }
+
+    /// The row a page away from row `from`, always another row if there is one.
+    ///
+    /// It goes by where the rows are: with every row built their heights may differ, and a
+    /// page counted in the tallest one would be far shorter than the screen.
+    fn row_a_page_from(&self, from: usize, up: bool, viewport: f64) -> usize {
+        let top = self.row_span(from).0;
+        if up {
+            // 上端が 1 画面ぶん上か、それより下にある最初の行。
+            let y = top - viewport;
+            let row = self.row_ending_below(y);
+            let row = row + usize::from(self.row_span(row).0 < y);
+            row.min(from.saturating_sub(1))
+        } else {
+            self.row_ending_below(top + viewport)
+                .max(from.saturating_add(1))
+                .min(self.len().saturating_sub(1))
         }
+    }
+
+    /// The first row that ends below `y` within the scrolled content, or the last row.
+    fn row_ending_below(&self, y: f64) -> usize {
+        let (mut low, mut high) = (0, self.len());
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if self.row_span(middle).1 <= y {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        low.min(self.len().saturating_sub(1))
     }
 
     /// Finds the height of one row from the built rows. `true` if it changed.
@@ -1972,11 +2049,16 @@ impl List {
 
     /// Gives the focus to a built row, as a click would.
     fn focus_row_at(&self, index: usize) {
+        self.focus_built_row(index, FocusState::Pointer);
+    }
+
+    /// Gives the focus to a built row, wherever it is.
+    fn focus_built_row(&self, index: usize, state: FocusState) {
         let row = index
             .checked_sub(self.0.built_start.get())
             .and_then(|offset| self.0.native_rows.borrow().get(offset).cloned());
         if let Some(row) = row.and_then(|row| row.cast::<Control>().ok()) {
-            let _ = row.Focus(FocusState::Pointer);
+            let _ = row.Focus(state);
         }
     }
 
@@ -1994,7 +2076,7 @@ impl List {
 /// Custom-content rows place the widget the app holds directly into the holder (`Grid`).
 /// Letting go of the holder with it still inside leaves the widget "with a parent", and
 /// the next rebuild is rejected with "Element is already the child of another element".
-fn release_row_content(native: &ListViewItem) {
+pub(crate) fn release_row_content(native: &ListViewItem) {
     if let Ok(host) = native
         .Content()
         .and_then(|content| content.cast::<XamlGrid>())
