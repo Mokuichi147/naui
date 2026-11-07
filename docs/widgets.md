@@ -603,8 +603,9 @@ collected in [Known limitations](known-limitations.md).
   spacers, so only the composed form can build just the rows on screen. **Having left
   `<select>`, naui adds selection, focus and keyboard operation (arrows, Home / End,
   Page Up / Down, Ctrl / ⌘ + A, Space, and typing to jump to a row) as it does for
-  `Table`.** The current row is indicated with
-  `aria-activedescendant`, and pressing a row itself moves focus to the list
+  `Table`. With multiple selection, Ctrl / ⌘ with an arrow, Home or End moves only the
+  current row, without changing the selection.** The current row is indicated with
+  `aria-activedescendant` and the browser's focus ring, and pressing a row itself moves focus to the list
   (`<ul tabindex="0">`) so keyboard use can continue. Buttons and input fields
   placed inside rows own their events, so clicks and keys that reach them are not
   turned into list operations (so that Space on a check box does not turn into row

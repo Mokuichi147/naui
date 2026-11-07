@@ -931,6 +931,7 @@ impl List {
         self.0.active.set(None);
         self.0.anchor.set(None);
         self.0.pending_reveal.set(None);
+        self.0.typed.borrow_mut().clear();
         self.rebuild_body();
     }
 
@@ -1516,6 +1517,11 @@ impl List {
             return false;
         }
         let current = self.0.active.get().or_else(|| self.selected());
+        if let Some(target) = self.current_row_moved_by(event, current) {
+            self.0.active.set(Some(target));
+            self.reveal_active();
+            return true;
+        }
         let target = match event.key().as_str() {
             "ArrowDown" => self.step(current, 1),
             "ArrowUp" => self.step(current, -1),
@@ -1546,7 +1552,10 @@ impl List {
                 let Some(index) = current else {
                     return false;
                 };
-                self.on_row_activated(index, true, false);
+                // Ctrl で選べない行にも止まれる。
+                if self.is_selectable(index) {
+                    self.on_row_activated(index, true, false);
+                }
                 return true;
             }
             _ => {
@@ -1573,6 +1582,27 @@ impl List {
             self.commit(&[target]);
         }
         true
+    }
+
+    /// Where Ctrl (⌘) with an arrow, Home or End moves the row the keyboard points at. The
+    /// selection stays, so rows can be picked one by one with Space, and the row can be one
+    /// that cannot be selected. `None` for any other key, and with single selection, which
+    /// has no way to add a row.
+    fn current_row_moved_by(&self, event: &KeyboardEvent, current: Option<usize>) -> Option<usize> {
+        if !(event.ctrl_key() || event.meta_key())
+            || event.shift_key()
+            || !self.0.mode.get().is_multiple()
+        {
+            return None;
+        }
+        let last = self.len() - 1;
+        match event.key().as_str() {
+            "ArrowDown" => Some(current.map_or(0, |index| (index + 1).min(last))),
+            "ArrowUp" => Some(current.map_or(last, |index| index.saturating_sub(1))),
+            "Home" => Some(0),
+            "End" => Some(last),
+            _ => None,
+        }
     }
 
     /// The row a page away from `from` for Page Up and Page Down, or the nearest selectable
@@ -1712,10 +1742,19 @@ impl List {
             return;
         };
         let window = self.0.window.get();
-        let _ = match self.0.active.get().filter(|&index| window.contains(index)) {
+        let active = self.0.active.get().filter(|&index| window.contains(index));
+        let _ = match active {
             Some(index) => list.set_attribute("aria-activedescendant", &self.option_id(index)),
             None => list.remove_attribute("aria-activedescendant"),
         };
+        // 選択は動かないことがあるので、いまの行はブラウザのフォーカスの輪で見せる。
+        if let Body::Listbox { options, .. } = &*body {
+            for (offset, option) in options.iter().enumerate() {
+                let current = active == Some(window.start + offset);
+                style(option, "outline", if current { "auto" } else { "none" });
+                style(option, "outline-offset", "-1px");
+            }
+        }
     }
 
     /// Brings row `index` into the scroll area, building the rows around it.

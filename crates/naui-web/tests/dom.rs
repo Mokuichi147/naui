@@ -8458,6 +8458,142 @@ fn list_with_many_rows_keeps_the_keys_of_a_select() {
     });
 }
 
+/// Ctrl (⌘) moves only the row the keyboard points at, as on the other platforms, so rows
+/// can be picked one by one with Space.
+#[wasm_bindgen_test]
+fn list_ctrl_moves_only_the_current_row() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_selection_mode(SelectionMode::Multiple);
+        list.set_rows(
+            &(0..ROWS)
+                .map(|index| {
+                    let row = ListRow::new(&ui.label(&format!("行 {index}"))?);
+                    Ok(row.selectable(index != 12))
+                })
+                .collect::<Result<Vec<_>>>()?,
+        );
+        let scroller = list_scroller(&list);
+        let press = |key: &str| press_shortcut(scroller.as_ref(), key, false, false, false);
+        let ctrl = |key: &str| press_shortcut(scroller.as_ref(), key, true, false, false);
+        let current = || {
+            let id = scroller
+                .get_attribute("aria-activedescendant")
+                .expect("いまの行");
+            web_sys::window()
+                .expect("window")
+                .document()
+                .expect("document")
+                .get_element_by_id(&id)
+                .expect("いまの行の要素")
+                .text_content()
+                .expect("行の文字")
+        };
+        let notified = Rc::new(Cell::new(0));
+        list.on_select({
+            let notified = notified.clone();
+            move |_| notified.set(notified.get() + 1)
+        });
+
+        press("Home");
+        press("ArrowDown");
+        assert_eq!(list.selection(), vec![1]);
+        notified.set(0);
+
+        assert!(ctrl("ArrowDown"), "処理したキーは既定の動作を止める");
+        assert_eq!(list.selection(), vec![1], "選択は変わらない");
+        assert_eq!(current(), "行 2", "いまの行だけが動く");
+        let rows = list_rows(&list);
+        let outline = |row: usize| {
+            web_sys::window()
+                .expect("window")
+                .get_computed_style(&rows[row])
+                .expect("スタイル")
+                .expect("スタイル")
+                .get_property_value("outline-style")
+                .expect("outline-style")
+        };
+        assert_ne!(outline(2), "none", "いまの行が見えること");
+        assert_eq!(outline(1), "none", "前の行には残らないこと");
+        assert_eq!(notified.get(), 0, "通知しない");
+
+        // Space で足せる。
+        press(" ");
+        assert_eq!(list.selection(), vec![1, 2]);
+        ctrl("ArrowUp");
+        ctrl("ArrowUp");
+        assert_eq!(current(), "行 0");
+        assert_eq!(list.selection(), vec![1, 2]);
+
+        // 選べない行にも止まる。その上の Space は何もしない。
+        for _ in 0..12 {
+            ctrl("ArrowDown");
+        }
+        assert_eq!(current(), "行 12");
+        notified.set(0);
+        press(" ");
+        assert_eq!(list.selection(), vec![1, 2], "選べない行は足さない");
+        assert_eq!(notified.get(), 0);
+        // 次の矢印は、そこから選べる行へ。
+        press("ArrowDown");
+        assert_eq!(list.selection(), vec![13]);
+
+        // 窓の外の端まで動いても、選択はそのまま。
+        ctrl("End");
+        assert_eq!(current(), "行 4999");
+        assert!(is_within(&scroller, &list_rows(&list).pop().expect("行")));
+        assert_eq!(list.selection(), vec![13]);
+        ctrl("Home");
+        assert_eq!(current(), "行 0");
+        assert_eq!(list.selection(), vec![13]);
+
+        // Shift もいっしょなら範囲を選ぶ。
+        press("Home");
+        assert!(press_shortcut(
+            scroller.as_ref(),
+            "ArrowDown",
+            true,
+            true,
+            false
+        ));
+        assert_eq!(list.selection(), vec![0, 1]);
+
+        // 単一選択には足す手段が無いので、これまでどおり選択が動く。
+        list.set_selection_mode(SelectionMode::Single);
+        press("Home");
+        ctrl("ArrowDown");
+        assert_eq!(list.selection(), vec![1]);
+        Ok(())
+    });
+}
+
+/// What has been typed is about the rows it was typed on.
+#[wasm_bindgen_test]
+fn list_forgets_what_was_typed_when_the_rows_change() {
+    with_ui(|ui| {
+        let (list, _mounted) = mounted_list(ui)?;
+        let many = |first: &str| {
+            let mut names: Vec<String> = (0..1_000).map(|index| format!("行 {index}")).collect();
+            names[500] = first.to_string();
+            ListItem::list(names)
+        };
+        list.set_items(&many("Apple"));
+        let scroller = list_scroller(&list);
+        assert!(press_shortcut(scroller.as_ref(), "a", false, false, false));
+        assert_eq!(list.selection(), vec![500]);
+
+        list.set_items(&many("Banana"));
+        let scroller = list_scroller(&list);
+        assert!(
+            press_shortcut(scroller.as_ref(), "b", false, false, false),
+            "新しい行を探すこと"
+        );
+        assert_eq!(list.selection(), vec![500]);
+        Ok(())
+    });
+}
+
 /// When a row with the focus inside leaves the window, the focus goes to the list, so the
 /// keys still reach something.
 #[wasm_bindgen_test]
