@@ -8568,6 +8568,27 @@ fn list_ctrl_moves_only_the_current_row() {
     });
 }
 
+/// Rows of plain text leave the `<select>` past the threshold, and Ctrl keeps the selection
+/// there too.
+#[wasm_bindgen_test]
+fn list_ctrl_keeps_the_selection_of_plain_text_rows() {
+    with_ui(|ui| {
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_selection_mode(SelectionMode::Multiple);
+        list.set_items(&ListItem::list(
+            (0..=ROW_WINDOW_THRESHOLD).map(|index| format!("行 {index}")),
+        ));
+        assert!(list.native_select().is_none(), "<ul> になっていること");
+        list.set_selection(&[1, 3, 150]);
+        let scroller = list_scroller(&list);
+        for key in ["ArrowDown", "ArrowUp", "Home", "End"] {
+            assert!(press_shortcut(scroller.as_ref(), key, true, false, false));
+            assert_eq!(list.selection(), vec![1, 3, 150], "Ctrl + {key}");
+        }
+        Ok(())
+    });
+}
+
 /// What has been typed is about the rows it was typed on.
 #[wasm_bindgen_test]
 fn list_forgets_what_was_typed_when_the_rows_change() {
