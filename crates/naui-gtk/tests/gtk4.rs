@@ -1671,6 +1671,15 @@ fn checkbox_indicator_is_aligned_to_text(ui: &Ui) -> Result<()> {
     let indicator = native.first_child().expect("印のノード");
 
     let margin = indicator.margin_top();
+    // macOS の Pango は日本語の行の ascent を広げず、既定のフォントでは行の箱が印より
+    // 低い。字面は箱の中心より下がらず、印を動かす余地も無いので、0 のままが正しい。
+    if cfg!(target_os = "macos") && margin == 0 {
+        skip(&format!(
+            "macOS の既定のフォントは印を下げる必要も余地も無い ({})",
+            indicator_metrics(&native, &indicator)
+        ));
+        return Ok(());
+    }
     assert!(
         margin > 0,
         "日本語のラベルでは印を下げて字面へそろえる (margin_top={margin}, {})",
@@ -6798,7 +6807,9 @@ fn list_shift_range_starts_from_a_row_outside_the_window(ui: &Ui) -> Result<()> 
     assert_eq!(list.selection(), vec![reached + 3, reached + 4]);
 
     // クリックも、選択の通知より先にフォーカスを移すので、その行まで広がる。修飾キーは
-    // テストから送れないが、直前の Shift+矢印の分が残っているので Shift のクリックになる。
+    // テストから送れないので、Shift+矢印の直後に押して Shift のクリックにする。間に
+    // ループを回すと、本物のポインタのイベントで Shift の分が消える (ポインタが窓の
+    // 上にあるとき)。
     let row = native.row_at_index(20).expect("行");
     let clicked = big_list_row_number(&row);
     let bounds = row.compute_bounds(&native).expect("行の場所");
@@ -6809,6 +6820,10 @@ fn list_shift_range_starts_from_a_row_outside_the_window(ui: &Ui) -> Result<()> 
         .find(|gesture| gesture.button() == gtk::gdk::BUTTON_PRIMARY)
         .expect("行のクリックを受けるジェスチャー");
     let (x, y) = (5.0f64, f64::from(bounds.y()) + 2.0);
+    native.emit_by_name::<()>(
+        "move-cursor",
+        &[&gtk::MovementStep::DisplayLines, &1i32, &true, &false],
+    );
     click.emit_by_name::<()>("pressed", &[&1i32, &x, &y]);
     click.emit_by_name::<()>("released", &[&1i32, &x, &y]);
     tick(&native);
@@ -8489,10 +8504,21 @@ fn image_loads_bytes(ui: &Ui) -> Result<()> {
         (24, 16),
         "SVG は自分の大きさで描かれる"
     );
+    let scale = native.scale_factor();
     assert_eq!(
         drawn_texture_size(&paintable, 96.0, 64.0),
-        (96, 64),
+        (96 * scale, 64 * scale),
         "SVG は表示する大きさの画素で描き直される"
+    );
+
+    // 形式を見分けるのに渡す先頭より長い SVG も、途中で切らずに読む。
+    let long = RED_SVG.replace("</svg>", &format!("<!-- {} --></svg>", "x".repeat(8192)));
+    image.set_bytes(long.as_bytes());
+    let paintable = native.paintable().expect("paintable");
+    assert_eq!(
+        drawn_texture_size(&paintable, 96.0, 64.0),
+        (96 * scale, 64 * scale),
+        "長い SVG も描き直される"
     );
 
     image.set_bytes(b"not an image");
@@ -8549,9 +8575,10 @@ fn image_loads_an_svg_file(ui: &Ui) -> Result<()> {
         (paintable.intrinsic_width(), paintable.intrinsic_height()),
         (24, 16)
     );
+    let scale = native.scale_factor();
     assert_eq!(
         drawn_texture_size(&paintable, 240.0, 160.0),
-        (240, 160),
+        (240 * scale, 160 * scale),
         "SVG ファイルも表示する大きさの画素で描き直される"
     );
     let _ = std::fs::remove_file(&path);
@@ -9651,6 +9678,17 @@ fn toolbar_callback_is_reentrant_and_replaceable(ui: &Ui) -> Result<()> {
 fn toolbar_icons_exist_in_the_theme(_ui: &Ui) -> Result<()> {
     let display = gtk::gdk::Display::default().expect("ディスプレイ");
     let theme = gtk::IconTheme::for_display(&display);
+    // テーマそのものが無ければ、名前の正しさは確かめられない (Homebrew の gtk4 は
+    // adwaita-icon-theme を入れない)。
+    let name = theme.theme_name();
+    let installed = theme
+        .search_path()
+        .iter()
+        .any(|dir| dir.join(name.as_str()).join("index.theme").exists());
+    if !installed {
+        skip(&format!("アイコンテーマ {name} が入っていない環境"));
+        return Ok(());
+    }
     let mut missing = Vec::new();
     for icon in ToolbarIcon::ALL {
         if !theme.has_icon(icon.icon_name()) {
@@ -11801,6 +11839,10 @@ fn window_position_is_unavailable(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// How long GDK's macOS backend is busy going into fullscreen. `NSWindow` ignores
+/// requests to toggle fullscreen in the meantime, so GDK's `unfullscreen` does nothing.
+const MACOS_FULLSCREEN_ANIMATION: std::time::Duration = std::time::Duration::from_millis(1500);
+
 /// Maximize and fullscreen round-trip with `state`, and `on_state_change` is called
 /// on each change.
 ///
@@ -11844,13 +11886,19 @@ fn window_state_round_trips(ui: &Ui) -> Result<()> {
     });
     assert_eq!(window.state(), WindowState::Fullscreen);
     assert!(native.is_fullscreen());
-    // 全画面から最大化へ移ると、全画面は解ける。
-    window.set_state(WindowState::Maximized);
-    spin_until(Duration::from_secs(3), || {
-        window.state() == WindowState::Maximized
-    });
-    assert_eq!(window.state(), WindowState::Maximized, "全画面から最大化へ");
-    assert!(!native.is_fullscreen());
+    if cfg!(target_os = "macos") {
+        // 全画面の動きの途中の頼みは無視されるので、終わるのを待つ。全画面から出る
+        // 動きに続けて頼んだ最大化も残らないので、最大化へ移るところは確かめない。
+        spin_until(MACOS_FULLSCREEN_ANIMATION, || false);
+    } else {
+        // 全画面から最大化へ移ると、全画面は解ける。
+        window.set_state(WindowState::Maximized);
+        spin_until(Duration::from_secs(3), || {
+            window.state() == WindowState::Maximized
+        });
+        assert_eq!(window.state(), WindowState::Maximized, "全画面から最大化へ");
+        assert!(!native.is_fullscreen());
+    }
     window.set_state(WindowState::Normal);
     spin_until(Duration::from_secs(3), || {
         window.state() == WindowState::Normal
@@ -11895,6 +11943,11 @@ fn window_state_requests_in_a_row(ui: &Ui) -> Result<()> {
         return Ok(());
     }
     for sequence in sequences {
+        // 全画面の動きの途中の頼みは macOS が無視するので、取り消せない
+        // (`MACOS_FULLSCREEN_ANIMATION`)。
+        if cfg!(target_os = "macos") && sequence.contains(&WindowState::Fullscreen) {
+            continue;
+        }
         let window = ui.window("続けて頼む", 320.0, 200.0)?;
         window.set_child(&ui.label("中身")?);
         window.show();
@@ -12247,11 +12300,15 @@ fn window_minimize_requested_before_show(ui: &Ui) -> Result<()> {
     window.on_state_change(sink);
     window.set_state(WindowState::Minimized);
     window.show();
-    assert_eq!(
-        window.state(),
-        WindowState::Minimized,
-        "コンポジタから届く前も頼んだ状態"
-    );
+    // GDK の macOS 版は `show` の中で最初の状態が届くことがあり、「届く前」が無い。
+    // また、そのときに頼む最小化は窓を出す途中なので macOS に無視され、下で SKIP になる。
+    if toplevel_state(&window).is_empty() {
+        assert_eq!(
+            window.state(),
+            WindowState::Minimized,
+            "コンポジタから届く前も頼んだ状態"
+        );
+    }
     if is_wayland() {
         skip("Wayland では最小化を知る仕組みが無い");
         window.close();

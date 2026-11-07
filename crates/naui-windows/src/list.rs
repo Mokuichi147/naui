@@ -1150,13 +1150,10 @@ impl List {
             .UpdateLayout()
             .map_err(|e| to_error("update the list layout", e))?;
         // 矢印キーで窓の端まで来たときに組み立て直しても、操作が続けられるように。
-        // 残る行でも、押した直後に窓が動くと `ListView` がフォーカスを落とすことがある。
-        if let Some((index, state)) = focused {
-            if !kept.contains(&index) {
-                self.restore_focus(index, state);
-            } else if self.focused_row().is_none() {
-                self.focus_built_row(index, state);
-            }
+        // 窓に残る行も、手前の行を取り除くと `ListView` がフォーカスを持ち去ることがある。
+        let now_focused = self.focused_row().map(|(index, _)| index);
+        if let Some((index, state)) = focused.filter(|&(index, _)| now_focused != Some(index)) {
+            self.restore_focus(index, state);
         }
         let Some(offset) = offset else {
             return outcome;
