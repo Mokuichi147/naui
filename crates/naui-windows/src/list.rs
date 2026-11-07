@@ -506,7 +506,7 @@ impl SelectionHandler {
 
 /// A movement of the keyboard cursor that [`List::move_cursor`] may do itself.
 #[derive(Clone, Copy)]
-enum RowMotion {
+pub(crate) enum RowMotion {
     /// Page Up and Page Down.
     Pages(i32),
     /// The up and down arrows, or Space to stay on the row.
@@ -518,7 +518,7 @@ enum RowMotion {
 }
 
 impl RowMotion {
-    fn of_key(key: VirtualKey) -> Option<Self> {
+    pub(crate) fn of_key(key: VirtualKey) -> Option<Self> {
         match key {
             VirtualKey::PageUp => Some(Self::Pages(-1)),
             VirtualKey::PageDown => Some(Self::Pages(1)),
@@ -1149,8 +1149,13 @@ impl List {
             .UpdateLayout()
             .map_err(|e| to_error("update the list layout", e))?;
         // 矢印キーで窓の端まで来たときに組み立て直しても、操作が続けられるように。
-        if let Some((index, state)) = focused.filter(|(index, _)| !kept.contains(index)) {
-            self.restore_focus(index, state);
+        // 残る行でも、押した直後に窓が動くと `ListView` がフォーカスを落とすことがある。
+        if let Some((index, state)) = focused {
+            if !kept.contains(&index) {
+                self.restore_focus(index, state);
+            } else if self.focused_row().is_none() {
+                self.focus_built_row(index, state);
+            }
         }
         let Some(offset) = offset else {
             return outcome;
@@ -1970,11 +1975,16 @@ impl List {
 
     /// Gives the focus to a built row, as a click would.
     fn focus_row_at(&self, index: usize) {
+        self.focus_built_row(index, FocusState::Pointer);
+    }
+
+    /// Gives the focus to a built row, wherever it is.
+    fn focus_built_row(&self, index: usize, state: FocusState) {
         let row = index
             .checked_sub(self.0.built_start.get())
             .and_then(|offset| self.0.native_rows.borrow().get(offset).cloned());
         if let Some(row) = row.and_then(|row| row.cast::<Control>().ok()) {
-            let _ = row.Focus(FocusState::Pointer);
+            let _ = row.Focus(state);
         }
     }
 
@@ -1992,7 +2002,7 @@ impl List {
 /// Custom-content rows place the widget the app holds directly into the holder (`Grid`).
 /// Letting go of the holder with it still inside leaves the widget "with a parent", and
 /// the next rebuild is rejected with "Element is already the child of another element".
-fn release_row_content(native: &ListViewItem) {
+pub(crate) fn release_row_content(native: &ListViewItem) {
     if let Ok(host) = native
         .Content()
         .and_then(|content| content.cast::<XamlGrid>())
