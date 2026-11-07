@@ -66,10 +66,12 @@ impl List {
     /// For rows built with [`List::set_row_builder`], naui does not know whether rows
     /// not yet built can be selected. With this function, [`List::set_selection`] can
     /// keep its promise of "removing rows that cannot be selected" even for rows off
-    /// screen. Without it, built rows follow [`ListRow::selectable`] and rows not yet
-    /// built are treated as selectable.
+    /// screen. Without it, rows follow the [`ListRow::selectable`] they were last built
+    /// with, even after leaving the screen, and rows not built since the rows were passed
+    /// or refreshed are treated as selectable.
     ///
-    /// Its answers must match the [`ListRow::selectable`] returned by `build`.
+    /// Its answers must match the [`ListRow::selectable`] returned by `build`. It stays when
+    /// the rows are replaced, so pass a new one if its answers change.
     #[inline]
     pub fn set_row_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
         self.0.set_row_selectable(selectable)
@@ -89,13 +91,15 @@ impl List {
     ///
     /// Every row gets at least this height. With more rows than
     /// [`ROW_WINDOW_THRESHOLD`](crate::ROW_WINDOW_THRESHOLD), rows off screen are filled
-    /// in as "row count × this height", so set it when the rows' heights vary.
+    /// in as "row count × this height", so set it when the rows' heights vary. A row built
+    /// later that needs more raises the height for every row (on macOS, only its own).
     #[inline]
     pub fn set_row_height(&self, height: f64) {
         self.0.set_row_height(height)
     }
 
-    /// The row height (logical pixels). 0 if no row has been built yet.
+    /// The row height (logical pixels). 0 if there are no rows, or no row has been built
+    /// yet (macOS has an estimate by then).
     ///
     /// With few rows and no height set, rows may differ in height.
     #[inline]

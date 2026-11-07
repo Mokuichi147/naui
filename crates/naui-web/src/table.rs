@@ -975,6 +975,7 @@ impl Table {
         *self.0.row_elements.borrow_mut() = elements;
         *self.0.row_listeners.borrow_mut() = listeners;
         *self.0.realized.borrow_mut() = realized;
+        self.sync_active_descendant();
         self.paint_selection();
         Ok(())
     }
@@ -1308,11 +1309,22 @@ impl Table {
         let Some(active) = self.0.active.get() else {
             return;
         };
-        let _ = self
-            .0
-            .table
-            .set_attribute("aria-activedescendant", &self.row_id(active));
         self.reveal_row(active);
+        self.sync_active_descendant();
+    }
+
+    /// Points `aria-activedescendant` at the row the keyboard is on, if it is built.
+    ///
+    /// The attribute must name an element in the document, so it is removed while the row
+    /// is outside the window (scrolled away with the wheel, say). `active` stays, so the
+    /// keys carry on from that row, and the attribute returns with the row.
+    fn sync_active_descendant(&self) {
+        let window = self.0.window.get();
+        let table = &self.0.table;
+        let _ = match self.0.active.get().filter(|&index| window.contains(index)) {
+            Some(index) => table.set_attribute("aria-activedescendant", &self.row_id(index)),
+            None => table.remove_attribute("aria-activedescendant"),
+        };
     }
 
     /// Brings row `index` into the scroll area and builds the rows around it.

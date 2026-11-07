@@ -19,15 +19,16 @@
 #![cfg(target_arch = "wasm32")]
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::rc::Rc;
 
 use naui_core::{
     Align, ButtonRole, Color, DialogButtons, DialogResponse, EventResponse, GridCell, Key,
     KeyEvent, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding,
-    Pane, Point, PointerButton, PointerPhase, PopupItem, Rect, Result, ScrollMetrics,
-    SelectionMode, SidebarItem, SidebarSection, Sizing, TableColumn, TableRow, TextColor,
+    Pane, Point, PointerButton, PointerPhase, PopupItem, Rect, Result, RichText, ScrollMetrics,
+    SelectionMode, SidebarItem, SidebarSection, Sizing, TableColumn, TableRow, TextColor, TextRun,
     TextStyle, Theme, ToolbarIcon, ToolbarItem, WindowPlacement, WindowState,
-    DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_THRESHOLD,
+    DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, WebWidgetExt, Widget};
 use wasm_bindgen::{JsCast, JsValue};
@@ -1382,6 +1383,163 @@ fn label_text_round_trips() {
         assert_eq!(label.text(), "はじめ");
         label.set_text("あと");
         assert_eq!(label.text(), "あと");
+        Ok(())
+    });
+}
+
+fn sample_rich_text() -> RichText {
+    RichText::new()
+        .text("a ")
+        .bold("b ")
+        .colored("c ", TextColor::Danger)
+        .link("d", "https://example.com/d")
+}
+
+#[wasm_bindgen_test]
+fn rich_text_maps_to_elements() {
+    with_ui(|ui| {
+        let label = ui.label("")?;
+        label.set_rich_text(&sample_rich_text());
+        assert_eq!(label.text(), "a b c d");
+
+        let element = label.native_element();
+        let bold = element.query_selector("b").unwrap().expect("<b>");
+        assert_eq!(bold.text_content().as_deref(), Some("b "));
+        let colored: web_sys::HtmlElement = element
+            .query_selector("span")
+            .unwrap()
+            .expect("<span>")
+            .unchecked_into();
+        assert_eq!(colored.text_content().as_deref(), Some("c "));
+        assert!(
+            !colored
+                .style()
+                .get_property_value("color")
+                .unwrap()
+                .is_empty(),
+            "役割の色が当たること"
+        );
+        let link = element.query_selector("a").unwrap().expect("<a>");
+        assert_eq!(link.text_content().as_deref(), Some("d"));
+        assert_eq!(
+            link.get_attribute("href").as_deref(),
+            Some("https://example.com/d")
+        );
+        assert_eq!(link.get_attribute("target").as_deref(), Some("_blank"));
+
+        // アプリの文字は HTML として読まれない。
+        label.set_rich_text(&RichText::new().bold("<i>&</i>"));
+        assert_eq!(label.text(), "<i>&</i>");
+        assert!(element.query_selector("i").unwrap().is_none());
+        Ok(())
+    });
+}
+
+/// `render` sets the same content every time, so the elements, which hold the
+/// selection and the keyboard focus, must stay the same.
+#[wasm_bindgen_test]
+fn rich_text_same_content_keeps_the_elements() {
+    with_ui(|ui| {
+        let label = ui.label("")?;
+        label.set_rich_text(&sample_rich_text());
+        let element = label.native_element();
+        let link = element.query_selector("a").unwrap().expect("<a>");
+
+        // 作り方が違っても、見せるものが同じなら同じ内容。
+        label.set_rich_text(
+            &RichText::new()
+                .text("a")
+                .text(" ")
+                .bold("b ")
+                .colored("c ", TextColor::Danger)
+                .link("d", "https://example.com/d"),
+        );
+        assert!(element.contains(Some(&link)), "同じ要素のままであること");
+
+        label.set_rich_text(&RichText::new().bold("a b c d"));
+        assert!(!element.contains(Some(&link)), "内容が変われば書き換わる");
+        assert_eq!(element.child_element_count(), 1);
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn rich_text_goes_back_to_plain_text() {
+    with_ui(|ui| {
+        let label = ui.label("")?;
+        let element = label.native_element();
+
+        // 文字が同じでも、飾りは外れる。
+        label.set_rich_text(&RichText::new().bold("abc").link("d", "x:y"));
+        label.set_text("abcd");
+        assert_eq!(label.text(), "abcd");
+        assert_eq!(element.child_element_count(), 0);
+
+        // 飾りの無い RichText は set_text と同じ。
+        label.set_rich_text(&RichText::new().bold("a"));
+        label.set_rich_text(&RichText::new().text("a<b"));
+        assert_eq!(label.text(), "a<b");
+        assert_eq!(element.child_element_count(), 0);
+
+        label.set_rich_text(&RichText::new());
+        assert_eq!(label.text(), "");
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn rich_text_link_click_reaches_on_link() {
+    with_ui(|ui| {
+        let label = ui.label("")?;
+        let element = label.native_element();
+        label.set_rich_text(
+            &RichText::new()
+                .text("open ")
+                .run(TextRun::new("here").bold().link("app:first")),
+        );
+
+        let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+        {
+            let seen = seen.clone();
+            let again = label.clone();
+            label.on_link(move |href| {
+                seen.borrow_mut().push(href.to_string());
+                // 通知の中で中身を変えられる (`render` はここから走る)。
+                again.set_rich_text(&RichText::new().link("there", "app:second"));
+                EventResponse::Handled
+            });
+        }
+        // リンクの中の `<b>` を押しても、`<a>` の href が届く。
+        let inner: web_sys::HtmlElement = element
+            .query_selector("a b")
+            .unwrap()
+            .expect("リンクの中の太字")
+            .unchecked_into();
+        inner.click();
+        assert_eq!(*seen.borrow(), ["app:first"]);
+        assert_eq!(label.text(), "there");
+
+        // リンクの外を押しても通知しない。
+        label.set_rich_text(&RichText::new().bold("plain").link("there", "app:second"));
+        let outside: web_sys::HtmlElement = element
+            .query_selector("b")
+            .unwrap()
+            .expect("太字")
+            .unchecked_into();
+        outside.click();
+        assert_eq!(seen.borrow().len(), 1);
+
+        // Handled はブラウザに辿らせない。
+        let link = element.query_selector("a").unwrap().expect("<a>");
+        let event = web_sys::MouseEvent::new_with_mouse_event_init_dict("click", &{
+            let init = web_sys::MouseEventInit::new();
+            init.set_bubbles(true);
+            init.set_cancelable(true);
+            init
+        })
+        .unwrap();
+        link.dispatch_event(&event).unwrap();
+        assert!(event.default_prevented());
         Ok(())
     });
 }
@@ -3011,6 +3169,63 @@ fn table_keeps_the_selection_outside_the_window() {
             vec![4_000],
             "戻ってきたら選ばれた見た目になること"
         );
+        Ok(())
+    });
+}
+
+/// `aria-activedescendant` names an element in the document, so it follows the row the
+/// keyboard is on only while that row is built, and the keys carry on from that row.
+#[wasm_bindgen_test]
+fn table_active_descendant_only_names_rows_that_exist() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        let table = ui.table()?;
+        table.set_columns(&TableColumn::list(["名前"]));
+        table.set_sizing(
+            Sizing::new()
+                .width(Length::Fill)
+                .height(Length::Fixed(200.0)),
+        );
+        let _mounted = Mounted::new(&table);
+        table.set_rows(
+            &(0..ROWS)
+                .map(|index| TableRow::new([format!("行 {index}")]))
+                .collect::<Vec<_>>(),
+        );
+        let grid = table.native_table();
+        let press = |key: &str| press_shortcut(grid.as_ref(), key, false, false, false);
+        let named = || {
+            grid.get_attribute("aria-activedescendant").map(|id| {
+                web_sys::window()
+                    .expect("window")
+                    .document()
+                    .expect("document")
+                    .get_element_by_id(&id)
+                    .and_then(|row| row.text_content())
+                    .unwrap_or_else(|| format!("文書に無い行 {id}"))
+            })
+        };
+
+        assert_eq!(named(), None, "まだキーで動かしていないこと");
+        press("ArrowDown");
+        press("ArrowDown");
+        assert_eq!(named().as_deref(), Some("行 1"));
+
+        // 遠くへ送ると、その行は組み立てられなくなるので指さない。
+        table.scroll_to_row(4_000);
+        assert_eq!(named(), None, "文書に無い行を指さないこと");
+
+        // 行が戻ると、また指す。
+        table.scroll_to_row(1);
+        assert_eq!(named().as_deref(), Some("行 1"));
+
+        // 離れていても、キーはその行から続く。窓の端の先の行も指せる。
+        table.scroll_to_row(4_000);
+        press("ArrowDown");
+        assert_eq!(table.selection(), vec![2]);
+        assert_eq!(named().as_deref(), Some("行 2"));
+        press("End");
+        assert_eq!(named().as_deref(), Some("行 4999"));
         Ok(())
     });
 }
@@ -7479,6 +7694,141 @@ fn list_with_many_rows_leaves_the_select() {
     });
 }
 
+/// Replacing the rows from inside the function that builds a row leaves only the new
+/// rows, in the body and window they need, however far the build had got.
+#[wasm_bindgen_test]
+fn list_builder_can_replace_the_rows() {
+    /// What the old builder does when it reaches the row it was waiting for.
+    type Replace = Rc<dyn Fn(&naui_web::List)>;
+
+    with_ui(|ui| {
+        const ROWS: usize = 1_000;
+        let (list, _mounted) = mounted_list(ui)?;
+        let slot = Rc::new(RefCell::new(None::<Replace>));
+        let fill = |list: &naui_web::List| {
+            let weak = list.downgrade();
+            let ui = ui.clone();
+            let slot = slot.clone();
+            list.set_row_builder(ROWS, move |index| {
+                // 窓の途中の行で差し替える。
+                if index % 7 == 3 {
+                    let replace = slot.borrow_mut().take();
+                    if let (Some(replace), Some(list)) = (replace, weak.upgrade()) {
+                        replace(&list);
+                    }
+                }
+                Ok(ListRow::new(&ui.label(&format!("古い {index}"))?))
+            });
+        };
+        let texts = |list: &naui_web::List| -> Vec<String> {
+            list_rows(list)
+                .iter()
+                .filter_map(|row| row.text_content())
+                .collect()
+        };
+        fill(&list);
+
+        // 別の組み立て関数へ。
+        let new_built = Rc::new(RefCell::new(Vec::new()));
+        *slot.borrow_mut() = Some(Rc::new({
+            let ui = ui.clone();
+            let new_built = new_built.clone();
+            move |list: &naui_web::List| {
+                let ui = ui.clone();
+                let new_built = new_built.clone();
+                list.set_row_builder(2_000, move |index| {
+                    new_built.borrow_mut().push(index);
+                    Ok(ListRow::new(&ui.label(&format!("新しい {index}"))?))
+                });
+            }
+        }));
+        list.refresh();
+        assert_eq!(list.len(), 2_000);
+        let shown = texts(&list);
+        assert!(
+            !shown.is_empty() && shown.iter().all(|text| text.starts_with("新しい ")),
+            "古い行が残らないこと: {shown:?}"
+        );
+        assert_eq!(shown[0], "新しい 0");
+        assert_eq!(
+            *new_built.borrow(),
+            (0..shown.len()).collect::<Vec<_>>(),
+            "新しい関数は新しい窓の行だけを、1 回ずつ組み立てること"
+        );
+        assert!(
+            list_scroller(&list).is_connected(),
+            "新しいリストが文書にあること"
+        );
+
+        // スクロールで窓が動く途中に、`<select>` で足りる行へ。
+        fill(&list);
+        list.set_selection(&[1]);
+        *slot.borrow_mut() = Some(Rc::new(|list: &naui_web::List| {
+            list.set_items(&ListItem::list(["東京", "大阪", "京都"]));
+        }));
+        list.scroll_to_row(800);
+        assert_eq!(list.len(), 3);
+        let select = list.native_select().expect("<select> に戻ること");
+        assert_eq!(select.length(), 3);
+        assert_eq!(
+            select
+                .item(2)
+                .and_then(|option| option.text_content())
+                .as_deref(),
+            Some("京都")
+        );
+        assert!(list.selection().is_empty(), "選択は外れること");
+
+        // 窓が動く途中に、行の多い固定の行へ。
+        fill(&list);
+        *slot.borrow_mut() = Some(Rc::new(|list: &naui_web::List| {
+            list.set_items(&ListItem::list(
+                (0..500).map(|index| format!("固定 {index}")),
+            ));
+        }));
+        list.scroll_to_row(800);
+        assert_eq!(list.len(), 500);
+        let shown = texts(&list);
+        assert!(
+            !shown.is_empty() && shown.iter().all(|text| text.starts_with("固定 ")),
+            "古い行が残らないこと: {shown:?}"
+        );
+        assert!(
+            shown.len() < 200,
+            "窓に絞られていること: {} 行",
+            shown.len()
+        );
+        // 差し替えてもスクロール位置は保つので、先頭の行とは限らない。
+        let first: usize = shown[0]
+            .trim_start_matches("固定 ")
+            .parse()
+            .expect("行の番号");
+        list.set_selection(&[first]);
+        assert_eq!(
+            list_rows(&list)[0]
+                .get_attribute("aria-selected")
+                .as_deref(),
+            Some("true"),
+            "選択が新しい行に写ること"
+        );
+
+        // 組み立てるたびに差し替える関数でも止まること。
+        fn keep_replacing(list: &naui_web::List, ui: &Ui) {
+            let weak = list.downgrade();
+            let ui = ui.clone();
+            list.set_row_builder(1_000, move |index| {
+                if let Some(list) = weak.upgrade() {
+                    keep_replacing(&list, &ui);
+                }
+                Ok(ListRow::new(&ui.label(&index.to_string())?))
+            });
+        }
+        keep_replacing(&list, ui);
+        assert_eq!(list.len(), 1_000);
+        Ok(())
+    });
+}
+
 /// Rows of widgets are built when they become visible, and every notification carries
 /// the row's place in the whole list.
 #[wasm_bindgen_test]
@@ -7692,6 +8042,54 @@ fn list_keys_reach_rows_not_built_yet() {
     });
 }
 
+/// `aria-activedescendant` names an element in the document, so it follows the row the
+/// keyboard is on only while that row is built, and the keys carry on from that row.
+#[wasm_bindgen_test]
+fn list_active_descendant_only_names_rows_that_exist() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_items(&ListItem::list(
+            (0..ROWS).map(|index| format!("行 {index}")),
+        ));
+        let scroller = list_scroller(&list);
+        let press = |key: &str| press_shortcut(scroller.as_ref(), key, false, false, false);
+        let named = || {
+            scroller.get_attribute("aria-activedescendant").map(|id| {
+                web_sys::window()
+                    .expect("window")
+                    .document()
+                    .expect("document")
+                    .get_element_by_id(&id)
+                    .and_then(|row| row.text_content())
+                    .unwrap_or_else(|| format!("文書に無い行 {id}"))
+            })
+        };
+
+        assert_eq!(named(), None, "まだキーで動かしていないこと");
+        press("ArrowDown");
+        press("ArrowDown");
+        assert_eq!(named().as_deref(), Some("行 1"));
+
+        // 遠くへ送ると、その行は組み立てられなくなるので指さない。
+        list.scroll_to_row(4_000);
+        assert_eq!(named(), None, "文書に無い行を指さないこと");
+
+        // 行が戻ると、また指す。
+        list.scroll_to_row(1);
+        assert_eq!(named().as_deref(), Some("行 1"));
+
+        // 離れていても、キーはその行から続く。窓の端の先の行も指せる。
+        list.scroll_to_row(4_000);
+        press("ArrowDown");
+        assert_eq!(list.selection(), vec![2]);
+        assert_eq!(named().as_deref(), Some("行 2"));
+        press("End");
+        assert_eq!(named().as_deref(), Some("行 4999"));
+        Ok(())
+    });
+}
+
 /// Even with built rows, whether a row can be selected is answered without creating
 /// it.
 #[wasm_bindgen_test]
@@ -7754,6 +8152,815 @@ fn list_row_height_follows_the_setting() {
             "指定を外すと <select> へ戻る"
         );
         assert_eq!(list.selection(), vec![1], "選択は残ること");
+        Ok(())
+    });
+}
+
+/// Moving the window leaves the rows in both ranges alone: the builder is not called for
+/// them, and a control inside one keeps the keyboard focus. The rows stay in order
+/// whichever way the window moves.
+#[wasm_bindgen_test]
+fn list_keeps_rows_that_stay_in_the_window() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        const TARGET: usize = 100;
+        let (list, _mounted) = mounted_list(ui)?;
+        let inputs: Rc<RefCell<HashMap<usize, naui_web::TextInput>>> = Rc::default();
+        let builds: Rc<RefCell<HashMap<usize, usize>>> = Rc::default();
+        {
+            let ui = ui.clone();
+            let inputs = inputs.clone();
+            let builds = builds.clone();
+            list.set_row_builder(ROWS, move |index| {
+                *builds.borrow_mut().entry(index).or_default() += 1;
+                let row = ui.stack(Orientation::Vertical)?;
+                row.append(&ui.label(&format!("行 {index}"))?);
+                let input = ui.text_input("")?;
+                row.append(&input);
+                inputs.borrow_mut().insert(index, input);
+                Ok(ListRow::new(&row))
+            });
+        }
+        let in_order = |context: &str| {
+            let shown: Vec<usize> = list_rows(&list)
+                .iter()
+                .map(|row| {
+                    row.text_content()
+                        .expect("行の文字")
+                        .strip_prefix("行 ")
+                        .expect("行の文字")
+                        .parse()
+                        .expect("行の番号")
+                })
+                .collect();
+            let first = shown[0];
+            let expected: Vec<usize> = (first..first + shown.len()).collect();
+            assert_eq!(shown, expected, "{context}: 行が順に並ぶこと");
+            first
+        };
+
+        list.scroll_to_row(TARGET);
+        let before = in_order("送った先");
+        let input = inputs.borrow()[&TARGET].clone();
+        assert!(input.request_focus(), "入力欄にフォーカスを置けること");
+        let element = input.native_element();
+        let focused_in_input = || {
+            let active = element
+                .owner_document()
+                .and_then(|doc| doc.active_element());
+            element.contains(active.as_ref().map(|active| active.as_ref()))
+        };
+        assert!(focused_in_input());
+        let built = builds.borrow()[&TARGET];
+
+        // 窓が先へ動いても、入力欄の行は窓の中に残っている。
+        list.scroll_to_row(TARGET + ROW_WINDOW_OVERSCAN);
+        let after = in_order("先へ動かしたあと");
+        assert!(after > before, "窓が動いていること: {before} -> {after}");
+        assert!(after <= TARGET, "行が窓に残っていること");
+        assert!(
+            focused_in_input(),
+            "先へ動いても入力欄にフォーカスが残ること"
+        );
+        assert_eq!(
+            builds.borrow()[&TARGET],
+            built,
+            "残る行は組み立て直さないこと"
+        );
+
+        // 手前へ戻しても同じ。
+        list.scroll_to_row(before + 1);
+        let back = in_order("手前へ戻したあと");
+        assert!(back < after, "窓が戻っていること: {after} -> {back}");
+        assert!(
+            focused_in_input(),
+            "手前へ動いても入力欄にフォーカスが残ること"
+        );
+        assert_eq!(
+            builds.borrow()[&TARGET],
+            built,
+            "残る行は組み立て直さないこと"
+        );
+
+        // 残る行の押した場所は、窓が動いても同じ行を指す。
+        list_rows(&list)
+            .iter()
+            .find(|row| row.text_content().as_deref() == Some(format!("行 {TARGET}").as_str()))
+            .expect("残った行")
+            .click();
+        assert_eq!(list.selection(), vec![TARGET], "押した行が選ばれること");
+
+        // 組み立て直しの指示では、残る行も新しくする。
+        list.refresh();
+        assert_eq!(
+            builds.borrow()[&TARGET],
+            built + 1,
+            "`refresh` は作り直すこと"
+        );
+        Ok(())
+    });
+}
+
+/// Going to or from a height set replaces the `<ul>`, whose scroll position starts at 0.
+/// The rows mean the same as before, so the position carries over and its rows are built.
+#[wasm_bindgen_test]
+fn list_row_height_keeps_the_scroll_position() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        const TOP: i32 = 3_000;
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_items(&ListItem::list(
+            (0..ROWS).map(|index| format!("行 {index}")),
+        ));
+        list_scroller(&list).set_scroll_top(TOP);
+
+        list.set_row_height(40.0);
+        let top = list_scroller(&list).scroll_top();
+        assert!((top - TOP).abs() <= 1, "位置を引き継ぐこと: {top}");
+        // 3,000 / 40 で 75 行目が見えている。
+        let shown = list_rows(&list)
+            .iter()
+            .any(|row| row.text_content().as_deref() == Some("行 75"));
+        assert!(shown, "その位置の行が組み立てられること");
+
+        list.set_row_height(0.0);
+        let top = list_scroller(&list).scroll_top();
+        assert!((top - TOP).abs() <= 1, "指定を外しても引き継ぐこと: {top}");
+        Ok(())
+    });
+}
+
+/// An `Auto` height is as tall as all the rows, so every row is built at its own height.
+/// Only a height the app limited makes the list build what is on screen.
+#[wasm_bindgen_test]
+fn list_auto_height_builds_every_row() {
+    with_ui(|ui| {
+        const ROWS: usize = 300;
+        let items: Vec<ListItem> = (0..ROWS)
+            .map(|index| match index % 2 {
+                0 => ListItem::new(format!("行 {index}")),
+                _ => ListItem::new(format!("行 {index}")).detail("補助の文字"),
+            })
+            .collect();
+        let list = ui.list()?;
+        let _mounted = Mounted::new(&list);
+        list.set_items(&items);
+        let rows = list_rows(&list);
+        assert_eq!(rows.len(), ROWS, "Auto の高さでは全行を組み立てること");
+        let height = |row: &Element| row.get_bounding_client_rect().height();
+        assert!(
+            height(&rows[1]) > height(&rows[0]),
+            "行ごとの高さのままであること: {} / {}",
+            height(&rows[0]),
+            height(&rows[1])
+        );
+
+        // 指定を付けると絞り、外すと全行へ戻る。
+        list.set_sizing(Sizing::fixed(240.0, 200.0));
+        let built = list_rows(&list).len();
+        assert!(built < 100, "絞られること: {built} 行");
+        list.set_sizing(Sizing::AUTO);
+        assert_eq!(list_rows(&list).len(), ROWS, "指定を外すと全行へ戻ること");
+        Ok(())
+    });
+}
+
+/// A list placed after it was filled learns its size only then. An `Auto` height goes from
+/// the first rows to every row, and a height given before placing never builds them all.
+#[wasm_bindgen_test]
+async fn list_auto_height_filled_before_it_is_placed_builds_every_row() {
+    const ROWS: usize = 300;
+    let mut kept = None;
+    with_ui(|ui| {
+        let list = ui.list()?;
+        list.set_items(&ListItem::list(
+            (0..ROWS).map(|index| format!("行 {index}")),
+        ));
+        assert_eq!(
+            list_rows(&list).len(),
+            ROW_WINDOW_THRESHOLD,
+            "大きさが分かるまでは先頭だけを組み立てる"
+        );
+        kept = Some(list);
+        Ok(())
+    });
+    let list = kept.expect("リスト");
+    let _mounted = Mounted::new(&list);
+    next_frames().await;
+    assert_eq!(list_rows(&list).len(), ROWS, "全行を組み立てること");
+}
+
+/// A row that cannot be built leaves the rows already there in the list's hands: they
+/// still answer clicks, and the next build does not line them up twice.
+#[wasm_bindgen_test]
+async fn list_keeps_its_rows_when_a_row_fails_to_build() {
+    const ROWS: usize = 5_000;
+    const BREAK: &str = "const create = document.createElement;
+         document.createElement = function (tag, ...rest) {
+           if (tag === 'li') throw new Error('li を作れない');
+           return create.call(this, tag, ...rest);
+         };";
+    const REPAIR: &str = "delete document.createElement;";
+    let run = |code: &str| {
+        js_sys::Function::new_no_args(code)
+            .call0(&wasm_bindgen::JsValue::NULL)
+            .expect("スクリプトの実行");
+    };
+    let mut kept = None;
+    with_ui(|ui| {
+        let list = ui.list()?;
+        list.set_sizing(Sizing::fixed(240.0, 200.0));
+        list.set_items(&ListItem::list(
+            (0..ROWS).map(|index| format!("行 {index}")),
+        ));
+        kept = Some(list);
+        Ok(())
+    });
+    let list = kept.expect("リスト");
+    let _mounted = Mounted::new(&list);
+    next_frames().await;
+    let height = list.row_height();
+    let scroll_to = |row: f64| list_scroller(&list).set_scroll_top((row * height) as i32);
+
+    // 窓を動かす間だけ `<li>` を作れなくする。前の窓と重なる行は残る。
+    run(BREAK);
+    scroll_to(15.0);
+    next_frames().await;
+    run(REPAIR);
+
+    let row = list_rows(&list)
+        .into_iter()
+        .find(|row| row.text_content().as_deref() == Some("行 10"))
+        .expect("窓に残る行");
+    row.click();
+    assert_eq!(list.selection(), vec![10], "残った行のクリックが届くこと");
+
+    let numbers = || -> Vec<usize> {
+        list_rows(&list)
+            .iter()
+            .map(|row| {
+                let text = row.text_content().expect("行の文字");
+                text.trim_start_matches("行 ").parse().expect("行の番号")
+            })
+            .collect()
+    };
+    scroll_to(30.0);
+    next_frames().await;
+    let built = numbers();
+    assert!(built.contains(&30), "次の窓を組み立てること: {built:?}");
+    assert!(
+        built.windows(2).all(|pair| pair[0] + 1 == pair[1]),
+        "行が二重に並ばないこと: {built:?}"
+    );
+
+    // 窓が動かなくても、次の機会に欠けた行を組み立てる。
+    run(BREAK);
+    scroll_to(45.0);
+    next_frames().await;
+    run(REPAIR);
+    let built = numbers();
+    let missing = built.last().expect("残った行") + 1;
+    assert!(built.contains(&45), "前の窓と重なる行は残ること: {built:?}");
+    let scroller = list_scroller(&list);
+    scroller.set_scroll_top(scroller.scroll_top() + 1);
+    next_frames().await;
+    let built = numbers();
+    assert!(
+        built.contains(&missing),
+        "欠けた行を組み立てること: {built:?}"
+    );
+    assert!(
+        built.windows(2).all(|pair| pair[0] + 1 == pair[1]),
+        "行が並ぶこと: {built:?}"
+    );
+}
+
+/// A `<ul>` has to do what a `<select>` gives for free: paging, selecting everything, and
+/// jumping to a row by typing.
+#[wasm_bindgen_test]
+fn list_with_many_rows_keeps_the_keys_of_a_select() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_selection_mode(SelectionMode::Multiple);
+        let mut names: Vec<String> = (0..ROWS).map(|index| format!("行 {index}")).collect();
+        names[3_000] = "Apple".to_string();
+        names[4_000] = "Apricot".to_string();
+        list.set_items(&ListItem::list(names));
+        let scroller = list_scroller(&list);
+        let press = |key: &str| press_shortcut(scroller.as_ref(), key, false, false, false);
+
+        assert!(press("PageDown"), "処理したキーは既定の動作を止める");
+        let start = list.selection()[0];
+        assert!(press("PageDown"));
+        let page = list.selection()[0] - start;
+        assert!(page > 1, "1 ページ分動くこと: {page}");
+        assert_eq!(list.selection(), vec![start + page]);
+        assert!(press("PageUp"));
+        assert_eq!(list.selection(), vec![start]);
+        // Shift で範囲が伸びる。
+        assert!(press_shortcut(
+            scroller.as_ref(),
+            "PageDown",
+            false,
+            true,
+            false
+        ));
+        assert_eq!(list.selection().len(), page + 1);
+        // 端で止まる。
+        press("End");
+        press("PageDown");
+        assert_eq!(list.selection(), vec![ROWS - 1]);
+
+        // 修飾キーが付いたらブラウザの操作 (タブの切り替えなど) なので、奪わない。
+        for key in ["PageDown", "PageUp"] {
+            assert!(
+                !press_shortcut(scroller.as_ref(), key, true, false, false),
+                "Ctrl"
+            );
+            assert!(
+                !press_shortcut(scroller.as_ref(), key, false, false, true),
+                "Alt"
+            );
+            let init = KeyboardEventInit::new();
+            init.set_key(key);
+            init.set_bubbles(true);
+            init.set_cancelable(true);
+            init.set_meta_key(true);
+            let event = KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init)
+                .expect("キーイベントの生成");
+            assert!(
+                scroller.dispatch_event(&event).expect("イベントの配送"),
+                "Meta"
+            );
+        }
+        assert_eq!(list.selection(), vec![ROWS - 1], "選択も動かさない");
+
+        // 全選択は窓の外まで届き、位置は動かさない。
+        let top = scroller.scroll_top();
+        assert!(press_shortcut(scroller.as_ref(), "a", true, false, false));
+        assert_eq!(list.selection().len(), ROWS);
+        assert_eq!(scroller.scroll_top(), top);
+
+        // 文字で飛ぶ。
+        press("Home");
+        assert!(press("a"));
+        assert_eq!(list.selection(), vec![3_000], "打った文字で始まる行へ");
+        assert!(press("p"));
+        assert_eq!(list.selection(), vec![3_000], "続けて打つと今の行のまま");
+        assert!(press("r"));
+        assert_eq!(list.selection(), vec![4_000], "打ち足すと絞られる");
+        assert!(!press("z"), "当たらなければ何もしない");
+        assert_eq!(list.selection(), vec![4_000]);
+        Ok(())
+    });
+}
+
+/// Ctrl (⌘) moves only the row the keyboard points at, as on the other platforms, so rows
+/// can be picked one by one with Space.
+#[wasm_bindgen_test]
+fn list_ctrl_moves_only_the_current_row() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_selection_mode(SelectionMode::Multiple);
+        list.set_rows(
+            &(0..ROWS)
+                .map(|index| {
+                    let row = ListRow::new(&ui.label(&format!("行 {index}"))?);
+                    Ok(row.selectable(index != 12))
+                })
+                .collect::<Result<Vec<_>>>()?,
+        );
+        let scroller = list_scroller(&list);
+        let press = |key: &str| press_shortcut(scroller.as_ref(), key, false, false, false);
+        let ctrl = |key: &str| press_shortcut(scroller.as_ref(), key, true, false, false);
+        let current = || {
+            let id = scroller
+                .get_attribute("aria-activedescendant")
+                .expect("いまの行");
+            web_sys::window()
+                .expect("window")
+                .document()
+                .expect("document")
+                .get_element_by_id(&id)
+                .expect("いまの行の要素")
+                .text_content()
+                .expect("行の文字")
+        };
+        let notified = Rc::new(Cell::new(0));
+        list.on_select({
+            let notified = notified.clone();
+            move |_| notified.set(notified.get() + 1)
+        });
+
+        press("Home");
+        press("ArrowDown");
+        assert_eq!(list.selection(), vec![1]);
+        notified.set(0);
+
+        assert!(ctrl("ArrowDown"), "処理したキーは既定の動作を止める");
+        assert_eq!(list.selection(), vec![1], "選択は変わらない");
+        assert_eq!(current(), "行 2", "いまの行だけが動く");
+        let rows = list_rows(&list);
+        let outline = |row: usize| {
+            web_sys::window()
+                .expect("window")
+                .get_computed_style(&rows[row])
+                .expect("スタイル")
+                .expect("スタイル")
+                .get_property_value("outline-style")
+                .expect("outline-style")
+        };
+        assert_ne!(outline(2), "none", "いまの行が見えること");
+        assert_eq!(outline(1), "none", "前の行には残らないこと");
+        assert_eq!(notified.get(), 0, "通知しない");
+
+        // Space で足せる。
+        press(" ");
+        assert_eq!(list.selection(), vec![1, 2]);
+        ctrl("ArrowUp");
+        ctrl("ArrowUp");
+        assert_eq!(current(), "行 0");
+        assert_eq!(list.selection(), vec![1, 2]);
+
+        // 選べない行にも止まる。その上の Space は何もしない。
+        for _ in 0..12 {
+            ctrl("ArrowDown");
+        }
+        assert_eq!(current(), "行 12");
+        notified.set(0);
+        press(" ");
+        assert_eq!(list.selection(), vec![1, 2], "選べない行は足さない");
+        assert_eq!(notified.get(), 0);
+        // 次の矢印は、そこから選べる行へ。
+        press("ArrowDown");
+        assert_eq!(list.selection(), vec![13]);
+
+        // 窓の外の端まで動いても、選択はそのまま。
+        ctrl("End");
+        assert_eq!(current(), "行 4999");
+        assert!(is_within(&scroller, &list_rows(&list).pop().expect("行")));
+        assert_eq!(list.selection(), vec![13]);
+        ctrl("Home");
+        assert_eq!(current(), "行 0");
+        assert_eq!(list.selection(), vec![13]);
+
+        // Shift もいっしょなら範囲を選ぶ。
+        press("Home");
+        assert!(press_shortcut(
+            scroller.as_ref(),
+            "ArrowDown",
+            true,
+            true,
+            false
+        ));
+        assert_eq!(list.selection(), vec![0, 1]);
+
+        // 単一選択には足す手段が無いので、これまでどおり選択が動く。
+        list.set_selection_mode(SelectionMode::Single);
+        press("Home");
+        ctrl("ArrowDown");
+        assert_eq!(list.selection(), vec![1]);
+        Ok(())
+    });
+}
+
+/// Rows of plain text leave the `<select>` past the threshold, and Ctrl keeps the selection
+/// there too.
+#[wasm_bindgen_test]
+fn list_ctrl_keeps_the_selection_of_plain_text_rows() {
+    with_ui(|ui| {
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_selection_mode(SelectionMode::Multiple);
+        list.set_items(&ListItem::list(
+            (0..=ROW_WINDOW_THRESHOLD).map(|index| format!("行 {index}")),
+        ));
+        assert!(list.native_select().is_none(), "<ul> になっていること");
+        list.set_selection(&[1, 3, 150]);
+        let scroller = list_scroller(&list);
+        for key in ["ArrowDown", "ArrowUp", "Home", "End"] {
+            assert!(press_shortcut(scroller.as_ref(), key, true, false, false));
+            assert_eq!(list.selection(), vec![1, 3, 150], "Ctrl + {key}");
+        }
+        Ok(())
+    });
+}
+
+/// What has been typed is about the rows it was typed on.
+#[wasm_bindgen_test]
+fn list_forgets_what_was_typed_when_the_rows_change() {
+    with_ui(|ui| {
+        let (list, _mounted) = mounted_list(ui)?;
+        let many = |first: &str| {
+            let mut names: Vec<String> = (0..1_000).map(|index| format!("行 {index}")).collect();
+            names[500] = first.to_string();
+            ListItem::list(names)
+        };
+        list.set_items(&many("Apple"));
+        let scroller = list_scroller(&list);
+        assert!(press_shortcut(scroller.as_ref(), "a", false, false, false));
+        assert_eq!(list.selection(), vec![500]);
+
+        list.set_items(&many("Banana"));
+        let scroller = list_scroller(&list);
+        assert!(
+            press_shortcut(scroller.as_ref(), "b", false, false, false),
+            "新しい行を探すこと"
+        );
+        assert_eq!(list.selection(), vec![500]);
+        Ok(())
+    });
+}
+
+/// When a row with the focus inside leaves the window, the focus goes to the list, so the
+/// keys still reach something.
+#[wasm_bindgen_test]
+async fn list_takes_the_focus_of_a_row_that_leaves_the_window() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let list = ui.list()?;
+        list.set_sizing(Sizing::fixed(240.0, 200.0));
+        let ui = ui.clone();
+        list.set_row_builder(5_000, move |_| Ok(ListRow::new(&ui.text_input("")?)));
+        kept = Some(list);
+        Ok(())
+    });
+    let list = kept.expect("リスト");
+    let _mounted = Mounted::new(&list);
+    next_frames().await;
+    let document = web_sys::window()
+        .expect("window")
+        .document()
+        .expect("document");
+    let input: HtmlElement = list_rows(&list)[1]
+        .query_selector("input")
+        .expect("検索")
+        .expect("行の入力欄")
+        .unchecked_into();
+    input.focus().expect("フォーカス");
+    let element: Element = input.clone().into();
+    assert_eq!(document.active_element(), Some(element));
+
+    // WebKit はフォーカスした要素を見える位置へ送る処理を遅らせるので、終わるのを待つ。
+    next_frames().await;
+    let scroller = list_scroller(&list);
+    scroller.set_scroll_top((2_000.0 * list.row_height()) as i32);
+    next_frames().await;
+    assert!(!input.is_connected(), "入力欄の行が窓から出ていること");
+    let element: Element = scroller.clone().into();
+    assert_eq!(document.active_element(), Some(element), "リストへ移ること");
+}
+
+/// A row is discarded when it leaves the window, and what it said goes on counting.
+#[wasm_bindgen_test]
+async fn list_remembers_rows_that_cannot_be_selected() {
+    const ROWS: usize = 5_000;
+    const HEADING: usize = 2;
+    let mut kept = None;
+    with_ui(|ui| {
+        let list = ui.list()?;
+        list.set_sizing(Sizing::fixed(240.0, 200.0));
+        list.set_selection_mode(SelectionMode::Multiple);
+        let ui = ui.clone();
+        list.set_row_builder(ROWS, move |index| {
+            let row = ListRow::new(&ui.label(&index.to_string())?);
+            Ok(row.selectable(index != HEADING))
+        });
+        kept = Some(list);
+        Ok(())
+    });
+    let list = kept.expect("リスト");
+    let _mounted = Mounted::new(&list);
+    next_frames().await;
+    list_scroller(&list).set_scroll_top((2_000.0 * list.row_height()) as i32);
+    next_frames().await;
+    assert!(
+        !list_rows(&list)
+            .iter()
+            .any(|row| row.text_content().as_deref() == Some("2")),
+        "見出しの行が窓から出ていること"
+    );
+
+    list.set_selection(&[HEADING, HEADING + 1]);
+    assert_eq!(list.selection(), vec![HEADING + 1], "窓の外でも選べない");
+
+    list.refresh();
+    list.set_selection(&[HEADING]);
+    assert_eq!(
+        list.selection(),
+        vec![HEADING],
+        "refresh で答えを忘れること"
+    );
+}
+
+/// A `refresh` from inside the builder makes the build under way start over, so no row keeps
+/// the old contents, and the list stays where it was.
+#[wasm_bindgen_test]
+async fn list_refresh_inside_the_builder_starts_over() {
+    let version = Rc::new(Cell::new(1));
+    let refresh_once = Rc::new(Cell::new(false));
+    let mut kept = None;
+    with_ui(|ui| {
+        let list = ui.list()?;
+        list.set_sizing(Sizing::fixed(240.0, 200.0));
+        let inside = list.downgrade();
+        let version = version.clone();
+        let refresh_once = refresh_once.clone();
+        let ui = ui.clone();
+        list.set_row_builder(1_000, move |index| {
+            let built_from = version.get();
+            if refresh_once.replace(false) {
+                version.set(2);
+                inside.upgrade().expect("リスト").refresh();
+            }
+            Ok(ListRow::new(&ui.label(&format!("{built_from}:{index}"))?))
+        });
+        kept = Some(list);
+        Ok(())
+    });
+    let list = kept.expect("リスト");
+    let _mounted = Mounted::new(&list);
+    next_frames().await;
+    list_scroller(&list).set_scroll_top(1_000);
+    next_frames().await;
+
+    refresh_once.set(true);
+    list.refresh();
+    let top = list_scroller(&list).scroll_top();
+    assert!((top - 1_000).abs() <= 1, "位置を保つこと: {top}");
+    let rows = list_rows(&list);
+    assert!(!rows.is_empty(), "行があること");
+    for row in rows {
+        let text = row.text_content().unwrap_or_default();
+        assert!(text.starts_with("2:"), "古い内容の行が残らないこと: {text}");
+    }
+}
+
+/// Replacing the rows keeps the scroll position, as on the other platforms: the elements are
+/// new, but the list is not.
+#[wasm_bindgen_test]
+fn list_replacing_the_rows_keeps_the_scroll_position() {
+    with_ui(|ui| {
+        const TOP: i32 = 3_000;
+        let (list, _mounted) = mounted_list(ui)?;
+        let items = |word: &str| ListItem::list((0..5_000).map(|index| format!("{word} {index}")));
+        list.set_items(&items("行"));
+        list_scroller(&list).set_scroll_top(TOP);
+
+        list.set_items(&items("新"));
+        let top = list_scroller(&list).scroll_top();
+        assert!((top - TOP).abs() <= 1, "set_items で位置を保つこと: {top}");
+        let number = TOP as f64 / list.row_height();
+        let row = format!("新 {}", number.floor() as usize);
+        assert!(
+            list_rows(&list)
+                .iter()
+                .any(|built| built.text_content().as_deref() == Some(row.as_str())),
+            "その位置の行を組み立てること: {row}"
+        );
+
+        let ui = ui.clone();
+        list.set_row_builder(5_000, move |index| {
+            Ok(ListRow::new(&ui.label(&index.to_string())?))
+        });
+        let top = list_scroller(&list).scroll_top();
+        assert!(
+            (top - TOP).abs() <= 1,
+            "set_row_builder で位置を保つこと: {top}"
+        );
+
+        // 行が減れば、ブラウザが範囲の中へ収める。
+        list.set_items(&items("短")[..300]);
+        let scroller = list_scroller(&list);
+        assert!(scroller.scroll_top() <= scroller.scroll_height());
+        assert!(!list_rows(&list).is_empty(), "行があること");
+        Ok(())
+    });
+}
+
+/// A hidden list cannot scroll, and it has not measured its rows: it goes there once it can.
+#[wasm_bindgen_test]
+async fn list_scroll_to_row_waits_until_it_can_scroll() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let list = ui.list()?;
+        list.set_sizing(Sizing::fixed(240.0, 200.0));
+        list.set_items(&ListItem::list(
+            (0..5_000).map(|index| format!("行 {index}")),
+        ));
+        list.scroll_to_row(1_000);
+        kept = Some(list);
+        Ok(())
+    });
+    let list = kept.expect("リスト");
+    let _mounted = Mounted::new(&list);
+    next_frames().await;
+    let row = list_rows(&list)
+        .into_iter()
+        .find(|row| row.text_content().as_deref() == Some("行 1000"))
+        .expect("指した行が組み立てられること");
+    assert!(
+        is_within(&list_scroller(&list), &row),
+        "指した行が見えること"
+    );
+}
+
+/// With no rows there is no height, whatever the last rows measured.
+#[wasm_bindgen_test]
+fn list_without_rows_has_no_row_height() {
+    with_ui(|ui| {
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_items(&ListItem::list(
+            (0..1_000).map(|index| format!("行 {index}")),
+        ));
+        assert!(list.row_height() > 0.0);
+        list.set_items(&[]);
+        assert_eq!(list.row_height(), 0.0);
+        list.set_row_height(30.0);
+        assert_eq!(list.row_height(), 30.0, "指定はそのまま返すこと");
+        Ok(())
+    });
+}
+
+/// The height set is a minimum. A row that needs more grows, so the spacers and scrolling
+/// must use the real height rather than the one set.
+#[wasm_bindgen_test]
+fn list_rows_taller_than_the_height_set_keep_the_window_right() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        let items: Vec<ListItem> = (0..ROWS)
+            .map(|index| ListItem::new(format!("行 {index}")).detail("補助の文字"))
+            .collect();
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_row_height(10.0);
+        list.set_items(&items);
+        let height = list.row_height();
+        assert!(height > 10.0, "中身に合わせて伸びること: {height}");
+        for row in list_rows(&list) {
+            let measured = row.get_bounding_client_rect().height();
+            assert!(
+                (measured - height).abs() < 0.5,
+                "どの行も同じ高さになること: {measured} / {height}"
+            );
+        }
+        let scroller = list_scroller(&list);
+        let expected = height * ROWS as f64;
+        assert!(
+            (f64::from(scroller.scroll_height()) - expected).abs() < 2.0,
+            "スクロールの範囲が実際の高さの全行分であること: {} / {expected}",
+            scroller.scroll_height()
+        );
+
+        list.scroll_to_row(4_000);
+        let target = list_rows(&list)
+            .into_iter()
+            .find(|row| {
+                row.text_content()
+                    .is_some_and(|text| text.starts_with("行 4000"))
+            })
+            .expect("指定した行が組み立てられていること");
+        assert!(is_within(&scroller, &target), "指定した行が見えること");
+
+        // 指定より低い行だけなら、指定のとおり。
+        list.set_row_height(100.0);
+        assert_eq!(list.row_height(), 100.0);
+        Ok(())
+    });
+}
+
+/// Changing the row height moves where every row is, so the window must follow even when
+/// the scroll position stays the same. Otherwise only spacer is left on screen.
+#[wasm_bindgen_test]
+fn list_row_height_change_keeps_rows_on_screen() {
+    with_ui(|ui| {
+        const ROWS: usize = 5_000;
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_items(&ListItem::list(
+            (0..ROWS).map(|index| format!("行 {index}")),
+        ));
+        list.set_row_height(40.0);
+        list.scroll_to_row(3_000);
+        let scroller = list_scroller(&list);
+        let rows_on_screen = || {
+            let view = scroller.get_bounding_client_rect();
+            list_rows(&list)
+                .iter()
+                .filter(|row| {
+                    let rect = row.get_bounding_client_rect();
+                    rect.bottom() > view.top() && rect.top() < view.bottom()
+                })
+                .count()
+        };
+        assert!(rows_on_screen() > 0, "送った先に行があること");
+        for height in [90.0, 120.0, 60.0] {
+            list.set_row_height(height);
+            assert!(
+                rows_on_screen() > 0,
+                "高さ {height} にしても画面に行があること (位置 {})",
+                scroller.scroll_top()
+            );
+        }
         Ok(())
     });
 }

@@ -25,6 +25,7 @@ that shape are covered in
 | What a dropped file carries (`on_file_drop`) | The absolute path | The absolute path | The absolute path (local files only) | A `blob:` URL, no path |
 | Looks of `ButtonRole` | Only `Primary` (accent) | `Primary` (accent), `Destructive` (red text, macOS 26 and later) | Both (`suggested-action` / `destructive-action`) | Neither (only `data-naui-role` is written) |
 | `AdaptivePanes` switching to one pane | `TwoPaneView` decides, below the breakpoint, with no slack | naui decides, with 8 px of slack | naui decides, with 8 px of slack (slides between the panes) | naui decides, with 8 px of slack |
+| `Label` holding links | Selectable as asked | Always selectable | Selectable as asked | Selectable as asked |
 | Where `Group`'s heading goes | Above the card | On the frame's top edge | On the frame's top edge | On the frame's top edge (`<legend>`) |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
 
@@ -108,14 +109,27 @@ that shape are covered in
   - naui does not know whether rows it has not built yet can be chosen, so with
     `set_row_builder` they are assumed to be choosable by default (this can be passed
     with `set_row_selectable`).
-  - On Windows and Linux, keyboard movement goes through the native list, which knows
-    only the rows built: Home and End go to the first and last rows built, and the
-    arrow keys continue past them as the rows follow. A Shift range selection also
-    covers only the rows built. macOS and the Web cover every row.
   - A control inside a row loses the keyboard focus when its row leaves the range
-    built, because the row is rebuilt.
+    built, because the row is discarded. While the row stays in the range it is left
+    as it is, so what the builder returned for it only changes with `refresh`.
   - On the Web, such a list is built from `<ul role="listbox">` instead of `<select>`,
-    and the same limit on the element height as for `Table` applies.
+    and the same limit on the element height as for `Table` applies. naui handles the
+    keys of a `<select>` itself, but typing to jump to a row works only for rows passed
+    as text: rows from `set_row_builder` have no text until they are built.
+  - Assistive technology is told each row's position among all the rows and how many
+    there are, because the native list knows only the rows built. On Linux the values
+    are set on every GTK version, but GTK sends them over AT-SPI only from 4.20; with
+    an earlier GTK, assistive technology sees just the rows built.
+- On Windows, an `Auto` height on a `List` with many rows can make the app stop
+  responding when a UI Automation client (a testing tool, and possibly a screen
+  reader) walks its rows. Mouse and keyboard use are not affected. The cost grows
+  steeply with the rows the `ListView` has built and comes from WinUI's `ListView`,
+  which a plain `ListView` without naui shows too. On a development machine, listing
+  every element took about 1.3 seconds at 200 rows and 9 seconds at 400. At 5000 rows
+  each step to the next row took about 3.6 seconds, and listing every element timed
+  out and left the app unresponsive for more than five minutes. With `Fixed` or `Fill`
+  only the rows on screen are built, so the same 5000 rows are listed in under 0.1
+  seconds: **use one of those for a list that may have more than about 200 rows.**
 - Sorting by pressing a `Table` header only goes as far as notifying "which column,
   in which direction"; **sorting the rows is the app's job**.
 - A `Table` with more than 200 rows builds only the range shown on screen (with
@@ -134,6 +148,8 @@ that shape are covered in
   - Columns with widgets in their cells, if no width is specified, are sized only
     by **the header's width and their share of the leftover space** (so columns do
     not move even when content widths differ per row).
+  - Assistive technology is told each row's position among all the rows and how many
+    there are, with the same limit on GTK versions as for `List`.
   - On the Web, when the number of rows × the row height exceeds the element height
     the browser can handle (about 33 million px in Chromium), the mapping between
     the scroll bar position and rows drifts (around 1 million rows for 30 px rows).
@@ -335,6 +351,12 @@ that shape are covered in
 
 ### Widgets
 
+- **A `Label` holding links is selectable**, whatever `set_selectable` says (and
+  `is_selectable` still answers what was asked), because AppKit reacts to links only
+  in a selectable field. Clicking a link gives the label the keyboard focus, and the
+  pointer over a link stays an I-beam rather than a pointing hand (the field's cursor
+  rect covers the whole label, and the field editor's `linkTextAttributes` names no
+  cursor).
 - `ButtonRole::Destructive` sets `hasDestructiveAction`, but **only macOS 26 and
   later give it a look** (red text on a faint red bezel, the same as destructive
   buttons in alerts). Before that it looks like an ordinary button.

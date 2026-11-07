@@ -44,7 +44,10 @@ use windows::Foundation::PropertyValue;
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
-use crate::list::{text_block, ActivationHandler, SelectionHandler};
+use crate::list::{
+    hold_unselectable_press, item_padding, new_row_item, report_row_position, text_block,
+    transparent_grid, ActivationHandler, SelectionHandler,
+};
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
@@ -595,6 +598,21 @@ impl RowsState {
             false => Some(self.rows.borrow().get(index).is_some_and(|row| row.enabled)),
         }
     }
+}
+
+/// The `Grid` holding one row's cells.
+///
+/// A row that cannot be selected takes over the padding its `ListViewItem` gives up,
+/// and holds the press over the whole row (see [`hold_unselectable_press`]). Otherwise
+/// a click in its margins or between cells would select it for an instant.
+fn row_grid(selectable: bool) -> Result<XamlGrid> {
+    if selectable {
+        return XamlGrid::new().map_err(|e| to_error("create the row Grid", e));
+    }
+    let grid = transparent_grid()?;
+    let _ = grid.SetPadding(ROW_PADDING);
+    hold_unselectable_press(&grid)?;
+    Ok(grid)
 }
 
 /// Places a widget cell at the column's position.
@@ -1367,9 +1385,11 @@ impl Table {
             let Some(cells) = self.0.rows.cells(index) else {
                 continue;
             };
-            let item = ListViewItem::new().map_err(|e| to_error("create the ListViewItem", e))?;
+            let selectable = cells.is_selectable();
+            let item = new_row_item()?;
             // 見出しと列をそろえるため、余白と高さは行ごとに書く。
-            let _ = item.SetPadding(ROW_PADDING);
+            // 選べない行の余白は、中の `Grid` が受け持つ (`row_grid`)。
+            let _ = item.SetPadding(item_padding(selectable));
             match self.0.fixed_row_height.get() {
                 Some(height) => {
                     let _ = item.SetHeight(height);
@@ -1379,7 +1399,7 @@ impl Table {
                     let _ = item.SetMinHeight(ROW_MIN_HEIGHT);
                 }
             }
-            let content = XamlGrid::new().map_err(|e| to_error("create the row Grid", e))?;
+            let content = row_grid(selectable)?;
             apply_columns(&content, &columns)?;
             for (column_index, column) in columns.iter().enumerate() {
                 match cells.content(column_index) {
@@ -1397,6 +1417,7 @@ impl Table {
                 .map_err(|e| to_error("set the row content", e))?;
             // 文字だけの行で `enabled` が `false` のときは、行ごと操作できない。
             let _ = item.SetIsEnabled(!cells.dimmed);
+            report_row_position(&item, index, window.count);
             self.attach_row_click(&item, index)?;
 
             let element = item

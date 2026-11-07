@@ -28,7 +28,7 @@ use naui_core::{
 
 use crate::bin::SizeBin;
 use crate::callback::{SelectionNotifier, SortNotifier};
-use crate::list::{focused_row_offset, restore_row_focus, ActivationHandler};
+use crate::list::ActivationHandler;
 use crate::widgets::{impl_widget, without_signal, Widget};
 
 /// The spacing between cells.
@@ -890,6 +890,7 @@ impl Table {
                 if let Some(height) = fixed_height {
                     row.set_size_request(-1, height);
                 }
+                crate::list::report_row_position(&row, index, window.count);
                 self.0.list.append(&row);
                 realized.push(cells);
             }
@@ -909,13 +910,52 @@ impl Table {
         // 矢印キーで窓の端まで来たときに組み立て直しても、操作が続けられるように。
         // 取り除いた行にフォーカスが残ったままだと、キーがどこにも届かなくなる。
         if let Some(index) = focused {
-            restore_row_focus(&self.0.list, &self.0.scroller, window, index);
+            let offset = match window.contains(index) {
+                true => index - window.start,
+                // スクロールバーで遠くへ送ったときは、見えている先頭の行から続ける。
+                false => self.first_visible_row().saturating_sub(window.start),
+            };
+            if let Some(row) = self.0.list.row_at_index(offset as i32) {
+                self.grab_focus_in_place(&row);
+            }
         }
+    }
+
+    /// The first row wholly on screen, as far as the window has it.
+    fn first_visible_row(&self) -> usize {
+        let window = self.0.window.get();
+        let height = self.0.row_height.get();
+        if height <= 0.0 || window.is_empty() {
+            return window.start;
+        }
+        let top = self.0.scroller.vadjustment().value();
+        ((top / height).ceil() as usize).clamp(window.start, window.end - 1)
     }
 
     /// The row holding the keyboard focus (itself, or a control inside it).
     fn focused_row(&self) -> Option<usize> {
-        Some(self.0.built_start.get() + focused_row_offset(&self.0.list)?)
+        let focus = self.0.list.root()?.focus()?;
+        let row = focus
+            .ancestor(gtk::ListBoxRow::static_type())
+            .and_downcast::<gtk::ListBoxRow>()
+            .filter(|row| row.parent().as_ref() == Some(self.0.list.upcast_ref()))?;
+        let offset = usize::try_from(row.index()).ok()?;
+        Some(self.0.built_start.get() + offset)
+    }
+
+    /// Moves the focus to a row just built, without scrolling.
+    ///
+    /// The row has no position yet, and `GtkViewport` would scroll to where it believes
+    /// the focused widget is (`scroll-to-focus`), jumping to the top of the list.
+    fn grab_focus_in_place(&self, row: &gtk::ListBoxRow) {
+        let viewport = self.0.scroller.child().and_downcast::<gtk::Viewport>();
+        if let Some(viewport) = &viewport {
+            viewport.set_scroll_to_focus(false);
+        }
+        row.grab_focus();
+        if let Some(viewport) = &viewport {
+            viewport.set_scroll_to_focus(true);
+        }
     }
 
     /// Computes the range of rows to build from the current scroll position.

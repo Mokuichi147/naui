@@ -6,8 +6,8 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use naui_core::{
-    Align, Breakpoint, ButtonRole, Orientation, Padding, Result, StackArrangement, TextColor,
-    TextStyle,
+    Align, Breakpoint, ButtonRole, EventResponse, LinkHandler, Orientation, Padding, Result,
+    RichText, StackArrangement, TextColor, TextRun, TextStyle,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
@@ -28,8 +28,13 @@ pub trait Widget: 'static {
     fn boxed_clone(&self) -> Box<dyn Widget>;
 }
 
+/// `after_sizing` is for widgets whose own work depends on the `Sizing`: it runs at the end
+/// of every `set_sizing`, once the new one is in effect.
 macro_rules! impl_widget {
     ($t:ty, $field:ident) => {
+        crate::widgets::impl_widget!($t, $field, after_sizing: |_: &$t| {});
+    };
+    ($t:ty, $field:ident, after_sizing: $after:expr) => {
         impl Widget for $t {
             fn native_element(&self) -> Element {
                 self.0.$field.clone().unchecked_into()
@@ -47,6 +52,8 @@ macro_rules! impl_widget {
             pub fn set_sizing(&self, sizing: naui_core::Sizing) {
                 let element = <$t as Widget>::native_element(self);
                 crate::layout::apply_sizing(&element, sizing);
+                let after: fn(&$t) = $after;
+                after(self);
             }
 
             /// Whether it is shown. Shown by default.
@@ -310,6 +317,12 @@ impl Drop for Listener {
 
 struct LabelInner {
     element: HtmlElement,
+    /// The formatted content being shown. `None` while showing plain text.
+    rich: RefCell<Option<RichText>>,
+    on_link: LinkHandler,
+    /// The click listener that hears about links, attached when first needed. Held
+    /// with the handle, since content can be replaced from inside the notification.
+    link_listener: RefCell<Option<Listener>>,
     /// `on_file_drop`.
     file_drop: crate::file_drop::FileDrop,
 }
@@ -325,6 +338,9 @@ impl Label {
         element.set_text_content(Some(text));
         let this = Self(Rc::new(LabelInner {
             element,
+            rich: RefCell::new(None),
+            on_link: LinkHandler::default(),
+            link_listener: RefCell::new(None),
             file_drop: Default::default(),
         }));
         this.set_wrap(false);
@@ -340,10 +356,52 @@ impl Label {
     pub fn set_text(&self, text: &str) {
         // 表示中と同じ値なら何もしない。書き直すと編集中のカーソルが動き、
         // 変換中の文字が確定してしまう (render が毎回同じ値を渡すため)。
-        if self.text() == text {
+        // 飾りが付いているときは、文字が同じでも飾りを外す必要がある。
+        if self.0.rich.borrow().is_none() && self.text() == text {
             return;
         }
+        self.0.rich.borrow_mut().take();
         self.0.element.set_text_content(Some(text));
+    }
+
+    /// Shows text that mixes bold, colors and links (`<b>`, `<span>`, `<a>`).
+    ///
+    /// Setting the content already shown does nothing, so the elements, and with them
+    /// the selection and the keyboard focus, survive, and `render` can call it every
+    /// time. [`text`](Self::text) returns the text without its formatting, and
+    /// [`set_text`](Self::set_text) goes back to plain text.
+    pub fn set_rich_text(&self, text: &RichText) {
+        if text.is_plain() {
+            self.set_text(&text.plain_text());
+            return;
+        }
+        if self.0.rich.borrow().as_ref() == Some(text) {
+            return;
+        }
+        let Some(document) = self.0.element.owner_document() else {
+            return;
+        };
+        if text.has_links() {
+            LabelInner::listen_for_links(&self.0);
+        }
+        self.0.element.set_text_content(None);
+        for run in text.runs() {
+            if let Err(error) = append_run(&document, &self.0.element, run) {
+                web_sys::console::error_1(&error.to_string().into());
+            }
+        }
+        *self.0.rich.borrow_mut() = Some(text.clone());
+    }
+
+    /// Called with the `href` when a link in the text is clicked. Calling it again
+    /// removes the previous one.
+    ///
+    /// Answering [`EventResponse::Continue`] then lets the browser follow the link, in
+    /// a new tab as with `Link`; [`EventResponse::Handled`] keeps it from being
+    /// followed, for links that act inside the app.
+    pub fn on_link(&self, f: impl FnMut(&str) -> EventResponse + 'static) {
+        self.0.on_link.set(f);
+        LabelInner::listen_for_links(&self.0);
     }
 
     /// Whether the text can be selected and copied. Not selectable by default.
@@ -411,6 +469,64 @@ impl Label {
     pub fn set_color(&self, color: TextColor) {
         set_or_clear(&self.0.element, "color", color.css_color());
     }
+}
+
+impl LabelInner {
+    /// Attaches the listener for clicks on links, once.
+    fn listen_for_links(this: &Rc<Self>) {
+        if this.link_listener.borrow().is_some() {
+            return;
+        }
+        let weak = Rc::downgrade(this);
+        let listener = Listener::attach_event(this.element.as_ref(), "click", move |event| {
+            let Some(inner) = weak.upgrade() else {
+                return;
+            };
+            // リンクの中の `<b>` などが当たるので、外側の `<a>` までさかのぼる。
+            let anchor = event
+                .target()
+                .and_then(|target| target.dyn_into::<Element>().ok())
+                .and_then(|target| target.closest("a").ok().flatten());
+            let Some(anchor) = anchor else {
+                return;
+            };
+            let href = anchor.get_attribute("href").unwrap_or_default();
+            if inner.on_link.emit(&href) == EventResponse::Handled || href.is_empty() {
+                event.prevent_default();
+            }
+        });
+        *this.link_listener.borrow_mut() = listener.ok();
+    }
+}
+
+/// Appends the elements of one run. A run without formatting is a bare text node.
+fn append_run(document: &Document, parent: &HtmlElement, run: &TextRun) -> Result<()> {
+    let mut inner: Element = parent.clone().into();
+    if let Some(href) = run.href() {
+        let anchor = create(document, "a")?;
+        let _ = anchor.set_attribute("href", href);
+        let _ = anchor.set_attribute("target", "_blank");
+        let _ = anchor.set_attribute("rel", "noopener noreferrer");
+        inner = nest(&inner, anchor)?;
+    }
+    if run.is_bold() {
+        inner = nest(&inner, create(document, "b")?)?;
+    }
+    if let Some(color) = run.text_color().css_color() {
+        let span: HtmlElement = create(document, "span")?.unchecked_into();
+        let _ = span.style().set_property("color", color);
+        inner = nest(&inner, span.into())?;
+    }
+    inner
+        .append_with_str_1(run.text())
+        .map_err(|e| to_error("append the text of a run", e))
+}
+
+fn nest(parent: &Element, child: Element) -> Result<Element> {
+    parent
+        .append_child(&child)
+        .map_err(|e| to_error("nest the elements of a run", e))?;
+    Ok(child)
 }
 
 /// Writes a CSS property, or with `None`, removes it to return to the browser's

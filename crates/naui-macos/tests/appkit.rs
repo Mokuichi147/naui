@@ -19,9 +19,10 @@ use naui_core::{
     Align, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
     EventResponse, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem,
     MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
-    PointerButton, PointerPhase, PopupItem, Rect, Result, ScrollPolicy, SelectionMode, SidebarItem,
-    SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle, Theme, Time,
-    ToolbarIcon, ToolbarItem, Track, TreeItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
+    PointerButton, PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode,
+    SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle,
+    Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem, WindowPlacement, WindowState,
+    DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
 use objc2::rc::{autoreleasepool, Retained};
@@ -32,14 +33,15 @@ use objc2::{
     define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message,
 };
 use objc2_app_kit::{
-    NSApplication, NSApplicationActivationPolicy, NSBox, NSBoxType, NSButton, NSColor,
-    NSColorSpace, NSComboBox, NSControlStateValueOff, NSControlStateValueOn, NSDatePicker,
-    NSDatePickerElementFlags, NSEvent, NSEventMask, NSEventModifierFlags, NSEventType, NSImage,
-    NSImageScaling, NSImageView, NSLayoutAttribute, NSLayoutConstraint,
-    NSLayoutConstraintOrientation, NSLayoutRelation, NSOutlineViewDelegate, NSResponder,
-    NSScrollView, NSScrollerStyle, NSSearchField, NSSecureTextField, NSSegmentedControl,
-    NSStandardKeyBindingResponding, NSStepper, NSSwitch, NSTableViewDelegate, NSTextField,
-    NSTextInputClient, NSTextView, NSTintProminence, NSTitlePosition,
+    NSApplication, NSApplicationActivationPolicy, NSAttributedStringNSStringDrawing, NSBox,
+    NSBoxType, NSButton, NSColor, NSColorSpace, NSComboBox, NSControlStateValueOff,
+    NSControlStateValueOn, NSDatePicker, NSDatePickerElementFlags, NSEvent, NSEventMask,
+    NSEventModifierFlags, NSEventType, NSFont, NSFontAttributeName, NSForegroundColorAttributeName,
+    NSImage, NSImageScaling, NSImageView, NSLayoutAttribute, NSLayoutConstraint,
+    NSLayoutConstraintOrientation, NSLayoutRelation, NSLinkAttributeName, NSOutlineViewDelegate,
+    NSResponder, NSScrollView, NSScrollerStyle, NSSearchField, NSSecureTextField,
+    NSSegmentedControl, NSStandardKeyBindingResponding, NSStepper, NSSwitch, NSTableViewDelegate,
+    NSTextField, NSTextInputClient, NSTextView, NSTintProminence, NSTitlePosition,
     NSUserInterfaceItemIdentification, NSUserInterfaceLayoutDirection, NSView, NSWindow,
     NSWindowStyleMask, NSWindowTitleVisibility,
 };
@@ -254,12 +256,32 @@ fn main() {
             list_row_selectable_answers_without_building,
         ),
         (
-            "リストの行の高さを指定でき、0 以下で自動へ戻る",
-            list_row_height_follows_the_setting,
+            "リストの行の高さの指定は最小の高さで、中身を切らない",
+            list_row_height_is_a_minimum,
         ),
         (
             "リストの組み立ての中からリストを触れる",
             list_builder_can_touch_the_list,
+        ),
+        (
+            "行を組み立てる関数の中で行を差し替えても新しい行にそろう",
+            list_builder_can_replace_the_rows,
+        ),
+        (
+            "組み立ての中で予約した読み直しより先に読み直すと、予約した選択は当たらない",
+            list_reload_takes_over_the_waiting_reload,
+        ),
+        (
+            "選択を読む時間が行数によらない",
+            list_selection_does_not_visit_every_row,
+        ),
+        (
+            "行を組み立てる関数の中の refresh は問い合わせのあとで読み直す",
+            list_refresh_inside_the_builder_waits,
+        ),
+        (
+            "行が多くても一覧の自然高を読むのに待たされない",
+            list_natural_height_does_not_visit_every_row,
         ),
         (
             "テーブルが見えている行だけを組み立てる",
@@ -553,6 +575,30 @@ fn main() {
             spinner_is_a_spinning_indicator,
         ),
         ("ラベルを選べるようにできる", label_can_be_selectable),
+        (
+            "リッチテキストの太字と色とリンクが属性になる",
+            rich_text_maps_to_attributes,
+        ),
+        (
+            "リッチテキストは表示中と同じ内容なら何もしない",
+            rich_text_same_content_keeps_the_selection,
+        ),
+        (
+            "リッチテキストからふつうの文字へ戻せる",
+            rich_text_goes_back_to_plain_text,
+        ),
+        (
+            "リッチテキストはラベルの段階と色の変更に付いてくる",
+            rich_text_follows_the_label_style_and_color,
+        ),
+        (
+            "リッチテキストも折り返しの指定に従う",
+            rich_text_follows_wrapping,
+        ),
+        (
+            "リンクの押下が on_link へ届き、中で内容を変えられる",
+            rich_text_link_click_reaches_on_link,
+        ),
         (
             "クリップボードへ書いた文字を読み戻せる",
             clipboard_round_trips_text,
@@ -5452,6 +5498,348 @@ fn label_can_be_selectable(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// The value of an attribute at a character index of a label.
+fn label_attribute(
+    native: &NSTextField,
+    key: &objc2_foundation::NSAttributedStringKey,
+    index: usize,
+) -> Option<Retained<AnyObject>> {
+    let mut range = NSRange::new(0, 0);
+    unsafe {
+        native
+            .attributedStringValue()
+            .attribute_atIndex_effectiveRange(key, index, &mut range)
+    }
+}
+
+fn label_font_at(native: &NSTextField, index: usize) -> Retained<NSFont> {
+    label_attribute(native, unsafe { NSFontAttributeName }, index)
+        .expect("フォントの属性があること")
+        .downcast()
+        .expect("NSFont")
+}
+
+fn label_color_at(native: &NSTextField, index: usize) -> Retained<NSColor> {
+    label_attribute(native, unsafe { NSForegroundColorAttributeName }, index)
+        .expect("色の属性があること")
+        .downcast()
+        .expect("NSColor")
+}
+
+fn is_bold(font: &NSFont) -> bool {
+    font.fontDescriptor()
+        .symbolicTraits()
+        .contains(objc2_app_kit::NSFontDescriptorSymbolicTraits::TraitBold)
+}
+
+fn sample_rich_text() -> RichText {
+    RichText::new()
+        .text("a ")
+        .bold("b ")
+        .colored("c ", TextColor::Danger)
+        .link("d", "https://example.com/d")
+}
+
+fn rich_text_maps_to_attributes(ui: &Ui) -> Result<()> {
+    let label = ui.label("")?;
+    let native: Retained<NSTextField> = label.native_view().downcast().expect("NSTextField");
+    label.set_rich_text(&sample_rich_text());
+    assert_eq!(label.text(), "a b c d");
+
+    assert!(!is_bold(&label_font_at(&native, 0)));
+    assert!(is_bold(&label_font_at(&native, 2)), "太字の断片だけ太い");
+    assert!(!is_bold(&label_font_at(&native, 4)));
+    assert_eq!(
+        label_font_at(&native, 0).pointSize(),
+        label_font_at(&native, 2).pointSize(),
+        "太字でも級数は変わらない"
+    );
+
+    assert_eq!(*label_color_at(&native, 0), *NSColor::labelColor());
+    assert_eq!(*label_color_at(&native, 4), *NSColor::systemRedColor());
+    assert_eq!(*label_color_at(&native, 6), *NSColor::linkColor());
+
+    assert!(label_attribute(&native, unsafe { NSLinkAttributeName }, 0).is_none());
+    let link = label_attribute(&native, unsafe { NSLinkAttributeName }, 6)
+        .expect("リンクの属性があること");
+    assert_eq!(
+        link.downcast::<NSString>().expect("NSString").to_string(),
+        "https://example.com/d"
+    );
+
+    // AppKit はこの 2 つが立っている欄でしかリンクに反応しない (QA1487)。
+    assert!(native.isSelectable());
+    assert!(native.allowsEditingTextAttributes());
+    assert!(!native.isEditable(), "リンクがあっても書き換えられない");
+    assert!(!label.is_selectable(), "利用者の指定は変わらない");
+
+    // リンクの無い内容なら選べないままでよい。
+    label.set_rich_text(&RichText::new().bold("b"));
+    assert!(!native.isSelectable());
+    assert!(!native.allowsEditingTextAttributes());
+
+    // 選べるようにする指定は、リンクの有無をまたいで残る。
+    label.set_selectable(true);
+    label.set_rich_text(&sample_rich_text());
+    label.set_rich_text(&RichText::new().bold("b"));
+    assert!(native.isSelectable());
+    assert!(label.is_selectable());
+    Ok(())
+}
+
+/// `render` sets the same content every time, so it must not disturb what the user
+/// is doing with the text.
+fn rich_text_same_content_keeps_the_selection(ui: &Ui) -> Result<()> {
+    let window = ui.window("同じ内容", 400.0, 200.0)?;
+    let label = ui.label("")?;
+    window.set_child(&label);
+    window.show();
+    let native: Retained<NSTextField> = label.native_view().downcast().expect("NSTextField");
+    label.set_rich_text(&sample_rich_text());
+
+    // 選べるだけの欄は `makeFirstResponder:` では編集に入らない。
+    unsafe { native.selectText(None) };
+    let editor = native.currentEditor().expect("欄の編集が始まること");
+    editor.setSelectedRange(NSRange::new(2, 3));
+
+    // 作り方が違っても、見せるものが同じなら同じ内容。
+    label.set_rich_text(
+        &RichText::new()
+            .text("a")
+            .text(" ")
+            .bold("b ")
+            .colored("c ", TextColor::Danger)
+            .link("d", "https://example.com/d"),
+    );
+    let editor = native.currentEditor().expect("編集が続いていること");
+    assert_eq!(editor.selectedRange(), NSRange::new(2, 3), "選択が残ること");
+
+    // 内容が変われば書き換わる。
+    label.set_rich_text(&RichText::new().text("a ").bold("b ").text("c d"));
+    assert_eq!(label.text(), "a b c d");
+    assert!(label_attribute(&native, unsafe { NSLinkAttributeName }, 6).is_none());
+    window.close();
+    Ok(())
+}
+
+fn rich_text_goes_back_to_plain_text(ui: &Ui) -> Result<()> {
+    let label = ui.label("")?;
+    let native: Retained<NSTextField> = label.native_view().downcast().expect("NSTextField");
+    let body = native.font().expect("フォント");
+
+    // 文字が同じでも、飾りは外れる。最初の断片の太字が欄に残らないことも見る。
+    label.set_rich_text(&RichText::new().bold("abc").link("d", "x:y"));
+    label.set_text("abcd");
+    assert_eq!(label.text(), "abcd");
+    assert!(!is_bold(&label_font_at(&native, 0)));
+    assert!(label_attribute(&native, unsafe { NSLinkAttributeName }, 3).is_none());
+    assert!(!native.isSelectable());
+    assert_eq!(native.font().expect("フォント").fontName(), body.fontName());
+
+    // 飾りの無い RichText は set_text と同じ。
+    label.set_rich_text(&RichText::new().bold("abcd"));
+    assert!(is_bold(&label_font_at(&native, 0)));
+    label.set_rich_text(&RichText::new().text("abcd"));
+    assert!(!is_bold(&label_font_at(&native, 0)));
+
+    label.set_rich_text(&RichText::new());
+    assert_eq!(label.text(), "");
+    Ok(())
+}
+
+fn rich_text_follows_the_label_style_and_color(ui: &Ui) -> Result<()> {
+    let label = ui.label("")?;
+    let native: Retained<NSTextField> = label.native_view().downcast().expect("NSTextField");
+    label.set_rich_text(&sample_rich_text());
+    let body_size = label_font_at(&native, 0).pointSize();
+
+    label.set_style(TextStyle::Title);
+    assert!(label_font_at(&native, 0).pointSize() > body_size);
+    assert!(label_font_at(&native, 2).pointSize() > body_size);
+    assert!(is_bold(&label_font_at(&native, 2)), "太字のまま");
+
+    // 役割を持たない断片だけがラベルの色に従う。
+    label.set_color(TextColor::Secondary);
+    assert_eq!(*label_color_at(&native, 0), *NSColor::secondaryLabelColor());
+    assert_eq!(*label_color_at(&native, 4), *NSColor::systemRedColor());
+    assert_eq!(*label_color_at(&native, 6), *NSColor::linkColor());
+    assert_eq!(label.text(), "a b c d");
+
+    // 先に決めた段階と色の上へ載せても同じ。
+    let later = ui.label("")?;
+    let later_native: Retained<NSTextField> = later.native_view().downcast().expect("NSTextField");
+    later.set_style(TextStyle::Title);
+    later.set_color(TextColor::Secondary);
+    later.set_rich_text(&sample_rich_text());
+    assert!(label_font_at(&later_native, 0).pointSize() > body_size);
+    assert_eq!(
+        *label_color_at(&later_native, 0),
+        *NSColor::secondaryLabelColor()
+    );
+
+    // ふつうの文字へ戻っても、最後に指定した段階と色は残る。
+    later.set_text("plain");
+    let font = later_native.font().expect("フォント");
+    assert!(font.pointSize() > body_size);
+    assert!(!is_bold(&label_font_at(&native, 0)) || font.pointSize() > body_size);
+    assert_eq!(
+        *later_native.textColor().expect("色"),
+        *NSColor::secondaryLabelColor()
+    );
+    Ok(())
+}
+
+/// Attributes of their own must not take over the field's line breaking.
+fn rich_text_follows_wrapping(ui: &Ui) -> Result<()> {
+    let window = ui.window("折り返し", 200.0, 240.0)?;
+    let stack = ui.stack(Orientation::Vertical)?;
+    let text = RichText::new()
+        .text("これはとても長い説明の文章で、")
+        .bold("狭い幅には ")
+        .link("1 行で収まりません。", "x:y");
+
+    let plain = ui.label("")?;
+    plain.set_rich_text(&text);
+    plain.set_sizing(Sizing::fill_width());
+    let wrapped = ui.label("")?;
+    wrapped.set_wrap(true);
+    wrapped.set_rich_text(&text);
+    wrapped.set_sizing(Sizing::fill_width());
+    stack.append(&plain);
+    stack.append(&wrapped);
+    window.set_child(&stack);
+
+    let content = window.native_window().contentView().expect("中身");
+    content.setFrameSize(NSSize::new(200.0, 240.0));
+    content.layoutSubtreeIfNeeded();
+    content.layoutSubtreeIfNeeded();
+
+    let plain_frame = plain.native_view().frame();
+    let wrapped_frame = wrapped.native_view().frame();
+    assert!(
+        wrapped_frame.size.height > plain_frame.size.height * 1.5,
+        "折り返した側だけ高くなること: 1 行 {} / 折り返し {}",
+        plain_frame.size.height,
+        wrapped_frame.size.height
+    );
+    assert!(
+        plain_frame.size.width <= 210.0,
+        "折り返さない側も配られた幅に収まること: {plain_frame:?}"
+    );
+
+    // 文字が増えれば、折り返している側は高くなる (親の連なりへ伝わる)。
+    let before = wrapped_frame.size.height;
+    wrapped.set_rich_text(
+        &RichText::new()
+            .text("これはとても長い説明の文章で、".repeat(4))
+            .bold("狭い幅には収まりません。"),
+    );
+    content.layoutSubtreeIfNeeded();
+    content.layoutSubtreeIfNeeded();
+    assert!(
+        wrapped.native_view().frame().size.height > before,
+        "増えた行のぶん高くなること"
+    );
+    Ok(())
+}
+
+fn rich_text_link_click_reaches_on_link(ui: &Ui) -> Result<()> {
+    let window = ui.window("リンク", 400.0, 200.0)?;
+    let stack = ui.stack(Orientation::Vertical)?;
+    let label = ui.label("")?;
+    stack.append(&label);
+    window.set_child(&stack);
+    window.show();
+    let view = label.native_view();
+    let native: Retained<NSTextField> = view.clone().downcast().expect("NSTextField");
+    label.set_rich_text(&RichText::new().text("open ").link("here", "app:first"));
+
+    // テストからブラウザを開かないよう、常に Handled で答える。
+    let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+    {
+        let seen = seen.clone();
+        let again = label.clone();
+        label.on_link(move |href| {
+            seen.borrow_mut().push(href.to_string());
+            // 通知の中で中身を変えられる (`render` はここから走る)。
+            again.set_rich_text(&RichText::new().text("open ").link("there", "app:second"));
+            EventResponse::Handled
+        });
+    }
+
+    let ns_window = window.native_window();
+    let content = ns_window.contentView().expect("中身");
+    content.layoutSubtreeIfNeeded();
+
+    // 「here」の位置を、欄と同じ文字組みで測る。
+    let open_width = {
+        let attributed = native.attributedStringValue();
+        let prefix = attributed.attributedSubstringFromRange(NSRange::new(0, 5));
+        prefix.size().width
+    };
+    let frame = view.frame();
+    let point = NSPoint::new(open_width + 2.0 + 6.0, view.bounds().size.height / 2.0);
+    assert!(point.x < frame.size.width, "前提: 文字が欄に収まること");
+    let in_window = view.convertPoint_toView(point, None);
+    let event = |kind, timestamp| {
+        NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+            kind,
+            in_window,
+            NSEventModifierFlags::empty(),
+            timestamp,
+            ns_window.windowNumber(),
+            None,
+            0,
+            1,
+            1.0,
+        )
+        .expect("マウスイベント")
+    };
+    let app = NSApplication::sharedApplication(MainThreadMarker::new().expect("main"));
+    let now = objc2_foundation::NSProcessInfo::processInfo().systemUptime();
+    unsafe { app.postEvent_atStart(&event(NSEventType::LeftMouseUp, now + 0.01), false) };
+    let frame_view = unsafe { content.superview() }.expect("ウィンドウの枠のビュー");
+    // 欄が編集に入っていれば、当たるのはフィールドエディタで、リンクの判定は
+    // それがする。アクティブでないアプリの窓は押下で編集に入らないので
+    // (CI も同じ)、先に入れておく。
+    unsafe { native.selectText(None) };
+    // 全選択のままだと、選択の上の押下はドラッグの始まりと見なされてリンクに届かない。
+    native
+        .currentEditor()
+        .expect("欄の編集が始まること")
+        .setSelectedRange(NSRange::new(0, 0));
+    let target = frame_view.hitTest(in_window).expect("文字の上のビュー");
+    assert!(
+        target.downcast_ref::<NSTextView>().is_some(),
+        "押下を受けるのはフィールドエディタ: {:?}",
+        target.class().name()
+    );
+    target.mouseDown(&event(NSEventType::LeftMouseDown, now));
+    deliver_events(&app);
+    pump(0.05);
+
+    assert_eq!(
+        *seen.borrow(),
+        ["app:first"],
+        "押したリンクの href が届くこと"
+    );
+    assert_eq!(label.text(), "open there", "通知の中で変えた内容が残ること");
+
+    // 差し替えた後のリンクも、同じ受け口へ届く。
+    let responded: objc2::runtime::Bool = unsafe {
+        msg_send![
+            &*native,
+            textView: Option::<&NSTextView>::None,
+            clickedOnLink: &*NSString::from_str("app:direct"),
+            atIndex: 5usize,
+        ]
+    };
+    assert!(responded.as_bool());
+    assert_eq!(seen.borrow().last().map(String::as_str), Some("app:direct"));
+    window.close();
+    Ok(())
+}
+
 fn clipboard_round_trips_text(ui: &Ui) -> Result<()> {
     use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
     // 利用者のクリップボードを書き換えるので、終わったら戻す。
@@ -8416,16 +8804,27 @@ fn list_with_many_rows_scrolls_and_selects(ui: &Ui) -> Result<()> {
     );
     assert!(list.row_height() > 0.0, "行の高さが分かること");
 
-    // 画面の外の行も選べて、残る。組み立てていない行は選べる扱い。
+    // 画面の外の行も選べて、残る。組み立てていない行は選べる扱い。一度組み立てて
+    // 画面から出た 3 行目は、選べないと答えたことを覚えている。
     list.set_selection(&[3, target, ROWS - 1]);
-    assert_eq!(list.selection(), vec![3, target, ROWS - 1]);
+    assert_eq!(list.selection(), vec![target, ROWS - 1]);
     list.scroll_to_row(0);
     content.layoutSubtreeIfNeeded();
     assert_eq!(
         list.selection(),
-        vec![3, target, ROWS - 1],
+        vec![target, ROWS - 1],
         "スクロールで落ちない"
     );
+    // 組み立てずに聞いても同じ (矢印キーで動くときの問い合わせ)。
+    list.scroll_to_row(target);
+    content.layoutSubtreeIfNeeded();
+    unsafe { content.display() };
+    list.set_selection(&[3]);
+    assert!(list.selection().is_empty(), "画面の外の行も答えを保つこと");
+    list.refresh();
+    list.set_selection(&[3]);
+    assert_eq!(list.selection(), vec![3], "refresh で答えを忘れること");
+    list.clear_selection();
     window.close();
     Ok(())
 }
@@ -8465,25 +8864,80 @@ fn list_row_selectable_answers_without_building(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// A row height can be set, and 0 or less returns to automatic heights.
-fn list_row_height_follows_the_setting(ui: &Ui) -> Result<()> {
+/// A row height is a minimum: every row is at least that tall, its content is centered,
+/// and a row whose content needs more grows instead of being cut off. Passing 0 or less
+/// returns to the rows' own heights.
+fn list_row_height_is_a_minimum(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
     assert_eq!(list.row_height(), 0.0, "行が無いうちは 0");
-    list.set_items(&ListItem::list(["東京", "大阪"]));
+    list.set_items(&[
+        ListItem::new("東京"),
+        ListItem::new("大阪").detail("8,838,000 人"),
+    ]);
+    list.set_sizing(Sizing::fill());
+    let window = ui.window("行の高さ", 400.0, 300.0)?;
+    window.set_child(&list);
+    window.show();
+    let content = window.native_window().contentView().expect("contentView");
     let native = list.native_table();
-    assert!(native.usesAutomaticRowHeights(), "既定は自動");
+    let show = || {
+        content.layoutSubtreeIfNeeded();
+        unsafe { content.display() };
+        for row in 0..native.numberOfRows() {
+            let _ = native.viewAtColumn_row_makeIfNecessary(0, row, true);
+        }
+        content.layoutSubtreeIfNeeded();
+    };
+    let height_of = |row: isize| native.rectOfRow(row).size.height;
+    show();
+    let (plain, detailed) = (height_of(0), height_of(1));
+    assert!(detailed > plain, "補助の文字がある行は高いこと");
     let estimate = native.rowHeight();
 
+    // 中身より高い指定は、どの行もその高さになる。中身は行の縦中央に来る。
     list.set_row_height(64.0);
+    show();
     assert_eq!(list.row_height(), 64.0);
-    assert!(!native.usesAutomaticRowHeights());
     assert_eq!(native.rowHeight(), 64.0);
-    list.set_items(&ListItem::list(["札幌"]));
-    assert_eq!(list.row_height(), 64.0, "行を入れ替えても指定は残る");
+    assert_eq!(height_of(0), 64.0);
+    assert_eq!(height_of(1), 64.0);
+    let cell = native
+        .viewAtColumn_row_makeIfNecessary(0, 0, true)
+        .expect("セル");
+    let inner = cell.subviews().objectAtIndex(0);
+    assert!(
+        (inner.frame().origin.y + inner.frame().size.height / 2.0 - cell.frame().size.height / 2.0)
+            .abs()
+            < 1.0,
+        "中身が縦中央にあること: {:?} / {:?}",
+        inner.frame(),
+        cell.frame()
+    );
 
+    // 中身より低い指定では、行は切れずに伸びる。
+    list.set_row_height(plain + 1.0);
+    show();
+    assert_eq!(list.row_height(), plain + 1.0);
+    assert_eq!(height_of(0), plain + 1.0);
+    assert_eq!(height_of(1), detailed, "中身の入る高さまで伸びること");
+    list.set_row_height(1.0);
+    show();
+    assert_eq!(height_of(0), plain, "切れないこと");
+    assert_eq!(height_of(1), detailed, "切れないこと");
+
+    // 行を入れ替えても指定は残る。
+    list.set_row_height(64.0);
+    list.set_items(&ListItem::list(["札幌"]));
+    show();
+    assert_eq!(height_of(0), 64.0);
+
+    // 0 以下で元へ戻す。指定を見積もりに残さない。
     list.set_row_height(0.0);
-    assert!(native.usesAutomaticRowHeights(), "0 以下は自動へ戻す");
-    assert_eq!(native.rowHeight(), estimate, "指定を見積もりに残さない");
+    show();
+    assert_eq!(native.rowHeight(), estimate);
+    assert_eq!(height_of(0), plain);
+    assert_eq!(list.row_height(), plain);
+    window.close();
     Ok(())
 }
 
@@ -8507,6 +8961,235 @@ fn list_builder_can_touch_the_list(ui: &Ui) -> Result<()> {
             .viewAtColumn_row_makeIfNecessary(0, 2, true)
             .is_some(),
         "組み立ての関数は次の行でも使えること"
+    );
+    Ok(())
+}
+
+/// Replacing the rows from inside the function that builds a row reloads the table once
+/// AppKit has finished asking, so only the new rows are left.
+fn list_builder_can_replace_the_rows(ui: &Ui) -> Result<()> {
+    let new_built = Rc::new(RefCell::new(Vec::new()));
+    let list = ui.list()?;
+    let weak = list.downgrade();
+    let ui_for_row = ui.clone();
+    list.set_row_builder(1_000, {
+        let new_built = new_built.clone();
+        move |index| {
+            if index == 2 {
+                let list = weak.upgrade().expect("リストが生きていること");
+                let ui = ui_for_row.clone();
+                let new_built = new_built.clone();
+                list.set_row_builder(5, move |index| {
+                    new_built.borrow_mut().push(index);
+                    Ok(ListRow::new(&ui.label(&index.to_string())?))
+                });
+                // 読み直しを待たずに選んでも、新しい行に当たること。
+                list.set_selection(&[4]);
+                assert_eq!(list.selection(), vec![4]);
+            }
+            Ok(ListRow::new(&ui_for_row.label(&index.to_string())?))
+        }
+    });
+    let native = list.native_table();
+    assert!(
+        native
+            .viewAtColumn_row_makeIfNecessary(0, 2, true)
+            .is_none(),
+        "差し替えの途中で組み立てた古い行は使わないこと"
+    );
+    pump_until(2.0, || native.numberOfRows() == 5);
+    assert_eq!(list.len(), 5);
+    assert_eq!(native.numberOfRows(), 5, "読み直しで新しい行数になること");
+    assert_eq!(list.selection(), vec![4], "読み直しのあとも選択が残ること");
+    assert!(native.selectedRowIndexes().containsIndex(4));
+
+    new_built.borrow_mut().clear();
+    assert!(native
+        .viewAtColumn_row_makeIfNecessary(0, 3, true)
+        .is_some());
+    assert_eq!(*new_built.borrow(), [3], "新しい関数が組み立てること");
+    Ok(())
+}
+
+/// A reload that happens before the one waiting from inside a row build takes its place:
+/// the selection set for the rows of that time is not applied to later rows.
+fn list_reload_takes_over_the_waiting_reload(ui: &Ui) -> Result<()> {
+    // 組み立ての中で行を差し替えて選び、読み直しを待っている状態にする。
+    let waiting = || -> Result<_> {
+        let list = ui.list()?;
+        let weak = list.downgrade();
+        let ui_for_row = ui.clone();
+        list.set_row_builder(1_000, move |index| {
+            if index == 2 {
+                let list = weak.upgrade().expect("リストが生きていること");
+                let ui = ui_for_row.clone();
+                list.set_row_builder(5, move |index| {
+                    Ok(ListRow::new(&ui.label(&index.to_string())?))
+                });
+                list.set_selection(&[4]);
+            }
+            Ok(ListRow::new(&ui_for_row.label(&index.to_string())?))
+        });
+        let _ = list
+            .native_table()
+            .viewAtColumn_row_makeIfNecessary(0, 2, true);
+        assert_eq!(list.selection(), vec![4]);
+        Ok(list)
+    };
+    let items = ListItem::list(["a", "b", "c", "d", "e", "f"]);
+
+    // 新しい行を渡すと、待っていた選択は当たらない。
+    let list = waiting()?;
+    let native = list.native_table();
+    list.set_items(&items);
+    assert_eq!(list.selection(), Vec::<usize>::new());
+    pump(0.2);
+    assert_eq!(native.numberOfRows(), 6);
+    assert_eq!(
+        list.selection(),
+        Vec::<usize>::new(),
+        "待っていた選択が新しい行に当たらないこと"
+    );
+    assert_eq!(native.selectedRowIndexes().count(), 0);
+
+    // そのあとで選んだ行は、待っていた読み直しで消えない。
+    let list = waiting()?;
+    let native = list.native_table();
+    list.set_items(&items);
+    list.set_selection(&[1]);
+    assert!(native.selectedRowIndexes().containsIndex(1));
+    pump(0.2);
+    assert_eq!(list.selection(), vec![1], "あとから選んだ行が残ること");
+    assert!(native.selectedRowIndexes().containsIndex(1));
+
+    // refresh は選択を残す読み直しなので、待っていた選択はそこで当たる。
+    let list = waiting()?;
+    let native = list.native_table();
+    list.refresh();
+    assert_eq!(native.numberOfRows(), 5);
+    assert!(native.selectedRowIndexes().containsIndex(4));
+    list.clear_selection();
+    pump(0.2);
+    assert_eq!(
+        list.selection(),
+        Vec::<usize>::new(),
+        "refresh のあとの解除が残ること"
+    );
+    assert_eq!(native.selectedRowIndexes().count(), 0);
+    Ok(())
+}
+
+/// A `refresh` from inside the builder cannot reload while AppKit is asking for a row. It
+/// reloads afterwards, and the row being built does not stay.
+fn list_refresh_inside_the_builder_waits(ui: &Ui) -> Result<()> {
+    let version = Rc::new(Cell::new(1));
+    let list = ui.list()?;
+    let weak = list.downgrade();
+    let ui_for_row = ui.clone();
+    let refresh_on = Rc::new(Cell::new(None));
+    list.set_row_builder(1_000, {
+        let version = version.clone();
+        let refresh_on = refresh_on.clone();
+        move |index| {
+            let built_from = version.get();
+            if refresh_on.get() == Some(index) {
+                refresh_on.set(None);
+                version.set(2);
+                let list = weak.upgrade().expect("リストが生きていること");
+                list.refresh();
+                assert_eq!(list.selection(), vec![4], "読み直しまでも選択は残ること");
+            }
+            Ok(ListRow::new(
+                &ui_for_row.label(&format!("{built_from}:{index}"))?,
+            ))
+        }
+    });
+    list.set_selection(&[4]);
+    refresh_on.set(Some(2));
+    let native = list.native_table();
+    assert!(
+        native
+            .viewAtColumn_row_makeIfNecessary(0, 2, true)
+            .is_none(),
+        "読み直す前の行は使わないこと"
+    );
+    assert_eq!(version.get(), 2);
+    pump(0.2);
+    let cell = native
+        .viewAtColumn_row_makeIfNecessary(0, 2, true)
+        .expect("読み直したあとは行があること");
+    let shown = cell
+        .subviews()
+        .iter()
+        .flat_map(|view| view.subviews().to_vec())
+        .chain(cell.subviews().to_vec())
+        .filter_map(|view| view.downcast::<objc2_app_kit::NSTextField>().ok())
+        .map(|field| field.stringValue().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(shown, ["2:2"], "新しい内容で組み立てること");
+    assert_eq!(list.selection(), vec![4], "読み直しのあとも選択が残ること");
+    assert!(native.selectedRowIndexes().containsIndex(4));
+    Ok(())
+}
+
+/// `NSScrollView` reads the table's natural height even when the list's height is fixed, so
+/// it must not depend on measuring every row.
+fn list_natural_height_does_not_visit_every_row(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 100_000;
+    let built = Rc::new(Cell::new(0usize));
+    let ui_for_row = ui.clone();
+    let list = ui.list()?;
+    list.set_row_builder(ROWS, {
+        let built = built.clone();
+        move |index| {
+            built.set(built.get() + 1);
+            Ok(ListRow::new(&ui_for_row.label(&index.to_string())?))
+        }
+    });
+    list.set_sizing(Sizing::new().height(Length::Fixed(200.0)));
+    let window = ui.window("自然高", 300.0, 240.0)?;
+    window.set_child(&list);
+    window.show();
+    let content = window.native_window().contentView().expect("contentView");
+    content.layoutSubtreeIfNeeded();
+    let native = list.native_table();
+    let started = Instant::now();
+    let height = native.intrinsicContentSize().height;
+    let elapsed = started.elapsed();
+    let scroll = native.enclosingScrollView().expect("NSScrollView");
+    let started = Instant::now();
+    let _ = scroll.intrinsicContentSize();
+    let elapsed_scroll = started.elapsed();
+    println!("     (10 万行の自然高 {height}: 表 {elapsed:?} / スクロール {elapsed_scroll:?})");
+    assert!(
+        elapsed < Duration::from_millis(500) && elapsed_scroll < Duration::from_millis(500),
+        "{elapsed:?} / {elapsed_scroll:?}"
+    );
+    assert!(built.get() < 200, "全行を組み立てないこと: {}", built.get());
+    window.close();
+    Ok(())
+}
+
+/// Reading the selection follows the rows selected, not the rows in the list: it happens
+/// on every arrow key.
+fn list_selection_does_not_visit_every_row(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 1_000_000;
+    let ui_for_row = ui.clone();
+    let list = ui.list()?;
+    list.set_selection_mode(SelectionMode::Multiple);
+    list.set_row_builder(ROWS, move |index| {
+        Ok(ListRow::new(&ui_for_row.label(&index.to_string())?))
+    });
+    list.set_selection(&[ROWS - 1, 5, 7]);
+
+    let started = Instant::now();
+    for _ in 0..100 {
+        assert_eq!(list.selection(), vec![5, 7, ROWS - 1]);
+    }
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "{ROWS} 行でも選んだ行だけを読むこと: {:?}",
+        started.elapsed()
     );
     Ok(())
 }
@@ -14619,6 +15302,9 @@ fn sidebar_collapses_during_live_resize(ui: &Ui) -> Result<()> {
 /// screen, and the test's window is not when another app holds a fullscreen Space
 /// in front (or the window itself opens into a fullscreen Space), so the drag would
 /// silently do nothing depending on what else is on the screen.
+///
+/// Right after a window is shown, the dragged events can read back in screen
+/// coordinates, so this waits until a posted event reads back unchanged.
 fn drag_divider(
     app: &NSApplication,
     window: &NSWindow,
@@ -14644,6 +15330,23 @@ fn drag_divider(
         )
         .expect("マウスイベント")
     };
+    // 窓を出した直後は、積んだドラッグの座標がスクリーン座標に化けて読める
+    // (CI の macOS 26 でほぼ毎回、最長 120 ms ほど)。化けたまま追跡ループが読むと、
+    // 区画が窓の x の分だけ動いて `on_resize` へ届く。座標がそのまま読めるのを、
+    // 試しの 1 個を積んで取り出すことで確かめてから始める。
+    pump_until(3.0, || {
+        let probe = event(NSEventType::LeftMouseDragged, start);
+        unsafe { app.postEvent_atStart(&probe, false) };
+        unsafe {
+            app.nextEventMatchingMask_untilDate_inMode_dequeue(
+                NSEventMask::LeftMouseDragged,
+                Some(&NSDate::distantPast()),
+                NSDefaultRunLoopMode,
+                true,
+            )
+        }
+        .is_some_and(|read| read.locationInWindow() == start)
+    });
     let steps = 4;
     for step in 1..=steps {
         let point = NSPoint::new(start.x + dx * f64::from(step) / f64::from(steps), start.y);

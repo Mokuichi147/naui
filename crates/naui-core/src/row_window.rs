@@ -21,6 +21,7 @@
 //! ```
 
 use std::cell::{Cell, RefCell};
+use std::collections::BTreeSet;
 use std::ops::Range;
 use std::rc::Rc;
 
@@ -39,6 +40,12 @@ pub const ROW_WINDOW_THRESHOLD: usize = 200;
 /// the scroll notification arrives. A larger value makes blanks less likely but
 /// builds more.
 pub const ROW_WINDOW_OVERSCAN: usize = 12;
+
+/// How many times a build starts over because the rows were replaced during it.
+///
+/// A function that replaces the rows every time it is called would otherwise never
+/// finish. The limit only has to be above what an app does on purpose.
+const ROW_REBUILD_LIMIT: usize = 8;
 
 /// The range of rows currently built.
 ///
@@ -106,6 +113,27 @@ impl RowWindow {
         self.count == needed.count && self.start <= needed.start && self.end >= needed.end
     }
 
+    /// The rows that stay built when the window moves to `next`. Empty if there are none.
+    ///
+    /// Rebuilding a row that stays would take the keyboard focus from a control inside it,
+    /// so the window moves by building only the rows that were not there. Windows over a
+    /// different number of rows have nothing in common.
+    ///
+    /// ```
+    /// # use naui_core::RowWindow;
+    /// let built = RowWindow { start: 10, end: 30, count: 100 };
+    /// let next = RowWindow { start: 20, end: 40, count: 100 };
+    /// assert_eq!(built.overlap(next), 20..30);
+    /// ```
+    pub fn overlap(self, next: RowWindow) -> Range<usize> {
+        let start = self.start.max(next.start);
+        let end = self.end.min(next.end);
+        match self.count == next.count && start < end {
+            true => start..end,
+            false => 0..0,
+        }
+    }
+
     /// The height taken by the rows before the range (the top spacer).
     pub fn leading(self, row_height: f64) -> f64 {
         self.start as f64 * row_height.max(0.0)
@@ -124,7 +152,7 @@ impl RowWindow {
 ///   (logical pixels)
 /// - `viewport`: the height in which rows are visible (logical pixels)
 /// - `row_height`: the height of one row (logical pixels); every row is assumed to
-///   be the same height
+///   be the same height, and a height under 1 counts as 1
 /// - `overscan`: rows to build outside the screen as well ([`ROW_WINDOW_OVERSCAN`])
 ///
 /// If the row count is at most [`ROW_WINDOW_THRESHOLD`], every row is returned
@@ -160,12 +188,15 @@ pub fn row_window(
         };
     }
 
+    // 1 ピクセルより低い行は描けない。指定をそのまま使うと、画面に入る行数の見積もりが
+    // 全行に近づいてしまう。実際の行は、組み立てたあとで測った高さになる。
+    let row_height = row_height.max(1.0);
     let top = scroll_top.max(0.0);
     // 行数が減った直後など、いまの位置が表の外を指していることがある。
     // 範囲が空にならないよう、最後の行までに抑える。
     let first = ((top / row_height).floor() as usize).min(count - 1);
     // 端が半分だけ見えている分を足して、画面の下端を含む行まで数える。
-    let visible = (viewport / row_height).ceil() as usize + 1;
+    let visible = ((viewport / row_height).ceil() as usize).saturating_add(1);
     let start = first.saturating_sub(overscan);
     let end = first
         .saturating_add(visible)
@@ -176,6 +207,40 @@ pub fn row_window(
         end,
         count,
     }
+}
+
+/// [`row_window`] for a list, whose height may follow its rows.
+///
+/// A height the app limited (`Fixed` or `Fill`) scrolls, so only the rows on screen are
+/// built. An `Auto` height is as tall as all the rows, so **every row is built**, each at
+/// its own height.
+///
+/// That waits until the list has a size. Until then the first rows are built as usual,
+/// because a height is often set after the rows: a list of a million rows given `Fill`
+/// on the next line must not build them all first.
+///
+/// ```
+/// # use naui_core::{list_row_window, ROW_WINDOW_THRESHOLD};
+/// // An `Auto` height with a size builds every row.
+/// assert_eq!(list_row_window(false, 5_000, 0.0, 200.0, 20.0, 5).len(), 5_000);
+/// // Not placed yet: only the first rows, whatever the height turns out to be.
+/// let first = list_row_window(false, 5_000, 0.0, 0.0, 0.0, 5);
+/// assert_eq!(first.len(), ROW_WINDOW_THRESHOLD);
+/// // A limited height builds what is on screen.
+/// assert!(list_row_window(true, 5_000, 0.0, 200.0, 20.0, 5).len() < 20);
+/// ```
+pub fn list_row_window(
+    height_limited: bool,
+    count: usize,
+    scroll_top: f64,
+    viewport: f64,
+    row_height: f64,
+    overscan: usize,
+) -> RowWindow {
+    if !height_limited && viewport > 0.0 {
+        return RowWindow::all(count);
+    }
+    row_window(count, scroll_top, viewport, row_height, overscan)
 }
 
 /// Whether the window built now can be kept.
@@ -343,6 +408,10 @@ pub struct RowSource<T> {
     built: Cell<bool>,
     count: Cell<usize>,
     selectable: RefCell<Option<RowSelectable>>,
+    /// The built rows that said they cannot be selected, kept after they leave the window.
+    unselectable: RefCell<BTreeSet<usize>>,
+    /// Counts the replacements, so a build under way can notice one.
+    generation: Cell<u64>,
 }
 
 impl<T> Default for RowSource<T> {
@@ -353,6 +422,8 @@ impl<T> Default for RowSource<T> {
             built: Cell::new(false),
             count: Cell::new(0),
             selectable: RefCell::new(None),
+            unselectable: RefCell::new(BTreeSet::new()),
+            generation: Cell::new(0),
         }
     }
 }
@@ -378,6 +449,8 @@ impl<T: Clone> RowSource<T> {
         self.built.set(false);
         self.count.set(rows.len());
         *self.rows.borrow_mut() = rows;
+        self.forget_selectable();
+        self.invalidate();
     }
 
     /// Replaces the rows with `count` rows that `build` makes when they become visible.
@@ -386,6 +459,53 @@ impl<T: Clone> RowSource<T> {
         *self.build.borrow_mut() = Some(Box::new(build));
         self.built.set(true);
         self.count.set(count);
+        self.forget_selectable();
+        self.invalidate();
+    }
+
+    /// Changes whenever the rows are replaced. A row built while this changed belongs
+    /// to the old rows.
+    pub fn generation(&self) -> u64 {
+        self.generation.get()
+    }
+
+    /// Makes a build under way start over, as if the rows had been replaced.
+    pub fn invalidate(&self) {
+        self.generation.set(self.generation.get().wrapping_add(1));
+    }
+
+    /// Runs `build`, and runs it again whenever the rows were replaced during it.
+    ///
+    /// The builder is the app's code, so it can replace the rows itself. `build` receives
+    /// `false` the first time and `true` when starting over, which is when to choose the
+    /// range to build again. It stops after a limited number of attempts, so a builder
+    /// that replaces the rows on every call leaves the last attempt as it is instead of
+    /// hanging.
+    ///
+    /// ```
+    /// # use naui_core::RowSource;
+    /// let rows: RowSource<String> = RowSource::default();
+    /// rows.set_rows(vec!["old".to_string()]);
+    /// let mut attempts = Vec::new();
+    /// rows.build_until_settled(|again| {
+    ///     attempts.push(again);
+    ///     if !again {
+    ///         rows.set_rows(vec!["new".to_string()]);
+    ///     }
+    /// });
+    /// assert_eq!(attempts, [false, true]);
+    /// ```
+    pub fn build_until_settled(&self, mut build: impl FnMut(bool)) {
+        let mut generation = self.generation();
+        build(false);
+        for _ in 0..ROW_REBUILD_LIMIT {
+            let current = self.generation();
+            if current == generation {
+                return;
+            }
+            generation = current;
+            build(true);
+        }
     }
 
     /// The contents of that row. `None` if there is no such row, or if it is asked for
@@ -419,22 +539,36 @@ impl<T: Clone> RowSource<T> {
     }
 
     /// Passes a function that answers whether a row can be selected without building it.
+    ///
+    /// It stays when the rows are replaced, so pass a new one if its answers change.
     pub fn set_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
         *self.selectable.borrow_mut() = Some(Rc::new(selectable));
+    }
+
+    /// Remembers what a row said when it was built, so the answer outlives the row.
+    ///
+    /// A row is discarded when it leaves the window, and a list can go on asking about it
+    /// (a Shift range, [`RowSource::is_selectable`] for an arrow key).
+    pub fn note_selectable(&self, index: usize, selectable: bool) {
+        let mut unselectable = self.unselectable.borrow_mut();
+        match selectable {
+            true => unselectable.remove(&index),
+            false => unselectable.insert(index),
+        };
+    }
+
+    /// Forgets what the rows said when built, for when they may answer differently.
+    pub fn forget_selectable(&self) {
+        self.unselectable.borrow_mut().clear();
     }
 
     /// Whether the row can be selected.
     ///
     /// Rows that already exist answer with `of_row`. For built rows, the function from
-    /// [`RowSource::set_selectable`] answers first, then `realized` (what the row said
-    /// when it was built, if it is built now). Rows nobody can answer for are assumed
+    /// [`RowSource::set_selectable`] answers first, then what the row said when it was
+    /// built ([`RowSource::note_selectable`]). Rows nobody can answer for are assumed
     /// selectable. No borrow is held while the app's function runs.
-    pub fn is_selectable(
-        &self,
-        index: usize,
-        of_row: impl FnOnce(&T) -> bool,
-        realized: impl FnOnce() -> Option<bool>,
-    ) -> bool {
+    pub fn is_selectable(&self, index: usize, of_row: impl FnOnce(&T) -> bool) -> bool {
         if index >= self.len() {
             return false;
         }
@@ -444,7 +578,7 @@ impl<T: Clone> RowSource<T> {
         let answer = self.selectable.borrow().clone();
         match answer {
             Some(answer) => answer(index),
-            None => realized().unwrap_or(true),
+            None => !self.unselectable.borrow().contains(&index),
         }
     }
 }
@@ -452,6 +586,61 @@ impl<T: Clone> RowSource<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_list_with_an_auto_height_builds_every_row_once_it_has_a_size() {
+        let count = ROW_WINDOW_THRESHOLD * 10;
+        assert!(list_row_window(false, count, 500.0, 200.0, 20.0, 5).is_complete());
+        // 行の高さがまだ分からなくても、全行を作ることは決まっている。
+        assert!(list_row_window(false, count, 0.0, 200.0, 0.0, 5).is_complete());
+
+        // 大きさが分かるまでは、あとから高さが指定されるかもしれない。
+        let unplaced = list_row_window(false, count, 0.0, 0.0, 0.0, 5);
+        assert_eq!(unplaced.len(), ROW_WINDOW_THRESHOLD);
+        assert_eq!(unplaced.start, 0);
+    }
+
+    #[test]
+    fn a_list_with_a_limited_height_builds_what_is_on_screen() {
+        let count = ROW_WINDOW_THRESHOLD * 10;
+        assert_eq!(
+            list_row_window(true, count, 500.0, 200.0, 20.0, 5),
+            row_window(count, 500.0, 200.0, 20.0, 5)
+        );
+    }
+
+    #[test]
+    fn replacing_the_rows_changes_the_generation() {
+        let rows: RowSource<usize> = RowSource::default();
+        let generation = rows.generation();
+        rows.set_rows(vec![1]);
+        assert_ne!(rows.generation(), generation);
+        let generation = rows.generation();
+        rows.set_builder(1, Ok);
+        assert_ne!(rows.generation(), generation);
+        let generation = rows.generation();
+        rows.row(0);
+        assert_eq!(rows.generation(), generation, "読むだけでは変わらない");
+    }
+
+    #[test]
+    fn a_build_without_a_replacement_runs_once() {
+        let rows: RowSource<usize> = RowSource::default();
+        let mut attempts = 0;
+        rows.build_until_settled(|_| attempts += 1);
+        assert_eq!(attempts, 1);
+    }
+
+    #[test]
+    fn a_build_that_always_replaces_the_rows_stops() {
+        let rows: RowSource<usize> = RowSource::default();
+        let mut attempts = 0;
+        rows.build_until_settled(|_| {
+            attempts += 1;
+            rows.set_rows(Vec::new());
+        });
+        assert_eq!(attempts, ROW_REBUILD_LIMIT + 1);
+    }
 
     #[test]
     fn small_tables_are_not_windowed() {
@@ -473,6 +662,41 @@ mod tests {
         assert!(!window.is_complete());
         assert!(window.contains(50));
         assert!(!window.contains(44));
+    }
+
+    #[test]
+    fn a_built_row_still_answers_after_it_is_gone() {
+        let rows: RowSource<bool> = RowSource::default();
+        rows.set_builder(100, |index| Ok(index != 7));
+        let selectable = |index| rows.is_selectable(index, |row| *row);
+        assert!(selectable(7), "組み立てる前は分からない");
+
+        let row = rows.row(7).unwrap().unwrap();
+        rows.note_selectable(7, row);
+        assert!(!selectable(7), "組み立てたときの答えを覚えている");
+        assert!(selectable(6));
+
+        rows.note_selectable(7, true);
+        assert!(selectable(7), "組み立て直した答えに変わる");
+
+        rows.note_selectable(7, false);
+        rows.forget_selectable();
+        assert!(selectable(7), "忘れたあとは分からない扱い");
+
+        rows.note_selectable(7, false);
+        rows.set_builder(100, |_| Ok(true));
+        assert!(selectable(7), "行を差し替えると答えも消える");
+    }
+
+    #[test]
+    fn a_tiny_row_height_does_not_build_every_row() {
+        // いちばん小さい値では、画面に入る行数が usize に収まらない。
+        for height in [1e-3, 1e-300, f64::MIN_POSITIVE] {
+            let window = row_window(1_000_000, 0.0, 200.0, height, 5);
+            assert!(window.len() <= 206, "{height}: {window:?}");
+            let window = row_window(1_000_000, 1_000.0, 200.0, height, 5);
+            assert_eq!(window.start, 995, "{height}");
+        }
     }
 
     #[test]
@@ -721,21 +945,49 @@ mod tests {
         let of_row = |row: &bool| *row;
         // 持っている行は、その行が答える。関数があっても優先しない。
         rows.set_selectable(|_| false);
-        assert!(rows.is_selectable(0, of_row, || None));
-        assert!(!rows.is_selectable(1, of_row, || Some(true)));
-        assert!(!rows.is_selectable(2, of_row, || Some(true)), "範囲の外");
+        assert!(rows.is_selectable(0, of_row));
+        assert!(!rows.is_selectable(1, of_row));
+        assert!(!rows.is_selectable(2, of_row), "範囲の外");
 
         let rows: RowSource<bool> = RowSource::default();
         rows.set_builder(10, |_| Ok(true));
-        // 誰も答えられない行は、選べる扱い。
-        assert!(rows.is_selectable(5, of_row, || None));
+        // 誰も答えられなければ、選べる扱い。
+        assert!(rows.is_selectable(5, of_row));
         // 組み立て済みなら、その行の答え。
-        assert!(!rows.is_selectable(5, of_row, || Some(false)));
+        rows.note_selectable(5, false);
+        assert!(!rows.is_selectable(5, of_row));
         // 組み立てずに答える関数があれば、それが先。
+        rows.note_selectable(6, false);
         rows.set_selectable(|index| index != 5);
-        assert!(!rows.is_selectable(5, of_row, || Some(true)));
-        assert!(rows.is_selectable(6, of_row, || Some(false)));
-        assert!(!rows.is_selectable(10, of_row, || None), "範囲の外");
+        assert!(!rows.is_selectable(5, of_row));
+        assert!(rows.is_selectable(6, of_row));
+        assert!(!rows.is_selectable(10, of_row), "範囲の外");
+    }
+
+    #[test]
+    fn overlap_is_what_both_windows_build() {
+        let window = |start, end| RowWindow {
+            start,
+            end,
+            count: 100,
+        };
+        assert_eq!(window(10, 30).overlap(window(20, 40)), 20..30, "先へ動く");
+        assert_eq!(window(20, 40).overlap(window(10, 30)), 20..30, "手前へ動く");
+        assert_eq!(window(10, 30).overlap(window(15, 25)), 15..25, "狭まる");
+        assert!(
+            window(10, 20).overlap(window(20, 30)).is_empty(),
+            "接するだけ"
+        );
+        assert!(
+            window(10, 20).overlap(window(50, 60)).is_empty(),
+            "離れている"
+        );
+        let other = RowWindow {
+            start: 10,
+            end: 30,
+            count: 99,
+        };
+        assert!(window(10, 30).overlap(other).is_empty(), "行数が違う");
     }
 
     #[test]

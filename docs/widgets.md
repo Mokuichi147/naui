@@ -34,7 +34,7 @@ Legend:
 
 | naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
 | --- | --- | --- | --- | --- |
-| `Label` | ✅ `TextBlock` | ✅ `NSTextField` | ✅ `GtkLabel` | ✅ `<span>` |
+| `Label` | ✅ `TextBlock` (`Inlines` for rich text) | ✅ `NSTextField` (`NSAttributedString` for rich text) | ✅ `GtkLabel` (Pango markup for rich text) | ✅ `<span>` (`<b>`, `<span>`, `<a>` for rich text) |
 | `Button` | ✅ `Button` | ✅ `NSButton` | ✅ `GtkButton` | ✅ `<button>` |
 | `Checkbox` | ✅ `CheckBox` | ✅ `NSButton` | ✅ `GtkCheckButton` | 🟡 `<input type="checkbox">` + `<label>` |
 | `Toggle` | ✅ `ToggleSwitch` | 🟡 `NSSwitch` + `NSTextField` | 🟡 `GtkSwitch` + `GtkLabel` | 🟡 `<input type="checkbox" switch>` + `<label>` |
@@ -178,6 +178,10 @@ collected in [Known limitations](known-limitations.md).
   `GotFocus` and moves focus into the pane shown.
 - **`Label`**: The `TextBlock` is created from XAML with
   `TextTrimming="CharacterEllipsis"` (wrapping is switched with `TextWrapping`).
+  `set_rich_text` fills `TextBlock.Inlines` with a `Run` per run, inside a
+  `Hyperlink` for a link. The `Run`s with bold or a color are created from XAML,
+  because only there can a color be a `{ThemeResource}` that follows the theme.
+  `NavigateUri` is left empty, so that `on_link` can decide whether the link opens.
 - **`Toggle`**: The label is put into both `OnContent` and `OffContent`, so the
   text read does not change between on and off (WinUI's default is text that
   switches between "On" and "Off").
@@ -361,7 +365,11 @@ collected in [Known limitations](known-limitations.md).
 - **`Label`**: With `set_wrap(true)`, naui watches
   `NSViewFrameDidChangeNotification` and makes `preferredMaxLayoutWidth` follow the
   frame width, because `NSTextField` can report its height only once the wrapping
-  width is known.
+  width is known. `set_rich_text` writes an `NSAttributedString`, with
+  `NSLinkAttributeName` for a link. AppKit reacts to links only in a field that is
+  selectable and has `allowsEditingTextAttributes`, so a label holding links has
+  both, whatever `set_selectable` says. The click reaches `textView:clickedOnLink:atIndex:`
+  on a subclass of `NSTextField`, the delegate of the field editor.
 - **`Toggle`**: `NSSwitch` has no text, so the label is an `NSTextField` placed
   beside it.
 - **`NumberInput`**: AppKit has no numeric control, so it is built from an
@@ -482,7 +490,10 @@ collected in [Known limitations](known-limitations.md).
   `.title-1`); the theme decides size and weight. By default (no wrapping),
   `PangoEllipsizeMode::End` is set. **Adding an ellipsis also lowers `GtkLabel`'s
   minimum width**, so putting it in a narrow container no longer pushes the whole
-  container wider.
+  container wider. `set_rich_text` writes Pango markup (`<b>`, `<span>`, `<a>`), with
+  everything from the app escaped. Markup cannot name a theme color, so a run's role
+  is resolved through a throwaway widget with the role's style class, and the markup
+  is written again when `AdwStyleManager` reports a change.
 - **`Toggle`**: `GtkSwitch` has no text, so the label is a `GtkLabel` placed beside
   it in a `GtkBox`.
 - **`EditableComboBox`**: GTK4 has no editable combo box, so it is built from a
@@ -554,7 +565,9 @@ collected in [Known limitations](known-limitations.md).
   ellipsis). To wrap, use `set_wrap(true)`. Browsers have no heading levels (type
   ramp), so only the sizes of `set_style` are matched to the other three platforms
   by naui with relative CSS values (`em`). Because they are relative, they follow
-  the base font size decided by the browser and the user.
+  the base font size decided by the browser and the user. `set_rich_text` builds
+  `<b>`, `<span style="color">` and `<a target="_blank">` inside the `<span>`, and a
+  run without formatting is a bare text node.
 - **`SplitView`**: HTML has no element that splits panes with a movable divider
   (`resize` only shows a grip in the element's corner), so naui assembles one. The
   divider is a `<div role="separator">`, and the cursor is left to `col-resize` /
@@ -581,15 +594,18 @@ collected in [Known limitations](known-limitations.md).
 - **`EditableComboBox`**: `<input list>` and `<datalist>`. naui builds neither the
   visuals nor the narrowing.
 - **`DatePicker`**: Uses `datetime-local` so as not to bring in time zones.
-- **`List`**: Using `ListItem::detail` or `ListRow` (rows of arbitrary content), or
-  having more than 200 rows, switches from `<select>` to an implementation using
-  `<ul role="listbox">`. With a few text-only rows it stays `<select size>`. The
+- **`List`**: Using `ListItem::detail` or `ListRow` (rows of arbitrary content), having
+  more than 200 rows, `set_row_builder` or `set_row_height` switches from `<select>` to
+  an implementation using `<ul role="listbox">`, and `native_select` then returns
+  `None`. With a few text-only rows it stays `<select size>`. The
   content model of `<option>` is text only and can hold neither elements nor line
   breaks, and a `<select>` creates every `<option>` it is given and has no place for
   spacers, so only the composed form can build just the rows on screen. **Having left
   `<select>`, naui adds selection, focus and keyboard operation (arrows, Home / End,
-  Space) as it does for `Table`.** The current row is indicated with
-  `aria-activedescendant`, and pressing a row itself moves focus to the list
+  Page Up / Down, Ctrl / ⌘ + A, Space, and typing to jump to a row) as it does for
+  `Table`. With multiple selection, Ctrl / ⌘ with an arrow, Home or End moves only the
+  current row, without changing the selection.** The current row is indicated with
+  `aria-activedescendant` and the browser's focus ring, and pressing a row itself moves focus to the list
   (`<ul tabindex="0">`) so keyboard use can continue. Buttons and input fields
   placed inside rows own their events, so clicks and keys that reach them are not
   turned into list operations (so that Space on a check box does not turn into row

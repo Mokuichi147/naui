@@ -30,6 +30,7 @@ Microsoft.UI.Windowing.AppWindowTitleBar
 Microsoft.UI.Windowing.FullScreenPresenter
 Microsoft.UI.Windowing.OverlappedPresenter
 Microsoft.UI.Windowing.OverlappedPresenterState
+Microsoft.UI.Windowing.TitleBarTheme
 Microsoft.UI.Xaml.Application
 Microsoft.UI.Xaml.ApplicationInitializationCallback
 Microsoft.UI.Xaml.ApplicationTheme
@@ -156,6 +157,13 @@ Microsoft.UI.Xaml.Controls.XamlControlsResources
 Microsoft.UI.Xaml.CornerRadius
 Microsoft.UI.Xaml.DataTemplate
 Microsoft.UI.Xaml.DependencyObject
+Microsoft.UI.Xaml.Documents.Hyperlink
+Microsoft.UI.Xaml.Documents.HyperlinkClickEventArgs
+Microsoft.UI.Xaml.Documents.Inline
+Microsoft.UI.Xaml.Documents.InlineCollection
+Microsoft.UI.Xaml.Documents.Run
+Microsoft.UI.Xaml.Documents.Span
+Microsoft.UI.Xaml.Documents.TextElement
 Microsoft.UI.Xaml.DragEventArgs
 Microsoft.UI.Xaml.DragEventHandler
 Microsoft.UI.Xaml.DragOperationDeferral

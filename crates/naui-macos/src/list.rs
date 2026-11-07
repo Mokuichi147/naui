@@ -26,6 +26,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use dispatch2::{DispatchQueue, MainThreadBound};
 use naui_core::{
     Align, ListItem, Orientation, Point, Result, RowSource, SelectionMode, Sizing, TextColor,
     TextStyle,
@@ -167,11 +168,11 @@ impl ListRow {
         self.activation.set(f);
     }
 
-    /// The view for one row.
-    fn cell_view(&self, mtm: MainThreadMarker) -> Retained<NSView> {
+    /// The view for one row. With `min_height`, the row is at least that tall.
+    fn cell_view(&self, mtm: MainThreadMarker, min_height: Option<f64>) -> Retained<NSView> {
         match &self.content {
-            ListRowContent::Item(item) => list_item_cell_view(mtm, item),
-            ListRowContent::Custom(content) => custom_cell_view(mtm, &**content),
+            ListRowContent::Item(item) => list_item_cell_view(mtm, item, min_height),
+            ListRowContent::Custom(content) => custom_cell_view(mtm, &**content, min_height),
         }
     }
 
@@ -195,6 +196,8 @@ impl ListRow {
 struct ListRows {
     source: RowSource<ListRow>,
     built: RefCell<HashMap<usize, ListRow>>,
+    /// Whether the app's function is building a row right now.
+    building: Cell<bool>,
 }
 
 impl ListRows {
@@ -212,7 +215,15 @@ impl ListRows {
         self.source.set_builder(count, build);
     }
 
+    /// Whether this is being called from inside the app's function that builds a row.
+    fn is_building(&self) -> bool {
+        self.building.get()
+    }
+
     /// The contents of that row, building it if it is not built yet.
+    ///
+    /// `None` if the rows were replaced while building it: the row belongs to the old
+    /// rows, and the table reloads afterwards ([`List::reload_after_build`]).
     fn row(&self, index: usize) -> Option<ListRow> {
         if !self.source.is_built() {
             return self.source.row(index)?.ok();
@@ -220,11 +231,16 @@ impl ListRows {
         if let Some(row) = self.built.borrow().get(&index) {
             return Some(row.clone());
         }
+        let generation = self.source.generation();
+        let was_building = self.building.replace(true);
+        let row = self.source.row(index);
+        self.building.set(was_building);
+        if self.source.generation() != generation {
+            return None;
+        }
         // 組み立てに失敗した行は、空の行にする。
-        let row = self
-            .source
-            .row(index)?
-            .unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
+        let row = row?.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
+        self.source.note_selectable(index, row.is_selectable());
         self.built.borrow_mut().insert(index, row.clone());
         Some(row)
     }
@@ -238,10 +254,7 @@ impl ListRows {
     }
 
     fn is_selectable(&self, index: usize) -> bool {
-        self.source
-            .is_selectable(index, ListRow::is_selectable, || {
-                self.read(index, ListRow::is_selectable)
-            })
+        self.source.is_selectable(index, ListRow::is_selectable)
     }
 
     fn is_disabled_item(&self, index: usize) -> bool {
@@ -449,6 +462,8 @@ struct SourceState {
     /// Stops notifications only while the selection is being changed from code, since
     /// AppKit calls the delegate even for `selectRowIndexes:`.
     silent: Rc<Cell<bool>>,
+    /// The row height decided by the app ([`List::set_row_height`]).
+    fixed_row_height: Rc<Cell<Option<f64>>>,
 }
 
 define_class!(
@@ -484,7 +499,7 @@ define_class!(
             usize::try_from(row)
                 .ok()
                 .and_then(|row| self.ivars().rows.row(row))
-                .map(|row| row.cell_view(mtm))
+                .map(|row| row.cell_view(mtm, self.ivars().fixed_row_height.get()))
         }
 
         #[unsafe(method(tableView:shouldSelectRow:))]
@@ -541,8 +556,19 @@ pub(crate) fn cell_view(
     detail: Option<&str>,
     enabled: bool,
 ) -> Retained<NSView> {
+    item_cell_view(mtm, label, detail, enabled, None)
+}
+
+/// [`cell_view`] with a minimum row height.
+fn item_cell_view(
+    mtm: MainThreadMarker,
+    label: &str,
+    detail: Option<&str>,
+    enabled: bool,
+    min_height: Option<f64>,
+) -> Retained<NSView> {
     let (content, title) = item_content(mtm, label, detail, enabled);
-    let cell = cell_with_content(mtm, &content);
+    let cell = cell_with_content(mtm, &content, min_height);
     // `textField` に入れておくと、行の背景色に合わせた文字色や
     // アクセシビリティの扱いを NSTableCellView が面倒を見る。
     unsafe { cell.setTextField(Some(&title)) };
@@ -551,8 +577,18 @@ pub(crate) fn cell_view(
 }
 
 /// Puts `ListItem`s on the same cell path as `ListRow`s.
-fn list_item_cell_view(mtm: MainThreadMarker, item: &ListItem) -> Retained<NSView> {
-    cell_view(mtm, &item.label, item.detail.as_deref(), item.enabled)
+fn list_item_cell_view(
+    mtm: MainThreadMarker,
+    item: &ListItem,
+    min_height: Option<f64>,
+) -> Retained<NSView> {
+    item_cell_view(
+        mtm,
+        &item.label,
+        item.detail.as_deref(),
+        item.enabled,
+        min_height,
+    )
 }
 
 /// The content of a text-only row. The returned `NSTextField` is the first line's.
@@ -621,27 +657,53 @@ fn native_field(label: &Label) -> Retained<NSTextField> {
 /// the top and bottom margins **connected by constraints**, lets Auto Layout
 /// (`usesAutomaticRowHeights`) decide the height, so the highlight and the text line
 /// up with one line or two.
-fn cell_with_content(mtm: MainThreadMarker, content: &dyn Widget) -> Retained<NSTableCellView> {
+///
+/// With `min_height`, the row is at least that tall and the content is centered in it. A
+/// row whose content needs more grows, so nothing is cut off.
+fn cell_with_content(
+    mtm: MainThreadMarker,
+    content: &dyn Widget,
+    min_height: Option<f64>,
+) -> Retained<NSTableCellView> {
     let cell = NSTableCellView::new(mtm);
     let view = content.native_view();
     view.setTranslatesAutoresizingMaskIntoConstraints(false);
     cell.addSubview(&view);
-    NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[
+    let mut constraints = vec![
         view.leadingAnchor()
             .constraintEqualToAnchor(&cell.leadingAnchor()),
         view.trailingAnchor()
             .constraintEqualToAnchor(&cell.trailingAnchor()),
-        view.topAnchor()
-            .constraintEqualToAnchor_constant(&cell.topAnchor(), ROW_PADDING),
-        cell.bottomAnchor()
-            .constraintEqualToAnchor_constant(&view.bottomAnchor(), ROW_PADDING),
-    ]));
+    ];
+    match min_height {
+        None => constraints.extend([
+            view.topAnchor()
+                .constraintEqualToAnchor_constant(&cell.topAnchor(), ROW_PADDING),
+            cell.bottomAnchor()
+                .constraintEqualToAnchor_constant(&view.bottomAnchor(), ROW_PADDING),
+        ]),
+        Some(height) => constraints.extend([
+            view.centerYAnchor()
+                .constraintEqualToAnchor(&cell.centerYAnchor()),
+            view.topAnchor()
+                .constraintGreaterThanOrEqualToAnchor_constant(&cell.topAnchor(), ROW_PADDING),
+            cell.bottomAnchor()
+                .constraintGreaterThanOrEqualToAnchor_constant(&view.bottomAnchor(), ROW_PADDING),
+            cell.heightAnchor()
+                .constraintGreaterThanOrEqualToConstant(height),
+        ]),
+    }
+    NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&constraints));
     cell
 }
 
 /// Connects any widget to Auto Layout, including the row height.
-fn custom_cell_view(mtm: MainThreadMarker, content: &dyn Widget) -> Retained<NSView> {
-    let cell = cell_with_content(mtm, content);
+fn custom_cell_view(
+    mtm: MainThreadMarker,
+    content: &dyn Widget,
+    min_height: Option<f64>,
+) -> Retained<NSView> {
+    let cell = cell_with_content(mtm, content, min_height);
     let view: &NSView = cell.as_ref();
     view.retain()
 }
@@ -656,7 +718,15 @@ impl ListSource {
 /// Reads the table's selection as an ascending sequence.
 pub(crate) fn selected_indices(table: &NSTableView, len: usize) -> Vec<usize> {
     let indexes = table.selectedRowIndexes();
-    (0..len).filter(|&i| indexes.containsIndex(i)).collect()
+    let mut picked = Vec::with_capacity(indexes.count());
+    // 行ではなく選択をたどる。矢印キーのたびに読むので、全行を見ると重くなる。
+    // 尽きると `NSNotFound` (どの行番号よりも大きい) が返る。
+    let mut index = indexes.firstIndex();
+    while index < len {
+        picked.push(index);
+        index = indexes.indexGreaterThanIndex(index);
+    }
+    picked
 }
 
 /// Supplies the "natural height showing every row" that `NSScrollView` lacks.
@@ -738,12 +808,15 @@ struct ListInner {
     table: Retained<ListTableView>,
     rows: Rc<ListRows>,
     /// The row height decided by the app ([`List::set_row_height`]).
-    fixed_row_height: Cell<Option<f64>>,
+    fixed_row_height: Rc<Cell<Option<f64>>>,
     /// AppKit's row height, used as its estimate while heights are automatic.
     default_row_height: f64,
     mode: Cell<SelectionMode>,
     handler: SelectionHandler,
     silent: Rc<Cell<bool>>,
+    /// The selection to apply once the table has reloaded, while a reload is waiting for
+    /// a row build to finish ([`List::reload_after_build`]).
+    pending_selection: RefCell<Option<Vec<usize>>>,
     /// Delegates and data sources are weak references, so they are held.
     _source: Retained<ListSource>,
 }
@@ -803,12 +876,14 @@ impl List {
 
         let handler = SelectionHandler::default();
         let silent = Rc::new(Cell::new(false));
+        let fixed_row_height = Rc::new(Cell::new(None));
         let source = ListSource::new(
             mtm,
             SourceState {
                 rows: rows.clone(),
                 handler: handler.clone(),
                 silent: silent.clone(),
+                fixed_row_height: fixed_row_height.clone(),
             },
         );
         unsafe {
@@ -839,11 +914,12 @@ impl List {
             scroll,
             table,
             rows,
-            fixed_row_height: Cell::new(None),
+            fixed_row_height,
             default_row_height,
             mode: Cell::new(SelectionMode::Single),
             handler,
             silent,
+            pending_selection: RefCell::new(None),
             _source: source,
         }))
     }
@@ -899,10 +975,12 @@ impl List {
     /// For rows built with [`List::set_row_builder`], naui does not know whether rows
     /// not yet built can be selected. With this function, [`List::set_selection`] can
     /// keep its promise of "removing rows that cannot be selected" even for rows off
-    /// screen. Without it, built rows follow [`ListRow::selectable`] and rows not yet
-    /// built are treated as selectable.
+    /// screen. Without it, rows follow the [`ListRow::selectable`] they were last built
+    /// with, even after leaving the screen, and rows not built since the rows were passed
+    /// or refreshed are treated as selectable.
     ///
-    /// Its answers must match the [`ListRow::selectable`] returned by `build`.
+    /// Its answers must match the [`ListRow::selectable`] returned by `build`. It stays when
+    /// the rows are replaced, so pass a new one if its answers change.
     pub fn set_row_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
         self.0.rows.source.set_selectable(selectable);
     }
@@ -914,6 +992,16 @@ impl List {
     pub fn refresh(&self) {
         let picked = self.selection();
         self.0.rows.forget_built();
+        self.0.rows.source.forget_selectable();
+        // AppKit が行を聞いている最中には読み直せない。いま組み立てている行も古い。
+        if self.0.rows.is_building() {
+            self.0.rows.source.invalidate();
+            self.reload_after_build();
+            self.without_notifying(|this| this.apply_selection(&picked));
+            return;
+        }
+        // ここで読み直すので、予約した読み直しは要らない。
+        self.0.pending_selection.take();
         self.without_notifying(|this| {
             this.apply_row_height();
             this.0.table.reloadData();
@@ -922,12 +1010,13 @@ impl List {
         });
     }
 
-    /// Sets the row height in logical pixels. Passing 0 or less returns to AppKit
-    /// working out each row's height (`usesAutomaticRowHeights`).
+    /// Sets the row height in logical pixels. Passing 0 or less measures it from the
+    /// rows.
     ///
-    /// Every row gets this height. AppKit measures rows only when they appear, so with
-    /// many rows of varying height the scroll bar shifts as it finds out their real
-    /// heights; setting a height avoids that.
+    /// Every row gets at least this height, and a row whose content needs more grows.
+    /// AppKit measures rows only when they appear, so with many rows of varying height
+    /// the scroll bar shifts as it finds out their real heights; setting a height that
+    /// fits every row avoids that.
     pub fn set_row_height(&self, height: f64) {
         self.0
             .fixed_row_height
@@ -939,17 +1028,23 @@ impl List {
     ///
     /// With no height set, rows may differ in height, and this is the first row's.
     pub fn row_height(&self) -> f64 {
-        if self.0.table.usesAutomaticRowHeights() {
-            match self.len() {
-                0 => 0.0,
-                _ => self.0.table.rectOfRow(0).size.height,
-            }
-        } else {
-            self.0.table.rowHeight()
+        if let Some(height) = self.0.fixed_row_height.get() {
+            return height;
+        }
+        match self.len() {
+            0 => 0.0,
+            _ => self.0.table.rectOfRow(0).size.height,
         }
     }
 
     fn reload_rows(&self) {
+        // AppKit が行を聞いている最中には読み直せない (再入の警告になる)。
+        if self.0.rows.is_building() {
+            self.reload_after_build();
+            return;
+        }
+        // ここで読み直すので、予約した読み直しと、そのときの行へ向けた選択は要らない。
+        self.0.pending_selection.take();
         self.without_notifying(|this| {
             this.apply_row_height();
             this.0.table.reloadData();
@@ -958,20 +1053,44 @@ impl List {
         });
     }
 
-    /// Decides how row heights are found (automatic or one height for every row).
-    fn apply_row_height(&self) {
-        let table = &self.0.table;
-        match self.0.fixed_row_height.get() {
-            Some(height) => {
-                table.setUsesAutomaticRowHeights(false);
-                table.setRowHeight(height);
-            }
-            // AppKit は自動の間、`rowHeight` を見積もりに使う。指定の値を残さない。
-            None => {
-                table.setRowHeight(self.0.default_row_height);
-                table.setUsesAutomaticRowHeights(true);
-            }
+    /// Reloads the table once the row build in progress has finished, and clears the
+    /// selection. The app can still set a selection until then; it is applied afterwards.
+    ///
+    /// A reload that happens first takes its place by clearing `pending_selection`.
+    fn reload_after_build(&self) {
+        if self.0.pending_selection.replace(Some(Vec::new())).is_some() {
+            return;
         }
+        let mtm = MainThreadMarker::from(&*self.0.table);
+        let weak = MainThreadBound::new(Rc::downgrade(&self.0), mtm);
+        DispatchQueue::main().exec_async(move || {
+            // メインキューの仕事はメインスレッドで走る。
+            let mtm = MainThreadMarker::new().expect("called outside the main queue");
+            if let Some(inner) = weak.into_inner(mtm).upgrade() {
+                let list = List(inner);
+                // 先に読み直していれば、いまの選択を消さずに終わる。
+                let Some(picked) = list.0.pending_selection.take() else {
+                    return;
+                };
+                list.without_notifying(|this| {
+                    this.apply_row_height();
+                    this.0.table.reloadData();
+                    this.apply_selection(&picked);
+                    this.0.scroll.invalidate_document_size();
+                });
+            }
+        });
+    }
+
+    /// Gives AppKit its estimate for rows it has not measured.
+    ///
+    /// **Heights stay automatic even with a height set.** A fixed `rowHeight` would cut
+    /// off the rows that need more; the minimum is a constraint on each cell instead.
+    fn apply_row_height(&self) {
+        let estimate = self.0.fixed_row_height.get();
+        self.0
+            .table
+            .setRowHeight(estimate.unwrap_or(self.0.default_row_height));
     }
 
     /// The number of rows.
@@ -988,7 +1107,7 @@ impl List {
     pub fn set_selection_mode(&self, mode: SelectionMode) {
         self.0.mode.set(mode);
         self.0.table.setAllowsMultipleSelection(mode.is_multiple());
-        self.without_notifying(|this| unsafe { this.0.table.deselectAll(None) });
+        self.without_notifying(|this| this.apply_selection(&[]));
     }
 
     pub fn selection_mode(&self) -> SelectionMode {
@@ -1002,6 +1121,9 @@ impl List {
 
     /// The selected rows (ascending). Zero or one for single selection.
     pub fn selection(&self) -> Vec<usize> {
+        if let Some(picked) = &*self.0.pending_selection.borrow() {
+            return picked.clone();
+        }
         selected_indices(&self.0.table, self.len())
     }
 
@@ -1032,7 +1154,7 @@ impl List {
 
     /// Clears the whole selection without notifying.
     pub fn clear_selection(&self) {
-        self.without_notifying(|this| unsafe { this.0.table.deselectAll(None) });
+        self.without_notifying(|this| this.apply_selection(&[]));
     }
 
     /// Selects one row through the same path as a user's selection (notifies).
@@ -1101,6 +1223,11 @@ impl List {
     }
 
     fn apply_selection(&self, indices: &[usize]) {
+        // テーブルはまだ前の行のままなので、読み直してから当てる。
+        if let Some(pending) = &mut *self.0.pending_selection.borrow_mut() {
+            *pending = indices.to_vec();
+            return;
+        }
         if indices.is_empty() {
             unsafe { self.0.table.deselectAll(None) };
             return;
