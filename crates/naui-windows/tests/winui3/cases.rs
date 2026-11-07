@@ -231,6 +231,22 @@ const CASES: &[Case] = &[
         table_focus_follows_the_real_place_of_rows,
     ),
     (
+        "高さの違うリストの行でも Page は 1 画面ずつ動く",
+        list_page_keys_go_by_the_real_height_of_rows,
+    ),
+    (
+        "高さの違う表の行でも Page は 1 画面ずつ動く",
+        table_page_keys_go_by_the_real_height_of_rows,
+    ),
+    (
+        "スクロールのあとリストの行の余白を Shift クリックできる",
+        list_shift_click_in_the_margin_after_a_scroll,
+    ),
+    (
+        "スクロールのあと表の行の余白を Shift クリックできる",
+        table_shift_click_in_the_margin_after_a_scroll,
+    ),
+    (
         "表のフォーカスが画面の外にあっても表示が動かない",
         table_view_stays_when_the_focus_is_off_screen,
     ),
@@ -881,7 +897,7 @@ const ASYNC_CASES: &[AsyncCase] = &[
 /// If it enters `Application::Start` and never returns, CI stays stuck until it gives
 /// up. After allowing time for every case, it always ends. The cases sending real input
 /// wait for it to arrive, and together take a few minutes.
-const WATCHDOG: Duration = Duration::from_secs(420);
+const WATCHDOG: Duration = Duration::from_secs(600);
 
 pub(crate) fn run() {
     std::thread::spawn(|| {
@@ -8255,6 +8271,16 @@ fn aim_at_list_row(
     list: &impl RowsForInput,
     index: usize,
 ) -> Option<()> {
+    aim_at_row_point(hwnd, list, index, 40.0)
+}
+
+/// [`aim_at_list_row`], at a distance from the row's left edge.
+fn aim_at_row_point(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+    index: usize,
+    x: f32,
+) -> Option<()> {
     use windows::Foundation::Point as XamlPoint;
     use windows::Win32::Foundation::POINT;
     use windows::Win32::Graphics::Gdi::ClientToScreen;
@@ -8272,7 +8298,7 @@ fn aim_at_list_row(
     let middle = (row.ActualHeight().expect("行の高さ") / 2.0) as f32;
     let row_at = || {
         row.TransformToVisual(None)
-            .and_then(|to| to.TransformPoint(XamlPoint { X: 40.0, Y: middle }))
+            .and_then(|to| to.TransformPoint(XamlPoint { X: x, Y: middle }))
             .expect("行の位置")
     };
     let view = scroll
@@ -9102,6 +9128,315 @@ fn table_focus_follows_the_real_place_of_rows(ui: &Ui) -> Result<()> {
     }
     table.set_sizing(Sizing::fill());
     real_place_scenario(ui, &table)
+}
+
+/// Page Up and Page Down move by what is on screen, also when rows differ in height: a page
+/// counted in the tallest row's height would be far shorter than the screen.
+fn list_page_keys_go_by_the_real_height_of_rows(ui: &Ui) -> Result<()> {
+    use naui_windows::ListRow;
+
+    let window = ui.window("高さの違うリストの Page", 300.0, 320.0)?;
+    let list = ui.list()?;
+    {
+        let ui = ui.clone();
+        list.set_row_builder(100, move |index| {
+            let label = ui.label(&format!("行 {index}"))?;
+            label.set_sizing(Sizing::fixed(100.0, alternating_row_height(index)));
+            Ok(ListRow::new(&label))
+        });
+    }
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+    run_shown_for_input(&window, &list, real_height_pages_scenario)
+}
+
+/// [`list_page_keys_go_by_the_real_height_of_rows`] on a `Table`.
+fn table_page_keys_go_by_the_real_height_of_rows(ui: &Ui) -> Result<()> {
+    use naui_windows::TableCells;
+
+    let window = ui.window("高さの違う表の Page", 300.0, 320.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[naui_core::TableColumn::new("名前")]);
+    {
+        let ui = ui.clone();
+        table.set_row_builder(100, move |index| {
+            let label = ui.label(&format!("行 {index}"))?;
+            label.set_sizing(Sizing::fixed(100.0, alternating_row_height(index)));
+            Ok(TableCells::new().cell(&label))
+        });
+    }
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
+    run_shown_for_input(&window, &table, real_height_pages_scenario)
+}
+
+fn real_height_pages_scenario(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+) -> Option<()> {
+    use windows::Foundation::Point as XamlPoint;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_NEXT, VK_PRIOR};
+
+    let scroll = list.scroller();
+    let viewport = scroll.ViewportHeight().expect("高さ");
+    let position = || scroll.VerticalOffset().expect("位置");
+    let top_of = |index: usize| {
+        let row = built_list_row(list, index).expect("組み立てた行");
+        let at = row
+            .TransformToVisual(&scroll)
+            .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+            .expect("行の位置");
+        f64::from(at.Y) + position()
+    };
+    let height_of = |index: usize| {
+        built_list_row(list, index)
+            .expect("組み立てた行")
+            .ActualHeight()
+            .expect("行の高さ")
+    };
+
+    list.scroll_to_row(20);
+    pump_until(Duration::from_millis(500), || false);
+    click_list_row_expecting(hwnd, list, 20, &[], &[20], "高さの違う行")?;
+
+    // Page Down: 今の行の上端から 1 画面下にある行へ、表示も 1 画面ぶん進む。
+    let from = list.selection()[0];
+    let below = top_of(from) + viewport;
+    let expected = (from..100)
+        .find(|&index| top_of(index) + height_of(index) > below)
+        .expect("1 画面下の行");
+    let before = position();
+    press_nav_key(&[], VK_NEXT)?;
+    assert_eq!(list.selection(), [expected], "Page Down の行");
+    let moved = position() - before;
+    assert!(
+        (moved - viewport).abs() <= 1.0,
+        "Page Down で表示が 1 画面ぶん進むこと: {moved} (表示 {viewport})"
+    );
+
+    // Page Up: 上端が 1 画面ぶん上か、それより下にある最初の行へ。
+    let from = list.selection()[0];
+    let above = top_of(from) - viewport;
+    let expected = (0..from)
+        .find(|&index| top_of(index) >= above)
+        .expect("1 画面上の行");
+    let before = position();
+    press_nav_key(&[], VK_PRIOR)?;
+    assert_eq!(list.selection(), [expected], "Page Up の行");
+    let moved = before - position();
+    assert!(
+        (moved - viewport).abs() <= 1.0,
+        "Page Up で表示が 1 画面ぶん戻ること: {moved} (表示 {viewport})"
+    );
+    Some(())
+}
+
+/// A Shift click reaches the row under the pointer even in the row's margin, which
+/// `ListViewItem` keeps to itself, right after a scroll with the pointer left still: no event
+/// says which row the pointer is on then.
+fn list_shift_click_in_the_margin_after_a_scroll(ui: &Ui) -> Result<()> {
+    with_shown_list_for_input(ui, 1_000, shift_click_in_margin_scenario)
+}
+
+/// [`list_shift_click_in_the_margin_after_a_scroll`] on a `Table`.
+fn table_shift_click_in_the_margin_after_a_scroll(ui: &Ui) -> Result<()> {
+    with_shown_table_for_input(ui, 1_000, shift_click_in_margin_scenario)
+}
+
+fn shift_click_in_margin_scenario(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+) -> Option<()> {
+    use windows::Foundation::Point as XamlPoint;
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
+    use windows::Win32::UI::HiDpi::GetDpiForWindow;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_WHEEL, VK_SHIFT,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
+
+    // 行の左端の余白。文字の入れ物より左なので、行の中の `PointerPressed` は来ない。
+    const MARGIN: f32 = 4.0;
+    let scroll = list.scroller();
+    let pointer_at = || {
+        let mut at = POINT::default();
+        // SAFETY: `at` はこの関数の中で生きている。
+        let _ = unsafe { GetCursorPos(&mut at) };
+        at
+    };
+    let click = |what: &str, expected: &dyn Fn() -> bool, modifiers: &[_]| {
+        for _ in 0..3 {
+            with_modifiers(modifiers, || {
+                send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
+                send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
+            });
+            pump_until(Duration::from_secs(1), expected);
+            if expected() {
+                return;
+            }
+            println!("     ({what}: クリックが反映されないので、もう一度押す)");
+        }
+    };
+
+    aim_at_row_point(hwnd, list, 2, MARGIN)?;
+    click("余白の行", &|| list.selection() == [2], &[]);
+    assert_eq!(list.selection(), [2], "余白を押して選べること");
+
+    // ポインターを動かさずにスクロールする。
+    let aimed = pointer_at();
+    for _ in 0..60 {
+        if !foreground_is_ours() {
+            println!("     (テストのウィンドウが前面に無いので、ホイールを送らずに通す)");
+            return None;
+        }
+        if built_list_row(list, 2).is_none() {
+            break;
+        }
+        send_input(mouse_input(MOUSEEVENTF_WHEEL, (-480_i32) as u32));
+    }
+    let mut settled = scroll.VerticalOffset().expect("位置");
+    pump_until(Duration::from_secs(3), || {
+        pump_until(Duration::from_millis(300), || false);
+        let now = scroll.VerticalOffset().expect("位置");
+        let still = (now - settled).abs() < 0.5;
+        settled = now;
+        still
+    });
+    let moved_elsewhere = |at: POINT| at.x != aimed.x || at.y != aimed.y;
+    if moved_elsewhere(pointer_at()) {
+        println!("     (ポインターがほかから動かされたので、確かめずに通す)");
+        return None;
+    }
+    assert!(built_list_row(list, 2).is_none(), "起点の行が窓の外にある");
+
+    // ポインターの下の行を、行そのものの位置で求める。
+    // SAFETY: HWND は window が閉じるまで有効で、UI スレッドから読んでいる。
+    let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
+    let mut origin = POINT::default();
+    // SAFETY: `origin` はこの関数の中で生きている。
+    let _ = unsafe { ClientToScreen(hwnd, &mut origin) };
+    let y = (aimed.y - origin.y) as f32 / scale;
+    let target = (0..1_000)
+        .find(|&index| {
+            built_list_row(list, index).is_some_and(|row| {
+                let top = row
+                    .TransformToVisual(None)
+                    .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+                    .expect("行の位置");
+                y >= top.Y && y < top.Y + row.ActualHeight().unwrap_or(0.0) as f32
+            })
+        })
+        .expect("ポインターの下の行");
+
+    let range: Vec<usize> = (2..=target).collect();
+    click(
+        "余白の Shift クリック",
+        &|| list.selection() == range,
+        &[VK_SHIFT],
+    );
+    if moved_elsewhere(pointer_at()) {
+        println!("     (ポインターがほかから動かされたので、確かめずに通す)");
+        return None;
+    }
+    let picked = list.selection();
+    assert_eq!(
+        (
+            picked.first().copied(),
+            picked.last().copied(),
+            picked.len()
+        ),
+        (Some(2), Some(target), range.len()),
+        "余白の Shift クリックの範囲"
+    );
+    assert_eq!(focused_list_row(list), Some(target), "押した行へ移る");
+
+    // ポインターのイベントが何も起きないスクロールのあとでも、同じ。
+    click("選び直し", &|| list.selection() == [target], &[]);
+    assert_eq!(list.selection(), [target], "選び直せること");
+    for (round, to) in [400, 800, 200, 600].into_iter().enumerate() {
+        let anchor = list.selection()[0];
+        list.scroll_to_row(to);
+        pump_until(Duration::from_millis(100), || false);
+        let under = (0..1_000)
+            .find(|&index| {
+                built_list_row(list, index).is_some_and(|row| {
+                    let top = row
+                        .TransformToVisual(None)
+                        .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+                        .expect("行の位置");
+                    y >= top.Y && y < top.Y + row.ActualHeight().unwrap_or(0.0) as f32
+                })
+            })
+            .expect("ポインターの下の行");
+        let range: Vec<usize> = (anchor.min(under)..=anchor.max(under)).collect();
+        click(
+            "スクロールのあとの Shift クリック",
+            &|| list.selection() == range,
+            &[VK_SHIFT],
+        );
+        if moved_elsewhere(pointer_at()) {
+            println!("     (ポインターがほかから動かされたので、確かめずに通す)");
+            return None;
+        }
+        let picked = list.selection();
+        assert_eq!(
+            (
+                picked.first().copied(),
+                picked.last().copied(),
+                picked.len()
+            ),
+            (range.first().copied(), range.last().copied(), range.len()),
+            "{round} 回目: {anchor} 行目から {under} 行目までの範囲"
+        );
+        assert_eq!(
+            focused_list_row(list),
+            Some(under),
+            "{round} 回目: 押した行へ移る"
+        );
+        click("次の起点", &|| list.selection() == [under], &[]);
+    }
+
+    // 窓が動かないところだと、`ListView` の範囲は押した行より後ろまで続く。押した行が範囲の
+    // どちらの端かは、ポインターの乗っている行でしか分からない。
+    let anchor = list.selection()[0];
+    let height = list.row_height();
+    let view = scroll.VerticalOffset().expect("位置");
+    let offset = PropertyValue::CreateDouble(view - height * 2.0)
+        .and_then(|value| value.cast::<windows::Foundation::IReference<f64>>())
+        .expect("送り先");
+    scroll
+        .ChangeViewWithOptionalAnimation(None, &offset, None, true)
+        .expect("スクロール");
+    pump_until(Duration::from_millis(500), || false);
+    let under = (0..1_000)
+        .find(|&index| {
+            built_list_row(list, index).is_some_and(|row| {
+                let top = row
+                    .TransformToVisual(None)
+                    .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+                    .expect("行の位置");
+                y >= top.Y && y < top.Y + row.ActualHeight().unwrap_or(0.0) as f32
+            })
+        })
+        .expect("ポインターの下の行");
+    assert!(
+        under < anchor,
+        "起点より上の行を押すこと: {under} / {anchor}"
+    );
+    let range: Vec<usize> = (under..=anchor).collect();
+    click(
+        "上へ戻った Shift クリック",
+        &|| list.selection() == range,
+        &[VK_SHIFT],
+    );
+    if moved_elsewhere(pointer_at()) {
+        println!("     (ポインターがほかから動かされたので、確かめずに通す)");
+        return None;
+    }
+    assert_eq!(list.selection(), range, "上へ戻った Shift クリックの範囲");
+    assert_eq!(focused_list_row(list), Some(under), "上へ戻った行へ移る");
+    Some(())
 }
 
 fn real_place_scenario(ui: &Ui, list: &(impl RowsForInput + Widget)) -> Result<()> {

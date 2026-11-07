@@ -1237,14 +1237,10 @@ impl List {
         let viewport = self.0.scroll.ViewportHeight().unwrap_or(0.0);
         let view_top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
         let (target, top) = match motion {
-            RowMotion::Pages(pages) => {
-                let distance = (viewport / height).floor().max(1.0) as usize;
-                let target = match pages < 0 {
-                    true => from.saturating_sub(distance),
-                    false => from.saturating_add(distance).min(count - 1),
-                };
-                (target, view_top + viewport * f64::from(pages))
-            }
+            RowMotion::Pages(pages) => (
+                self.row_a_page_from(from, pages < 0, viewport),
+                view_top + viewport * f64::from(pages),
+            ),
             RowMotion::Lines(lines) => (
                 from.saturating_add_signed(lines as isize).min(count - 1),
                 view_top,
@@ -1564,6 +1560,25 @@ impl List {
             if !self.settle_row_height() {
                 return;
             }
+        }
+    }
+
+    /// The row a page away from row `from`, always another row if there is one.
+    ///
+    /// It goes by where the rows are: with every row built their heights may differ, and a
+    /// page counted in the tallest one would be far shorter than the screen.
+    fn row_a_page_from(&self, from: usize, up: bool, viewport: f64) -> usize {
+        let top = self.row_span(from).0;
+        if up {
+            // 上端が 1 画面ぶん上か、それより下にある最初の行。
+            let y = top - viewport;
+            let row = self.row_ending_below(y);
+            let row = row + usize::from(self.row_span(row).0 < y);
+            row.min(from.saturating_sub(1))
+        } else {
+            self.row_ending_below(top + viewport)
+                .max(from.saturating_add(1))
+                .min(self.len().saturating_sub(1))
         }
     }
 
