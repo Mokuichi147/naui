@@ -14766,6 +14766,9 @@ fn sidebar_collapses_during_live_resize(ui: &Ui) -> Result<()> {
 /// screen, and the test's window is not when another app holds a fullscreen Space
 /// in front (or the window itself opens into a fullscreen Space), so the drag would
 /// silently do nothing depending on what else is on the screen.
+///
+/// Right after a window is shown, the dragged events can read back in screen
+/// coordinates, so this waits until a posted event reads back unchanged.
 fn drag_divider(
     app: &NSApplication,
     window: &NSWindow,
@@ -14791,6 +14794,23 @@ fn drag_divider(
         )
         .expect("マウスイベント")
     };
+    // 窓を出した直後は、積んだドラッグの座標がスクリーン座標に化けて読める
+    // (CI の macOS 26 でほぼ毎回、最長 120 ms ほど)。化けたまま追跡ループが読むと、
+    // 区画が窓の x の分だけ動いて `on_resize` へ届く。座標がそのまま読めるのを、
+    // 試しの 1 個を積んで取り出すことで確かめてから始める。
+    pump_until(3.0, || {
+        let probe = event(NSEventType::LeftMouseDragged, start);
+        unsafe { app.postEvent_atStart(&probe, false) };
+        unsafe {
+            app.nextEventMatchingMask_untilDate_inMode_dequeue(
+                NSEventMask::LeftMouseDragged,
+                Some(&NSDate::distantPast()),
+                NSDefaultRunLoopMode,
+                true,
+            )
+        }
+        .is_some_and(|read| read.locationInWindow() == start)
+    });
     let steps = 4;
     for step in 1..=steps {
         let point = NSPoint::new(start.x + dx * f64::from(step) / f64::from(steps), start.y);
