@@ -1521,6 +1521,10 @@ impl List {
             "ArrowUp" => self.step(current, -1),
             "Home" => self.first_enabled(0, 1),
             "End" => self.first_enabled(len as isize - 1, -1),
+            // 修飾キーが付いたらブラウザの操作 (タブの切り替えなど) なので、奪わない。
+            "PageDown" | "PageUp" if event.ctrl_key() || event.meta_key() || event.alt_key() => {
+                return false;
+            }
             "PageDown" => self.page(current, 1),
             "PageUp" => self.page(current, -1),
             "a" | "A"

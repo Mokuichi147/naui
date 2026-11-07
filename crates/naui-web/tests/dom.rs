@@ -8414,6 +8414,30 @@ fn list_with_many_rows_keeps_the_keys_of_a_select() {
         press("PageDown");
         assert_eq!(list.selection(), vec![ROWS - 1]);
 
+        // 修飾キーが付いたらブラウザの操作 (タブの切り替えなど) なので、奪わない。
+        for key in ["PageDown", "PageUp"] {
+            assert!(
+                !press_shortcut(scroller.as_ref(), key, true, false, false),
+                "Ctrl"
+            );
+            assert!(
+                !press_shortcut(scroller.as_ref(), key, false, false, true),
+                "Alt"
+            );
+            let init = KeyboardEventInit::new();
+            init.set_key(key);
+            init.set_bubbles(true);
+            init.set_cancelable(true);
+            init.set_meta_key(true);
+            let event = KeyboardEvent::new_with_keyboard_event_init_dict("keydown", &init)
+                .expect("キーイベントの生成");
+            assert!(
+                scroller.dispatch_event(&event).expect("イベントの配送"),
+                "Meta"
+            );
+        }
+        assert_eq!(list.selection(), vec![ROWS - 1], "選択も動かさない");
+
         // 全選択は窓の外まで届き、位置は動かさない。
         let top = scroller.scroll_top();
         assert!(press_shortcut(scroller.as_ref(), "a", true, false, false));
