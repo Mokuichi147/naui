@@ -64,6 +64,16 @@ pub(crate) fn mark_parent(element: &HtmlElement, layout: ParentLayout) {
     let _ = element.set_attribute(PARENT_ATTR, layout.attribute());
 }
 
+/// Whether this element has a height other than `Auto` ([`apply_sizing`], or being the
+/// root of a window, which [`fill_parent`] makes `Fill`).
+pub(crate) fn height_is_limited(element: &HtmlElement) -> bool {
+    element.has_attribute(FILL_HEIGHT_ATTR)
+        || element
+            .style()
+            .get_property_value("height")
+            .is_ok_and(|height| !height.is_empty())
+}
+
 /// Applies the size specification to the element.
 pub(crate) fn apply_sizing(element: &Element, sizing: Sizing) {
     let element: &HtmlElement = element.unchecked_ref();

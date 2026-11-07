@@ -9,7 +9,7 @@ use naui::{
 use crate::parts::{self, Notice};
 
 /// List の補足表示、無効な行、単一・複数選択、行の起動と行ごとのコンテキストメニュー、
-/// ListRow の任意内容の行と行クリック、Tree の開閉・選択。
+/// 行がとても多いリスト、ListRow の任意内容の行と行クリック、Tree の開閉・選択。
 pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
@@ -168,6 +168,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     pane.append(&actions);
     pane.append(&list);
 
+    build_large_list(ui, &pane, notice)?;
     build_composed_list(ui, &pane)?;
     build_dynamic_rows(ui, &pane)?;
 
@@ -179,6 +180,43 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
 ///
 /// 組み立てたウィジェットを set_rows で並べる。行を押すと on_activate で
 /// チェックが切り替わる。
+/// 行がとても多いリスト。組み立てるのは画面に出ている分だけなので、開くのも
+/// スクロールするのも行数によらない。選択は画面の外の行にも残る。
+fn build_large_list(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
+    const ROWS: usize = 100_000;
+    parts::section(ui, pane, "Large list")?;
+
+    let list = ui.list()?;
+    list.set_selection_mode(SelectionMode::Multiple);
+    list.set_items(&ListItem::list(
+        (1..=ROWS).map(|number| format!("Row {number}")),
+    ));
+    list.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(180.0)),
+    );
+    list.on_select({
+        let notice = notice.clone();
+        move |indices| notice.show(&format!("{} of {ROWS} rows selected", indices.len()))
+    });
+
+    let actions = ui.stack(Orientation::Horizontal)?;
+    let jump = ui.button("Go to the middle")?;
+    jump.on_click({
+        let list = list.downgrade();
+        move || {
+            if let Some(list) = list.upgrade() {
+                list.scroll_to_row(ROWS / 2);
+            }
+        }
+    });
+    actions.append(&jump);
+    pane.append(&actions);
+    pane.append(&list);
+    Ok(())
+}
+
 fn build_composed_list(ui: &Ui, pane: &naui::Stack) -> Result<()> {
     parts::section(ui, pane, "ListRow")?;
 

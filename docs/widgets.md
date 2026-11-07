@@ -248,7 +248,10 @@ collected in [Known limitations](known-limitations.md).
 - **`List`**: A `ListView`. The row appearance (rounded corners, a subtle fill, the
   accent-colored indicator at the left edge) comes from the standard template, so
   naui adds only a frame `Border` (the same color and corner radius as `Table` and
-  `Tree`). `ListView` handles scrolling itself.
+  `Tree`). As in `Table`, an outer `ScrollViewer` holds the `ListView` between two
+  spacers, because `ListView` creates a `ListViewItem` for every row it is given: with
+  many rows, only the rows on screen are built, and the spacers carry the height of
+  the rest. naui holds the selection, since the `ListView` knows only the rows it has.
 - **`Table`**: WinUI 3 has no `DataGrid` (it belongs to the Community Toolkit), so
   the table is built with `ListView` rows made of `Grid`s, and the header is put in
   a separate `Grid` with the same column definitions to align widths. Only the row
@@ -264,8 +267,8 @@ collected in [Known limitations](known-limitations.md).
   that absorbs presses. The overlay covers only the area right of the disclosure
   chevron, so unselectable branches can still be expanded and collapsed.
   `TreeView` handles scrolling itself (its inner list lays out only as much as the
-  given height, so delegating to an outer `ScrollViewer` as `List` does would cut it
-  off instead of growing).
+  given height, so delegating to an outer `ScrollViewer` would cut it off instead of
+  growing).
 - **`PopupMenu`**: A `MenuFlyout`. Positioning, shadow, rounded corners, light
   dismiss, keyboard operation (arrows and Esc) and wrapping at screen edges all come
   from WinUI. Right-click is delegated to `UIElement.ContextFlyout`, so long press
@@ -529,7 +532,9 @@ collected in [Known limitations](known-limitations.md).
   (`ListRow::on_activate`) are received through `GtkListBox`'s `row-activated`
   (`GtkListBoxRow`'s `activate` is the path for keyboard Enter / Space only). With
   `SelectionMode::Multiple`, single-click activation is turned off so that GTK4 reads
-  the Ctrl / Shift attached to clicks.
+  the Ctrl / Shift attached to clicks. `GtkListBox` creates a row for everything it is
+  given, so with many rows only the rows on screen go in, two `GtkBox`es outside it
+  carry the height of the rest, and naui holds the selection.
 - **`Table`**: Instead of `GtkColumnView` (which requires a `GtkListItemFactory` and
   a `GListModel`), it is built from `GtkListBox` rows laid out horizontally, with
   column widths aligned by a `GtkSizeGroup` per column. Sortable headers are `flat`
@@ -589,13 +594,18 @@ collected in [Known limitations](known-limitations.md).
 - **`EditableComboBox`**: `<input list>` and `<datalist>`. naui builds neither the
   visuals nor the narrowing.
 - **`DatePicker`**: Uses `datetime-local` so as not to bring in time zones.
-- **`List`**: Using `ListItem::detail` or `ListRow` (rows of arbitrary content)
-  switches from `<select>` to an implementation using `<ul role="listbox">`. With
-  text-only rows it stays `<select size>`, because the content model of `<option>`
-  is text only and can hold neither elements nor line breaks. **Having left
+- **`List`**: Using `ListItem::detail` or `ListRow` (rows of arbitrary content), having
+  more than 200 rows, `set_row_builder` or `set_row_height` switches from `<select>` to
+  an implementation using `<ul role="listbox">`, and `native_select` then returns
+  `None`. With a few text-only rows it stays `<select size>`. The
+  content model of `<option>` is text only and can hold neither elements nor line
+  breaks, and a `<select>` creates every `<option>` it is given and has no place for
+  spacers, so only the composed form can build just the rows on screen. **Having left
   `<select>`, naui adds selection, focus and keyboard operation (arrows, Home / End,
-  Space) as it does for `Table`.** The current row is indicated with
-  `aria-activedescendant`, and pressing a row itself moves focus to the list
+  Page Up / Down, Ctrl / ⌘ + A, Space, and typing to jump to a row) as it does for
+  `Table`. With multiple selection, Ctrl / ⌘ with an arrow, Home or End moves only the
+  current row, without changing the selection.** The current row is indicated with
+  `aria-activedescendant` and the browser's focus ring, and pressing a row itself moves focus to the list
   (`<ul tabindex="0">`) so keyboard use can continue. Buttons and input fields
   placed inside rows own their events, so clicks and keys that reach them are not
   turned into list operations (so that Space on a check box does not turn into row

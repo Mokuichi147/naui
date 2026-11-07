@@ -88,8 +88,8 @@ pub use popover::PopoverPosition;
 pub use popup::PopupItem;
 pub use rich_text::{LinkHandler, RichText, TextRun};
 pub use row_window::{
-    keeps_hidden_selection, keeps_row_window, row_window, RowWindow, SelectionGesture,
-    ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
+    keeps_hidden_selection, keeps_row_window, list_row_window, merge_hidden_selection, row_window,
+    RowSource, RowWindow, SelectionGesture, ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
 };
 pub use scroll::ScrollNotifier;
 pub use sidebar::{

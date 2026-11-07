@@ -876,6 +876,7 @@ impl Table {
                 if let Some(height) = fixed_height {
                     row.set_size_request(-1, height);
                 }
+                crate::list::report_row_position(&row, index, window.count);
                 self.0.list.append(&row);
                 realized.push(cells);
             }
@@ -1109,7 +1110,7 @@ fn build_row(
 }
 
 /// Infers how the selection is being changed from the modifier keys held.
-fn gesture_of(state: gtk::gdk::ModifierType) -> SelectionGesture {
+pub(crate) fn gesture_of(state: gtk::gdk::ModifierType) -> SelectionGesture {
     if state.contains(gtk::gdk::ModifierType::SHIFT_MASK) {
         // Shift は起点からの範囲。選び直しなので、窓の外の選択は落とす。
         return SelectionGesture::Extend;

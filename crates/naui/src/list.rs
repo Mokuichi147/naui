@@ -1,11 +1,14 @@
 use crate::sys;
 use crate::Widget;
-use naui_core::{ListItem, Point, SelectionMode};
+use naui_core::{ListItem, Point, Result, SelectionMode};
 
 /// A list of selectable rows. It scrolls by itself.
 ///
 /// Without a height set, it follows the height of all its rows; with a fixed height
 /// or `Fill`, it scrolls whatever overflows.
+///
+/// With more than [`ROW_WINDOW_THRESHOLD`](crate::ROW_WINDOW_THRESHOLD) rows and a limited
+/// height, only the rows on screen are built, whichever way the rows are passed.
 #[derive(Clone)]
 pub struct List(pub(crate) sys::List);
 
@@ -26,6 +29,82 @@ impl List {
     pub fn set_rows(&self, rows: &[ListRow]) {
         self.0
             .set_rows(&rows.iter().map(|row| row.0.clone()).collect::<Vec<_>>())
+    }
+
+    /// Passes rows in a form that **builds each row when it becomes visible**.
+    ///
+    /// `count` is the number of rows, and `build` receives an index from 0 to
+    /// `count - 1` and returns that row ([`ListRow`]). It is called only for the rows on
+    /// screen (and a few before and after), so opening stays fast even with hundreds of
+    /// thousands of rows. Indices change meaning, so the selection is cleared.
+    ///
+    /// The widgets in a row may be recreated every time it is built. Keep per-row state
+    /// in the app's data and build from it inside `build`.
+    ///
+    /// ```no_run
+    /// # use naui::{List, ListRow, Ui};
+    /// # fn fill(ui: &Ui, list: &List, cities: Vec<String>) {
+    /// let ui = ui.clone();
+    /// list.set_row_builder(cities.len(), move |index| {
+    ///     Ok(ListRow::new(&ui.label(&cities[index])?))
+    /// });
+    /// # }
+    /// ```
+    #[inline]
+    pub fn set_row_builder(
+        &self,
+        count: usize,
+        mut build: impl FnMut(usize) -> Result<ListRow> + 'static,
+    ) {
+        self.0
+            .set_row_builder(count, move |index| build(index).map(|row| row.0))
+    }
+
+    /// Passes a function that answers whether a row can be selected **without building
+    /// the row**.
+    ///
+    /// For rows built with [`List::set_row_builder`], naui does not know whether rows
+    /// not yet built can be selected. With this function, [`List::set_selection`] can
+    /// keep its promise of "removing rows that cannot be selected" even for rows off
+    /// screen. Without it, rows follow the [`ListRow::selectable`] they were last built
+    /// with, even after leaving the screen, and rows not built since the rows were passed
+    /// or refreshed are treated as selectable.
+    ///
+    /// Its answers must match the [`ListRow::selectable`] returned by `build`. It stays when
+    /// the rows are replaced, so pass a new one if its answers change.
+    #[inline]
+    pub fn set_row_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
+        self.0.set_row_selectable(selectable)
+    }
+
+    /// Rebuilds the visible rows. The row count and selection stay.
+    ///
+    /// Use it when what the function passed to [`List::set_row_builder`] returns has
+    /// changed.
+    #[inline]
+    pub fn refresh(&self) {
+        self.0.refresh()
+    }
+
+    /// Sets the row height in logical pixels. Passing 0 or less measures it from the
+    /// rows.
+    ///
+    /// Every row gets at least this height. With more rows than
+    /// [`ROW_WINDOW_THRESHOLD`](crate::ROW_WINDOW_THRESHOLD), rows off screen are filled
+    /// in as "row count × this height", so set it when the rows' heights vary. A row built
+    /// later that needs more raises the height for every row (on macOS, only its own).
+    #[inline]
+    pub fn set_row_height(&self, height: f64) {
+        self.0.set_row_height(height)
+    }
+
+    /// The row height (logical pixels). 0 if there are no rows, or no row has been built
+    /// yet (macOS has an estimate by then).
+    ///
+    /// With few rows and no height set, rows may differ in height.
+    #[inline]
+    pub fn row_height(&self) -> f64 {
+        self.0.row_height()
     }
 
     #[inline]
@@ -54,7 +133,7 @@ impl List {
         self.0.selected()
     }
 
-    /// Returns the selected rows in ascending order.
+    /// Returns the selected rows in ascending order, including rows not built.
     #[inline]
     pub fn selection(&self) -> Vec<usize> {
         self.0.selection()
@@ -64,7 +143,7 @@ impl List {
     ///
     /// If it is already visible nothing moves; otherwise it is aligned to the nearer
     /// edge (the top if it is above, the bottom if it is below). Does nothing if out of
-    /// range.
+    /// range. Rows not built yet can be scrolled to as well.
     #[inline]
     pub fn scroll_to_row(&self, index: usize) {
         self.0.scroll_to_row(index)

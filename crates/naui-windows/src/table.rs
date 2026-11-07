@@ -44,8 +44,8 @@ use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
 use crate::list::{
-    hold_unselectable_press, item_padding, new_row_item, text_block, transparent_grid,
-    ActivationHandler, SelectionHandler,
+    hold_unselectable_press, item_padding, new_row_item, report_row_position, text_block,
+    transparent_grid, ActivationHandler, SelectionHandler,
 };
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
@@ -647,7 +647,7 @@ fn append_widget_cell(
 /// spot. `GetKeyState` returns the state as far as the thread has processed, so it
 /// is the state at the same moment as the click or key operation that caused the
 /// selection.
-fn selection_gesture() -> SelectionGesture {
+pub(crate) fn selection_gesture() -> SelectionGesture {
     use windows::Win32::UI::Input::KeyboardAndMouse::{GetKeyState, VK_CONTROL, VK_SHIFT};
 
     // 最上位のビットが立っていれば、そのキーは押されている。
@@ -1411,6 +1411,7 @@ impl Table {
                 .map_err(|e| to_error("set the row content", e))?;
             // 文字だけの行で `enabled` が `false` のときは、行ごと操作できない。
             let _ = item.SetIsEnabled(!cells.dimmed);
+            report_row_position(&item, index, window.count);
             self.attach_row_click(&item, index)?;
 
             let element = item

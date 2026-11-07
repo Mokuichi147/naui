@@ -2,8 +2,7 @@
 //!
 //! WinUI's standard `ListView` is used as is. Rows are `ListViewItem`s, holding
 //! either a `TextBlock` placed in a transparent `Grid` or any prebuilt widget. Rows
-//! that cannot be used get `IsEnabled = false`, and multiple selection and keyboard
-//! navigation are done by `ListView`.
+//! that cannot be used get `IsEnabled = false`.
 //!
 //! The row look (rounded corners, light fill, the accent-colored indicator on the
 //! left) comes from `ListView`'s standard template. Only a frame is missing, so
@@ -13,11 +12,18 @@
 //! resources cannot be obtained, it falls back to a plain `Border`, prioritizing
 //! function.
 //!
-//! Scrolling is owned by the `ListView` itself (the inner list lays out only as many
-//! rows as fit its given height, so entrusting it to an outer `ScrollViewer` would
-//! cut it off instead of growing). For the window-wide wheel helper
-//! ([`crate::layout`]), the `ScrollViewer` inside the template is found and
-//! registered.
+//! Scrolling is owned by an outer `ScrollViewer` holding the `ListView` and two spacers
+//! (the same structure as [`crate::Table`]). **With many rows, only the rows on screen
+//! are built**: `ListView` creates a `ListViewItem` for every row it is given, so the
+//! rows outside the window are left out and the spacers carry their height. The
+//! selection is held here, because `ListView` knows only the rows it has. That
+//! `ScrollViewer` is registered with the window-wide wheel helper ([`crate::layout`]).
+//!
+//! For the same reason, in a list that scrolls itself the movement keys and anything with
+//! Shift are handled here: `ListView` takes all its rows as the page, and it keeps its
+//! keyboard position and the Shift anchor as places among the rows it has, which mean other
+//! rows once the window moves. Clicks are left to it, as is everything in a list whose
+//! height follows its rows.
 //!
 //! Row activation is received through the `ListViewItem`'s `DoubleTapped` and
 //! Enter's `KeyDown`. Right-clicks are received through `ContextRequested`, the
@@ -26,15 +32,20 @@
 //! position, so the row's left edge is passed.
 
 use std::cell::{Cell, RefCell};
+use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{
-    Align, ListItem, Orientation, Point, Result, SelectionMode, Sizing, TextColor, TextStyle,
+    keeps_row_window, list_row_window, merge_hidden_selection, Align, ListItem, Modifiers,
+    Orientation, Point, Result, RowSource, RowWindow, SelectionGesture, SelectionMode, Sizing,
+    TextColor, TextStyle, ROW_WINDOW_OVERSCAN,
 };
+use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Border, Control, Grid as XamlGrid, ListView, ListViewItem, ListViewSelectionMode,
-    ScrollBarVisibility, ScrollViewer, SelectionChangedEventHandler, TextBlock,
+    ScrollBarVisibility, ScrollMode, ScrollViewer, ScrollViewerViewChangedEventArgs,
+    SelectionChangedEventHandler, StackPanel, TextBlock,
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::{
     ContextRequestedEventArgs, DoubleTappedEventHandler, KeyEventHandler, PointerEventHandler,
@@ -43,13 +54,14 @@ use naui_winui3::Microsoft::UI::Xaml::Input::{
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
 use naui_winui3::Microsoft::UI::Xaml::{
-    DependencyObject, FrameworkElement, RoutedEventHandler, Thickness, UIElement,
+    DependencyObject, FocusState, FrameworkElement, RoutedEventHandler, Thickness, UIElement,
 };
-use windows::Foundation::{Point as XamlPoint, TypedEventHandler};
+use windows::Foundation::{Point as XamlPoint, PropertyValue, TypedEventHandler};
 use windows::System::VirtualKey;
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
+use crate::table::selection_gesture;
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, label_style, Label, SelectHandler, Stack, Widget};
@@ -191,9 +203,10 @@ const ROW_PADDING: Thickness = Thickness {
 /// The list's frame. `ListView` has no frame, so it is surrounded by a `Border` with
 /// the same color and rounded corners as `Table` and `Tree`.
 ///
-/// The rows are rebuilt as a whole on every `set_rows`, so the default item transitions
-/// (which animate rows as they are added and removed) are cleared. Otherwise the whole
-/// list animates each time it is rebuilt. `Table` does the same.
+/// The rows are rebuilt as a whole on every `set_rows` and whenever the window moves, so
+/// the default item transitions (which animate rows as they are added and removed) are
+/// cleared. Otherwise the whole list animates each time it is rebuilt. `Table` does the
+/// same.
 const SURFACE_XAML: &str = r##"<Border
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Background="{ThemeResource ControlFillColorDefaultBrush}"
@@ -218,6 +231,15 @@ const ROW_ITEM_XAML: &str = r##"<ListViewItem
         <TransitionCollection/>
     </ListViewItem.ContentTransitions>
 </ListViewItem>"##;
+
+/// Tells assistive technology a row's place among all the rows and how many there are.
+///
+/// The `ListView` has only the rows built, so it would answer with those alone.
+pub(crate) fn report_row_position(row: &ListViewItem, index: usize, count: usize) {
+    let _ =
+        AutomationProperties::SetPositionInSet(row, i32::try_from(index + 1).unwrap_or(i32::MAX));
+    let _ = AutomationProperties::SetSizeOfSet(row, i32::try_from(count).unwrap_or(i32::MAX));
+}
 
 /// Creates one row container. Falls back to a plain `ListViewItem` if the XAML cannot
 /// be read.
@@ -482,17 +504,80 @@ impl SelectionHandler {
     }
 }
 
+/// A movement of the keyboard cursor that [`List::move_cursor`] may do itself.
+#[derive(Clone, Copy)]
+enum RowMotion {
+    /// Page Up and Page Down.
+    Pages(i32),
+    /// The up and down arrows, or Space to stay on the row.
+    Lines(i32),
+    /// Home.
+    First,
+    /// End.
+    Last,
+}
+
+impl RowMotion {
+    fn of_key(key: VirtualKey) -> Option<Self> {
+        match key {
+            VirtualKey::PageUp => Some(Self::Pages(-1)),
+            VirtualKey::PageDown => Some(Self::Pages(1)),
+            VirtualKey::Up => Some(Self::Lines(-1)),
+            VirtualKey::Down => Some(Self::Lines(1)),
+            VirtualKey::Space => Some(Self::Lines(0)),
+            VirtualKey::Home => Some(Self::First),
+            VirtualKey::End => Some(Self::Last),
+            _ => None,
+        }
+    }
+}
+
 struct ListInner {
     native: Border,
     list_view: ListView,
-    /// The registration with the wheel helper. It cannot be decided until the
-    /// template's `ScrollViewer` appears, so it is made after `Loaded`.
+    /// The scroll area bundling the row list and the spacers before and after it.
+    scroll: ScrollViewer,
+    /// What `scroll` scrolls. Row positions are measured from here.
+    body: StackPanel,
+    /// Frames filling in for the rows outside the window.
+    top_spacer: XamlGrid,
+    bottom_spacer: XamlGrid,
+    /// The registration with the wheel helper, made after `Loaded`.
     wheel: RefCell<Option<Rc<ListScrollTarget>>>,
-    /// The rows themselves. Reading and writing the selection goes through here.
+    /// The built rows themselves, in order from `window.start`.
     native_rows: RefCell<Vec<ListViewItem>>,
-    /// The row models. Whether they can be selected and their activation are looked up
-    /// from here. It also keeps the callbacks and the like contained in the rows alive.
-    rows: RefCell<Vec<ListRow>>,
+    /// The contents of the built rows, in the same order as `native_rows`. It also keeps
+    /// the callbacks and the like contained in the rows alive.
+    realized: RefCell<Vec<ListRow>>,
+    /// Where the rows come from.
+    rows: RowSource<ListRow>,
+    /// The range of rows currently built. With many rows, only those around the screen.
+    window: Cell<RowWindow>,
+    /// The first row the `ListView` has now. `window` moves ahead of it just before the
+    /// rows are rebuilt.
+    built_start: Cell<usize>,
+    /// The range the last build failed on, if it did.
+    failed_window: Cell<Option<RowWindow>>,
+    /// Whether rows are being built right now. Prevents nested rebuilds.
+    rebuilding: Cell<bool>,
+    /// The selected rows (ascending). Rows outside the window are included, so this is
+    /// the source of truth, not the `ListView`.
+    selected: RefCell<Vec<usize>>,
+    /// The anchor of a Shift range selection, as a row number: `ListView` keeps it as a
+    /// place among the rows it has, so it means another row once the window moves.
+    anchor: Cell<Option<usize>>,
+    /// The row the pointer last went over or pressed.
+    pointer_row: Cell<Option<usize>>,
+    /// The height of one row (logical pixels). Either measured or set with
+    /// [`List::set_row_height`].
+    row_height: Cell<f64>,
+    /// Whether `row_height` is from rows that are gone, so the next measurement replaces
+    /// it instead of only growing it.
+    row_height_stale: Cell<bool>,
+    /// Whether rows were built and not measured yet (they have no size until layout).
+    row_height_pending: Cell<bool>,
+    /// The row height decided by the app. If absent, it is measured from the built rows.
+    fixed_row_height: Cell<Option<f64>>,
     mode: Cell<SelectionMode>,
     handler: SelectionHandler,
     /// Stops notifications only while the selection is being changed from code, since
@@ -508,8 +593,11 @@ struct ListInner {
 
 /// A vertical list of selectable rows (`ListView`).
 ///
-/// The `ListView` itself owns its height, but to fix it regardless of the number of
-/// rows, specify it with `set_sizing`.
+/// Its height follows its rows; to fix it regardless of the number of rows, specify it
+/// with `set_sizing`. Do so for a list that may have more than about
+/// [`ROW_WINDOW_THRESHOLD`](naui_core::ROW_WINDOW_THRESHOLD) rows: following the rows
+/// builds all of them, and a UI Automation client walking them can make the app stop
+/// responding, because the cost in WinUI's `ListView` grows steeply with the rows built.
 #[derive(Clone)]
 pub struct List(Rc<ListInner>);
 impl_widget!(List, native);
@@ -527,12 +615,63 @@ impl List {
         );
         let hovered = Arc::new(UiThreadCell::new(0));
 
+        // `ListView` の Header / Footer で巨大な空白を動かすと、行があっても描かれない
+        // ことがある (`Table` と同じ)。スクロールと詰め物は外側が持ち、`ListView` は
+        // 実体化した行だけを測る。
+        ScrollViewer::SetVerticalScrollBarVisibility2(&list_view, ScrollBarVisibility::Disabled)
+            .map_err(|e| to_error("disable the row list scroll bar", e))?;
+        ScrollViewer::SetVerticalScrollMode2(&list_view, ScrollMode::Disabled)
+            .map_err(|e| to_error("disable the row list scrolling", e))?;
+        let top_spacer = XamlGrid::new().map_err(|e| to_error("create the List spacer", e))?;
+        let bottom_spacer = XamlGrid::new().map_err(|e| to_error("create the List spacer", e))?;
+        let body = StackPanel::new().map_err(|e| to_error("create the List body", e))?;
+        native
+            .SetChild(Option::<&UIElement>::None)
+            .map_err(|e| to_error("move the row list", e))?;
+        let body_children = body.Children().map_err(|e| to_error("get the body", e))?;
+        for element in [
+            top_spacer.cast::<UIElement>(),
+            list_view.cast::<UIElement>(),
+            bottom_spacer.cast::<UIElement>(),
+        ] {
+            body_children
+                .Append(&element.map_err(|e| to_error("convert the body to UIElement", e))?)
+                .map_err(|e| to_error("add to the body", e))?;
+        }
+        let scroll = ScrollViewer::new().map_err(|e| to_error("create the list scroll area", e))?;
+        // 横スクロールは持たせない (行は幅いっぱいに広げる)。
+        scroll
+            .SetHorizontalScrollBarVisibility(ScrollBarVisibility::Disabled)
+            .map_err(|e| to_error("disable horizontal scrolling", e))?;
+        scroll
+            .SetContent(&body)
+            .map_err(|e| to_error("set the list scroll content", e))?;
+        native
+            .SetChild(&scroll)
+            .map_err(|e| to_error("add the list body", e))?;
+
         let this = Self(Rc::new(ListInner {
             native,
             list_view,
+            scroll,
+            body,
+            top_spacer,
+            bottom_spacer,
             wheel: RefCell::new(None),
             native_rows: RefCell::new(Vec::new()),
-            rows: RefCell::new(Vec::new()),
+            realized: RefCell::new(Vec::new()),
+            rows: RowSource::default(),
+            window: Cell::new(RowWindow::default()),
+            built_start: Cell::new(0),
+            failed_window: Cell::new(None),
+            rebuilding: Cell::new(false),
+            selected: RefCell::new(Vec::new()),
+            anchor: Cell::new(None),
+            pointer_row: Cell::new(None),
+            row_height: Cell::new(0.0),
+            row_height_stale: Cell::new(false),
+            row_height_pending: Cell::new(false),
+            fixed_row_height: Cell::new(None),
             mode: Cell::new(SelectionMode::Single),
             handler: SelectionHandler::new(),
             silent: Rc::new(Cell::new(false)),
@@ -554,10 +693,8 @@ impl List {
                 if let Some(inner) = weak.upgrade() {
                     let list = List(inner);
                     if !list.0.silent.get() {
-                        let indices = list.selection();
-                        // 任意内容の設定行など、行全体を選ばない項目へ付いた
-                        // ListBox の選択は即座に戻す。子の Button 等は無効にしない。
-                        list.write_selection(&indices);
+                        let indices = list.read_native_selection();
+                        *list.0.selected.borrow_mut() = indices.clone();
                         list.0.handler.emit(&indices);
                     }
                 }
@@ -569,6 +706,21 @@ impl List {
             .SelectionChanged(&handler)
             .map_err(|e| to_error("subscribe to the ListView", e))?;
         this.install_wheel_target()?;
+        this.install_window_updates()?;
+
+        let state = UiThreadCell::new(Rc::downgrade(&this.0));
+        let got_focus = RoutedEventHandler::new(move |_, _| {
+            let _ = state.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    List(inner).keep_focus_on_screen();
+                }
+            });
+            Ok(())
+        });
+        this.0
+            .list_view
+            .GotFocus(&got_focus)
+            .map_err(|e| to_error("subscribe to List focus changes", e))?;
 
         // `layout` のホイール補助は、子要素の上でも `ScrollViewer` を動かせる
         // ように、ウィンドウ全体のホイールを先に処理する。List の上では
@@ -611,12 +763,9 @@ impl List {
         Ok(this)
     }
 
-    /// Registers the `ScrollViewer` inside the template as a destination of the wheel
-    /// helper.
+    /// Registers the list's `ScrollViewer` as a destination of the wheel helper.
     ///
-    /// The `ListView`'s contents are not assembled until `Loaded`, so it waits for that.
-    /// If it is not found it simply does not register; the control's own scrolling still
-    /// works.
+    /// After the display size is decided on `Loaded`, the visible range is updated too.
     fn install_wheel_target(&self) -> Result<()> {
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let loaded = RoutedEventHandler::new(move |_, _| {
@@ -639,17 +788,66 @@ impl List {
         if self.0.wheel.borrow().is_some() {
             return;
         }
-        let Some(scroll) = crate::layout::scroll_viewer_within(&self.0.list_view) else {
-            return;
-        };
-        let target = crate::layout::register_list_scroll(scroll, self.0.hovered.clone());
+        let target =
+            crate::layout::register_list_scroll(self.0.scroll.clone(), self.0.hovered.clone());
         *self.0.wheel.borrow_mut() = Some(target);
+        // 大きさが決まったので、組み立てる範囲を引き直す。
+        self.update_window();
+    }
+
+    /// Moves the built range along with scrolling and layout.
+    ///
+    /// `ViewChanged` also arrives for intermediate progress (dragging the thumb,
+    /// inertia), so the rows follow while scrolling. Layout completing gets row swaps in
+    /// before drawing, and it is also when newly built rows first have a size.
+    fn install_window_updates(&self) -> Result<()> {
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let handler = windows::Foundation::EventHandler::<IInspectable>::new(move |_, _| {
+            let _ = state.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    List(inner).update_window();
+                }
+            });
+            Ok(())
+        });
+        self.0
+            .list_view
+            .LayoutUpdated(&handler)
+            .map_err(|e| to_error("subscribe to List layout updates", e))?;
+
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let handler = windows::Foundation::EventHandler::<ScrollViewerViewChangedEventArgs>::new(
+            move |_, _| {
+                let _ = state.try_with_mut(|weak| {
+                    if let Some(inner) = weak.upgrade() {
+                        List(inner).update_window();
+                    }
+                });
+                Ok(())
+            },
+        );
+        self.0
+            .scroll
+            .ViewChanged(&handler)
+            .map_err(|e| to_error("subscribe to List scroll position changes", e))?;
+
+        // `Auto` の高さでは全行を組み立て、指定があれば絞る。実際の大きさが同じままの
+        // 変更もあるので、`SizeChanged` は待たない。
+        let target = Rc::downgrade(&self.0);
+        crate::layout::on_sizing_change(&self.native_element(), move || {
+            if let Some(inner) = target.upgrade() {
+                List(inner).update_window();
+            }
+        });
+        Ok(())
     }
 
     /// Rebuilds the rows. Indices change meaning, so the selection is cleared.
     pub fn set_items(&self, items: &[ListItem]) {
-        let rows: Vec<ListRow> = items.iter().cloned().map(ListRow::from_item).collect();
-        self.set_rows(&rows);
+        self.0
+            .rows
+            .set_rows(items.iter().cloned().map(ListRow::from_item).collect());
+        self.reset_rows();
     }
 
     /// Rebuilds the rows. Both plain text rows and custom-content rows are built
@@ -658,51 +856,751 @@ impl List {
     /// Controls inside a row can have their own callbacks as usual. Indices change
     /// meaning, so the selection is cleared.
     pub fn set_rows(&self, rows: &[ListRow]) {
-        let _ = self.rebuild(rows);
+        self.0.rows.set_rows(rows.to_vec());
+        self.reset_rows();
     }
 
-    fn rebuild(&self, rows: &[ListRow]) -> Result<()> {
+    /// Passes rows in a form that **builds each row when it becomes visible**.
+    ///
+    /// `count` is the number of rows, and `build` receives an index from 0 to
+    /// `count - 1` and returns that row ([`ListRow`]). It is called only for the rows on
+    /// screen (and a few before and after), so opening stays fast even with hundreds of
+    /// thousands of rows. Indices change meaning, so the selection is cleared.
+    ///
+    /// The widgets in a row may be recreated every time it is built. Keep per-row state
+    /// in the app's data and build from it inside `build`.
+    ///
+    /// ```no_run
+    /// # use naui_windows::{List, ListRow, Ui};
+    /// # fn fill(ui: &Ui, list: &List, cities: Vec<String>) {
+    /// let ui = ui.clone();
+    /// list.set_row_builder(cities.len(), move |index| {
+    ///     Ok(ListRow::new(&ui.label(&cities[index])?))
+    /// });
+    /// # }
+    /// ```
+    pub fn set_row_builder(
+        &self,
+        count: usize,
+        build: impl FnMut(usize) -> Result<ListRow> + 'static,
+    ) {
+        self.0.rows.set_builder(count, build);
+        self.reset_rows();
+    }
+
+    /// Passes a function that answers whether a row can be selected **without building
+    /// the row**.
+    ///
+    /// For rows built with [`List::set_row_builder`], naui does not know whether rows
+    /// not yet built can be selected. With this function, [`List::set_selection`] can
+    /// keep its promise of "removing rows that cannot be selected" even for rows off
+    /// screen. Without it, rows follow the [`ListRow::selectable`] they were last built
+    /// with, even after leaving the screen, and rows not built since the rows were passed
+    /// or refreshed are treated as selectable.
+    ///
+    /// Its answers must match the [`ListRow::selectable`] returned by `build`. It stays when
+    /// the rows are replaced, so pass a new one if its answers change.
+    pub fn set_row_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
+        self.0.rows.set_selectable(selectable);
+    }
+
+    /// Rebuilds the visible rows. The row count and selection stay.
+    ///
+    /// Use it when what the function passed to [`List::set_row_builder`] returns has
+    /// changed.
+    pub fn refresh(&self) {
+        self.0.row_height_stale.set(true);
+        self.0.rows.forget_selectable();
+        // 行を組み立てる関数の中から呼ばれたら、組み立てている側が最初からやり直す。
+        if self.0.rebuilding.get() {
+            self.0.rows.invalidate();
+            return;
+        }
+        self.build_window();
+        // 中身や指定が変わって行の高さが動いていれば、窓の位置も変わる。測った結果が
+        // 同じでも窓を引き直す (`set_row_height` は先に高さを書き換えている)。
+        self.settle_row_height();
+        self.update_window();
+    }
+
+    /// Sets the row height in logical pixels. Passing 0 or less measures it from the
+    /// rows.
+    ///
+    /// Every row gets at least this height. With more rows than
+    /// [`ROW_WINDOW_THRESHOLD`](naui_core::ROW_WINDOW_THRESHOLD), rows off screen are
+    /// filled in as "row count × this height", so set it when the rows' heights vary. A
+    /// row built later that needs more raises the height for every row.
+    pub fn set_row_height(&self, height: f64) {
+        self.0
+            .fixed_row_height
+            .set((height > 0.0).then_some(height));
+        // 指定を外したときは、組み立て直した行から測り直す。
+        self.0.row_height.set(height.max(0.0));
+        self.refresh();
+    }
+
+    /// The row height (logical pixels). 0 if there are no rows or none has been built yet.
+    ///
+    /// With few rows and no height set, rows may differ, and this is the tallest built.
+    pub fn row_height(&self) -> f64 {
+        if self.is_empty() && self.0.fixed_row_height.get().is_none() {
+            return 0.0;
+        }
+        self.0.row_height.get()
+    }
+
+    // ------------------------------------------------------- 行を絞る窓
+
+    /// Rebuilds the rows and moves the window back to the start. The selection is
+    /// cleared too.
+    fn reset_rows(&self) {
+        self.0.selected.borrow_mut().clear();
+        self.0.anchor.set(None);
+        self.0.row_height_stale.set(true);
+        // 組み立ての途中で差し替えられたら、組み立てている側が新しい行でやり直す。
+        if self.0.rebuilding.get() {
+            return;
+        }
+        self.0.window.set(self.compute_window(ROW_WINDOW_OVERSCAN));
+        self.build_window();
+        if self.settle_row_height() {
+            self.update_window();
+        }
+    }
+
+    /// Rebuilds every `ListView` row of the current window.
+    fn build_window(&self) {
+        self.build_window_from(None);
+    }
+
+    /// Builds the current window. The rows `previous` has in common with it stay as they
+    /// are, unless the rows are replaced during the build.
+    fn build_window_from(&self, previous: Option<RowWindow>) {
+        // 組み立ての途中でアプリのコードが動くので、そこから呼ばれても
+        // 二重に作り直さない。
+        if self.0.rebuilding.replace(true) {
+            return;
+        }
+        self.0.rows.build_until_settled(|replaced| {
+            if replaced {
+                self.0.window.set(self.compute_window(ROW_WINDOW_OVERSCAN));
+            }
+            if let Err(error) = self.build_window_once(previous.filter(|_| !replaced)) {
+                eprintln!("naui-windows: failed to build the list rows: {error}");
+            }
+        });
+        self.0.rebuilding.set(false);
+    }
+
+    fn build_window_once(&self, previous: Option<RowWindow>) -> Result<()> {
+        // コレクションを空にせず置換し、スクロールのリセットを避ける。
+        // 行数が減って位置が補正された場合だけ、レイアウト後に戻す。
+        let offset = self.0.scroll.VerticalOffset().ok();
         let children = self
             .0
             .list_view
             .Items()
             .map_err(|e| to_error("get the rows", e))?;
-        self.release_row_contents();
-        self.without_notifying(|_| children.Clear())
-            .map_err(|e| to_error("clear the rows", e))?;
-        self.0.native_rows.borrow_mut().clear();
-
-        let mut native_rows = Vec::with_capacity(rows.len());
-        for (index, row) in rows.iter().enumerate() {
-            let native = new_row_item()?;
-            let _ = native.SetPadding(item_padding(row.is_selectable()));
-            let host = row_host(row)?;
-            native
-                .SetContent(&host)
-                .map_err(|e| to_error("set the row content", e))?;
-            // 選べないだけの行は中のコントロールを押せる必要があるので、
-            // 無効にするのは `ListItem::enabled(false)` の行だけ。
-            let _ = native.SetIsEnabled(!row.is_disabled_item());
-            // 無効の行には入力が届かないので、起動も文脈メニューも出ない。
-            self.listen_row_events(&native, index)?;
-
-            let element = native
-                .cast::<IInspectable>()
-                .map_err(|e| to_error("convert the row to UIElement", e))?;
-            self.without_notifying(|_| children.Append(&element))
-                .map_err(|e| to_error("add the row", e))?;
-            native_rows.push(native);
+        let previous_count = children
+            .Size()
+            .map_err(|e| to_error("get the row count", e))?;
+        let focused = self.focused_row();
+        let window = self.0.window.get();
+        let generation = self.0.rows.generation();
+        let built = std::mem::take(&mut *self.0.native_rows.borrow_mut());
+        let built_rows = std::mem::take(&mut *self.0.realized.borrow_mut());
+        let built_start = self.0.built_start.get();
+        // 窓に残る行は触らない。作り直すと、中のコントロールのフォーカスが失われる。
+        // 前回の組み立てが途中で終わっていたら、位置が合わないので全部作り直す。
+        // 全行を組み立てるときも、そろえた高さから行ごとの高さへ戻すために作り直す。
+        let kept = previous
+            .filter(|previous| previous.len() == built.len() && !window.is_complete())
+            .map_or(0..0, |previous| previous.overlap(window));
+        // 残る行が無いときは、取り除かずに置き換える (上のコメントのとおり)。
+        let replaceable = match kept.is_empty() {
+            true => previous_count,
+            false => 0,
+        };
+        // 高さが分かっていれば、作るときから同じ高さにする (測るまで行が動かない)。
+        let min_height = match window.is_complete() || self.0.row_height_stale.get() {
+            true => 0.0,
+            false => self.0.row_height.get(),
+        };
+        let mut native_rows = Vec::with_capacity(window.len());
+        let mut realized = Vec::with_capacity(window.len());
+        // 失敗しても `ListView` に残っている行は、管理から外さない。外すと、次の組み立てで
+        // 中身を取り出せず、アプリが持っているウィジェットを載せ直せなくなる。窓は実際に
+        // 組み立てた行まで縮めるので、行の番号はずれない。
+        let mut outcome = Ok(());
+        for (offset, (native, row)) in built.into_iter().zip(built_rows).enumerate() {
+            if kept.contains(&(built_start + offset)) {
+                native_rows.push(native);
+                realized.push(row);
+                continue;
+            }
+            release_row_content(&native);
+            if kept.is_empty() {
+                continue;
+            }
+            let at = native_rows.len() as u32;
+            if let Err(error) = self.without_notifying(|_| children.RemoveAt(at)) {
+                outcome = Err(to_error("remove the row", error));
+                native_rows.push(native);
+                realized.push(row);
+            }
         }
+        // 残る行から外側へ組み立てるので、途中で失敗しても行は連続している。
+        let mut first = match kept.is_empty() {
+            true => window.start,
+            false => kept.start,
+        };
+        let after_kept = window
+            .indices()
+            .filter(|&index| kept.is_empty() || index >= kept.end);
+        let before_kept = (window.start..kept.start).rev();
+        for index in after_kept.chain(before_kept) {
+            if outcome.is_err() {
+                break;
+            }
+            let Some(row) = self.0.rows.row(index) else {
+                continue;
+            };
+            // 差し替えられたら、この行も残りの窓ももう古い。
+            if self.0.rows.generation() != generation {
+                break;
+            }
+            // 組み立てに失敗した行は、空の行にする。
+            let mut row = row.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
+            // 行に載せられないウィジェットが返ったときも同じ。行が欠けると、行の位置と
+            // 窓の位置がずれて、選択やフォーカスが別の行へ届く。
+            let built = self
+                .new_native_row(index, &row, window.count, min_height)
+                .or_else(|error| {
+                    eprintln!("naui-windows: failed to build list row {index}: {error}");
+                    row = ListRow::from_item(ListItem::new(""));
+                    self.new_native_row(index, &row, window.count, min_height)
+                });
+            self.0.rows.note_selectable(index, row.is_selectable());
+            let native = match built {
+                Ok(native) => native,
+                Err(error) => {
+                    outcome = Err(error);
+                    break;
+                }
+            };
+            let before = index < kept.start;
+            let slot = match before {
+                true => 0,
+                false => native_rows.len(),
+            };
+            let placed = native.cast::<IInspectable>().and_then(|element| {
+                self.without_notifying(|_| {
+                    if before {
+                        children.InsertAt(slot as u32, &element)
+                    } else if (slot as u32) < replaceable {
+                        children.SetAt(slot as u32, &element)
+                    } else {
+                        children.Append(&element)
+                    }
+                })
+            });
+            if let Err(error) = placed {
+                release_row_content(&native);
+                outcome = Err(to_error("place the row", error));
+                break;
+            }
+            native_rows.insert(slot, native);
+            realized.insert(slot, row);
+            first -= usize::from(before);
+        }
+        for _ in native_rows.len() as u32..replaceable {
+            if let Err(error) = self.without_notifying(|_| children.RemoveAtEnd()) {
+                outcome = Err(to_error("remove the extra rows", error));
+                break;
+            }
+        }
+        let built_count = native_rows.len();
         *self.0.native_rows.borrow_mut() = native_rows;
-        *self.0.rows.borrow_mut() = rows.to_vec();
-        self.write_selection(&[]);
+        *self.0.realized.borrow_mut() = realized;
+        self.0.built_start.set(first);
+        self.0.row_height_pending.set(true);
+        // 同じ窓で何度も失敗しないよう、やり直すのは窓が動くか `refresh` のときにする。
+        self.0.failed_window.set(outcome.is_err().then_some(window));
+        let window = match outcome.is_err() {
+            true => RowWindow {
+                start: first,
+                end: first + built_count,
+                count: window.count,
+            },
+            false => window,
+        };
+        self.0.window.set(window);
+
+        let height = self.0.row_height.get();
+        set_spacer_height(&self.0.top_spacer, window.leading(height));
+        set_spacer_height(&self.0.bottom_spacer, window.trailing(height));
+
+        // 覚えている選択を、組み立て直した行へ写す。
+        let picked = self.selection();
+        self.write_selection(&picked);
+
+        self.0
+            .scroll
+            .UpdateLayout()
+            .map_err(|e| to_error("update the list layout", e))?;
+        // 矢印キーで窓の端まで来たときに組み立て直しても、操作が続けられるように。
+        if let Some((index, state)) = focused.filter(|(index, _)| !kept.contains(index)) {
+            self.restore_focus(index, state);
+        }
+        let Some(offset) = offset else {
+            return outcome;
+        };
+        // 毎回 ChangeView を呼ぶと、ホイールの進行中の移動まで止めてしまう。
+        if (self.0.scroll.VerticalOffset().unwrap_or(offset) - offset).abs() < 0.5 {
+            return outcome;
+        }
+        outcome.and(self.change_view(offset))
+    }
+
+    /// Creates the `ListViewItem` of one row.
+    fn new_native_row(
+        &self,
+        index: usize,
+        row: &ListRow,
+        count: usize,
+        min_height: f64,
+    ) -> Result<ListViewItem> {
+        let native = new_row_item()?;
+        let _ = native.SetPadding(item_padding(row.is_selectable()));
+        match self.0.fixed_row_height.get() {
+            Some(height) => {
+                let _ = native.SetMinHeight(height);
+            }
+            None if min_height > 0.0 => {
+                let _ = native.SetMinHeight(min_height);
+            }
+            None => {}
+        }
+        let host = row_host(row)?;
+        // 取り込んだウィジェットを、捨てる入れ物に残さない。
+        let in_row = |result: windows_core::Result<()>| {
+            result.map_err(|error| {
+                release_host_content(&host);
+                to_error("set the row content", error)
+            })
+        };
+        // スクロールのあとポインターを動かさずに押すと、`PointerEntered` は来ない。
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let pressed = PointerEventHandler::new(move |_, _| {
+            let _ = state.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.pointer_row.set(Some(index));
+                }
+            });
+            Ok(())
+        });
+        let _ = host.PointerPressed(&pressed);
+        in_row(native.SetContent(&host))?;
+        // 選べないだけの行は中のコントロールを押せる必要があるので、
+        // 無効にするのは `ListItem::enabled(false)` の行だけ。
+        let _ = native.SetIsEnabled(!row.is_disabled_item());
+        report_row_position(&native, index, count);
+        // 無効の行には入力が届かないので、起動も文脈メニューも出ない。
+        if let Err(error) = self.listen_row_events(&native, index) {
+            release_row_content(&native);
+            return Err(error);
+        }
+        Ok(native)
+    }
+
+    /// Moves the keyboard cursor from row `from`, as `ListView` would if it had every row.
+    /// `false` if `ListView` should do it.
+    ///
+    /// `ListView` knows only the rows it has, and it takes those as the page because the
+    /// scrolling is outside it: Page Down goes straight to the last one even in a short
+    /// list. It also keeps the Shift anchor as a place among those rows. So the movements
+    /// that depend on either are done here, before it sees the key.
+    fn move_cursor(&self, from: usize, motion: RowMotion, modifiers: Modifiers) -> bool {
+        let height = self.0.row_height.get();
+        let count = self.len();
+        let extending = modifiers.shift && self.0.mode.get().is_multiple();
+        // 高さが行に従うリストは全行を持ち、スクロールするのは親なので、任せたままでよい。
+        if height <= 0.0 || count == 0 || !self.height_is_limited() {
+            return false;
+        }
+        let viewport = self.0.scroll.ViewportHeight().unwrap_or(0.0);
+        let view_top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
+        let (target, top) = match motion {
+            RowMotion::Pages(pages) => {
+                let distance = (viewport / height).floor().max(1.0) as usize;
+                let target = match pages < 0 {
+                    true => from.saturating_sub(distance),
+                    false => from.saturating_add(distance).min(count - 1),
+                };
+                (target, view_top + viewport * f64::from(pages))
+            }
+            RowMotion::Lines(lines) => (
+                from.saturating_add_signed(lines as isize).min(count - 1),
+                view_top,
+            ),
+            RowMotion::First => (0, view_top),
+            RowMotion::Last => (count - 1, view_top),
+        };
+        // 選択を動かす移動は、選べない行 (見出しなど) へ止まらない。止まると選択が空になる。
+        // Ctrl はフォーカスだけなので、行の中のコントロールへ入れるように止まる。Space は
+        // その行のままなので探さない。
+        let selecting = (extending || !modifiers.control) && !matches!(motion, RowMotion::Lines(0));
+        let target = match selecting {
+            true => {
+                match self.nearest_row(target, from, 0..count, |row| self.is_selectable(*row)) {
+                    Some(target) => target,
+                    None => return true,
+                }
+            }
+            false => target,
+        };
+        let top = self.offset_showing(target, top, viewport);
+        // `ChangeView` はすぐには位置へ反映されないので、窓は移る先の位置から決める。
+        self.move_window(top);
+        self.scroll_now(top);
+        // ビルダーの行は、組み立てて初めて選べないと分かることがある。
+        let Some(landed) = self.focus_nearest(target, from, FocusState::Keyboard, selecting) else {
+            return true;
+        };
+        // 無効の行を飛ばすと、移った行が画面の外のことがある。
+        if landed != target {
+            self.scroll_now(self.offset_showing(landed, top, viewport));
+        }
+        let picked = match (extending, modifiers.control) {
+            (true, _) => {
+                let anchor = self.0.anchor.get().unwrap_or(from);
+                self.0.anchor.set(Some(anchor));
+                let range: Vec<usize> = (anchor.min(landed)..=anchor.max(landed)).collect();
+                self.normalize(&range)
+            }
+            // Ctrl + Space は足し引きする。
+            (false, true) if matches!(motion, RowMotion::Lines(0)) => {
+                self.0.anchor.set(Some(landed));
+                let mut picked = self.selection();
+                match picked.binary_search(&landed) {
+                    Ok(at) => {
+                        picked.remove(at);
+                    }
+                    Err(at) => picked.insert(at, landed),
+                }
+                self.normalize(&picked)
+            }
+            // Ctrl はフォーカスだけを動かす。
+            (false, true) => return true,
+            // 選べない行の上の Space は何もしない。
+            (false, false) if !self.is_selectable(landed) => return true,
+            (false, false) => {
+                self.0.anchor.set(Some(landed));
+                self.normalize(&[landed])
+            }
+        };
+        if picked != self.selection() {
+            self.write_selection(&picked);
+            self.0.handler.emit(&picked);
+        }
+        true
+    }
+
+    /// Selects every row for Ctrl + A, including those not built: `ListView` would select
+    /// only the ones it has. `false` if only one row can be selected.
+    fn select_every_row(&self) -> bool {
+        if !self.0.mode.get().is_multiple() {
+            return false;
+        }
+        let every: Vec<usize> = (0..self.len()).collect();
+        let picked = self.normalize(&every);
+        if picked != self.selection() {
+            self.write_selection(&picked);
+            self.0.handler.emit(&picked);
+        }
+        true
+    }
+
+    /// Whether the app limited the height (`Fixed` or `Fill`), so the list scrolls itself.
+    fn height_is_limited(&self) -> bool {
+        crate::layout::height_is_limited(&self.native_element())
+    }
+
+    /// The scroll position nearest `top` that shows row `index`.
+    fn offset_showing(&self, index: usize, top: f64, viewport: f64) -> f64 {
+        let (row_top, row_bottom) = self.row_span(index);
+        if row_top < top {
+            row_top
+        } else if row_bottom > top + viewport {
+            row_bottom - viewport
+        } else {
+            top
+        }
+    }
+
+    /// Moves the scroll position, in place by the time this returns.
+    fn scroll_now(&self, offset: f64) {
+        let current = self.0.scroll.VerticalOffset().unwrap_or(offset);
+        if (offset - current).abs() >= 0.5 && self.change_view(offset).is_ok() {
+            let _ = self.0.scroll.UpdateLayout();
+        }
+    }
+
+    /// The nearest row in `rows` that `accepts`, looking on from `target` in the direction
+    /// of travel from `from`, or else back toward `from`.
+    fn nearest_row(
+        &self,
+        target: usize,
+        from: usize,
+        rows: Range<usize>,
+        accepts: impl FnMut(&usize) -> bool,
+    ) -> Option<usize> {
+        let mut accepts = accepts;
+        match target >= from {
+            true => (target..rows.end)
+                .find(&mut accepts)
+                .or_else(|| (from..target).rev().find(&mut accepts)),
+            false => (rows.start..=target)
+                .rev()
+                .find(&mut accepts)
+                .or_else(|| (target + 1..=from).find(&mut accepts)),
+        }
+    }
+
+    /// Focuses row `target`, or if it cannot take the focus (it is disabled) or
+    /// `selectable_only` rules it out, the nearest built row that fits. Returns that row.
+    fn focus_nearest(
+        &self,
+        target: usize,
+        from: usize,
+        state: FocusState,
+        selectable_only: bool,
+    ) -> Option<usize> {
+        let window = self.0.window.get();
+        if window.is_empty() {
+            return None;
+        }
+        let target = target.clamp(window.start, window.end - 1);
+        let from = from.clamp(window.start, window.end - 1);
+        let start = self.0.built_start.get();
+        let rows = self.0.native_rows.borrow().clone();
+        self.nearest_row(target, from, window.start..window.end, |index| {
+            (!selectable_only || self.is_selectable(*index))
+                && rows
+                    .get(index - start)
+                    .and_then(|row| row.cast::<Control>().ok())
+                    .is_some_and(|row| row.Focus(state).unwrap_or(false))
+        })
+    }
+
+    /// Moves a focus that landed on a row off screen to the nearest row on screen.
+    ///
+    /// Focus changes do not scroll a list that scrolls itself (see
+    /// [`List::update_window`]), and `ListView` picks rows without looking at what is on
+    /// screen: Tab can land on the first row built. The next key would then pull the view
+    /// to that row.
+    fn keep_focus_on_screen(&self) {
+        let height = self.0.row_height.get();
+        let viewport = self.0.scroll.ViewportHeight().unwrap_or(0.0);
+        if self.0.rebuilding.get() || !self.height_is_limited() || height <= 0.0 || viewport <= 0.0
+        {
+            return;
+        }
+        let Some((index, state)) = self.focused_row() else {
+            return;
+        };
+        let top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
+        let (row_top, row_bottom) = self.row_span(index);
+        let target = if row_bottom <= top {
+            (top / height).ceil() as usize
+        } else if row_top >= top + viewport {
+            (((top + viewport) / height).floor() as usize).saturating_sub(1)
+        } else {
+            return;
+        };
+        self.focus_nearest(target, index, state, false);
+    }
+
+    /// The row holding the keyboard focus itself, and how it got it.
+    fn focused_row(&self) -> Option<(usize, FocusState)> {
+        let rows = self.0.native_rows.borrow();
+        rows.iter().enumerate().find_map(|(offset, row)| {
+            let state = row.cast::<Control>().and_then(|c| c.FocusState()).ok()?;
+            (state != FocusState::Unfocused).then_some((self.0.built_start.get() + offset, state))
+        })
+    }
+
+    /// Gives the focus back to a row just rebuilt, if it is on screen.
+    ///
+    /// `Focus` also scrolls the row into view, so a row the wheel is moving away from is
+    /// left alone: the scrolling would be pulled back to it.
+    fn restore_focus(&self, index: usize, state: FocusState) {
+        let window = self.0.window.get();
+        if !window.contains(index) {
+            return;
+        }
+        let start = self.0.built_start.get();
+        let height = self.0.row_height.get();
+        let top = index as f64 * height;
+        let view_top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
+        let viewport = self.0.scroll.ViewportHeight().unwrap_or(0.0);
+        if top + height < view_top || top > view_top + viewport {
+            return;
+        }
+        if let Some(row) = self.0.native_rows.borrow().get(index - start) {
+            let _ = row.cast::<Control>().and_then(|row| row.Focus(state));
+        }
+    }
+
+    /// Moves the vertical scroll without animation.
+    fn change_view(&self, offset: f64) -> Result<()> {
+        let offset = PropertyValue::CreateDouble(offset)
+            .and_then(|value| value.cast::<windows::Foundation::IReference<f64>>())
+            .map_err(|e| to_error("box the scroll position", e))?;
+        self.0
+            .scroll
+            .ChangeViewWithOptionalAnimation(None, &offset, None, true)
+            .map_err(|e| to_error("move the scroll position", e))?;
         Ok(())
+    }
+
+    /// Computes the range of rows to build from the current scroll position.
+    fn compute_window(&self, overscan: usize) -> RowWindow {
+        self.window_at(self.0.scroll.VerticalOffset().unwrap_or(0.0), overscan)
+    }
+
+    /// Computes the range of rows to build at a scroll position.
+    fn window_at(&self, offset: f64, overscan: usize) -> RowWindow {
+        // 詰め物が窓の外の行と同じ高さを持つので、表示位置は
+        // 「全行を入れたとき」と同じ座標になる。
+        list_row_window(
+            crate::layout::height_is_limited(&self.native_element()),
+            self.len(),
+            offset,
+            self.0.scroll.ViewportHeight().unwrap_or(0.0),
+            self.0.row_height.get(),
+            overscan,
+        )
+    }
+
+    /// Moves the built range along with scrolling.
+    ///
+    /// Rebuilding for every row scrolled is heavy, so the window is reused until you
+    /// have scrolled through half of the extra rows ([`ROW_WINDOW_OVERSCAN`]). Even then,
+    /// only the rows that were not there are built.
+    fn update_window(&self) {
+        // UpdateLayout 中の再入では、差し替え途中の位置を読まない。
+        if self.0.rebuilding.get() {
+            return;
+        }
+        // 自分でスクロールするリストでは、フォーカスの自動スクロールを止める。フォーカスの
+        // 行が窓から外れると XAML が画面の外の行へフォーカスを移し、遅れてそこへ飛ぶので、
+        // 押下と解放の間だとクリックまで失われる。キーで移るときの位置は `move_cursor` が
+        // 決める。高さが行に従うリストをスクロールするのは親なので、そのまま任せる。
+        let _ = self
+            .0
+            .scroll
+            .SetBringIntoViewOnFocusChange(!self.height_is_limited());
+        // 行の追加直後は ActualHeight が 0 のことがある。レイアウトのあとで測り、
+        // 全行分のスクロール領域を確保する。
+        if self.0.row_height_pending.get() {
+            self.settle_row_height();
+        }
+        // 隠れている間は大きさが読めないので、組み立てた行をそのまま残す。
+        if self.0.scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 && !self.is_empty() {
+            return;
+        }
+        self.move_window(self.0.scroll.VerticalOffset().unwrap_or(0.0));
+    }
+
+    /// Moves the built range for a scroll position, unless the rows built are enough.
+    fn move_window(&self, offset: f64) {
+        let current = self.0.window.get();
+        let needed = self.window_at(offset, ROW_WINDOW_OVERSCAN / 2);
+        let next = self.window_at(offset, ROW_WINDOW_OVERSCAN);
+        // 前回の組み立てが途中で失敗していたら、残った行は使わずに全部作り直す。
+        // 失敗した窓そのものは、レイアウトのたびにやり直さない。
+        let failed = self.0.failed_window.get();
+        if failed == Some(next)
+            || (failed.is_none() && (next == current || keeps_row_window(current, needed, next)))
+        {
+            return;
+        }
+        self.0.window.set(next);
+        self.build_window_from(failed.is_none().then_some(current));
+        if self.settle_row_height() {
+            self.move_window(offset);
+        }
+    }
+
+    /// Finds the height of one row from the built rows. `true` if it changed.
+    ///
+    /// Row height is decided by the content, so it is not known until a row is laid out.
+    /// **The tallest built row is used, and every built row is given that height.**
+    /// The rows outside the window are filled in as "row count × this height", so rows
+    /// of differing height (only some with `detail`, for instance) would make the
+    /// scroll bar drift every time the window moves. A taller row appearing later grows
+    /// the height once.
+    fn settle_row_height(&self) -> bool {
+        let rows = self.0.native_rows.borrow().clone();
+        let tallest = rows
+            .iter()
+            .filter_map(|row| row.ActualHeight().ok())
+            .fold(0.0, f64::max);
+        // まだレイアウトされていない。次のレイアウトのあとで測る。
+        if tallest <= 0.0 {
+            return false;
+        }
+        self.0.row_height_pending.set(false);
+        let previous = self.0.row_height.get();
+        // 指定は下限。中身がそれより高い行は伸びるので、窓の計算もそちらに合わせる。
+        let measured = match self.0.row_height_stale.replace(false) {
+            true => tallest,
+            false => tallest.max(previous),
+        }
+        .max(self.0.fixed_row_height.get().unwrap_or(0.0));
+        let window = self.0.window.get();
+        // 行が少なければ行ごとの高さのまま (窓の外の行が無いので、ずれない)。
+        if !window.is_complete() {
+            for row in &rows {
+                let _ = row.SetMinHeight(measured);
+            }
+        }
+        self.0.row_height.set(measured);
+        set_spacer_height(&self.0.top_spacer, window.leading(measured));
+        set_spacer_height(&self.0.bottom_spacer, window.trailing(measured));
+        (previous - measured).abs() >= 0.5
+    }
+
+    /// Where a row is within the scrolled content (top and bottom).
+    ///
+    /// With every row built, it is the row's real position (heights may differ). While
+    /// only some rows are built, it is computed from the row height, so it can point at
+    /// rows that do not exist yet.
+    fn row_span(&self, index: usize) -> (f64, f64) {
+        if self.0.window.get().is_complete() {
+            let item = self.0.native_rows.borrow().get(index).cloned();
+            let span = item.and_then(|item| {
+                let height = item.ActualHeight().ok().filter(|&height| height > 0.0)?;
+                let at = item
+                    .TransformToVisual(&self.0.body)
+                    .and_then(|transform| transform.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+                    .ok()?;
+                Some((f64::from(at.Y), f64::from(at.Y) + height))
+            });
+            if let Some(span) = span {
+                return span;
+            }
+        }
+        let height = self.0.row_height.get().max(1.0);
+        let top = index as f64 * height;
+        (top, top + height)
     }
 
     /// Receives row activation (double-click, Enter) and context menu requests.
     ///
-    /// Rows are recreated on every `set_rows`, so the index can be the position at
-    /// creation. The subscriptions hold the `List` weakly (avoiding the cycle row →
+    /// A row stays this row for as long as it is built, so the index can be the row's place
+    /// in the whole list at creation. The subscriptions hold the `List` weakly (avoiding the cycle row →
     /// subscription → `List` → row).
     fn listen_row_events(&self, native: &ListViewItem, index: usize) -> Result<()> {
         let activate = self.0.row_activate.clone();
@@ -723,19 +1621,50 @@ impl List {
             .map_err(|e| to_error("subscribe to row double clicks", e))?;
 
         let activate = self.0.row_activate.clone();
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let keyed = KeyEventHandler::new(move |sender, args| {
             let Some(args) = args.as_ref() else {
                 return Ok(());
             };
-            // 行の中の入力欄やボタンが受けた Enter は、そのコントロールのもの。
-            // 行そのものにフォーカスがあるときだけ起動にする。
+            // 行の中の入力欄やボタンが受けたキーは、そのコントロールのもの。
+            // 行そのものにフォーカスがあるときだけ行の操作にする。
             let on_row = match (args.OriginalSource(), sender.as_ref()) {
                 (Ok(source), Some(sender)) => &source == sender,
                 _ => false,
             };
+            let key = args.Key().unwrap_or(VirtualKey::None);
             let modifiers = crate::keys::modifiers();
+            let plain_ctrl =
+                modifiers.control && !modifiers.shift && !modifiers.alt && !modifiers.meta;
+            if on_row && key == VirtualKey::A && plain_ctrl {
+                let selected = state
+                    .try_with_mut(|weak| {
+                        weak.upgrade()
+                            .is_some_and(|inner| List(inner).select_every_row())
+                    })
+                    .unwrap_or(false);
+                if selected {
+                    let _ = args.SetHandled(true);
+                }
+                return Ok(());
+            }
+            if let Some(motion) = RowMotion::of_key(key).filter(|_| on_row) {
+                let moved = !modifiers.alt
+                    && !modifiers.meta
+                    && state
+                        .try_with_mut(|weak| {
+                            weak.upgrade().is_some_and(|inner| {
+                                List(inner).move_cursor(index, motion, modifiers)
+                            })
+                        })
+                        .unwrap_or(false);
+                if moved {
+                    let _ = args.SetHandled(true);
+                }
+                return Ok(());
+            }
             let modified = modifiers.shift || modifiers.control || modifiers.alt || modifiers.meta;
-            if !on_row || args.Key().unwrap_or(VirtualKey::None) != VirtualKey::Enter || modified {
+            if !on_row || key != VirtualKey::Enter || modified {
                 return Ok(());
             }
             // 受け取り手がいないときは止めず、親のキー処理へ渡す。
@@ -749,6 +1678,21 @@ impl List {
         native
             .KeyDown(&keyed)
             .map_err(|e| to_error("subscribe to row key presses", e))?;
+
+        // Shift クリックの先の行は `SelectionChanged` では分からない。行の余白の押下は
+        // `ListViewItem` が止めるので、ポインターが乗った行も覚えておく。
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let entered = PointerEventHandler::new(move |_, _| {
+            let _ = state.try_with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.pointer_row.set(Some(index));
+                }
+            });
+            Ok(())
+        });
+        native
+            .PointerEntered(&entered)
+            .map_err(|e| to_error("subscribe to row pointer events", e))?;
 
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let requested = TypedEventHandler::new(
@@ -778,29 +1722,9 @@ impl List {
         Ok(())
     }
 
-    /// Empties the holders of the rows currently laid out.
-    ///
-    /// Custom-content rows place the widget the app holds directly into the holder
-    /// (`Grid`). Letting go of the holder with it still inside leaves the widget "with
-    /// a parent", and the next rebuild is rejected with "Element is already the child of
-    /// another element". So it is always removed here before the holder is discarded.
-    fn release_row_contents(&self) {
-        for native in self.0.native_rows.borrow().iter() {
-            let Ok(host) = native
-                .Content()
-                .and_then(|content| content.cast::<XamlGrid>())
-            else {
-                continue;
-            };
-            if let Ok(children) = host.Children() {
-                let _ = children.Clear();
-            }
-        }
-    }
-
     /// The number of rows.
     pub fn len(&self) -> usize {
-        self.0.rows.borrow().len()
+        self.0.rows.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -820,7 +1744,7 @@ impl List {
             ListViewSelectionMode::Single
         };
         let _ = self.without_notifying(|this| this.0.list_view.SetSelectionMode(native));
-        self.write_selection(&[]);
+        self.clear_selection();
     }
 
     pub fn selection_mode(&self) -> SelectionMode {
@@ -833,19 +1757,11 @@ impl List {
     }
 
     /// The selected rows (ascending). Zero or one for single selection.
+    ///
+    /// Rows outside the window are included. The `ListView` knows only the rows that are
+    /// built, so the remembered selection is returned.
     pub fn selection(&self) -> Vec<usize> {
-        let rows = self.0.rows.borrow();
-        self.0
-            .native_rows
-            .borrow()
-            .iter()
-            .enumerate()
-            .filter(|(index, native)| {
-                rows.get(*index).is_some_and(ListRow::is_selectable)
-                    && native.IsSelected().unwrap_or(false)
-            })
-            .map(|(index, _)| index)
-            .collect()
+        self.0.selected.borrow().clone()
     }
 
     /// Scrolls until row `index` is visible. The selection does not change.
@@ -854,10 +1770,27 @@ impl List {
     /// edge (the top if it is above, the bottom if it is below). Does nothing if out of
     /// range.
     pub fn scroll_to_row(&self, index: usize) {
-        let item = self.0.native_rows.borrow().get(index).cloned();
-        if let Some(item) = item.and_then(|item| item.cast::<windows_core::IInspectable>().ok()) {
-            let _ = self.0.list_view.ScrollIntoView(&item);
+        if index >= self.len() {
+            return;
         }
+        // 組み立てたばかりの行にも位置が付くように、レイアウトを先に済ませる。
+        let _ = self.0.scroll.UpdateLayout();
+        if self.0.row_height_pending.get() {
+            self.settle_row_height();
+        }
+        let (top, bottom) = self.row_span(index);
+        let view_top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
+        let viewport = self.0.scroll.ViewportHeight().unwrap_or(0.0);
+        let target = if top < view_top {
+            top
+        } else if bottom > view_top + viewport {
+            bottom - viewport
+        } else {
+            return;
+        };
+        // 位置を先に動かさないと、窓が古い位置で決まる。
+        self.scroll_now(target);
+        self.update_window();
     }
 
     /// Selects exactly one row without notifying.
@@ -871,11 +1804,13 @@ impl List {
     /// selection only the first remains ([`SelectionMode::normalize`]).
     pub fn set_selection(&self, indices: &[usize]) {
         let picked = self.normalize(indices);
+        self.0.anchor.set(picked.last().copied());
         self.write_selection(&picked);
     }
 
     /// Clears the whole selection without notifying.
     pub fn clear_selection(&self) {
+        self.0.anchor.set(None);
         self.write_selection(&[]);
     }
 
@@ -926,19 +1861,121 @@ impl List {
     }
 
     fn normalize(&self, indices: &[usize]) -> Vec<usize> {
-        let rows = self.0.rows.borrow();
-        self.0.mode.get().normalize_by(indices, |index| {
-            rows.get(index).is_some_and(ListRow::is_selectable)
-        })
+        self.0
+            .mode
+            .get()
+            .normalize_by(indices, |index| self.is_selectable(index))
     }
 
-    /// Writes the selection into the rows as is (no notification).
+    /// Whether the row can be selected.
+    fn is_selectable(&self, index: usize) -> bool {
+        self.0.rows.is_selectable(index, ListRow::is_selectable)
+    }
+
+    /// Remembers the selection and writes it into the built rows (no notification).
+    ///
+    /// Rows outside the window have no `ListViewItem`, so they cannot be written. When
+    /// the window moves and rows are rebuilt, it is written again from the remembered
+    /// selection.
     fn write_selection(&self, indices: &[usize]) {
+        *self.0.selected.borrow_mut() = indices.to_vec();
+        let start = self.0.built_start.get();
         self.without_notifying(|this| {
-            for (index, native) in this.0.native_rows.borrow().iter().enumerate() {
-                let _ = native.SetIsSelected(indices.contains(&index));
+            for (offset, native) in this.0.native_rows.borrow().iter().enumerate() {
+                let _ = native.SetIsSelected(indices.binary_search(&(start + offset)).is_ok());
             }
         });
+    }
+
+    /// Reads the selection the user changed. How rows outside the window are treated is
+    /// decided here too.
+    fn read_native_selection(&self) -> Vec<usize> {
+        let window = self.0.window.get();
+        let start = self.0.built_start.get();
+        let mut picked: Vec<usize> = self
+            .0
+            .native_rows
+            .borrow()
+            .iter()
+            .enumerate()
+            .filter(|(_, native)| native.IsSelected().unwrap_or(false))
+            .map(|(offset, _)| start + offset)
+            .collect();
+        // `ListViewItem` には「選ばせない」指定が無い (`IsEnabled` を落とすと
+        // 中のボタンまで効かなくなる) ので、選べない行はここで外し、
+        // ネイティブ側へも書き戻す。
+        if picked.iter().any(|&index| !self.is_selectable(index)) {
+            picked.retain(|&index| self.is_selectable(index));
+            let kept = self.0.selected.borrow().clone();
+            self.write_selection(&picked);
+            *self.0.selected.borrow_mut() = kept;
+        }
+        // 単一選択では、窓の外の行を残すと 2 行選ばれてしまう。
+        let gesture = match self.0.mode.get().is_multiple() {
+            true => selection_gesture(),
+            false => SelectionGesture::Plain,
+        };
+        let previous = self.0.selected.borrow().clone();
+        // Shift のキー操作は `move_cursor` が受けるので、ここへ来る Shift はクリック。
+        // `ListView` の範囲は持っている行の中で決まるので、覚えている起点から引き直す。
+        // 高さが行に従うリストはキーも `ListView` に任せていて、全行を持っているので
+        // 範囲はそのままで正しい。
+        if gesture == SelectionGesture::Extend && self.height_is_limited() {
+            // 押した行は `ListView` の範囲の端にある。覚えている行は、スクロールのあと
+            // ポインターを動かさずに押すと古いことがあるので、近いほうの端を選ぶ。
+            let clicked = picked.first().zip(picked.last()).map(|(&first, &last)| {
+                match self.0.pointer_row.get() {
+                    Some(row) if row.abs_diff(first) < row.abs_diff(last) => first,
+                    _ => last,
+                }
+            });
+            if let Some((anchor, clicked)) = self.0.anchor.get().zip(clicked) {
+                let range: Vec<usize> = (anchor.min(clicked)..=anchor.max(clicked)).collect();
+                let picked = self.normalize(&range);
+                self.write_selection(&picked);
+                // 押した行のはずなので、フォーカスが行の外へ出ていても移す。
+                self.focus_row_at(clicked);
+                return picked;
+            }
+        }
+        let cursor = match gesture {
+            // 足し引きした行だけが、前の選択と違う。
+            SelectionGesture::Toggle => window.indices().rfind(|index| {
+                previous.binary_search(index).is_ok() != picked.binary_search(index).is_ok()
+            }),
+            _ => picked.last().copied(),
+        };
+        if let Some(cursor) = cursor {
+            self.0.anchor.set(Some(cursor));
+            // 全行を持つリストでは `ListView` のフォーカスはずれない。
+            if self.height_is_limited() {
+                self.follow_with_focus(cursor);
+            }
+        }
+        merge_hidden_selection(window, &previous, picked, gesture)
+    }
+
+    /// Moves the focus to the row the selection just changed on, if it is on another row.
+    ///
+    /// Once the window has moved, `ListView` can leave it where it was, and the next key
+    /// would then start from that row.
+    fn follow_with_focus(&self, index: usize) {
+        if self
+            .focused_row()
+            .is_some_and(|(focused, _)| focused != index)
+        {
+            self.focus_row_at(index);
+        }
+    }
+
+    /// Gives the focus to a built row, as a click would.
+    fn focus_row_at(&self, index: usize) {
+        let row = index
+            .checked_sub(self.0.built_start.get())
+            .and_then(|offset| self.0.native_rows.borrow().get(offset).cloned());
+        if let Some(row) = row.and_then(|row| row.cast::<Control>().ok()) {
+            let _ = row.Focus(FocusState::Pointer);
+        }
     }
 
     /// Operates with notifications from WinUI stopped.
@@ -948,6 +1985,32 @@ impl List {
         self.0.silent.set(previous);
         result
     }
+}
+
+/// Empties the holder of a row that is about to be discarded.
+///
+/// Custom-content rows place the widget the app holds directly into the holder (`Grid`).
+/// Letting go of the holder with it still inside leaves the widget "with a parent", and
+/// the next rebuild is rejected with "Element is already the child of another element".
+fn release_row_content(native: &ListViewItem) {
+    if let Ok(host) = native
+        .Content()
+        .and_then(|content| content.cast::<XamlGrid>())
+    {
+        release_host_content(&host);
+    }
+}
+
+/// Takes the content out of a row's holder.
+fn release_host_content(host: &XamlGrid) {
+    if let Ok(children) = host.Children() {
+        let _ = children.Clear();
+    }
+}
+
+/// Gives the spacer the height of the rows outside the window.
+fn set_spacer_height(spacer: &XamlGrid, height: f64) {
+    let _ = spacer.SetHeight(height.max(0.0));
 }
 
 impl Drop for ListInner {
@@ -1019,7 +2082,10 @@ fn row_host(row: &ListRow) -> Result<XamlGrid> {
     if !row.is_selectable() {
         // 選べない行は、余白を含めて行の全体を入れ物が受け持ち、押下を止める。
         let _ = host.SetPadding(ROW_PADDING);
-        hold_unselectable_press(&host)?;
+        if let Err(error) = hold_unselectable_press(&host) {
+            release_host_content(&host);
+            return Err(error);
+        }
     }
     Ok(host)
 }

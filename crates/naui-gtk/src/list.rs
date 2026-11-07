@@ -11,13 +11,22 @@
 //! rows in the bubble phase, so they are not delivered over controls inside the row
 //! that take clicks themselves, such as buttons. Enter is caught by a key receiver
 //! in `GtkListBox`'s capture phase, only when the row itself has focus.
+//!
+//! **With many rows, only the rows on screen are built** (the same mechanism as
+//! [`crate::Table`]). `GtkListBoxRow`s exist only for the window, spacers outside the
+//! `GtkListBox` carry the height of the rest, and the selection is held here because
+//! `GtkListBox` knows only the rows it has.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use gtk::prelude::*;
 use gtk::{gdk, glib, graphene};
-use naui_core::{Align, ListItem, Orientation, Point, SelectionMode, Sizing, TextColor, TextStyle};
+use naui_core::{
+    keeps_row_window, list_row_window, merge_hidden_selection, Align, ListItem, Orientation, Point,
+    Result, RowSource, RowWindow, SelectionGesture, SelectionMode, Sizing, TextColor, TextStyle,
+    ROW_WINDOW_OVERSCAN,
+};
 
 use crate::bin::SizeBin;
 use crate::callback::{Notifier, SelectionNotifier, Slot};
@@ -147,9 +156,39 @@ impl ListRow {
 struct ListInner {
     native: gtk::ListBox,
     /// `GtkListBox` does not scroll by itself, so it is placed in a scroll area.
-    _scroller: gtk::ScrolledWindow,
+    scroller: gtk::ScrolledWindow,
+    /// Fills in for the rows outside the window, keeping the scroll bar length.
+    top_spacer: gtk::Box,
+    bottom_spacer: gtk::Box,
     bin: SizeBin,
-    rows: RefCell<Vec<ListRow>>,
+    rows: RowSource<ListRow>,
+    /// The range of rows currently built. With many rows, only those around the screen.
+    window: Cell<RowWindow>,
+    /// The first row the `GtkListBox` has now. `window` moves ahead of it just before the
+    /// rows are rebuilt.
+    built_start: Cell<usize>,
+    /// Whether rows are being built right now. Prevents nested rebuilds.
+    rebuilding: Cell<bool>,
+    /// Whether moving the window is already waiting for the current handling to finish.
+    window_update_queued: Cell<bool>,
+    /// How the selection was changed (modifier keys), as inferred from the last input.
+    gesture: Cell<SelectionGesture>,
+    /// The contents of the built rows, in order from `window.start`.
+    realized: RefCell<Vec<ListRow>>,
+    /// The selected rows (ascending). **Rows outside the window are included**, so this
+    /// is the source of truth, not the `GtkListBox`.
+    selected: RefCell<Vec<usize>>,
+    /// The anchor of a Shift range selection. `GtkListBox` remembers it as a row, so it
+    /// forgets it when the rows are rebuilt.
+    anchor: Cell<Option<usize>>,
+    /// The height of one row (logical pixels). Either measured or set with
+    /// [`List::set_row_height`].
+    row_height: Cell<f64>,
+    /// Whether `row_height` is from rows that are gone, so the next measurement replaces
+    /// it instead of only growing it.
+    row_height_stale: Cell<bool>,
+    /// The row height decided by the app. If absent, it is measured from the built rows.
+    fixed_row_height: Cell<Option<i32>>,
     on_select: SelectionNotifier,
     handler: RefCell<Option<glib::SignalHandlerId>>,
     /// The handler for double-clicks and Enter.
@@ -164,7 +203,7 @@ struct ListInner {
 /// or `Fill`, it scrolls whatever overflows.
 #[derive(Clone)]
 pub struct List(Rc<ListInner>);
-impl_widget!(List);
+impl_widget!(List, after_sizing: |list: &List| list.update_window());
 
 impl List {
     pub(crate) fn new() -> Self {
@@ -179,14 +218,35 @@ impl List {
         scroller.set_policy(gtk::PolicyType::Never, gtk::PolicyType::Automatic);
         scroller.set_has_frame(true);
         scroller.set_propagate_natural_height(true);
-        scroller.set_child(Some(&native));
+        // 詰め物を一覧の**外**に置くのは、`GtkListBox` の行として入れると
+        // キーボード操作や行のインデックスに混ざってしまうため (`Table` と同じ)。
+        let top_spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let bottom_spacer = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        content.append(&top_spacer);
+        content.append(&native);
+        content.append(&bottom_spacer);
+        scroller.set_child(Some(&content));
 
         let bin = SizeBin::wrap(&scroller);
         let inner = Rc::new(ListInner {
             native,
-            _scroller: scroller,
+            scroller,
+            top_spacer,
+            bottom_spacer,
             bin,
-            rows: RefCell::new(Vec::new()),
+            rows: RowSource::default(),
+            window: Cell::new(RowWindow::default()),
+            built_start: Cell::new(0),
+            rebuilding: Cell::new(false),
+            window_update_queued: Cell::new(false),
+            gesture: Cell::new(SelectionGesture::Unknown),
+            realized: RefCell::new(Vec::new()),
+            selected: RefCell::new(Vec::new()),
+            anchor: Cell::new(None),
+            row_height: Cell::new(0.0),
+            row_height_stale: Cell::new(false),
+            fixed_row_height: Cell::new(None),
             on_select: SelectionNotifier::default(),
             handler: RefCell::new(None),
             row_activate: Notifier::default(),
@@ -198,7 +258,8 @@ impl List {
             inner.native.connect_selected_rows_changed(move |_| {
                 if let Some(inner) = weak.upgrade() {
                     let list = List(inner);
-                    let selection = list.selection();
+                    let selection = list.read_native_selection();
+                    *list.0.selected.borrow_mut() = selection.clone();
                     list.0.on_select.emit(&selection);
                 }
             })
@@ -213,14 +274,14 @@ impl List {
                 let Some(inner) = weak.upgrade() else {
                     return;
                 };
-                let Ok(index) = usize::try_from(row.index()) else {
+                let Ok(offset) = usize::try_from(row.index()) else {
                     return;
                 };
                 // 通知の中から `set_rows` を呼べるように、借りたまま呼ばない。
                 let activation = inner
-                    .rows
+                    .realized
                     .borrow()
-                    .get(index)
+                    .get(offset)
                     .map(|row| row.activation.clone());
                 if let Some(activation) = activation {
                     activation.emit();
@@ -230,13 +291,91 @@ impl List {
         inner
             .native
             .add_controller(enter_controller(Rc::downgrade(&inner)));
+        // 選択が変わる前に、そのとき押されていた修飾キーを覚えておく。
+        // `selected-rows-changed` には修飾キーが乗らないが、窓の外の選択を
+        // 残すかどうかの判断に要る。捕捉の段で見るので、一覧が選択を決めるより
+        // 先に入る (`Table` と同じ)。
+        {
+            let controller = gtk::EventControllerLegacy::new();
+            controller.set_propagation_phase(gtk::PropagationPhase::Capture);
+            let weak = Rc::downgrade(&inner);
+            controller.connect_event(move |_, event| {
+                if let Some(inner) = weak.upgrade() {
+                    inner
+                        .gesture
+                        .set(crate::table::gesture_of(event.modifier_state()));
+                }
+                glib::Propagation::Proceed
+            });
+            inner.native.add_controller(controller);
+        }
+        // キーでの移動は、クラスのハンドラより先にここへ来る。
+        {
+            let weak = Rc::downgrade(&inner);
+            inner
+                .native
+                .connect_move_cursor(move |native, step, count, extend, modify| {
+                    let Some(inner) = weak.upgrade() else {
+                        return;
+                    };
+                    let list = List(inner);
+                    list.0.gesture.set(match extend {
+                        true => SelectionGesture::Extend,
+                        false => SelectionGesture::Plain,
+                    });
+                    let moved = match step {
+                        gtk::MovementStep::Pages => list.move_by_pages(count, extend, modify),
+                        gtk::MovementStep::BufferEnds => {
+                            list.move_to_the_end(count, extend, modify)
+                        }
+                        _ => false,
+                    };
+                    if moved {
+                        native.stop_signal_emission_by_name("move-cursor");
+                    }
+                });
+        }
+        // Ctrl + A と Ctrl + Shift + A。`GtkListBox` は持っている行しか扱えない。
+        {
+            let weak = Rc::downgrade(&inner);
+            inner.native.connect_select_all(move |native| {
+                if let Some(inner) = weak.upgrade() {
+                    List(inner).select_every_row();
+                }
+                native.stop_signal_emission_by_name("select-all");
+            });
+            let weak = Rc::downgrade(&inner);
+            inner.native.connect_unselect_all(move |native| {
+                let Some(list) = weak.upgrade().map(List) else {
+                    return;
+                };
+                if list.selection_mode().is_multiple() {
+                    list.change_selection(&[]);
+                    native.stop_signal_emission_by_name("unselect-all");
+                }
+            });
+        }
+        // スクロールと一覧の大きさに合わせて、組み立てる範囲を動かす。
+        {
+            let weak = Rc::downgrade(&inner);
+            let update = move |_: &gtk::Adjustment| {
+                if let Some(inner) = weak.upgrade() {
+                    List(inner).queue_window_update();
+                }
+            };
+            let adjustment = inner.scroller.vadjustment();
+            adjustment.connect_value_changed(update.clone());
+            adjustment.connect_page_size_notify(move |adjustment| update(adjustment));
+        }
         Self(inner)
     }
 
     /// Rebuilds the rows. Indices change meaning, so the selection is cleared.
     pub fn set_items(&self, items: &[ListItem]) {
-        let rows: Vec<ListRow> = items.iter().cloned().map(ListRow::from_item).collect();
-        self.set_rows(&rows);
+        self.0
+            .rows
+            .set_rows(items.iter().cloned().map(ListRow::from_item).collect());
+        self.reset_rows();
     }
 
     /// Rebuilds the rows. Both plain rows and rows with custom content are drawn
@@ -244,22 +383,105 @@ impl List {
     ///
     /// Controls inside a row can have their own callbacks as usual.
     pub fn set_rows(&self, rows: &[ListRow]) {
-        without_signal(&self.0.native, &self.0.handler, || {
-            while let Some(row) = self.0.native.first_child() {
-                self.0.native.remove(&row);
-            }
-            for row in rows {
-                self.0
-                    .native
-                    .append(&build_row(row, Rc::downgrade(&self.0)));
-            }
-            self.0.native.unselect_all();
-        });
-        *self.0.rows.borrow_mut() = rows.to_vec();
+        self.0.rows.set_rows(rows.to_vec());
+        self.reset_rows();
+    }
+
+    /// Passes rows in a form that **builds each row when it becomes visible**.
+    ///
+    /// `count` is the number of rows, and `build` receives an index from 0 to
+    /// `count - 1` and returns that row ([`ListRow`]). It is called only for the rows on
+    /// screen (and a few before and after), so opening stays fast even with hundreds of
+    /// thousands of rows. Indices change meaning, so the selection is cleared.
+    ///
+    /// The widgets in a row may be recreated every time it is built. Keep per-row state
+    /// in the app's data and build from it inside `build`.
+    ///
+    /// ```no_run
+    /// # use naui_gtk::{List, ListRow, Ui};
+    /// # fn fill(ui: &Ui, list: &List, cities: Vec<String>) {
+    /// let ui = ui.clone();
+    /// list.set_row_builder(cities.len(), move |index| {
+    ///     Ok(ListRow::new(&ui.label(&cities[index])?))
+    /// });
+    /// # }
+    /// ```
+    pub fn set_row_builder(
+        &self,
+        count: usize,
+        build: impl FnMut(usize) -> Result<ListRow> + 'static,
+    ) {
+        self.0.rows.set_builder(count, build);
+        self.reset_rows();
+    }
+
+    /// Passes a function that answers whether a row can be selected **without building
+    /// the row**.
+    ///
+    /// For rows built with [`List::set_row_builder`], naui does not know whether rows
+    /// not yet built can be selected. With this function, [`List::set_selection`] can
+    /// keep its promise of "removing rows that cannot be selected" even for rows off
+    /// screen. Without it, rows follow the [`ListRow::selectable`] they were last built
+    /// with, even after leaving the screen, and rows not built since the rows were passed
+    /// or refreshed are treated as selectable.
+    ///
+    /// Its answers must match the [`ListRow::selectable`] returned by `build`. It stays when
+    /// the rows are replaced, so pass a new one if its answers change.
+    pub fn set_row_selectable(&self, selectable: impl Fn(usize) -> bool + 'static) {
+        self.0.rows.set_selectable(selectable);
+    }
+
+    /// Rebuilds the visible rows. The row count and selection stay.
+    ///
+    /// Use it when what the function passed to [`List::set_row_builder`] returns has
+    /// changed.
+    pub fn refresh(&self) {
+        self.0.row_height_stale.set(true);
+        self.0.rows.forget_selectable();
+        // 行を組み立てる関数の中から呼ばれたら、組み立てている側が最初からやり直す。
+        if self.0.rebuilding.get() {
+            self.0.rows.invalidate();
+            return;
+        }
+        self.build_window();
+        // 中身や指定が変わって行の高さが動いていれば、窓の位置も変わる。測った結果が
+        // 同じでも窓を引き直す (`set_row_height` は先に高さを書き換えている)。
+        self.settle_row_height();
+        self.update_window();
+    }
+
+    /// Sets the row height in logical pixels. Passing 0 or less measures it from the
+    /// rows.
+    ///
+    /// Every row gets at least this height. With more rows than
+    /// [`ROW_WINDOW_THRESHOLD`](naui_core::ROW_WINDOW_THRESHOLD), rows off screen are
+    /// filled in as "row count × this height", so set it when the rows' heights vary. A
+    /// row built later that needs more raises the height for every row.
+    ///
+    /// GTK sizes are whole pixels, so a fraction is rounded up.
+    pub fn set_row_height(&self, height: f64) {
+        // 指定は下限なので、切り捨てると指定を下回る。
+        let height = height.max(0.0).ceil();
+        self.0
+            .fixed_row_height
+            .set((height > 0.0).then_some(height as i32));
+        // 指定を外したときは、組み立て直した行から測り直す。
+        self.0.row_height.set(height);
+        self.refresh();
+    }
+
+    /// The row height (logical pixels). 0 if there are no rows or none has been built yet.
+    ///
+    /// With few rows and no height set, rows may differ, and this is the tallest built.
+    pub fn row_height(&self) -> f64 {
+        if self.is_empty() && self.0.fixed_row_height.get().is_none() {
+            return 0.0;
+        }
+        self.0.row_height.get()
     }
 
     pub fn len(&self) -> usize {
-        self.0.rows.borrow().len()
+        self.0.rows.len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -267,6 +489,8 @@ impl List {
     }
 
     pub fn set_selection_mode(&self, mode: SelectionMode) {
+        self.0.selected.borrow_mut().clear();
+        self.0.anchor.set(None);
         let multiple = mode.is_multiple();
         self.0.native.set_selection_mode(if multiple {
             // `Multiple` は「⌘ / Ctrl や Shift を押しながら選ぶ」形。
@@ -278,6 +502,10 @@ impl List {
         // Ctrl / Shift を読まず、必ず「その行だけを選ぶ」に倒す。複数選択では
         // これを切らないと、行を足すことも外すこともできない。
         self.0.native.set_activate_on_single_click(!multiple);
+        // GTK4 がモードの変更で選択を落とすとは限らないので、明示的に外す。
+        without_signal(&self.0.native, &self.0.handler, || {
+            self.0.native.unselect_all();
+        });
     }
 
     pub fn selection_mode(&self) -> SelectionMode {
@@ -293,16 +521,11 @@ impl List {
     }
 
     /// Returns the selected rows in ascending order.
+    ///
+    /// Rows outside the window are included. `GtkListBox` knows only the rows that are
+    /// built, so the remembered selection is returned.
     pub fn selection(&self) -> Vec<usize> {
-        let mut indices: Vec<usize> = self
-            .0
-            .native
-            .selected_rows()
-            .iter()
-            .map(|row| row.index().max(0) as usize)
-            .collect();
-        indices.sort_unstable();
-        indices
+        self.0.selected.borrow().clone()
     }
 
     /// Scrolls until row `index` is visible. The selection does not change.
@@ -311,12 +534,34 @@ impl List {
     /// edge (the top if it is above, the bottom if it is below). Does nothing if out of
     /// range.
     pub fn scroll_to_row(&self, index: usize) {
-        let Ok(index) = i32::try_from(index) else {
+        if index >= self.len() {
             return;
-        };
-        if let Some(row) = self.0.native.row_at_index(index) {
-            reveal_widget(&self.0._scroller, &row, false);
         }
+        // すべての行があるなら、高さのそろわない行でも実際の位置へ送れる。
+        if self.0.window.get().is_complete() {
+            if let Some(row) = self.0.native.row_at_index(index as i32) {
+                reveal_widget(&self.0.scroller, &row, false);
+            }
+            return;
+        }
+        // 絞っている間は、まだ無い行へ送れるように位置を行の高さから求める。
+        // 詰め物の高さがまだレイアウトに載っていなければ、載るのを待つ。
+        if self.reveal_computed(index) {
+            return;
+        }
+        let list = Rc::downgrade(&self.0);
+        let frames = Cell::new(0u8);
+        self.0.scroller.add_tick_callback(move |_, _| {
+            frames.set(frames.get() + 1);
+            let revealed = list
+                .upgrade()
+                .is_none_or(|inner| List(inner).reveal_computed(index));
+            if revealed || frames.get() >= REVEAL_FRAMES {
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        });
     }
 
     /// Selects a single row without notifying.
@@ -327,14 +572,12 @@ impl List {
     /// Replaces the selection without notifying.
     pub fn set_selection(&self, indices: &[usize]) {
         let picked = self.normalize(indices);
-        without_signal(&self.0.native, &self.0.handler, || self.show(&picked));
+        self.replace_selection(&picked);
     }
 
     /// Clears the whole selection without notifying.
     pub fn clear_selection(&self) {
-        without_signal(&self.0.native, &self.0.handler, || {
-            self.0.native.unselect_all();
-        });
+        self.replace_selection(&[]);
     }
 
     /// Selects one row through the same path as a user's selection (notifies).
@@ -345,7 +588,7 @@ impl List {
     /// Replaces the selection through the same path as a user's selection (notifies).
     pub fn select_many(&self, indices: &[usize]) {
         let picked = self.normalize(indices);
-        without_signal(&self.0.native, &self.0.handler, || self.show(&picked));
+        self.replace_selection(&picked);
         self.0.on_select.emit(&picked);
     }
 
@@ -374,23 +617,485 @@ impl List {
             .set(move |(index, point)| f(index, point));
     }
 
-    /// Normalizes the requested selection into a form meaningful for this list.
-    fn normalize(&self, indices: &[usize]) -> Vec<usize> {
-        let rows = self.0.rows.borrow();
-        self.selection_mode().normalize_by(indices, |index| {
-            rows.get(index).is_some_and(ListRow::is_selectable)
-        })
+    // ------------------------------------------------------- 行を絞る窓
+
+    /// Rebuilds the rows and moves the window back to the start. The selection is
+    /// cleared too.
+    fn reset_rows(&self) {
+        self.0.selected.borrow_mut().clear();
+        self.0.anchor.set(None);
+        self.0.row_height_stale.set(true);
+        // 組み立ての途中で差し替えられたら、組み立てている側が新しい行でやり直す。
+        if self.0.rebuilding.get() {
+            self.0.realized.borrow_mut().clear();
+            return;
+        }
+        self.0.window.set(self.compute_window(ROW_WINDOW_OVERSCAN));
+        self.build_window();
+        // 行の高さが分かったら、その高さで窓を引き直す。
+        if self.settle_row_height() {
+            self.update_window();
+        }
     }
 
-    /// Applies the selection to the native side.
+    /// Rebuilds every `GtkListBox` row of the current window.
+    fn build_window(&self) {
+        self.build_window_from(None);
+    }
+
+    /// Builds the current window. The rows `previous` has in common with it stay as they
+    /// are, unless the rows are replaced during the build.
+    fn build_window_from(&self, previous: Option<RowWindow>) {
+        // 組み立ての途中でアプリのコードが動くので、そこから呼ばれても
+        // 二重に作り直さない。
+        if self.0.rebuilding.replace(true) {
+            return;
+        }
+        self.0.rows.build_until_settled(|replaced| {
+            if replaced {
+                self.0.window.set(self.compute_window(ROW_WINDOW_OVERSCAN));
+            }
+            self.build_window_once(previous.filter(|_| !replaced));
+        });
+        self.0.rebuilding.set(false);
+    }
+
+    fn build_window_once(&self, previous: Option<RowWindow>) {
+        let window = self.0.window.get();
+        let generation = self.0.rows.generation();
+        let fixed_height = self.0.fixed_row_height.get();
+        let focused = self.focused_row();
+        let built = self.native_rows();
+        let built_start = self.0.built_start.get();
+        // 窓に残る行は触らない。作り直すと、中のコントロールのフォーカスが失われる。
+        // 前回の組み立てが途中で終わっていたら、位置が合わないので全部作り直す。
+        // 全行を組み立てるときも、そろえた高さから行ごとの高さへ戻すために作り直す。
+        let kept = previous
+            .filter(|previous| previous.len() == built.len() && !window.is_complete())
+            .map_or(0..0, |previous| previous.overlap(window));
+        let mut realized: Vec<ListRow> = {
+            let rows = self.0.realized.borrow();
+            let offsets =
+                kept.start.saturating_sub(built_start)..kept.end.saturating_sub(built_start);
+            rows.get(offsets).map_or(Vec::new(), <[ListRow]>::to_vec)
+        };
+        let mut before_kept = 0;
+        without_signal(&self.0.native, &self.0.handler, || {
+            for (offset, row) in built.iter().enumerate() {
+                if kept.contains(&(built_start + offset)) {
+                    continue;
+                }
+                // 中身を先に放す。アプリが持ち続ける行の中身は、次に組み立てるときに
+                // 別の行へ入る。古い行に親として残っていると入れられない。
+                if let Some(row) = row.downcast_ref::<gtk::ListBoxRow>() {
+                    row.set_child(gtk::Widget::NONE);
+                }
+                self.0.native.remove(row);
+            }
+            for index in window.indices().filter(|index| !kept.contains(index)) {
+                let Some(row) = self.0.rows.row(index) else {
+                    continue;
+                };
+                // 差し替えられたら、この行も残りの窓ももう古い。
+                if self.0.rows.generation() != generation {
+                    break;
+                }
+                // 組み立てに失敗した行は、空の行にする。
+                let row = row.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
+                self.0.rows.note_selectable(index, row.is_selectable());
+                let native = build_row(&row, Rc::downgrade(&self.0));
+                if let Some(height) = fixed_height {
+                    native.set_size_request(-1, height);
+                }
+                report_row_position(&native, index, window.count);
+                if index < kept.start {
+                    self.0.native.insert(&native, before_kept as i32);
+                    realized.insert(before_kept, row);
+                    before_kept += 1;
+                } else {
+                    self.0.native.append(&native);
+                    realized.push(row);
+                }
+            }
+            self.0.native.unselect_all();
+        });
+        *self.0.realized.borrow_mut() = realized;
+        self.0.built_start.set(window.start);
+
+        // `GtkListBox` の Page Up / Down は自分の座標をそのままスクロール位置として
+        // 使う。上に詰め物があるとずれるので、そのときは渡さない (カーソルは動き、
+        // スクロールは `GtkViewport` がフォーカスに付いてくる)。
+        let adjustment = self.0.scroller.vadjustment();
+        self.0
+            .native
+            .set_adjustment((window.start == 0).then_some(&adjustment));
+
+        let height = self.0.row_height.get();
+        set_spacer_height(&self.0.top_spacer, window.leading(height));
+        set_spacer_height(&self.0.bottom_spacer, window.trailing(height));
+
+        // 覚えている選択を、組み立て直した行へ写す。
+        let picked = self.selection();
+        without_signal(&self.0.native, &self.0.handler, || self.show(&picked));
+
+        // 矢印キーで窓の端まで来たときに組み立て直しても、操作が続けられるように。
+        // 取り除いた行にフォーカスが残ったままだと、キーがどこにも届かなくなる。
+        if let Some(index) = focused.filter(|index| !kept.contains(index)) {
+            let offset = match window.contains(index) {
+                true => index - window.start,
+                // スクロールバーで遠くへ送ったときは、見えている先頭の行から続ける。窓の
+                // 先頭は画面より上にあり、次のキーでそこまで戻ってしまう。
+                false => self.first_visible_row().saturating_sub(window.start),
+            };
+            if let Some(row) = self.0.native.row_at_index(offset as i32) {
+                self.grab_focus_in_place(&row);
+            }
+        }
+    }
+
+    /// The first row wholly on screen, as far as the window has it.
+    fn first_visible_row(&self) -> usize {
+        let window = self.0.window.get();
+        let height = self.0.row_height.get();
+        if height <= 0.0 || window.is_empty() {
+            return window.start;
+        }
+        let top = self.0.scroller.vadjustment().value();
+        ((top / height).ceil() as usize).clamp(window.start, window.end - 1)
+    }
+
+    /// The row holding the keyboard focus (itself, or a control inside it).
+    fn focused_row(&self) -> Option<usize> {
+        let focus = self.0.native.root()?.focus()?;
+        let row = focus
+            .ancestor(gtk::ListBoxRow::static_type())
+            .and_downcast::<gtk::ListBoxRow>()
+            .filter(|row| row.parent().as_ref() == Some(self.0.native.upcast_ref()))?;
+        let offset = usize::try_from(row.index()).ok()?;
+        Some(self.0.built_start.get() + offset)
+    }
+
+    /// Moves the focus to a row just built, without scrolling.
+    fn grab_focus_in_place(&self, row: &gtk::ListBoxRow) {
+        self.without_scroll_to_focus(|| {
+            row.grab_focus();
+        });
+    }
+
+    /// Runs `f`, which moves the focus to a row that may have just been built.
+    ///
+    /// Such a row has no position yet, and `GtkViewport` would scroll to where it believes
+    /// the focused widget is (`scroll-to-focus`), jumping to the top of the list.
+    fn without_scroll_to_focus(&self, f: impl FnOnce()) {
+        let viewport = self.0.scroller.child().and_downcast::<gtk::Viewport>();
+        if let Some(viewport) = &viewport {
+            viewport.set_scroll_to_focus(false);
+        }
+        f();
+        if let Some(viewport) = &viewport {
+            viewport.set_scroll_to_focus(true);
+        }
+    }
+
+    /// Moves the cursor by whole pages, scrolling with it. `false` if `GtkListBox` should
+    /// do it, which is when every row is built or no row has the focus.
+    ///
+    /// `GtkListBox` stops at the last row it has, and with no adjustment to read a page
+    /// from, it moves by a fixed 100 px. It is stopped before it starts, so the rows can be
+    /// rebuilt here, and then it moves the rest of the way to select as usual.
+    fn move_by_pages(&self, pages: i32, extend: bool, modify: bool) -> bool {
+        let height = self.0.row_height.get();
+        if self.0.window.get().is_complete() || height <= 0.0 {
+            return false;
+        }
+        let Some(from) = self.focused_row() else {
+            return false;
+        };
+        let adjustment = self.0.scroller.vadjustment();
+        let page = adjustment.page_size();
+        let distance = (page / height).floor().max(1.0) as usize * pages.unsigned_abs() as usize;
+        let target = match pages < 0 {
+            true => from.saturating_sub(distance),
+            false => from.saturating_add(distance).min(self.len() - 1),
+        };
+        adjustment.set_value(adjustment.value() + page * f64::from(pages));
+        self.land_cursor(from, target, extend, modify);
+        true
+    }
+
+    /// Moves the cursor to the first or last of all the rows for Home and End. `false` if
+    /// `GtkListBox` should do it, which is when every row is built or no row has the focus.
+    fn move_to_the_end(&self, count: i32, extend: bool, modify: bool) -> bool {
+        if self.0.window.get().is_complete() || self.0.row_height.get() <= 0.0 {
+            return false;
+        }
+        let Some(from) = self.focused_row() else {
+            return false;
+        };
+        let target = match count < 0 {
+            true => 0,
+            false => self.len() - 1,
+        };
+        self.land_cursor(from, target, extend, modify);
+        true
+    }
+
+    /// Scrolls to `target`, builds the rows there, and lets `GtkListBox` move the rest of
+    /// the way to select as usual.
+    fn land_cursor(&self, from: usize, target: usize, extend: bool, modify: bool) {
+        // 範囲の起点は、選択を変える前の行。
+        if extend && self.0.anchor.get().is_none() {
+            self.0.anchor.set(Some(from));
+        }
+        self.reveal_computed(target);
+        self.update_window();
+
+        // 作り直しで元の行が窓から外れると、フォーカスも移っている。
+        let Some(from) = self.focused_row() else {
+            return;
+        };
+        let window = self.0.window.get();
+        let target = target.clamp(window.start, window.end - 1);
+        let count = i32::try_from(target as i64 - from as i64).unwrap_or(0);
+        // すでにその行にいると、`GtkListBox` は動いた先が無いとみなして何も選ばない。
+        if count == 0 {
+            if !extend && !modify {
+                let picked = self.normalize(&[target]);
+                self.change_selection(&picked);
+            }
+            return;
+        }
+        self.without_scroll_to_focus(|| {
+            self.0
+                .native
+                .emit_move_cursor(gtk::MovementStep::DisplayLines, count, extend, modify);
+        });
+    }
+
+    /// Selects every row for Ctrl + A, including those not built.
+    fn select_every_row(&self) {
+        if self.selection_mode().is_multiple() {
+            let every: Vec<usize> = (0..self.len()).collect();
+            let picked = self.normalize(&every);
+            self.change_selection(&picked);
+        }
+    }
+
+    /// Changes the selection for an operation of the user's, notifying if it changed.
+    fn change_selection(&self, picked: &[usize]) {
+        if picked != self.selection() {
+            self.replace_selection(picked);
+            self.0.on_select.emit(picked);
+        }
+    }
+
+    /// Computes the range of rows to build from the current scroll position.
+    fn compute_window(&self, overscan: usize) -> RowWindow {
+        let adjustment = self.0.scroller.vadjustment();
+        // 詰め物が窓の外の行と同じ高さを持つので、スクロール位置は
+        // 「全行を作ったとき」と同じ座標になる。
+        list_row_window(
+            self.0.bin.sizing().height != naui_core::Length::Auto,
+            self.len(),
+            adjustment.value(),
+            adjustment.page_size(),
+            self.0.row_height.get(),
+            overscan,
+        )
+    }
+
+    /// Moves the window at the start of the next frame.
+    ///
+    /// **The scroll position can change from inside `GtkListBox`'s own handling.** Moving
+    /// the cursor focuses the next row, `GtkViewport` scrolls to it, and only then does
+    /// `GtkListBox` select that row. Rebuilding the rows in the middle removes the row it
+    /// is about to select, so the selection lands on the wrong row.
+    ///
+    /// It waits for a frame rather than just for the handling to finish, because the
+    /// frame lays the new rows out right after this, before any more input. A key
+    /// arriving while a new row has no position yet would make `GtkViewport` scroll to
+    /// the top of the list.
+    fn queue_window_update(&self) {
+        // 表示されていなければフレームが来ない。キーの処理の途中でもない。
+        if !self.0.scroller.is_mapped() {
+            self.update_window();
+            return;
+        }
+        if self.0.window_update_queued.replace(true) {
+            return;
+        }
+        let weak = Rc::downgrade(&self.0);
+        self.0.scroller.add_tick_callback(move |_, _| {
+            if let Some(inner) = weak.upgrade() {
+                inner.window_update_queued.set(false);
+                List(inner).update_window();
+            }
+            glib::ControlFlow::Break
+        });
+    }
+
+    /// Moves the built range along with scrolling.
+    ///
+    /// Rebuilding for every row scrolled is heavy, so the window is reused until you
+    /// have scrolled through half of the extra rows ([`ROW_WINDOW_OVERSCAN`]). Even then,
+    /// only the rows that were not there are built.
+    fn update_window(&self) {
+        if self.0.rebuilding.get() {
+            return;
+        }
+        let current = self.0.window.get();
+        let needed = self.compute_window(ROW_WINDOW_OVERSCAN / 2);
+        let next = self.compute_window(ROW_WINDOW_OVERSCAN);
+        if next == current || keeps_row_window(current, needed, next) {
+            return;
+        }
+        self.0.window.set(next);
+        self.build_window_from(Some(current));
+        if self.settle_row_height() {
+            self.update_window();
+        }
+    }
+
+    /// Finds the height of one row from the built rows. `true` if it changed.
+    ///
+    /// Row height is decided by the content, so it is not known until a row is built.
+    /// **The tallest built row is used, and every built row is given that height.**
+    /// The rows outside the window are filled in as "row count × this height", so rows
+    /// of differing height (only some with `detail`, for instance) would make the
+    /// scroll bar drift every time the window moves. A taller row appearing later grows
+    /// the height once.
+    fn settle_row_height(&self) -> bool {
+        let rows = self.native_rows();
+        let tallest = rows
+            .iter()
+            .map(|row| row.measure(gtk::Orientation::Vertical, -1).1 as f64)
+            .fold(0.0, f64::max);
+        let previous = self.0.row_height.get();
+        // 指定は下限。中身がそれより高い行は伸びるので、窓の計算もそちらに合わせる。
+        let floor = f64::from(self.0.fixed_row_height.get().unwrap_or(0));
+        let measured = match self.0.row_height_stale.replace(false) {
+            true => tallest,
+            false => tallest.max(previous),
+        }
+        .max(floor);
+        if measured <= 0.0 {
+            return false;
+        }
+        let window = self.0.window.get();
+        // 行が少なければ行ごとの高さのまま (窓の外の行が無いので、ずれない)。
+        if !window.is_complete() {
+            for row in &rows {
+                row.set_size_request(-1, measured as i32);
+            }
+        }
+        self.0.row_height.set(measured);
+        set_spacer_height(&self.0.top_spacer, window.leading(measured));
+        set_spacer_height(&self.0.bottom_spacer, window.trailing(measured));
+        (previous - measured).abs() >= 0.5
+    }
+
+    /// The rows the `GtkListBox` has now.
+    fn native_rows(&self) -> Vec<gtk::Widget> {
+        let mut rows = Vec::with_capacity(self.0.window.get().len());
+        let mut child = self.0.native.first_child();
+        while let Some(row) = child {
+            child = row.next_sibling();
+            rows.push(row);
+        }
+        rows
+    }
+
+    /// Scrolls to the position computed from the row height. `false` if the height is
+    /// not known or the scroll range does not reach the row yet.
+    fn reveal_computed(&self, index: usize) -> bool {
+        let height = self.0.row_height.get();
+        if height <= 0.0 {
+            return false;
+        }
+        let top = index as f64 * height;
+        if top + height > self.0.scroller.vadjustment().upper() + 0.5 {
+            return false;
+        }
+        reveal_range(&self.0.scroller, top, top + height);
+        true
+    }
+
+    /// Normalizes the requested selection into a form meaningful for this list.
+    fn normalize(&self, indices: &[usize]) -> Vec<usize> {
+        self.selection_mode()
+            .normalize_by(indices, |index| self.is_selectable(index))
+    }
+
+    /// Whether the row can be selected.
+    fn is_selectable(&self, index: usize) -> bool {
+        self.0.rows.is_selectable(index, ListRow::is_selectable)
+    }
+
+    /// Replaces the selection from code. A Shift range then starts from its last row, as
+    /// `GtkListBox` does.
+    fn replace_selection(&self, picked: &[usize]) {
+        self.0.anchor.set(picked.last().copied());
+        without_signal(&self.0.native, &self.0.handler, || self.show(picked));
+    }
+
+    /// Remembers the selection and applies it to the built rows.
+    ///
+    /// Rows outside the window have no `GtkListBoxRow`, so it cannot be applied to them.
+    /// When the window moves and rows are rebuilt, it is applied again from the
+    /// remembered selection.
     fn show(&self, picked: &[usize]) {
+        *self.0.selected.borrow_mut() = picked.to_vec();
+        let window = self.0.window.get();
         self.0.native.unselect_all();
         for &index in picked {
-            if let Some(row) = self.0.native.row_at_index(index as i32) {
+            if !window.contains(index) {
+                continue;
+            }
+            if let Some(row) = self.0.native.row_at_index((index - window.start) as i32) {
                 self.0.native.select_row(Some(&row));
             }
         }
     }
+
+    /// Reads the selection the user changed. How rows outside the window are treated is
+    /// decided here too.
+    fn read_native_selection(&self) -> Vec<usize> {
+        let window = self.0.window.get();
+        // `GtkListBox` はカーソルを動かしてから選択を変えるので、フォーカスの行が
+        // いま操作された行になる。
+        let cursor = self.focused_row();
+        let extending =
+            self.selection_mode().is_multiple() && self.0.gesture.get() == SelectionGesture::Extend;
+        if let Some((anchor, cursor)) = self.0.anchor.get().zip(cursor).filter(|_| extending) {
+            let range: Vec<usize> = (anchor.min(cursor)..=anchor.max(cursor)).collect();
+            let picked = self.normalize(&range);
+            // `GtkListBox` が広げた範囲は、覚えている行が起点なので合っているとは限らない。
+            without_signal(&self.0.native, &self.0.handler, || self.show(&picked));
+            return picked;
+        }
+        self.0.anchor.set(cursor);
+        let picked = self
+            .0
+            .native
+            .selected_rows()
+            .iter()
+            .map(|row| self.0.built_start.get() + row.index().max(0) as usize)
+            .collect();
+        let previous = self.0.selected.borrow().clone();
+        // 単一選択では、窓の外の行を残すと 2 行選ばれてしまう。
+        let gesture = match self.selection_mode().is_multiple() {
+            true => self.0.gesture.get(),
+            false => SelectionGesture::Plain,
+        };
+        merge_hidden_selection(window, &previous, picked, gesture)
+    }
+}
+
+/// Gives the spacer the height of the rows outside the window.
+fn set_spacer_height(spacer: &gtk::Box, height: f64) {
+    let height = height.max(0.0).min(i32::MAX as f64) as i32;
+    spacer.set_size_request(-1, height);
+    spacer.set_visible(height > 0);
 }
 
 /// The content of a text-only row.
@@ -439,6 +1144,16 @@ pub(crate) fn apply_caption(label: &gtk::Label) {
     {
         label.add_css_class(class);
     }
+}
+
+/// Tells assistive technology a row's place among all the rows and how many there are.
+///
+/// The `GtkListBox` has only the rows built, so it would answer with those alone.
+pub(crate) fn report_row_position(row: &gtk::ListBoxRow, index: usize, count: usize) {
+    row.update_relation(&[
+        gtk::accessible::Relation::PosInSet(i32::try_from(index + 1).unwrap_or(i32::MAX)),
+        gtk::accessible::Relation::SetSize(i32::try_from(count).unwrap_or(i32::MAX)),
+    ]);
 }
 
 /// Builds one row. Both `ListItem`s and custom content go through the same path.
@@ -527,7 +1242,7 @@ fn pressed_row(
         .widget()
         .and_downcast::<gtk::ListBoxRow>()
         .filter(|row| row.is_sensitive())?;
-    let index = usize::try_from(row.index()).ok()?;
+    let index = inner.built_start.get() + usize::try_from(row.index()).ok()?;
     Some((inner, row, index))
 }
 
@@ -562,8 +1277,8 @@ fn enter_controller(list: Weak<ListInner>) -> gtk::EventControllerKey {
             .and_downcast::<gtk::ListBoxRow>()
             .filter(|row| row.parent().as_ref() == Some(inner.native.upcast_ref()));
         if let Some(row) = focused.filter(|row| row.is_sensitive()) {
-            if let Ok(index) = usize::try_from(row.index()) {
-                inner.row_activate.emit(index);
+            if let Ok(offset) = usize::try_from(row.index()) {
+                inner.row_activate.emit(inner.built_start.get() + offset);
             }
         }
         glib::Propagation::Proceed

@@ -244,6 +244,46 @@ fn main() {
             table_columns_keep_filling_the_width,
         ),
         (
+            "リストが見えている行だけを組み立てる",
+            list_builds_only_the_rows_it_shows,
+        ),
+        (
+            "行の多いリストをスクロールでき、画面の外の選択が残る",
+            list_with_many_rows_scrolls_and_selects,
+        ),
+        (
+            "リストは行を組み立てずに選べるかどうかを答える",
+            list_row_selectable_answers_without_building,
+        ),
+        (
+            "リストの行の高さの指定は最小の高さで、中身を切らない",
+            list_row_height_is_a_minimum,
+        ),
+        (
+            "リストの組み立ての中からリストを触れる",
+            list_builder_can_touch_the_list,
+        ),
+        (
+            "行を組み立てる関数の中で行を差し替えても新しい行にそろう",
+            list_builder_can_replace_the_rows,
+        ),
+        (
+            "組み立ての中で予約した読み直しより先に読み直すと、予約した選択は当たらない",
+            list_reload_takes_over_the_waiting_reload,
+        ),
+        (
+            "選択を読む時間が行数によらない",
+            list_selection_does_not_visit_every_row,
+        ),
+        (
+            "行を組み立てる関数の中の refresh は問い合わせのあとで読み直す",
+            list_refresh_inside_the_builder_waits,
+        ),
+        (
+            "行が多くても一覧の自然高を読むのに待たされない",
+            list_natural_height_does_not_visit_every_row,
+        ),
+        (
             "テーブルが見えている行だけを組み立てる",
             table_builds_only_the_rows_it_shows,
         ),
@@ -8654,6 +8694,502 @@ fn table_columns_follow_the_spec(ui: &Ui) -> Result<()> {
         field_width > cell.frame().size.width - 20.0,
         "セルの文字が列いっぱいに広がること: {field_width} / {}",
         cell.frame().size.width
+    );
+    Ok(())
+}
+
+/// However many rows a list has, only the rows on screen are built.
+///
+/// `NSTableView` asks only for what it shows, and automatic row heights do not change
+/// that: AppKit estimates the rows it has not measured.
+fn list_builds_only_the_rows_it_shows(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 500_000;
+    let built: Rc<RefCell<Vec<usize>>> = Rc::new(RefCell::new(Vec::new()));
+    let list = ui.list()?;
+    let started = Instant::now();
+    list.set_row_builder(ROWS, {
+        let built = built.clone();
+        let ui = ui.clone();
+        move |index| {
+            built.borrow_mut().push(index);
+            Ok(ListRow::new(&ui.label(&format!("行 {index}"))?))
+        }
+    });
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "{ROWS} 行でも渡すだけなら待たされないこと: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(list.len(), ROWS);
+    let native = list.native_table();
+    assert_eq!(native.numberOfRows() as usize, ROWS);
+    assert!(
+        built.borrow().is_empty(),
+        "画面に出るまでは組み立てないこと"
+    );
+
+    let cell = native.viewAtColumn_row_makeIfNecessary(0, 42, true);
+    assert!(cell.is_some(), "見えた行のビューが作られること");
+    assert_eq!(*built.borrow(), vec![42], "組み立てるのは見えた行だけ");
+
+    list.refresh();
+    let _ = native.viewAtColumn_row_makeIfNecessary(0, 42, true);
+    assert_eq!(
+        *built.borrow(),
+        vec![42, 42],
+        "`refresh` は組み立て直すこと"
+    );
+
+    // 文字だけの行も、渡しただけで全行の高さを測ることがない。
+    let items: Vec<ListItem> = (0..ROWS)
+        .map(|index| ListItem::new(format!("項目 {index}")))
+        .collect();
+    let started = Instant::now();
+    list.set_items(&items);
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "{ROWS} 行の `set_items` が待たされないこと: {:?}",
+        started.elapsed()
+    );
+    assert_eq!(list.len(), ROWS);
+    Ok(())
+}
+
+/// A list with many rows opens and scrolls without building or measuring every row,
+/// and the selection is kept for rows off screen.
+fn list_with_many_rows_scrolls_and_selects(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 100_000;
+    let built = Rc::new(Cell::new(0usize));
+    let list = ui.list()?;
+    list.set_selection_mode(SelectionMode::Multiple);
+    list.set_row_builder(ROWS, {
+        let built = built.clone();
+        let ui = ui.clone();
+        move |index| {
+            built.set(built.get() + 1);
+            let label = ui.label(&format!("行 {index}"))?;
+            Ok(ListRow::new(&label).selectable(index % 2 == 0))
+        }
+    });
+    list.set_sizing(Sizing::fill());
+    let window = ui.window("大きなリスト", 400.0, 300.0)?;
+    window.set_child(&list);
+    window.show();
+    let content = window.native_window().contentView().expect("contentView");
+    content.layoutSubtreeIfNeeded();
+    unsafe { content.display() };
+    pump(0.05);
+    assert!(
+        built.get() > 0 && built.get() < 200,
+        "見えている分だけを組み立てること: {} 回",
+        built.get()
+    );
+
+    let target = ROWS / 2;
+    list.scroll_to_row(target);
+    content.layoutSubtreeIfNeeded();
+    unsafe { content.display() };
+    let native = list.native_table();
+    let visible = native.rowsInRect(native.visibleRect());
+    assert!(
+        visible.location <= target && target < visible.location + visible.length,
+        "指定した行まで送られること: {} 行目から {} 行",
+        visible.location,
+        visible.length
+    );
+    assert!(
+        built.get() < 400,
+        "スクロールしても見えている分だけであること: {} 回",
+        built.get()
+    );
+    assert!(list.row_height() > 0.0, "行の高さが分かること");
+
+    // 画面の外の行も選べて、残る。組み立てていない行は選べる扱い。一度組み立てて
+    // 画面から出た 3 行目は、選べないと答えたことを覚えている。
+    list.set_selection(&[3, target, ROWS - 1]);
+    assert_eq!(list.selection(), vec![target, ROWS - 1]);
+    list.scroll_to_row(0);
+    content.layoutSubtreeIfNeeded();
+    assert_eq!(
+        list.selection(),
+        vec![target, ROWS - 1],
+        "スクロールで落ちない"
+    );
+    // 組み立てずに聞いても同じ (矢印キーで動くときの問い合わせ)。
+    list.scroll_to_row(target);
+    content.layoutSubtreeIfNeeded();
+    unsafe { content.display() };
+    list.set_selection(&[3]);
+    assert!(list.selection().is_empty(), "画面の外の行も答えを保つこと");
+    list.refresh();
+    list.set_selection(&[3]);
+    assert_eq!(list.selection(), vec![3], "refresh で答えを忘れること");
+    list.clear_selection();
+    window.close();
+    Ok(())
+}
+
+/// Even with built rows, whether a row can be selected is answered without creating
+/// it.
+fn list_row_selectable_answers_without_building(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 10_000;
+    const LOCKED: usize = 5_000;
+    let built = Rc::new(Cell::new(0usize));
+    let list = ui.list()?;
+    list.set_row_builder(ROWS, {
+        let built = built.clone();
+        let ui = ui.clone();
+        move |index| {
+            built.set(built.get() + 1);
+            let label = ui.label(&index.to_string())?;
+            Ok(ListRow::new(&label).selectable(index != LOCKED))
+        }
+    });
+
+    list.set_selection(&[LOCKED]);
+    assert_eq!(list.selection(), vec![LOCKED], "述語が無ければ選べる扱い");
+
+    list.clear_selection();
+    list.set_row_selectable(|index| index != LOCKED);
+    list.set_selection(&[LOCKED]);
+    assert!(list.selection().is_empty(), "選べない行は取り除かれること");
+    list.set_selection(&[LOCKED - 1]);
+    assert_eq!(list.selection(), vec![LOCKED - 1]);
+    assert_eq!(built.get(), 0, "選択のために行を組み立てないこと");
+
+    let native = list.native_table();
+    let delegate = unsafe { native.delegate() }.expect("デリゲートがあること");
+    assert!(!delegate.tableView_shouldSelectRow(&native, LOCKED as isize));
+    assert!(delegate.tableView_shouldSelectRow(&native, (LOCKED - 1) as isize));
+    Ok(())
+}
+
+/// A row height is a minimum: every row is at least that tall, its content is centered,
+/// and a row whose content needs more grows instead of being cut off. Passing 0 or less
+/// returns to the rows' own heights.
+fn list_row_height_is_a_minimum(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    assert_eq!(list.row_height(), 0.0, "行が無いうちは 0");
+    list.set_items(&[
+        ListItem::new("東京"),
+        ListItem::new("大阪").detail("8,838,000 人"),
+    ]);
+    list.set_sizing(Sizing::fill());
+    let window = ui.window("行の高さ", 400.0, 300.0)?;
+    window.set_child(&list);
+    window.show();
+    let content = window.native_window().contentView().expect("contentView");
+    let native = list.native_table();
+    let show = || {
+        content.layoutSubtreeIfNeeded();
+        unsafe { content.display() };
+        for row in 0..native.numberOfRows() {
+            let _ = native.viewAtColumn_row_makeIfNecessary(0, row, true);
+        }
+        content.layoutSubtreeIfNeeded();
+    };
+    let height_of = |row: isize| native.rectOfRow(row).size.height;
+    show();
+    let (plain, detailed) = (height_of(0), height_of(1));
+    assert!(detailed > plain, "補助の文字がある行は高いこと");
+    let estimate = native.rowHeight();
+
+    // 中身より高い指定は、どの行もその高さになる。中身は行の縦中央に来る。
+    list.set_row_height(64.0);
+    show();
+    assert_eq!(list.row_height(), 64.0);
+    assert_eq!(native.rowHeight(), 64.0);
+    assert_eq!(height_of(0), 64.0);
+    assert_eq!(height_of(1), 64.0);
+    let cell = native
+        .viewAtColumn_row_makeIfNecessary(0, 0, true)
+        .expect("セル");
+    let inner = cell.subviews().objectAtIndex(0);
+    assert!(
+        (inner.frame().origin.y + inner.frame().size.height / 2.0 - cell.frame().size.height / 2.0)
+            .abs()
+            < 1.0,
+        "中身が縦中央にあること: {:?} / {:?}",
+        inner.frame(),
+        cell.frame()
+    );
+
+    // 中身より低い指定では、行は切れずに伸びる。
+    list.set_row_height(plain + 1.0);
+    show();
+    assert_eq!(list.row_height(), plain + 1.0);
+    assert_eq!(height_of(0), plain + 1.0);
+    assert_eq!(height_of(1), detailed, "中身の入る高さまで伸びること");
+    list.set_row_height(1.0);
+    show();
+    assert_eq!(height_of(0), plain, "切れないこと");
+    assert_eq!(height_of(1), detailed, "切れないこと");
+
+    // 行を入れ替えても指定は残る。
+    list.set_row_height(64.0);
+    list.set_items(&ListItem::list(["札幌"]));
+    show();
+    assert_eq!(height_of(0), 64.0);
+
+    // 0 以下で元へ戻す。指定を見積もりに残さない。
+    list.set_row_height(0.0);
+    show();
+    assert_eq!(native.rowHeight(), estimate);
+    assert_eq!(height_of(0), plain);
+    assert_eq!(list.row_height(), plain);
+    window.close();
+    Ok(())
+}
+
+/// Replacing the rows from inside the function that builds a row does not double-borrow.
+fn list_builder_can_touch_the_list(ui: &Ui) -> Result<()> {
+    let list = ui.list()?;
+    let weak = list.downgrade();
+    let ui_for_row = ui.clone();
+    list.set_row_builder(3, move |index| {
+        let list = weak.upgrade().expect("リストが生きていること");
+        assert_eq!(list.len(), 3);
+        list.set_row_selectable(|_| true);
+        Ok(ListRow::new(&ui_for_row.label(&index.to_string())?))
+    });
+    let native = list.native_table();
+    assert!(native
+        .viewAtColumn_row_makeIfNecessary(0, 1, true)
+        .is_some());
+    assert!(
+        native
+            .viewAtColumn_row_makeIfNecessary(0, 2, true)
+            .is_some(),
+        "組み立ての関数は次の行でも使えること"
+    );
+    Ok(())
+}
+
+/// Replacing the rows from inside the function that builds a row reloads the table once
+/// AppKit has finished asking, so only the new rows are left.
+fn list_builder_can_replace_the_rows(ui: &Ui) -> Result<()> {
+    let new_built = Rc::new(RefCell::new(Vec::new()));
+    let list = ui.list()?;
+    let weak = list.downgrade();
+    let ui_for_row = ui.clone();
+    list.set_row_builder(1_000, {
+        let new_built = new_built.clone();
+        move |index| {
+            if index == 2 {
+                let list = weak.upgrade().expect("リストが生きていること");
+                let ui = ui_for_row.clone();
+                let new_built = new_built.clone();
+                list.set_row_builder(5, move |index| {
+                    new_built.borrow_mut().push(index);
+                    Ok(ListRow::new(&ui.label(&index.to_string())?))
+                });
+                // 読み直しを待たずに選んでも、新しい行に当たること。
+                list.set_selection(&[4]);
+                assert_eq!(list.selection(), vec![4]);
+            }
+            Ok(ListRow::new(&ui_for_row.label(&index.to_string())?))
+        }
+    });
+    let native = list.native_table();
+    assert!(
+        native
+            .viewAtColumn_row_makeIfNecessary(0, 2, true)
+            .is_none(),
+        "差し替えの途中で組み立てた古い行は使わないこと"
+    );
+    pump_until(2.0, || native.numberOfRows() == 5);
+    assert_eq!(list.len(), 5);
+    assert_eq!(native.numberOfRows(), 5, "読み直しで新しい行数になること");
+    assert_eq!(list.selection(), vec![4], "読み直しのあとも選択が残ること");
+    assert!(native.selectedRowIndexes().containsIndex(4));
+
+    new_built.borrow_mut().clear();
+    assert!(native
+        .viewAtColumn_row_makeIfNecessary(0, 3, true)
+        .is_some());
+    assert_eq!(*new_built.borrow(), [3], "新しい関数が組み立てること");
+    Ok(())
+}
+
+/// A reload that happens before the one waiting from inside a row build takes its place:
+/// the selection set for the rows of that time is not applied to later rows.
+fn list_reload_takes_over_the_waiting_reload(ui: &Ui) -> Result<()> {
+    // 組み立ての中で行を差し替えて選び、読み直しを待っている状態にする。
+    let waiting = || -> Result<_> {
+        let list = ui.list()?;
+        let weak = list.downgrade();
+        let ui_for_row = ui.clone();
+        list.set_row_builder(1_000, move |index| {
+            if index == 2 {
+                let list = weak.upgrade().expect("リストが生きていること");
+                let ui = ui_for_row.clone();
+                list.set_row_builder(5, move |index| {
+                    Ok(ListRow::new(&ui.label(&index.to_string())?))
+                });
+                list.set_selection(&[4]);
+            }
+            Ok(ListRow::new(&ui_for_row.label(&index.to_string())?))
+        });
+        let _ = list
+            .native_table()
+            .viewAtColumn_row_makeIfNecessary(0, 2, true);
+        assert_eq!(list.selection(), vec![4]);
+        Ok(list)
+    };
+    let items = ListItem::list(["a", "b", "c", "d", "e", "f"]);
+
+    // 新しい行を渡すと、待っていた選択は当たらない。
+    let list = waiting()?;
+    let native = list.native_table();
+    list.set_items(&items);
+    assert_eq!(list.selection(), Vec::<usize>::new());
+    pump(0.2);
+    assert_eq!(native.numberOfRows(), 6);
+    assert_eq!(
+        list.selection(),
+        Vec::<usize>::new(),
+        "待っていた選択が新しい行に当たらないこと"
+    );
+    assert_eq!(native.selectedRowIndexes().count(), 0);
+
+    // そのあとで選んだ行は、待っていた読み直しで消えない。
+    let list = waiting()?;
+    let native = list.native_table();
+    list.set_items(&items);
+    list.set_selection(&[1]);
+    assert!(native.selectedRowIndexes().containsIndex(1));
+    pump(0.2);
+    assert_eq!(list.selection(), vec![1], "あとから選んだ行が残ること");
+    assert!(native.selectedRowIndexes().containsIndex(1));
+
+    // refresh は選択を残す読み直しなので、待っていた選択はそこで当たる。
+    let list = waiting()?;
+    let native = list.native_table();
+    list.refresh();
+    assert_eq!(native.numberOfRows(), 5);
+    assert!(native.selectedRowIndexes().containsIndex(4));
+    list.clear_selection();
+    pump(0.2);
+    assert_eq!(
+        list.selection(),
+        Vec::<usize>::new(),
+        "refresh のあとの解除が残ること"
+    );
+    assert_eq!(native.selectedRowIndexes().count(), 0);
+    Ok(())
+}
+
+/// A `refresh` from inside the builder cannot reload while AppKit is asking for a row. It
+/// reloads afterwards, and the row being built does not stay.
+fn list_refresh_inside_the_builder_waits(ui: &Ui) -> Result<()> {
+    let version = Rc::new(Cell::new(1));
+    let list = ui.list()?;
+    let weak = list.downgrade();
+    let ui_for_row = ui.clone();
+    let refresh_on = Rc::new(Cell::new(None));
+    list.set_row_builder(1_000, {
+        let version = version.clone();
+        let refresh_on = refresh_on.clone();
+        move |index| {
+            let built_from = version.get();
+            if refresh_on.get() == Some(index) {
+                refresh_on.set(None);
+                version.set(2);
+                let list = weak.upgrade().expect("リストが生きていること");
+                list.refresh();
+                assert_eq!(list.selection(), vec![4], "読み直しまでも選択は残ること");
+            }
+            Ok(ListRow::new(
+                &ui_for_row.label(&format!("{built_from}:{index}"))?,
+            ))
+        }
+    });
+    list.set_selection(&[4]);
+    refresh_on.set(Some(2));
+    let native = list.native_table();
+    assert!(
+        native
+            .viewAtColumn_row_makeIfNecessary(0, 2, true)
+            .is_none(),
+        "読み直す前の行は使わないこと"
+    );
+    assert_eq!(version.get(), 2);
+    pump(0.2);
+    let cell = native
+        .viewAtColumn_row_makeIfNecessary(0, 2, true)
+        .expect("読み直したあとは行があること");
+    let shown = cell
+        .subviews()
+        .iter()
+        .flat_map(|view| view.subviews().to_vec())
+        .chain(cell.subviews().to_vec())
+        .filter_map(|view| view.downcast::<objc2_app_kit::NSTextField>().ok())
+        .map(|field| field.stringValue().to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(shown, ["2:2"], "新しい内容で組み立てること");
+    assert_eq!(list.selection(), vec![4], "読み直しのあとも選択が残ること");
+    assert!(native.selectedRowIndexes().containsIndex(4));
+    Ok(())
+}
+
+/// `NSScrollView` reads the table's natural height even when the list's height is fixed, so
+/// it must not depend on measuring every row.
+fn list_natural_height_does_not_visit_every_row(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 100_000;
+    let built = Rc::new(Cell::new(0usize));
+    let ui_for_row = ui.clone();
+    let list = ui.list()?;
+    list.set_row_builder(ROWS, {
+        let built = built.clone();
+        move |index| {
+            built.set(built.get() + 1);
+            Ok(ListRow::new(&ui_for_row.label(&index.to_string())?))
+        }
+    });
+    list.set_sizing(Sizing::new().height(Length::Fixed(200.0)));
+    let window = ui.window("自然高", 300.0, 240.0)?;
+    window.set_child(&list);
+    window.show();
+    let content = window.native_window().contentView().expect("contentView");
+    content.layoutSubtreeIfNeeded();
+    let native = list.native_table();
+    let started = Instant::now();
+    let height = native.intrinsicContentSize().height;
+    let elapsed = started.elapsed();
+    let scroll = native.enclosingScrollView().expect("NSScrollView");
+    let started = Instant::now();
+    let _ = scroll.intrinsicContentSize();
+    let elapsed_scroll = started.elapsed();
+    println!("     (10 万行の自然高 {height}: 表 {elapsed:?} / スクロール {elapsed_scroll:?})");
+    assert!(
+        elapsed < Duration::from_millis(500) && elapsed_scroll < Duration::from_millis(500),
+        "{elapsed:?} / {elapsed_scroll:?}"
+    );
+    assert!(built.get() < 200, "全行を組み立てないこと: {}", built.get());
+    window.close();
+    Ok(())
+}
+
+/// Reading the selection follows the rows selected, not the rows in the list: it happens
+/// on every arrow key.
+fn list_selection_does_not_visit_every_row(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 1_000_000;
+    let ui_for_row = ui.clone();
+    let list = ui.list()?;
+    list.set_selection_mode(SelectionMode::Multiple);
+    list.set_row_builder(ROWS, move |index| {
+        Ok(ListRow::new(&ui_for_row.label(&index.to_string())?))
+    });
+    list.set_selection(&[ROWS - 1, 5, 7]);
+
+    let started = Instant::now();
+    for _ in 0..100 {
+        assert_eq!(list.selection(), vec![5, 7, ROWS - 1]);
+    }
+    assert!(
+        started.elapsed() < Duration::from_millis(500),
+        "{ROWS} 行でも選んだ行だけを読むこと: {:?}",
+        started.elapsed()
     );
     Ok(())
 }
