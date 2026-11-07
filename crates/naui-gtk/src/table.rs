@@ -22,7 +22,7 @@ use gtk::glib;
 use gtk::pango;
 use gtk::prelude::*;
 use naui_core::{
-    keeps_hidden_selection, keeps_row_window, row_window, Align, Result, RowWindow,
+    keeps_row_window, merge_hidden_selection, row_window, Align, Result, RowWindow,
     SelectionGesture, SelectionMode, SortOrder, TableColumn, TableRow, ROW_WINDOW_OVERSCAN,
 };
 
@@ -331,8 +331,13 @@ struct TableInner {
     rows: Rc<RowsState>,
     /// The range of rows currently built. With many rows, only those around the screen.
     window: Cell<RowWindow>,
+    /// The first row the `GtkListBox` has now. `window` moves ahead of it just before the
+    /// rows are rebuilt.
+    built_start: Cell<usize>,
     /// Whether rows are being built right now. Prevents nested rebuilds.
     rebuilding: Cell<bool>,
+    /// Whether a window update is already waiting for the next frame.
+    window_update_queued: Cell<bool>,
     /// How the selection was changed (modifier keys), as inferred from the last input.
     gesture: Cell<SelectionGesture>,
     /// The contents of the built rows, in order from `window.start`.
@@ -416,7 +421,9 @@ impl Table {
             columns: RefCell::new(Vec::new()),
             rows: Rc::new(RowsState::default()),
             window: Cell::new(RowWindow::default()),
+            built_start: Cell::new(0),
             rebuilding: Cell::new(false),
+            window_update_queued: Cell::new(false),
             gesture: Cell::new(SelectionGesture::Unknown),
             realized: RefCell::new(Vec::new()),
             selected: RefCell::new(Vec::new()),
@@ -486,16 +493,20 @@ impl Table {
         }
         // スクロールに合わせて、組み立てる範囲を動かす。
         {
+            let adjustment = table.0.scroller.vadjustment();
             let weak = Rc::downgrade(&table.0);
-            let update = move |_: &gtk::Adjustment| {
+            adjustment.connect_value_changed(move |_| {
+                if let Some(inner) = weak.upgrade() {
+                    Table(inner).queue_window_update();
+                }
+            });
+            // 表そのものの大きさが変わったときも引き直す。
+            let weak = Rc::downgrade(&table.0);
+            adjustment.connect_page_size_notify(move |_| {
                 if let Some(inner) = weak.upgrade() {
                     Table(inner).update_window();
                 }
-            };
-            let adjustment = table.0.scroller.vadjustment();
-            adjustment.connect_value_changed(update.clone());
-            // 表そのものの大きさが変わったときも引き直す。
-            adjustment.connect_page_size_notify(move |adjustment| update(adjustment));
+            });
         }
         table
     }
@@ -679,6 +690,8 @@ impl Table {
         let height = self.0.row_height.get().max(1.0);
         let top = index as f64 * height;
         crate::list::reveal_range(&self.0.scroller, top, top + height);
+        // 呼んだ直後に行を読めるように、遅らせずに組み立てておく。
+        self.update_window();
     }
 
     /// Selects exactly one row without notifying.
@@ -845,6 +858,7 @@ impl Table {
         let columns = self.0.columns.borrow().clone();
         let uniform = !window.is_complete();
         let fixed_height = self.0.fixed_row_height.get();
+        let focused = self.focused_row();
         // 列ごとの `GtkSizeGroup` は組み立てのたびに作り直す。消えた行の
         // セルを持ったままだと、その幅が残ってしまうため。見出しは
         // 作り直さないので、古い組から外してから新しい組へ入れる。
@@ -883,6 +897,7 @@ impl Table {
             self.0.list.unselect_all();
         });
         *self.0.realized.borrow_mut() = realized;
+        self.0.built_start.set(window.start);
 
         let height = self.0.row_height.get();
         set_spacer_height(&self.0.top_spacer, window.leading(height));
@@ -891,6 +906,56 @@ impl Table {
         // 覚えている選択を、組み立て直した行へ写す。
         let picked = self.selection();
         without_signal(&self.0.list, &self.0.handler, || self.show(&picked));
+
+        // 矢印キーで窓の端まで来たときに組み立て直しても、操作が続けられるように。
+        // 取り除いた行にフォーカスが残ったままだと、キーがどこにも届かなくなる。
+        if let Some(index) = focused {
+            let offset = match window.contains(index) {
+                true => index - window.start,
+                // スクロールバーで遠くへ送ったときは、見えている先頭の行から続ける。
+                false => self.first_visible_row().saturating_sub(window.start),
+            };
+            if let Some(row) = self.0.list.row_at_index(offset as i32) {
+                self.grab_focus_in_place(&row);
+            }
+        }
+    }
+
+    /// The first row wholly on screen, as far as the window has it.
+    fn first_visible_row(&self) -> usize {
+        let window = self.0.window.get();
+        let height = self.0.row_height.get();
+        if height <= 0.0 || window.is_empty() {
+            return window.start;
+        }
+        let top = self.0.scroller.vadjustment().value();
+        ((top / height).ceil() as usize).clamp(window.start, window.end - 1)
+    }
+
+    /// The row holding the keyboard focus (itself, or a control inside it).
+    fn focused_row(&self) -> Option<usize> {
+        let focus = self.0.list.root()?.focus()?;
+        let row = focus
+            .ancestor(gtk::ListBoxRow::static_type())
+            .and_downcast::<gtk::ListBoxRow>()
+            .filter(|row| row.parent().as_ref() == Some(self.0.list.upcast_ref()))?;
+        let offset = usize::try_from(row.index()).ok()?;
+        Some(self.0.built_start.get() + offset)
+    }
+
+    /// Moves the focus to a row just built, without scrolling.
+    ///
+    /// The row has no position yet, and `GtkViewport` would scroll to where it believes
+    /// the focused widget is (`scroll-to-focus`), jumping to the top of the list.
+    fn grab_focus_in_place(&self, row: &gtk::ListBoxRow) {
+        let viewport = self.0.scroller.child().and_downcast::<gtk::Viewport>();
+        if let Some(viewport) = &viewport {
+            viewport.set_scroll_to_focus(false);
+        }
+        row.grab_focus();
+        if let Some(viewport) = &viewport {
+            viewport.set_scroll_to_focus(true);
+        }
     }
 
     /// Computes the range of rows to build from the current scroll position.
@@ -905,6 +970,35 @@ impl Table {
             self.0.row_height.get(),
             overscan,
         )
+    }
+
+    /// Moves the built range on the next frame.
+    ///
+    /// Moving the cursor scrolls from inside `GtkListBox`'s own handling: `grab_focus`
+    /// reaches `GtkViewport`'s `scroll-to-focus`, which changes the adjustment. Rebuilding
+    /// there would remove the row `GtkListBox` is about to select, so the selection would
+    /// land on the wrong row.
+    ///
+    /// It waits for a frame rather than just for the handling to finish, because the frame
+    /// lays the new rows out right after this, before any more input. A key arriving while
+    /// a new row has no position yet would make `GtkViewport` scroll to the top of the list.
+    fn queue_window_update(&self) {
+        // 表示されていなければフレームが来ない。キーの処理の途中でもない。
+        if !self.0.scroller.is_mapped() {
+            self.update_window();
+            return;
+        }
+        if self.0.window_update_queued.replace(true) {
+            return;
+        }
+        let weak = Rc::downgrade(&self.0);
+        self.0.scroller.add_tick_callback(move |_, _| {
+            if let Some(inner) = weak.upgrade() {
+                inner.window_update_queued.set(false);
+                Table(inner).update_window();
+            }
+            glib::ControlFlow::Break
+        });
     }
 
     /// Moves the built range along with scrolling.
@@ -1025,33 +1119,20 @@ impl Table {
     /// decided here too.
     fn read_native_selection(&self) -> Vec<usize> {
         let window = self.0.window.get();
-        let mut picked: Vec<usize> = self
+        let picked = self
             .0
             .list
             .selected_rows()
             .iter()
             .map(|row| window.start + row.index().max(0) as usize)
             .collect();
-        picked.sort_unstable();
-        if window.is_complete() {
-            return picked;
-        }
-        // 組み立ててある行の選択しか届かないので、窓の外の選択を残すかどうかを
-        // 修飾キーから決める (`keeps_hidden_selection`)。
         let previous = self.0.selected.borrow().clone();
-        let inside: Vec<usize> = previous
-            .iter()
-            .copied()
-            .filter(|&index| window.contains(index))
-            .collect();
-        if !keeps_hidden_selection(&inside, &picked, self.0.gesture.get()) {
-            return picked;
-        }
-        let outside = previous.iter().copied().filter(|&i| !window.contains(i));
-        picked.extend(outside);
-        picked.sort_unstable();
-        picked.dedup();
-        picked
+        // 単一選択では、窓の外の行を残すと 2 行選ばれてしまう。
+        let gesture = match self.selection_mode().is_multiple() {
+            true => self.0.gesture.get(),
+            false => SelectionGesture::Plain,
+        };
+        merge_hidden_selection(window, &previous, picked, gesture)
     }
 }
 

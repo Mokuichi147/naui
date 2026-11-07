@@ -751,6 +751,18 @@ fn main() {
             table_sorting_works_while_windowed,
         ),
         (
+            "テーブルの窓が動いてもフォーカスのある行を保つ",
+            table_keeps_the_focused_row_across_rebuilds,
+        ),
+        (
+            "テーブルの矢印キーの移動が窓の端で止まらない",
+            table_arrow_keys_cross_the_window_edge,
+        ),
+        (
+            "テーブルの単一選択で窓の外の行が残らない",
+            table_single_selection_drops_rows_outside_the_window,
+        ),
+        (
             "リストの行が多くても見えている行だけを組み立てる",
             list_builder_rows_scale,
         ),
@@ -7284,6 +7296,157 @@ fn table_rows_report_their_place_among_all_rows(ui: &Ui) -> Result<()> {
     table.set_rows(&rows[..1_000]);
     tick(&list);
     check(1_000);
+    window.close();
+    Ok(())
+}
+
+/// A shown table of `count` rows in a small window, with its `GtkListBox`.
+fn shown_big_table(
+    ui: &Ui,
+    title: &str,
+    count: usize,
+) -> Result<(naui_gtk::Window, naui_gtk::Table, gtk::ListBox)> {
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["名前"]));
+    table.set_sizing(Sizing::fill());
+    let window = ui.window(title, 300.0, 200.0)?;
+    window.set_child(&table);
+    window.show();
+    table.set_rows(
+        &(0..count)
+            .map(|index| TableRow::new([format!("行 {index}")]))
+            .collect::<Vec<_>>(),
+    );
+    let native = table.native_list_box();
+    tick(&native);
+    tick(&native);
+    Ok((window, table, native))
+}
+
+/// The row holding the keyboard focus, if the focus is on a row.
+fn focused_list_row(native: &gtk::ListBox) -> Option<gtk::ListBoxRow> {
+    native.root()?.focus().and_downcast::<gtk::ListBoxRow>()
+}
+
+/// The row with the focus stays focused when the window moves and rows are rebuilt.
+fn table_keeps_the_focused_row_across_rebuilds(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    let (window, table, native) = shown_big_table(ui, "表のフォーカス", ROWS)?;
+    let height = table.row_height();
+    let adjustment = scroller_of(&native)
+        .expect("GtkScrolledWindow")
+        .vadjustment();
+    let scroll_to = |value: f64| {
+        adjustment.set_value(value);
+        tick(&native);
+    };
+    scroll_to(height * 100.0);
+    let row = native.row_at_index(14).expect("行");
+    let target = table_cells(row.upcast_ref());
+    assert_eq!(target.len(), 1);
+    assert!(row.grab_focus(), "行にフォーカスを置けること");
+
+    scroll_to(height * 110.0);
+    let focused = focused_list_row(&native).expect("行にフォーカスが残ること");
+    assert!(focused.parent().is_some(), "取り除いた行に残らないこと");
+    assert_ne!(focused, row, "組み立て直されていること");
+    assert!(focused.index() < 14, "窓が動いていること");
+    assert_eq!(
+        table_cells(focused.upcast_ref()),
+        target,
+        "同じ行であること"
+    );
+    assert_eq!(
+        adjustment.value(),
+        height * 110.0,
+        "フォーカスを戻しても位置が飛ばないこと"
+    );
+
+    // 窓の外まで送ったときは、組み立ててある行へ移す (宙に浮かせない)。
+    scroll_to(height * 3_000.0);
+    let focused = focused_list_row(&native).expect("行にフォーカスが残ること");
+    assert!(focused.parent().is_some(), "取り除いた行に残らないこと");
+    assert_eq!(
+        table_cells(focused.upcast_ref()),
+        vec!["行 3000".to_string()],
+        "見えている先頭の行へ移ること"
+    );
+    assert_eq!(adjustment.value(), height * 3_000.0);
+    window.close();
+    Ok(())
+}
+
+/// Moving with the arrow keys goes through `GtkListBox`, which knows only the rows
+/// built, so the cursor has to survive the rows being rebuilt at the window's edge.
+///
+/// It scrolls from inside `GtkListBox`'s own handling, so rows must not be rebuilt in
+/// the middle of it, and a key arriving before a new row has a position must not make
+/// `GtkViewport` jump to the top.
+fn table_arrow_keys_cross_the_window_edge(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    const STEPS: usize = 60;
+    let (window, table, native) = shown_big_table(ui, "表の矢印キー", ROWS)?;
+    let press_down = || {
+        native.emit_by_name::<()>(
+            "move-cursor",
+            &[&gtk::MovementStep::DisplayLines, &1i32, &false, &false],
+        );
+    };
+    assert!(
+        native.row_at_index(0).expect("行").grab_focus(),
+        "行にフォーカスを置けること"
+    );
+    table.set_selected(0);
+    assert!(
+        children(&native).len() < STEPS,
+        "組み立てた行より遠くまで動くこと"
+    );
+    for step in 1..=STEPS {
+        press_down();
+        tick(&native);
+        assert_eq!(table.selection(), vec![step], "{step} 回目の移動");
+    }
+    let focused = focused_list_row(&native).expect("行にフォーカスがあること");
+    assert_eq!(
+        table_cells(focused.upcast_ref()),
+        vec![format!("行 {STEPS}")],
+        "フォーカスも付いてくること"
+    );
+
+    // キーの連打: フレームを待たずに続けて押されても、行を飛ばさない。
+    let mut expected = STEPS;
+    for round in 1..=20 {
+        for _ in 0..3 {
+            press_down();
+            pump();
+            expected += 1;
+            assert_eq!(table.selection(), vec![expected], "連打の {round} 回目");
+        }
+        tick(&native);
+    }
+    window.close();
+    Ok(())
+}
+
+/// With single selection, a row off screen must not stay selected next to the row
+/// just picked. Multiple selection keeps it.
+fn table_single_selection_drops_rows_outside_the_window(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 5_000;
+    let (window, table, native) = shown_big_table(ui, "表の単一選択", ROWS)?;
+    let (seen, mut sink) = recorder::<Vec<usize>>();
+    table.on_select(move |indices| sink(indices.to_vec()));
+
+    table.set_selected(4_000);
+    native.select_row(native.row_at_index(1).as_ref());
+    assert_eq!(table.selection(), vec![1], "1 行だけになること");
+    assert_eq!(seen.borrow().last(), Some(&vec![1]));
+
+    // 複数選択では、足した行と窓の外の行が両方残る (修飾キーが読めないときの判断)。
+    table.set_selection_mode(SelectionMode::Multiple);
+    table.set_selection(&[4_000]);
+    native.select_row(native.row_at_index(1).as_ref());
+    assert_eq!(table.selection(), vec![1, 4_000]);
+    assert_eq!(seen.borrow().last(), Some(&vec![1, 4_000]));
     window.close();
     Ok(())
 }
