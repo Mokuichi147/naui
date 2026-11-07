@@ -1439,10 +1439,11 @@ impl List {
         };
         let top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
         let (row_top, row_bottom) = self.row_span(index);
+        // どちらも少しでも見えている行になるので、ここへ戻ってきても動かない。
         let target = if row_bottom <= top {
-            (top / height).ceil() as usize
+            self.row_ending_below(top)
         } else if row_top >= top + viewport {
-            (((top + viewport) / height).floor() as usize).saturating_sub(1)
+            self.row_ending_below(top + viewport - 1.0)
         } else {
             return;
         };
@@ -1468,11 +1469,11 @@ impl List {
             return;
         }
         let start = self.0.built_start.get();
-        let height = self.0.row_height.get();
-        let top = index as f64 * height;
+        // 全行があるときの行の高さはまちまちなので、行そのものの位置で決める。
+        let (top, bottom) = self.row_span(index);
         let view_top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
         let viewport = self.0.scroll.ViewportHeight().unwrap_or(0.0);
-        if top + height < view_top || top > view_top + viewport {
+        if bottom < view_top || top > view_top + viewport {
             return;
         }
         if let Some(row) = self.0.native_rows.borrow().get(index - start) {
@@ -1543,22 +1544,41 @@ impl List {
 
     /// Moves the built range for a scroll position, unless the rows built are enough.
     fn move_window(&self, offset: f64) {
-        let current = self.0.window.get();
-        let needed = self.window_at(offset, ROW_WINDOW_OVERSCAN / 2);
-        let next = self.window_at(offset, ROW_WINDOW_OVERSCAN);
-        // 前回の組み立てが途中で失敗していたら、残った行は使わずに全部作り直す。
-        // 失敗した窓そのものは、レイアウトのたびにやり直さない。
-        let failed = self.0.failed_window.get();
-        if failed == Some(next)
-            || (failed.is_none() && (next == current || keeps_row_window(current, needed, next)))
-        {
-            return;
+        // 行の高さが変わると窓も変わる。高さは増えるだけなので、この繰り返しは止まる
+        // (`settle_row_height`)。
+        loop {
+            let current = self.0.window.get();
+            let needed = self.window_at(offset, ROW_WINDOW_OVERSCAN / 2);
+            let next = self.window_at(offset, ROW_WINDOW_OVERSCAN);
+            // 前回の組み立てが途中で失敗していたら、残った行は使わずに全部作り直す。
+            // 失敗した窓そのものは、レイアウトのたびにやり直さない。
+            let failed = self.0.failed_window.get();
+            if failed == Some(next)
+                || (failed.is_none()
+                    && (next == current || keeps_row_window(current, needed, next)))
+            {
+                return;
+            }
+            self.0.window.set(next);
+            self.build_window_from(failed.is_none().then_some(current));
+            if !self.settle_row_height() {
+                return;
+            }
         }
-        self.0.window.set(next);
-        self.build_window_from(failed.is_none().then_some(current));
-        if self.settle_row_height() {
-            self.move_window(offset);
+    }
+
+    /// The first row that ends below `y` within the scrolled content, or the last row.
+    fn row_ending_below(&self, y: f64) -> usize {
+        let (mut low, mut high) = (0, self.len());
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if self.row_span(middle).1 <= y {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
         }
+        low.min(self.len().saturating_sub(1))
     }
 
     /// Finds the height of one row from the built rows. `true` if it changed.

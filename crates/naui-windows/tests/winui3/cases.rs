@@ -215,6 +215,22 @@ const CASES: &[Case] = &[
         table_keys_pass_over_long_runs_only_the_builder_knows,
     ),
     (
+        "高さの違う行でもリストの窓の再計算は止まる",
+        list_window_settles_with_rows_of_many_heights,
+    ),
+    (
+        "高さの違う行でも表の窓の再計算は止まる",
+        table_window_settles_with_rows_of_many_heights,
+    ),
+    (
+        "高さの違うリストの行のフォーカスは実際の位置で決まる",
+        list_focus_follows_the_real_place_of_rows,
+    ),
+    (
+        "高さの違う表の行のフォーカスは実際の位置で決まる",
+        table_focus_follows_the_real_place_of_rows,
+    ),
+    (
         "表のフォーカスが画面の外にあっても表示が動かない",
         table_view_stays_when_the_focus_is_off_screen,
     ),
@@ -7989,6 +8005,7 @@ trait RowsForInput {
     fn set_selection(&self, indices: &[usize]);
     fn scroll_to_row(&self, index: usize);
     fn on_select(&self, f: impl FnMut(&[usize]) + 'static);
+    fn refresh(&self);
 }
 
 macro_rules! rows_for_input {
@@ -8014,6 +8031,9 @@ macro_rules! rows_for_input {
             }
             fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
                 self.on_select(f)
+            }
+            fn refresh(&self) {
+                self.refresh()
             }
         }
     };
@@ -8756,6 +8776,220 @@ fn table_view_stays_when_the_focus_is_off_screen(ui: &Ui) -> Result<()> {
             pump_until(Duration::from_millis(500), || false);
             hold_and_release(first_in_view() + round % 3, &what)?;
         }
+        Some(())
+    })
+}
+
+/// The height of a row of [`list_window_settles_with_rows_of_many_heights`]. Taken from the
+/// first row built, a height would put the window where the first row has the other height,
+/// over and over.
+fn height_that_moves_the_window(index: usize) -> f64 {
+    match index % 1_000 >= 900 {
+        true => 72.0,
+        false => 20.0,
+    }
+}
+
+/// Rows of many heights do not keep the window moving: the rows' height only settles if it
+/// cannot go back and forth with the rows built.
+fn list_window_settles_with_rows_of_many_heights(ui: &Ui) -> Result<()> {
+    use naui_windows::ListRow;
+
+    let window = ui.window("高さの違うリストの行", 300.0, 240.0)?;
+    let list = ui.list()?;
+    {
+        let ui = ui.clone();
+        list.set_row_builder(10_000, move |index| {
+            let label = ui.label(&format!("行 {index}"))?;
+            label.set_sizing(Sizing::fixed(100.0, height_that_moves_the_window(index)));
+            Ok(ListRow::new(&label))
+        });
+    }
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+    window_settles_scenario(&window, &list)
+}
+
+/// [`list_window_settles_with_rows_of_many_heights`] on a `Table`.
+fn table_window_settles_with_rows_of_many_heights(ui: &Ui) -> Result<()> {
+    use naui_windows::TableCells;
+
+    let window = ui.window("高さの違う表の行", 300.0, 240.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[naui_core::TableColumn::new("名前")]);
+    {
+        let ui = ui.clone();
+        table.set_row_builder(10_000, move |index| {
+            let label = ui.label(&format!("行 {index}"))?;
+            label.set_sizing(Sizing::fixed(100.0, height_that_moves_the_window(index)));
+            Ok(TableCells::new().cell(&label))
+        });
+    }
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
+    window_settles_scenario(&window, &table)
+}
+
+fn window_settles_scenario(window: &naui_windows::Window, list: &impl RowsForInput) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        let scroll = list.scroller();
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && list.row_height() > 0.0
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        let state = || {
+            let items = list.list_view().Items().expect("行");
+            let first = items
+                .GetAt(0)
+                .and_then(|item| item.cast::<ListViewItem>())
+                .and_then(|row| AutomationProperties::GetPositionInSet(&row))
+                .expect("位置");
+            (
+                first,
+                items.Size().expect("行数"),
+                list.row_height().to_bits(),
+            )
+        };
+        // 高さの低い行の位置から、窓の先頭が高い行へ来るところへ送る。
+        for target in [1_000, 3_000, 40, 7_000] {
+            list.scroll_to_row(target);
+            pump_until(Duration::from_millis(500), || false);
+            let settled = state();
+            pump_until(Duration::from_millis(500), || false);
+            assert_eq!(
+                state(),
+                settled,
+                "{target} 行目へ送ったあと、窓が動き続けないこと"
+            );
+            assert!(
+                settled.1 < 200,
+                "{target} 行目: 絞られていること: {}",
+                settled.1
+            );
+        }
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// The height of a row of [`list_focus_follows_the_real_place_of_rows`].
+fn alternating_row_height(index: usize) -> f64 {
+    match index % 2 == 1 {
+        true => 100.0,
+        false => 20.0,
+    }
+}
+
+/// Where a row is, when rows differ in height, is known only from the row itself: an
+/// estimate from a row height takes rows on screen for rows off it, and the focus is lost.
+fn list_focus_follows_the_real_place_of_rows(ui: &Ui) -> Result<()> {
+    use naui_windows::ListRow;
+
+    let list = ui.list()?;
+    {
+        let ui = ui.clone();
+        list.set_row_builder(100, move |index| {
+            let label = ui.label(&format!("行 {index}"))?;
+            label.set_sizing(Sizing::fixed(100.0, alternating_row_height(index)));
+            Ok(ListRow::new(&label))
+        });
+    }
+    list.set_sizing(Sizing::fill());
+    real_place_scenario(ui, &list)
+}
+
+/// [`list_focus_follows_the_real_place_of_rows`] on a `Table`.
+fn table_focus_follows_the_real_place_of_rows(ui: &Ui) -> Result<()> {
+    use naui_windows::TableCells;
+
+    let table = ui.table()?;
+    table.set_columns(&[naui_core::TableColumn::new("名前")]);
+    {
+        let ui = ui.clone();
+        table.set_row_builder(100, move |index| {
+            let label = ui.label(&format!("行 {index}"))?;
+            label.set_sizing(Sizing::fixed(100.0, alternating_row_height(index)));
+            Ok(TableCells::new().cell(&label))
+        });
+    }
+    table.set_sizing(Sizing::fill());
+    real_place_scenario(ui, &table)
+}
+
+fn real_place_scenario(ui: &Ui, list: &(impl RowsForInput + Widget)) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
+    use naui_winui3::Microsoft::UI::Xaml::FocusState;
+    use windows::Foundation::Point as XamlPoint;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_DOWN, VK_TAB};
+
+    let window = ui.window("高さの違う行のフォーカス", 300.0, 320.0)?;
+    let stack = ui.stack(Orientation::Vertical)?;
+    let button = ui.button("手前")?;
+    stack.set_sizing(Sizing::fill());
+    stack.append(&button);
+    stack.append(list);
+    window.set_child(&stack);
+    run_shown_for_input(&window, list, |hwnd, list| {
+        let scroll = list.scroller();
+        // 行そのものの位置で、見えているかを確かめる。
+        let visible = |index: usize| {
+            let Some(row) = built_list_row(list, index) else {
+                return false;
+            };
+            let top = row
+                .TransformToVisual(&scroll)
+                .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+                .expect("行の位置");
+            let bottom = f64::from(top.Y) + row.ActualHeight().expect("行の高さ");
+            bottom > 0.0 && f64::from(top.Y) < scroll.ViewportHeight().expect("高さ")
+        };
+        let target = 50;
+        list.scroll_to_row(target);
+        pump_until(Duration::from_millis(500), || false);
+        assert!(visible(target), "{target} 行目が見えていること");
+        click_list_row_expecting(hwnd, list, target, &[], &[target], "高さの違う行")?;
+        assert_eq!(focused_list_row(list), Some(target), "押した行へ移る");
+
+        // 組み立て直しても、見えている行のフォーカスは戻る。
+        list.refresh();
+        pump_until(Duration::from_millis(500), || false);
+        assert_eq!(
+            focused_list_row(list),
+            Some(target),
+            "組み立て直したあともフォーカスが残ること"
+        );
+        press_nav_key(&[], VK_DOWN)?;
+        assert_eq!(list.selection(), [target + 1], "次のキーが効くこと");
+        assert!(visible(target + 1), "移った行が見えていること");
+
+        // 手前のボタンから Tab で入っても、見えている行へ付く。
+        list.scroll_to_row(20);
+        pump_until(Duration::from_millis(500), || false);
+        let _ = native::<XamlButton>(&button).Focus(FocusState::Keyboard);
+        pump_until(FOCUS_TIMEOUT, || {
+            native::<Control>(&button).FocusState() != Ok(FocusState::Unfocused)
+        });
+        press_nav_key(&[], VK_TAB)?;
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            focused_list_row(list).is_some_and(visible)
+        });
+        let Some(focused) = focused_list_row(list) else {
+            println!("     (Tab で行へ入らない環境なので、確かめずに通す)");
+            return None;
+        };
+        assert!(
+            visible(focused),
+            "Tab で見えている行へ入ること: {focused} 行目"
+        );
         Some(())
     })
 }

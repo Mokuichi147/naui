@@ -141,7 +141,8 @@ that shape are covered in
 - A `Table` with more than 200 rows builds only the range shown on screen (with
   either `set_rows` or `set_row_builder`). This leads to the following rules.
   - **All rows are assumed to have the same height.** If needed, set it with
-    `set_row_height`.
+    `set_row_height`. On Windows rows are given the tallest height built so far, so a
+    taller row appearing later moves the scroll position once.
   - naui does not know whether rows it has not built yet can be chosen, so by
     default they are assumed to be choosable (this can be passed with
     `set_row_selectable`).

@@ -635,7 +635,12 @@ struct TableInner {
     /// The height of one row (logical pixels). Either measured or set with
     /// [`Table::set_row_height`].
     row_height: Cell<f64>,
-    /// The row height decided by the app. If absent, it is measured from a built row.
+    /// Whether `row_height` is from rows that are gone, so the next measurement replaces
+    /// it instead of only growing it.
+    row_height_stale: Cell<bool>,
+    /// Whether rows were built and not measured yet (they have no size until layout).
+    row_height_pending: Cell<bool>,
+    /// The row height decided by the app. If absent, it is measured from the built rows.
     fixed_row_height: Cell<Option<f64>>,
     /// A frame filling in for the rows outside the window (placed before and after the
     /// row list).
@@ -745,6 +750,8 @@ impl Table {
             anchor: Cell::new(None),
             pointer_row: Cell::new(None),
             row_height: Cell::new(0.0),
+            row_height_stale: Cell::new(false),
+            row_height_pending: Cell::new(false),
             fixed_row_height: Cell::new(None),
             top_spacer,
             bottom_spacer,
@@ -930,6 +937,7 @@ impl Table {
 
     /// Rebuilds the visible rows. The row count and selection stay.
     pub fn refresh(&self) {
+        self.0.row_height_stale.set(true);
         self.0.rows.forget_selectable();
         // 行を組み立てる関数の中から呼ばれたら、組み立てている側が最初からやり直す。
         if self.0.rebuilding.get() {
@@ -940,7 +948,7 @@ impl Table {
         self.build_window();
         self.write_selection(&picked);
         // 中身が変わって行の高さが動いていれば、窓を引き直す。
-        if self.measure_row_height() {
+        if self.settle_row_height() {
             self.update_window();
         }
     }
@@ -961,6 +969,8 @@ impl Table {
     }
 
     /// The row height (logical pixels). 0 if there are no rows or none has been built yet.
+    ///
+    /// With few rows and no height set, rows may differ, and this is the tallest built.
     pub fn row_height(&self) -> f64 {
         if self.is_empty() && self.0.fixed_row_height.get().is_none() {
             return 0.0;
@@ -1025,7 +1035,9 @@ impl Table {
         }
         // 組み立てたばかりの行にも位置が付くように、レイアウトを先に済ませる。
         let _ = self.0.scroll.UpdateLayout();
-        self.measure_row_height();
+        if self.0.row_height_pending.get() {
+            self.settle_row_height();
+        }
         let (top, bottom) = self.row_span(index);
         let view_top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
         let viewport = self.0.scroll.ViewportHeight().unwrap_or(0.0);
@@ -1302,13 +1314,14 @@ impl Table {
     fn reset_rows(&self) {
         self.0.selected.borrow_mut().clear();
         self.0.anchor.set(None);
+        self.0.row_height_stale.set(true);
         // 組み立ての途中で差し替えられたら、組み立てている側が新しい行でやり直す。
         if self.0.rebuilding.get() {
             return;
         }
         self.0.window.set(self.compute_window(ROW_WINDOW_OVERSCAN));
         self.build_window();
-        if self.measure_row_height() {
+        if self.settle_row_height() {
             self.update_window();
         }
     }
@@ -1465,6 +1478,7 @@ impl Table {
         *self.0.row_items.borrow_mut() = row_items;
         *self.0.realized.borrow_mut() = realized;
         self.0.built_start.set(first);
+        self.0.row_height_pending.set(true);
         // 同じ窓で何度も失敗しないよう、やり直すのは窓が動くか `refresh` のときにする。
         self.0.failed_window.set(outcome.is_err().then_some(window));
         let window = match outcome.is_err() {
@@ -1527,7 +1541,14 @@ impl Table {
                 let _ = item.SetMinHeight(height);
             }
             None => {
-                let _ = item.SetMinHeight(ROW_MIN_HEIGHT);
+                // 高さが分かっていれば、作るときから同じ高さにする (測るまで行が動かない)。
+                // 行が少なければ行ごとの高さのまま。
+                let known = match self.0.window.get().is_complete() || self.0.row_height_stale.get()
+                {
+                    true => 0.0,
+                    false => self.0.row_height.get(),
+                };
+                let _ = item.SetMinHeight(known.max(ROW_MIN_HEIGHT));
             }
         }
         let content = row_grid(selectable)?;
@@ -1884,10 +1905,11 @@ impl Table {
         };
         let top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
         let (row_top, row_bottom) = self.row_span(index);
+        // どちらも少しでも見えている行になるので、ここへ戻ってきても動かない。
         let target = if row_bottom <= top {
-            (top / height).ceil() as usize
+            self.row_ending_below(top)
         } else if row_top >= top + viewport {
-            (((top + viewport) / height).floor() as usize).saturating_sub(1)
+            self.row_ending_below(top + viewport - 1.0)
         } else {
             return;
         };
@@ -1913,11 +1935,11 @@ impl Table {
             return;
         }
         let start = self.0.built_start.get();
-        let height = self.0.row_height.get();
-        let top = index as f64 * height;
+        // 全行があるときの行の高さはまちまちなので、行そのものの位置で決める。
+        let (top, bottom) = self.row_span(index);
         let view_top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
         let viewport = self.0.scroll.ViewportHeight().unwrap_or(0.0);
-        if top + height < view_top || top > view_top + viewport {
+        if bottom < view_top || top > view_top + viewport {
             return;
         }
         if let Some(row) = self.0.row_items.borrow().get(index - start) {
@@ -1985,50 +2007,88 @@ impl Table {
             .SetBringIntoViewOnFocusChange(!self.scrolls_itself());
         // 行の追加直後は ActualHeight が 0 のことがある。窓が同じでも
         // レイアウト後に再計測し、全行分のスクロール領域を確保する。
-        self.measure_row_height();
+        if self.0.row_height_pending.get() {
+            self.settle_row_height();
+        }
         self.move_window(self.0.scroll.VerticalOffset().unwrap_or(0.0));
     }
 
     /// Moves the built range for a scroll position, unless the rows built are enough.
     fn move_window(&self, offset: f64) {
-        let current = self.0.window.get();
-        let needed = self.window_at(offset, ROW_WINDOW_OVERSCAN / 2);
-        let next = self.window_at(offset, ROW_WINDOW_OVERSCAN);
-        // 前回の組み立てが途中で失敗していたら、残った行は使わずに全部作り直す。
-        // 失敗した窓そのものは、レイアウトのたびにやり直さない。
-        let failed = self.0.failed_window.get();
-        if failed == Some(next)
-            || (failed.is_none() && (next == current || keeps_row_window(current, needed, next)))
-        {
-            return;
-        }
-        self.0.window.set(next);
-        self.build_window_from(failed.is_none().then_some(current));
-        if self.measure_row_height() {
-            self.move_window(offset);
+        // 行の高さが変わると窓も変わる。高さは増えるだけなので、この繰り返しは止まる
+        // (`settle_row_height`)。
+        loop {
+            let current = self.0.window.get();
+            let needed = self.window_at(offset, ROW_WINDOW_OVERSCAN / 2);
+            let next = self.window_at(offset, ROW_WINDOW_OVERSCAN);
+            // 前回の組み立てが途中で失敗していたら、残った行は使わずに全部作り直す。
+            // 失敗した窓そのものは、レイアウトのたびにやり直さない。
+            let failed = self.0.failed_window.get();
+            if failed == Some(next)
+                || (failed.is_none()
+                    && (next == current || keeps_row_window(current, needed, next)))
+            {
+                return;
+            }
+            self.0.window.set(next);
+            self.build_window_from(failed.is_none().then_some(current));
+            if !self.settle_row_height() {
+                return;
+            }
         }
     }
 
-    /// Measures the height of one row from the built rows. `true` if it changed.
-    fn measure_row_height(&self) -> bool {
+    /// Finds the height of one row from the built rows. `true` if it changed.
+    ///
+    /// **The tallest built row is used, and every built row is given that height**, as in
+    /// [`crate::List`]. The window is worked out from this height, so one taken from a single
+    /// row could put the window where its first row has another height, and back again, for
+    /// ever. It only grows until the rows are replaced or refreshed, so that cannot happen.
+    fn settle_row_height(&self) -> bool {
         if self.0.fixed_row_height.get().is_some() {
+            self.0.row_height_pending.set(false);
             return false;
         }
-        let measured = self
-            .0
-            .row_items
-            .borrow()
-            .first()
-            .and_then(|item| item.ActualHeight().ok())
-            .unwrap_or(0.0);
-        if measured <= 0.0 || (self.0.row_height.get() - measured).abs() < 0.5 {
+        let rows = self.0.row_items.borrow().clone();
+        let tallest = rows
+            .iter()
+            .filter_map(|row| row.ActualHeight().ok())
+            .fold(0.0, f64::max);
+        // まだレイアウトされていない。次のレイアウトのあとで測る。
+        if tallest <= 0.0 {
             return false;
+        }
+        self.0.row_height_pending.set(false);
+        let previous = self.0.row_height.get();
+        let measured = match self.0.row_height_stale.replace(false) {
+            true => tallest,
+            false => tallest.max(previous),
+        };
+        let window = self.0.window.get();
+        // 行が少なければ行ごとの高さのまま (窓の外の行が無いので、ずれない)。
+        if !window.is_complete() {
+            for row in &rows {
+                let _ = row.SetMinHeight(measured);
+            }
         }
         self.0.row_height.set(measured);
-        let window = self.0.window.get();
         set_spacer_height(&self.0.top_spacer, window.leading(measured));
         set_spacer_height(&self.0.bottom_spacer, window.trailing(measured));
-        true
+        (previous - measured).abs() >= 0.5
+    }
+
+    /// The first row that ends below `y` within the scrolled content, or the last row.
+    fn row_ending_below(&self, y: f64) -> usize {
+        let (mut low, mut high) = (0, self.len());
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if self.row_span(middle).1 <= y {
+                low = middle + 1;
+            } else {
+                high = middle;
+            }
+        }
+        low.min(self.len().saturating_sub(1))
     }
 
     /// Where a row is within the scrolled content (top and bottom).
