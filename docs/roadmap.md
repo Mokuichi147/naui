@@ -1,6 +1,6 @@
 # Roadmap
 
-This lists features commonly expected of a GUI toolkit that naui (as of v0.15.0)
+This lists features commonly expected of a GUI toolkit that naui (as of v0.16.0)
 does not have yet, with priorities.
 
 The native counterparts written for each item are estimates. When work starts,
@@ -59,9 +59,10 @@ v0.12.0, step 4 (automatic collapsing of `Sidebar`) in v0.13.0, step 5
 (size-based arrangements, `Stack::set_breakpoint`) in v0.14.0, and step 6
 (`AdaptivePanes`) in v0.15.0.
 
-What remains is `Flow` (P2), which does not depend on these steps, and the items
-in P3, which are decided after investigating whether `Stack::set_breakpoint`,
-`AdaptivePanes` and `Sidebar` leave real cases uncovered.
+What remains is `Flow` (P2), which does not depend on these steps. The P3 items
+were investigated against `Stack::set_breakpoint`, `AdaptivePanes` and `Sidebar`:
+the composition swap and the bottom bar moved to Not planned, and the rail is
+still to be checked on the other platforms.
 
 ## Internationalization
 
@@ -165,12 +166,11 @@ Each step builds on the ones before it, and comes with tests of its own: the que
 order and its guarantee against re-entry, a component's lifecycle, the
 cancellation of effects. Step 1 (the message queue and the split of `update` and
 `render`: `Program`, `App`, `Dispatch` and `examples/todo`) was released in
-v0.15.0.
+v0.15.0, and steps 2 to 4 (components, effects and lifecycles, unified error
+handling, with `examples/checklist` and `examples/search`) in v0.16.0. What remains
+is the guide below.
 
-2. **Components** (P0).
-3. **Effects and lifecycles** (P0).
-4. **Unified error handling** (P0).
-5. **A guide for structuring large apps** (P2).
+5. **A guide for structuring large apps** (P0, for v0.17.0).
 
 ## Drawing in separate crates
 
@@ -213,99 +213,8 @@ drawing is done by separate crates.
 ## P0: Do now
 
 Gaps that ordinary apps run into right away and that all four platforms have native
-counterparts for, plus steps 2 to 4 of the application layer track, so that its
-Model–View–Update structure is complete in v0.16.0 (the guide stays in P2).
-
-- [x] **Row windowing for large `List`s** (`List::set_row_builder`,
-      `set_row_selectable`, `refresh`, `set_row_height`, `row_height`). With more
-      than 200 rows and a limited height, `List` builds only the rows on screen, by
-      `Table`'s mechanism (`row_window` in naui-core, and the new `RowSource` for
-      where rows come from): padding for the rows outside the window, uniform row
-      heights, and selection held by naui rather than by the native list. macOS
-      needs only the builder, since `NSTableView` asks only for the rows it shows
-      and estimates the heights of the rest. On the Web such a list leaves
-      `<select>`, which has no place for padding, for the composed
-      `<ul role="listbox">`.
-- [x] **Rich text** (`RichText`, `TextRun`, `Label::set_rich_text`,
-      `Label::on_link`), mixing bold, colors and links within a line.
-      `NSAttributedString`, Pango markup, `TextBlock.Inlines`, `<span>`. As with
-      `set_text` since v0.15.0, setting the content already shown does nothing, so
-      that naui-app's `render` can set it every time: `RichText` compares by what it
-      shows (empty runs are dropped, neighbouring runs with the same look are joined),
-      and the selection and the keyboard focus survive. Colors are the `TextColor`
-      roles, and a link keeps the platform's link color. A click opens the `href` with
-      the default handler unless `on_link` answers `Handled`, for links that act inside
-      the app. On macOS a label holding links is selectable, since AppKit reacts to
-      links only in a selectable field.
-- [x] *(app)* **Components** (`Component`, `Mounted`, `Children`,
-      `Dispatch::wrap`, `examples/checklist`). A component has its own model,
-      messages, `update` and widgets, and goes through `mount` (building its
-      widgets), `update`, `render` and `unmount` (cleaning up). Its model lives in
-      the parent's model and its widgets in the parent's view; its messages are
-      wrapped into the parent's and go through the same queue, so the parent's
-      `update` sees them first and hands them on. The parent places the root
-      widget and removes it, since a component does not know its container and
-      naui's containers remove by position or cell. `Mounted::unmount` takes the
-      removal as an argument and `Children::sync` (children under keys, from a
-      collection in the model) asks for it as a `Change`, so they always come in
-      one order: the child's dispatch is disconnected, its `unmount` runs while
-      its widgets are still in place, the root is removed, and the widgets are
-      dropped. Dropping a `Mounted` or `Children` takes its children down too, so
-      components nested in a view go with it, with nothing for the parent to do.
-      `Children::sync` holds no borrow while it calls `mount`, `unmount`, `render` or
-      the parent's placement, so they can read the `Children`. A panic in one child
-      does not stop the others, and one in the placement is put right by the next
-      `sync`. A reordering leaves the longest run already in order where it is, since
-      a moved child loses the keyboard focus. It is meant for modest numbers of
-      children: thousands of rows belong in `List` or `Table`.
-- [x] *(app)* **Effects and lifecycles** (`Effect`, `Scoped`, `App::with_tasks`,
-      `examples/search`). `Program::update` returns an `Effect<Message>` (a breaking
-      change, made while naui-app has no users), which gathers asynchronous work:
-      tasks (`Effect::spawn`, on `Tasks::spawn`), work on other threads
-      (`Effect::thread` and `Effect::channel`, on `Tasks::channel`) and timers
-      (`Effect::after`, `Effect::every`), and a failure to report (`Effect::fail`).
-      Work that can fail hands its result to a message, so an error inside `update`
-      and a failed effect take the same path, and the model does not stay "loading".
-      Effects start after `render`, once the queue is empty, and nothing happens until
-      then, so `update` stays plain Rust and tests can look at what it returns.
-      A parent hands a child's effects on with `.map`. Each child model is kept in a
-      `Scoped` wrapper that owns the tasks and timers its `update` started, and
-      dropping the wrapper cancels them (dropping a `Task` or `Timer` does not stop
-      it; work on another thread cannot be stopped, so its channel is closed with
-      `ChannelCloser`, which drops the result and makes further sending fail), and an
-      effect that has not started does not start. Effects under the same key in one
-      model replace each other: the earlier one is cancelled, or its result discarded
-      (a search overtaken by further typing). `Effect::cancel`
-      stops what runs under a key with nothing to replace it.
-- [x] *(app)* **Unified error handling** (`run_with_handler`,
-      `App::set_error_handler`, `Report`, `Decision`). One handler, set by the app, receives
-      panics on the UI thread, the failures from `update` and effects, and the
-      mount failures of `Children::sync` (which stops returning them: `render` has
-      no caller to hand them to) along with its repeated keys, which go to standard
-      error until then. Reports from inside the queue carry the message
-      being handled, so the handler needs the message type to be `Debug`; the
-      text is recorded before `update`, cut to a bounded length, and only while a
-      handler is set, so large messages cost little. Panics reach it through a
-      panic hook naui-app installs in front of the previous one. On the desktop
-      platforms with `panic = "unwind"` they are also caught per message and per
-      `render`, and the handler decides whether the queue goes on or the app stops,
-      since naui-app cannot tell whether the model is still whole; without a handler
-      the queue goes on. On the Web (wasm aborts on a panic) and with
-      `panic = "abort"`, the handler is told and the app stops, which is
-      written in [Known limitations](known-limitations.md). naui itself gets no
-      handler: panics in ordinary naui callbacks reach naui-app's hook as well and
-      are reported without a message. A panic in the queue is told after it is caught,
-      so the model is no longer borrowed and a panic in the handler can be caught too. A
-      failed mount and a repeated key come again on every `render`, so each is reported
-      once until it is put right; a handler that sends a message about them would
-      otherwise go round forever. With several apps on a thread, each handler hears
-      about its own queue and effects; a panic outside any queue goes to the handler
-      set last. Stopping an app cancels everything it started, children's effects in
-      a `Scoped` included, since an app stopped with `with_tasks` can stay around.
-
-## P1: Do next
-
-Medium weight and frequently requested, or a smaller gap between platforms.
+counterparts for, plus the next steps of the tracks, so that they are complete in
+v0.17.0.
 
 - [ ] *(i18n)* **Writing direction** (`LayoutDirection` with `Auto`, `Ltr` and
       `Rtl`). `userInterfaceLayoutDirection`, `gtk_widget_set_default_direction`,
@@ -318,20 +227,43 @@ Medium weight and frequently requested, or a smaller gap between platforms.
       measurement on Windows can use the DirectWrite that `Canvas` now draws with,
       and image drawing can build on the image sources `Image::set_bytes` and
       `set_pixels` read.
+- [ ] **Images on the clipboard.** Copying and pasting images: `NSPasteboard` on
+      macOS, `GdkTexture` on GTK, `DataPackage.SetBitmap` on WinUI, and the
+      Clipboard API's `image/png` on the Web, which depends on the browser's
+      support for image types. The images to copy come from `Image::set_bytes`
+      and `set_pixels`, which were released in v0.15.0.
+- [ ] **Publish the testing facilities across platforms.** Gather the existing
+      testing APIs (`click`, `activate`, and so on) for app developers. Also
+      provide a way to resize windows in tests, so apps can check their adaptive
+      layouts.
+- [ ] *(app)* **A guide for structuring large apps.** Like
+      [Translating apps](translating.md), with an example under `examples/`: how to
+      split an app into crates by feature (an app crate, a core crate with the
+      models and `update` that does not depend on naui, a crate per screen, and
+      services) so that Cargo reuses the build of crates that did not change. A
+      change to a crate's public API still rebuilds the crates that depend on it,
+      so where to draw the boundaries is part of the guide. It is the last step of
+      the application layer track, after steps 1 to 4 were released.
+
+## P1: Do next
+
+Medium weight and frequently requested, or a smaller gap between platforms.
+
+- [ ] **Relax the limits on toasts** (queueing, more than one action, position).
+      Dialogs needing more than three buttons can now put the extra controls in a
+      `Sheet`'s content, so only toasts remain. Queueing has a native counterpart
+      only in `AdwToastOverlay`, so the others would be built in naui.
+- [ ] **Reordering rows in a `List` by drag and drop.** `NSTableView` drag and
+      drop, WinUI `ListView` (`CanReorderItems`), GTK drag sources and drop targets
+      on a `GtkListBox`, and HTML5 drag and drop all support it. It builds on the
+      file drops that are already in place. Still open: the shape of the payload
+      passed between widgets within one app. `Tree` on GTK is built from
+      `GtkListBox`, so dragging in `Tree` is left out.
 
 ## P2: Do if there is time
 
 Heavy, or supported on a limited set of platforms.
 
-- [ ] **Publish the testing facilities across platforms.** Gather the existing
-      testing APIs (`click`, `activate`, and so on) for app developers. Also
-      provide a way to resize windows in tests, so apps can check their adaptive
-      layouts.
-- [ ] **Relax the limits on toasts** (queueing, more than one action, position).
-      Dialogs needing more than three buttons can now put the extra controls in a
-      `Sheet`'s content, so only toasts remain. Queueing has a native counterpart
-      only in `AdwToastOverlay`, so the others would be built in naui.
-- [ ] **Images on the clipboard.**
 - [ ] **Desktop notifications.** macOS needs a bundle, Linux a `.desktop` file, and
       Windows registration, so the conditions for each distribution method need to
       be documented.
@@ -354,46 +286,55 @@ Heavy, or supported on a limited set of platforms.
       wgpu's GL backend, or rendering offscreen and handing frames over as
       textures (`GdkDmabufTexture` from GTK 4.14). Windows needs `SwapChainPanel`
       in the projection, and the Web a `<canvas>` for WebGPU or WebGL.
-- [ ] *(app)* **A guide for structuring large apps.** Like
-      [Translating apps](translating.md), with an example under `examples/`: how to
-      split an app into crates by feature (an app crate, a core crate with the
-      models and `update` that does not depend on naui, a crate per screen, and
-      services) so that Cargo reuses the build of crates that did not change. A
-      change to a crate's public API still rebuilds the crates that depend on it,
-      so where to draw the boundaries is part of the guide.
-
 ## P3: Decide after investigating
 
-Not yet clear whether they fit the approach, or whether they are needed.
+Each entry records what the four platforms offer and what is still open. The
+native API facts come from the platforms' documentation, and are checked again
+when work starts. Items that did not fit the approach have moved to
+[Not planned](#not-planned).
 
-- [ ] **Drag and drop between widgets** (rearranging `List` or `Tree`). Builds on
-      receiving file drops.
-- [ ] **Single instance, file associations, URL schemes.** Strongly tied to
-      distribution and packaging.
-- [ ] **Tray icons.** GTK4 has none and needs DBus StatusNotifierItem. WinUI has
-      none either, so it would be built with Win32, and the Web has no counterpart.
-- [ ] **Printing.**
-- [ ] **Font choosers, and an always-visible calendar widget.**
-- [ ] **WebView, a code editor, Markdown rendering.** These seem better suited to
-      separate crates than to the core. A WebView (`WKWebView`, WebKitGTK,
-      WebView2, `<iframe>`) could be one built on `NativeHost`.
+- [ ] **Single instance, file associations, URL schemes.** GTK's `GtkApplication`
+      already gives single-instance activation and an `open` signal for files.
+      macOS needs `application:openURLs:` and a bundle `Info.plist`, WinUI uses
+      `AppInstance` key redirection with MSIX registration, and the Web has no
+      counterpart. What each distribution method (`cargo run`, `.app`, MSIX,
+      Flatpak) provides has to be decided first.
+- [ ] **Printing.** All four have a print pipeline (`NSPrintOperation`,
+      `GtkPrintOperation`, WinUI's `PrintDocument` through window interop, and
+      CSS for `window.print()`). None can print a naui widget tree directly, so
+      an app would print what `Canvas` draws or a separate document. Heavy, so it
+      stays here.
+- [ ] **Always-visible calendar widget.** WinUI's `CalendarView`, `GtkCalendar`
+      and `NSDatePicker` (calendar style) exist. The Web has no always-visible
+      control, only the popup of `<input type="date">`, so it would be composed
+      from buttons there (🟡). It waits until an app needs it.
+- [ ] **WebView, a code editor, Markdown rendering.** Markdown can use `RichText`
+      (added in v0.16.0) for inline parts and `Stack` for blocks, so it fits a
+      separate crate. A WebView builds on `NativeHost` (`WKWebView`, WebKitGTK,
+      WebView2, `<iframe>`), and a code editor is a separate crate too. None of
+      them needs the core.
 - [ ] *(drawing)* **`naui-charts`.** Line, bar and scatter charts in a separate
-      crate drawing on `Canvas`, so it can start before `NativeHost`. Windows's
-      `Canvas` keeps up with charts of many points since v0.15.0.
+      crate drawing on `Canvas`. Plot areas must not draw outside their bounds, so
+      it waits for `Canvas`'s clipping (P1). Windows's `Canvas` keeps up with
+      charts of many points since v0.15.0.
 - [ ] *(drawing)* **`naui-wgpu`.** A separate crate that connects a wgpu surface
       through `NativeHost` on all four platforms, and checks basic 2D and 3D
-      drawing, resizing and scale-factor changes.
-- [ ] *(adaptive)* **Swapping whole compositions by size** (a different widget tree
-      per size class). First check whether size-based arrangements and
-      `AdaptivePanes` leave real cases uncovered.
-- [ ] *(adaptive)* **Switching navigation by size** (`Sidebar`, a narrow rail,
-      a bottom bar). The rail is covered on Windows by `Sidebar`'s automatic
-      collapsing (`LeftCompact`). The bottom bar is a phone pattern, so it waits
-      until there is a reason to have it on the desktop.
+      drawing, resizing and scale-factor changes. It waits for `NativeHost`,
+      including the Linux approach.
+- [ ] *(adaptive)* **Narrow navigation rail.** Windows is covered by `Sidebar`'s
+      automatic collapsing (`LeftCompact`). Still to check: whether the same
+      collapsing covers macOS, GTK and the Web.
 - [ ] *(adaptive)* **Display shape: safe areas, folds and hinges.** Only the Web
-      exposes this (the Viewport Segments API), and it cannot be checked in CI, so
-      for now this is limited to investigating how the information could be
-      obtained.
+      exposes this, through the Viewport Segments API. It is available only in
+      Chrome and Edge from version 138, MDN marks it experimental, and it cannot
+      be checked in CI. It stays on hold until a foldable or mobile target is
+      decided.
+- [ ] **iOS, Android, and embedded devices.** naui has no mobile backend, so each
+      would need a new one, and the native-control approach would have to fit touch
+      and phone navigation (the display-shape and bottom-bar items depend on it).
+      The obstacle is checking: the iOS Simulator runs only on macOS, and these
+      targets cannot be checked in CI at present. Decide which target comes first,
+      and how it would be verified, before any backend work.
 
 ## Not planned
 
@@ -407,5 +348,16 @@ Things that do not fit naui's approach.
   built at all, they would be separate crates on top, not part of the core. The
   [application layer](#application-layer) is not one of these: it builds the tree
   with the existing API and updates it with setters.
-- **iOS, Android, embedded devices.** There are no mobile backends, and they
-  cannot be checked in CI either, so they are on hold.
+- **Swapping whole compositions by size** (a different widget tree per size
+  class). It would rebuild the tree from a size callback, which the adaptive
+  approach rules out. The cases it would cover are handled by `Stack::set_breakpoint`
+  and `AdaptivePanes`.
+- **A bottom navigation bar.** It is a phone pattern, and naui has no mobile
+  backend (see the mobile entry in P3).
+- **Font choosers.** WinUI has no font picker (only Win32's `ChooseFont`), and the
+  Web can list fonts only through Local Font Access, which is available in Chrome
+  and Edge from version 103 and not in Firefox or Safari. There is no common
+  behavior to build on.
+- **Tray icons.** The Web has no counterpart, and Linux needs DBus
+  StatusNotifierItem. An app that needs one can add it as native code in its own
+  crate.
