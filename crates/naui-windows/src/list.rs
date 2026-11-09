@@ -207,6 +207,9 @@ const ROW_PADDING: Thickness = Thickness {
 /// the default item transitions (which animate rows as they are added and removed) are
 /// cleared. Otherwise the whole list animates each time it is rebuilt. `Table` does the
 /// same.
+// 仮想化は RowWindow が担当する。`ListView` の既定の ItemsStackPanel (仮想化) を重ねると、
+// 行の位置と `ListView` の高さがずれ、窓の外へはみ出した行が下の詰め物に押下を取られる
+// (`Table` と同じ理由で、`ItemsPanel` は StackPanel にする)。
 const SURFACE_XAML: &str = r##"<Border
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Background="{ThemeResource ControlFillColorDefaultBrush}"
@@ -219,6 +222,9 @@ const SURFACE_XAML: &str = r##"<Border
         <ListView.ItemContainerTransitions>
             <TransitionCollection/>
         </ListView.ItemContainerTransitions>
+        <ListView.ItemsPanel>
+            <ItemsPanelTemplate><StackPanel/></ItemsPanelTemplate>
+        </ListView.ItemsPanel>
     </ListView>
 </Border>"##;
 
@@ -421,6 +427,9 @@ const PLAIN_LIST_VIEW_XAML: &str = r##"<ListView
     <ListView.ItemContainerTransitions>
         <TransitionCollection/>
     </ListView.ItemContainerTransitions>
+    <ListView.ItemsPanel>
+        <ItemsPanelTemplate><StackPanel/></ItemsPanelTemplate>
+    </ListView.ItemsPanel>
 </ListView>"##;
 
 fn plain_surface() -> Result<(Border, ListView)> {
