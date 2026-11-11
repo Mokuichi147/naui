@@ -1,0 +1,48 @@
+# apt でパッケージを入れる。Ubuntu のミラーが止まっていても入るようにする。
+#
+# `apt-get update && apt-get install` をそのまま書くと、Canonical のミラーが
+# 落ちたとき (2026-11-11 には DNS ごと引けなくなった) に、apt が一つ一つの
+# パッケージで 20 秒ずつ待ってはやり直すのを繰り返し、導入だけで 45 分止まる。
+#
+# そこで、取ったパッケージとその一覧を GitHub Actions のキャッシュに置き、
+# 次からはミラーへ行かずにキャッシュだけで入れる。キャッシュで足りないとき
+# (初回、パッケージを変えたとき、ランナーのイメージが合わなくなったとき) に
+# だけミラーへ行き、そのときも Canonical 以外のミラーを予備として足す。
+name: apt で導入する
+description: キャッシュと予備のミラーを使って apt のパッケージを入れる
+inputs:
+  packages:
+    description: 入れるパッケージ (空白か改行で区切る)
+    required: true
+runs:
+  using: composite
+  steps:
+    # キーはイメージの版ごとに変える。版を入れないと、イメージが変わって
+    # キャッシュだけでは入らなくなったとき、同じキーには保存し直せない。
+    # restore-keys で前の版のキャッシュを引き継ぐので、版が変わっても
+    # まずはキャッシュだけで入るかを試せる。
+    - id: key
+      shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: |
+        set -f
+        hash="$(printf '%s\n' $PACKAGES | sort -u | sha256sum | cut -c1-16)"
+        prefix="apt-${ImageOS:-unknown}-${hash}-"
+        echo "prefix=$prefix" >>"$GITHUB_OUTPUT"
+        echo "key=${prefix}${ImageVersion:-unknown}" >>"$GITHUB_OUTPUT"
+    - id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/.cache/naui-apt
+        key: ${{ steps.key.outputs.key }}
+        restore-keys: ${{ steps.key.outputs.prefix }}
+    - shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: bash "$GITHUB_ACTION_PATH/install.sh"
+    - if: steps.restore.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ~/.cache/naui-apt
+        key: ${{ steps.key.outputs.key }}

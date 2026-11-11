@@ -230,7 +230,8 @@ jobs:
   linux:
     name: Linux (GTK4 / libadwaita)
     runs-on: ubuntu-latest
-    # ふだんは 2 分ほどだが、apt の取得が遅いと導入だけで 30 分かかったことがある。
+    # ふだんは 2 分ほど。apt の取得が遅いと導入だけで 30 分かかったことがあるため、
+    # いまはキャッシュから入れる (.github/actions/apt-install)。
     timeout-minutes: 45
     env:
       # Xvfb 上では GL が使えないので、GSK はソフトウェアの cairo で描く。
@@ -247,11 +248,11 @@ jobs:
       # SVG の画像は librsvg の gdk-pixbuf ローダーが読む (推奨パッケージなので
       # --no-install-recommends では入らないことがある)。
       - name: GTK4 / libadwaita と日本語フォントを導入
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            libgtk-4-dev libadwaita-1-dev build-essential pkg-config \
-            xvfb dbus \
+        uses: ./.github/actions/apt-install
+        with:
+          packages: >-
+            libgtk-4-dev libadwaita-1-dev build-essential pkg-config
+            xvfb dbus
             fonts-noto-cjk librsvg2-common
       # Xvfb には設定デーモンが無いので、GTK は組み込みの既定 "Sans 10" を
       # 使う。デスクトップの既定 (Ubuntu 24.04 は 11pt) より 1pt 小さく、
