@@ -2891,6 +2891,17 @@ fn right_to_left_layout_is_set_on_the_window_content(ui: &Ui) -> Result<()> {
         row.append(&first);
         row.append(&second);
         stack.append(&row);
+        let group = ui.group("")?;
+        let content = ui.label("中身")?;
+        content.set_sizing(Sizing::fill_width());
+        group.set_child(&content);
+        group.set_padding(naui_core::Padding {
+            top: 2.0,
+            right: 20.0,
+            bottom: 2.0,
+            left: 4.0,
+        });
+        stack.append(&group);
         let number = ui.number_input(-5.0)?;
         let canvas = ui.canvas()?;
         let image = ui.image("")?;
@@ -2900,11 +2911,13 @@ fn right_to_left_layout_is_set_on_the_window_content(ui: &Ui) -> Result<()> {
         stack.append(&image);
         stack.append(&video);
         window.set_child(&stack);
-        Ok((window, first, second, number, canvas, image, video))
+        Ok((
+            window, first, second, group, content, number, canvas, image, video,
+        ))
     })();
     assert_eq!(ui.layout_direction(), LayoutDirection::Rtl);
     naui_core::set_app_layout_direction(None);
-    let (window, first, second, number, canvas, image, video) = built?;
+    let (window, first, second, group, content, number, canvas, image, video) = built?;
 
     let root = window
         .native_window()
@@ -2956,6 +2969,29 @@ fn right_to_left_layout_is_set_on_the_window_content(ui: &Ui) -> Result<()> {
         assert!(
             first_x > second_x,
             "最初の子が右に来ること: 一 {first_x} / 二 {second_x}"
+        );
+
+        // Group の余白の left は先頭側 (右) に付く。反転した要素の原点は右上に
+        // なるので、両端を窓の座標へ移してから左右を決める。
+        let edges = |element: &FrameworkElement| {
+            let width = element.ActualWidth().unwrap_or(0.0) as f32;
+            let transform = element.TransformToVisual(None).expect("窓への変換");
+            let a = transform
+                .TransformPoint(windows::Foundation::Point { X: 0.0, Y: 0.0 })
+                .expect("端")
+                .X;
+            let b = transform
+                .TransformPoint(windows::Foundation::Point { X: width, Y: 0.0 })
+                .expect("端")
+                .X;
+            (a.min(b), a.max(b))
+        };
+        let (outer_left, outer_right) = edges(&native::<FrameworkElement>(&group));
+        let (inner_left, inner_right) = edges(&native::<FrameworkElement>(&content));
+        let (left_gap, right_gap) = (inner_left - outer_left, outer_right - inner_right);
+        assert!(
+            left_gap - right_gap > 10.0,
+            "right の 20 が左、left の 4 が右: 左 {left_gap} / 右 {right_gap}"
         );
     }));
     window.close();

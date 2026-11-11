@@ -1082,6 +1082,24 @@ fn right_to_left_layout_is_mirrored() {
         let number = ui.number_input(-5.0)?;
         let _number = Mounted::new(&number);
         assert_eq!(direction_of(&number.native_input()), "ltr");
+        let time = ui.time_picker()?;
+        let _time = Mounted::new(&time);
+        let time_input = time
+            .native_element()
+            .query_selector("input")
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| time.native_element());
+        assert_eq!(direction_of(&time_input), "ltr", "時刻の欄は左から右");
+        let date = ui.date_picker(naui_core::DatePickerMode::Date)?;
+        let _date = Mounted::new(&date);
+        let date_input = date
+            .native_element()
+            .query_selector("input")
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| date.native_element());
+        assert_eq!(direction_of(&date_input), "ltr", "日付の欄は左から右");
         let video = ui.video("")?;
         let _video = Mounted::new(&video);
         let media = video

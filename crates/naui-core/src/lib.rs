@@ -374,15 +374,16 @@ impl Settings {
     /// bars fill from the right, and text starts at the right. [`Padding`]'s `left`
     /// and `right` are mirrored with the rest, so `left` is the side where a row
     /// starts. Pictures and drawings are not mirrored, nor are `Canvas`, the
-    /// number in a `NumberInput` (which stays `-5`, not `5-`), or the controls of
-    /// `Video` and `Audio`, which follow the direction of time on the tape.
+    /// number in a `NumberInput` (which stays `-5`, not `5-`), the fields of
+    /// `DatePicker` and `TimePicker` on the Web, or the controls of `Video` and
+    /// `Audio`, which follow the direction of time on the tape.
     ///
     /// [`LayoutDirection::Auto`] (the default) takes the direction of
     /// [`Settings::language`]. Without a language, each toolkit keeps its own
     /// default: Linux follows the locale (GTK mirrors an untranslated app too when
-    /// `LANG` is Arabic), macOS mirrors only when the app is localized into a
-    /// right-to-left language and the system asks for it, and Windows and the Web
-    /// stay left to right. An app that translates its strings should pass the
+    /// `LANG` is Arabic), macOS stayed left to right in every case tried (an app
+    /// localized into Arabic and launched with Arabic as its language included),
+    /// and Windows and the Web stay left to right. An app that translates its strings should pass the
     /// language it chose to [`Settings::language`], so that the layout follows it
     /// on every platform.
     ///

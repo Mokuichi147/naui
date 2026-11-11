@@ -293,16 +293,18 @@ naui leaves that to it. [`Padding`]'s `left` and `right` are mirrored with the
 rest, so `left` is the side where a row starts. A few things stay left to right:
 `Canvas` (draw on the side where rows start by reading [`Ui::layout_direction`]),
 pictures, the number in a `NumberInput` (a minus sign at the start of a
-right-to-left paragraph would move to the end) and the playback bar of `Video` and
-`Audio`, which follows the direction of time on the tape. `PopoverPosition::Left`
+right-to-left paragraph would move to the end), the fields of `DatePicker` and
+`TimePicker` on the Web (where WebKit would show `07:30` as `30:07`) and the
+playback bar of `Video` and `Audio`, which follows the direction of time on the
+tape. `PopoverPosition::Left`
 and `Right` keep meaning the physical sides.
 
 The direction is decided once, for the whole app, at startup: AppKit fixes it when
 the app starts and applies it to all of its Auto Layout, so neither a running app
 nor a single widget can be switched. Without [`Settings::language`], `Auto` keeps
-each toolkit's own default: Linux follows the locale, macOS mirrors an app only
-when it is localized into a right-to-left language and the system asks for it, and
-Windows and the Web stay left to right. An app that translates itself should pass
+each toolkit's own default: Linux follows the locale, while macOS, Windows and the
+Web stayed left to right (on macOS also for an app localized into Arabic and
+launched with Arabic as its language). An app that translates itself should pass
 the language it chose, so that the layout follows it on every platform.
 
 ## Layout and size

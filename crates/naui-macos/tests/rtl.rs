@@ -16,8 +16,8 @@ use naui_macos::{run_for_test, Ui, Widget};
 use objc2::rc::Retained;
 use objc2::MainThreadMarker;
 use objc2_app_kit::{
-    NSApplication, NSBox, NSSplitViewController, NSTableCellView, NSTextAlignment, NSView,
-    NSWritingDirection,
+    NSApplication, NSBox, NSSplitViewController, NSTableCellView, NSTextAlignment, NSTextField,
+    NSView, NSWritingDirection,
 };
 use objc2_foundation::NSSize;
 
@@ -49,6 +49,7 @@ fn main() {
             table_alignment_is_mirrored,
         ),
         ("サイドバーが右に付く", sidebar_sits_at_the_right),
+        ("ラベルと入力欄の文字は右に寄る", text_starts_at_the_right),
     ];
 
     let mut failed = 0;
@@ -228,5 +229,47 @@ fn sidebar_sits_at_the_right(ui: &Ui) -> Result<()> {
     );
     window.clear_sidebar();
     native_window.close();
+    Ok(())
+}
+
+/// Text that fills its row starts at the right. AppKit's natural alignment follows
+/// the app's direction, but fields built with `init` or `new` start out aligned to
+/// the left, which kept the rows of a `List` on the left.
+fn text_starts_at_the_right(ui: &Ui) -> Result<()> {
+    let label = ui.label("Inbox")?;
+    let password = ui.password_input()?;
+    let search = ui.search_input()?;
+    let combo = ui.editable_combo_box()?;
+    for (name, view) in [
+        ("ラベル", label.native_view()),
+        ("パスワード入力", password.native_view()),
+        ("検索入力", search.native_view()),
+        ("自由入力コンボボックス", combo.native_view()),
+    ] {
+        let field = view
+            .downcast_ref::<NSTextField>()
+            .unwrap_or_else(|| panic!("{name}は NSTextField"));
+        assert_eq!(field.alignment(), NSTextAlignment::Natural, "{name}");
+    }
+
+    // 自然な揃えの英字は、右から左のアプリでは右に描かれる。
+    let view = label.native_view();
+    view.setFrameSize(NSSize::new(300.0, 20.0));
+    let rep = view
+        .bitmapImageRepForCachingDisplayInRect(view.bounds())
+        .expect("画素の入れ物");
+    view.cacheDisplayInRect_toBitmapImageRep(view.bounds(), &rep);
+    let width = rep.pixelsWide();
+    let inked = (0..width).filter(|&x| {
+        (0..rep.pixelsHigh()).any(|y| {
+            rep.colorAtX_y(x, y)
+                .is_some_and(|color| color.alphaComponent() > 0.3)
+        })
+    });
+    let first = inked.min().expect("文字が描かれていること");
+    assert!(
+        first > width / 2,
+        "文字が右半分に描かれること: 描き始め {first} / 幅 {width}"
+    );
     Ok(())
 }

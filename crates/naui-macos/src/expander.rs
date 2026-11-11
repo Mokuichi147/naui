@@ -29,9 +29,10 @@ use crate::widgets::{impl_widget, Widget};
 /// The gap between the heading and the content.
 const SPACING: f64 = 6.0;
 
-/// The triangles for expanded and collapsed (SF Symbols).
+/// The triangles for expanded and collapsed (SF Symbols). `chevron.forward` points
+/// to where rows end: the right, or the left in a right-to-left app.
 const SYMBOL_EXPANDED: &str = "chevron.down";
-const SYMBOL_COLLAPSED: &str = "chevron.right";
+const SYMBOL_COLLAPSED: &str = "chevron.forward";
 
 struct ExpanderInner {
     native: Retained<NSStackView>,

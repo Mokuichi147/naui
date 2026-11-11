@@ -25,8 +25,8 @@ use objc2_app_kit::{
     NSFontTextStyleTitle3, NSForegroundColorAttributeName, NSLayoutAttribute, NSLayoutConstraint,
     NSLineBreakMode, NSLinkAttributeName, NSProgressIndicator, NSProgressIndicatorStyle,
     NSResponder, NSScrollView, NSSearchField, NSSecureTextField, NSSlider, NSStackView,
-    NSStackViewDistribution, NSTextField, NSTextView, NSTintProminence, NSUnderlineStyle,
-    NSUnderlineStyleAttributeName, NSUserInterfaceLayoutOrientation, NSView,
+    NSStackViewDistribution, NSTextAlignment, NSTextField, NSTextView, NSTintProminence,
+    NSUnderlineStyle, NSUnderlineStyleAttributeName, NSUserInterfaceLayoutOrientation, NSView,
     NSViewFrameDidChangeNotification,
 };
 use objc2_foundation::{
@@ -216,6 +216,9 @@ impl NauiLabel {
         this.setSelectable(false);
         this.setBezeled(false);
         this.setDrawsBackground(false);
+        // `init` で作った欄の揃えは左 (Left) のまま。`labelWithString` などと同じ
+        // 自然な揃え (Natural) にし、右から左のアプリでは右へ寄せる。
+        this.setAlignment(NSTextAlignment::Natural);
         this.setTextColor(Some(&NSColor::labelColor()));
         this.setFont(Some(&NSFont::systemFontOfSize(NSFont::systemFontSize())));
         this.setTranslatesAutoresizingMaskIntoConstraints(false);
@@ -810,6 +813,9 @@ impl_widget!(PasswordInput);
 impl PasswordInput {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
         let native = NSSecureTextField::new(mtm);
+        // `new` で作った欄の揃えは左 (Left) のまま。`labelWithString` などと同じ
+        // 自然な揃え (Natural) にし、右から左のアプリでは右へ寄せる。
+        native.setAlignment(NSTextAlignment::Natural);
         let (handlers, observer) = observe_field(mtm, &native);
         Self(Rc::new(PasswordInputInner {
             native,
@@ -878,6 +884,8 @@ impl_widget!(SearchInput);
 impl SearchInput {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
         let native = NSSearchField::new(mtm);
+        // 揃えは自然な揃えにする (PasswordInput と同じ理由)。
+        native.setAlignment(NSTextAlignment::Natural);
         let (handlers, observer) = observe_field(mtm, &native);
         Self(Rc::new(SearchInputInner {
             native,
@@ -970,6 +978,7 @@ impl PlaceholderLabel {
         this.setSelectable(false);
         this.setBezeled(false);
         this.setDrawsBackground(false);
+        this.setAlignment(NSTextAlignment::Natural);
         this.setTextColor(Some(&NSColor::placeholderTextColor()));
         this.setFont(Some(&NSFont::systemFontOfSize(NSFont::systemFontSize())));
         this.setTranslatesAutoresizingMaskIntoConstraints(false);

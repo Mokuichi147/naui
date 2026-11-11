@@ -70,17 +70,27 @@ that shape are covered in
   given `userInterfaceLayoutDirection` alone was not mirrored), so no platform
   switches it per widget or while the app runs. Without `Settings::language`,
   `LayoutDirection::Auto` leaves each toolkit's default, which differs: GTK follows
-  the locale (an untranslated app is mirrored when `LANG` is Arabic), AppKit
-  mirrors only an app localized into a right-to-left language when the system asks
-  for it (an unbundled binary stayed left to right with `AppleLanguages` set to
-  `ar`), and WinUI and the Web stay left to right. On Windows naui sets
+  the locale (an untranslated app is mirrored when `LANG` is Arabic), while AppKit,
+  WinUI and the Web stayed left to right. On macOS no case was found where AppKit
+  mirrors an app by itself: an unbundled binary with `AppleLanguages` set to `ar`,
+  and an app bundle localized into Arabic launched with `-AppleLanguages (ar)`
+  (directly and through `open`), all stayed left to right, and only
+  `AppleTextDirection` turned the direction over. So `LayoutDirection::Ltr` has
+  not been tried against an app AppKit would mirror on its own; naui then writes
+  `AppleTextDirection` and `NSForceRightToLeftWritingDirection` as `NO`. On Windows naui sets
   `FlowDirection` on each window's content and on `Dialog` and `Sheet`; whether a
   `Popover` (a `Flyout`) and menus follow it, and which side
   `PopoverPosition::Left` and `Right` then mean, has not been checked on a device.
   macOS and Linux keep `Left` and `Right` on the physical sides (GTK's popover
   does not swap them), as does the Web. The playback bar of `Video` is AVKit's on
   macOS, which keeps it left to right in a right-to-left app by itself; naui pins
-  it left to right on the other platforms.
+  it left to right on the other platforms. The whole window's content is mirrored
+  on Windows, naui's own title bar and menu rows included; how that sits beside
+  the system caption buttons and drag regions has not been checked on a device.
+  Horizontal scroll positions in a right-to-left layout (`Scroll::scroll_to`'s
+  `x` and the metrics `Scroll` reports) are left to each toolkit and have not been
+  aligned: the Web's `scrollLeft` runs from 0 toward negative values there, while
+  AppKit's offsets stay physical.
 - `Ui::on_preferred_languages_change` is never called on Linux, which decides the
   languages from environment variables at startup. Elsewhere it is called only
   when the list itself changes: a change of region or format alone does not call

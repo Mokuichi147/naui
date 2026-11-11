@@ -31,8 +31,9 @@ impl LayoutDirection {
     /// `"az-Arab"`). POSIX locale names (`"he_IL.UTF-8"`) are read too.
     ///
     /// A script subtag decides when there is one, so `"az-Arab"` is right to left and
-    /// `"ar-Latn"` left to right; otherwise the language's usual script does.
-    /// Unknown languages are left to right.
+    /// `"ar-Latn"` left to right; otherwise the language's usual script in the region
+    /// does (`"pa-PK"` is written in Arabic script, `"pa-IN"` in Gurmukhi). Unknown
+    /// languages are left to right.
     ///
     /// ```
     /// # use naui_core::LayoutDirection;
@@ -50,16 +51,30 @@ impl LayoutDirection {
         let Some(language) = subtags.next() else {
             return LayoutDirection::Ltr;
         };
-        // 文字体系は言語のすぐ後ろ (拡張言語の 3 文字が挟まることもある)。
-        let script = subtags
-            .take(4)
-            .take_while(|s| !(s.len() == 1))
+        // 文字体系と地域は言語のすぐ後ろ (拡張言語の 3 文字が挟まることもある)。
+        // 1 文字の部分 (拡張・私用) から先は見ない。
+        let rest: Vec<&str> = subtags.take(4).take_while(|s| s.len() != 1).collect();
+        let script = rest
+            .iter()
             .find(|s| s.len() == 4 && s.chars().all(|c| c.is_ascii_alphabetic()));
-        let rtl = match script {
-            Some(script) => RTL_SCRIPTS
+        let region = rest.iter().find(|s| {
+            (s.len() == 2 && s.chars().all(|c| c.is_ascii_alphabetic()))
+                || (s.len() == 3 && s.chars().all(|c| c.is_ascii_digit()))
+        });
+        let by_region = region.and_then(|region| {
+            REGIONAL_DIRECTIONS
+                .iter()
+                .find(|(l, r, _)| {
+                    l.eq_ignore_ascii_case(language) && r.eq_ignore_ascii_case(region)
+                })
+                .map(|(_, _, rtl)| *rtl)
+        });
+        let rtl = match (script, by_region) {
+            (Some(script), _) => RTL_SCRIPTS
                 .iter()
                 .any(|known| known.eq_ignore_ascii_case(script)),
-            None => RTL_LANGUAGES
+            (None, Some(rtl)) => rtl,
+            (None, None) => RTL_LANGUAGES
                 .iter()
                 .any(|known| known.eq_ignore_ascii_case(language)),
         };
@@ -102,6 +117,17 @@ impl LayoutDirection {
 const RTL_LANGUAGES: &[&str] = &[
     "ar", "arc", "azb", "bal", "bqi", "ckb", "dv", "fa", "glk", "he", "iw", "ji", "khw", "ks",
     "lrc", "luz", "mzn", "nqo", "pnb", "prs", "ps", "sd", "sdh", "skr", "syr", "ug", "ur", "yi",
+];
+
+/// Languages whose usual script depends on the region (after CLDR's likely
+/// subtags): `(language, region, right to left)`. Punjabi is written in Shahmukhi
+/// (Arabic) in Pakistan, Uzbek in Arabic in Afghanistan, Azerbaijani in Arabic in
+/// Iran, and Sindhi in Devanagari in India.
+const REGIONAL_DIRECTIONS: &[(&str, &str, bool)] = &[
+    ("pa", "PK", true),
+    ("uz", "AF", true),
+    ("az", "IR", true),
+    ("sd", "IN", false),
 ];
 
 /// Scripts written right to left (ISO 15924 codes) that living languages use.
@@ -174,6 +200,21 @@ mod tests {
         );
         assert_eq!(
             LayoutDirection::for_language("az-Latn-IR"),
+            LayoutDirection::Ltr
+        );
+        // 地域で文字体系が決まる言語。
+        assert_eq!(LayoutDirection::for_language("pa-PK"), LayoutDirection::Rtl);
+        assert_eq!(LayoutDirection::for_language("pa-IN"), LayoutDirection::Ltr);
+        assert_eq!(LayoutDirection::for_language("uz-AF"), LayoutDirection::Rtl);
+        assert_eq!(
+            LayoutDirection::for_language("az_IR.UTF-8"),
+            LayoutDirection::Rtl
+        );
+        assert_eq!(LayoutDirection::for_language("sd-IN"), LayoutDirection::Ltr);
+        assert_eq!(LayoutDirection::for_language("sd-PK"), LayoutDirection::Rtl);
+        // 文字体系は地域より優先する。
+        assert_eq!(
+            LayoutDirection::for_language("pa-Guru-PK"),
             LayoutDirection::Ltr
         );
         // POSIX の名前。
