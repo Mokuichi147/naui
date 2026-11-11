@@ -1521,13 +1521,7 @@ impl Stack {
     }
 
     pub fn set_padding(&self, padding: Padding) {
-        let _ = self.0.element.style().set_property(
-            "padding",
-            &format!(
-                "{}px {}px {}px {}px",
-                padding.top, padding.right, padding.bottom, padding.left
-            ),
-        );
+        apply_padding(&self.0.element, padding);
     }
 
     pub fn set_align(&self, align: Align) {
@@ -1601,4 +1595,19 @@ pub(crate) fn set_disabled(element: &HtmlElement, disabled: bool) {
     } else {
         element.remove_attribute("disabled").ok();
     }
+}
+
+/// Writes `padding` as CSS padding. `left` and `right` go to the inline start and
+/// end, so that they are mirrored with the rest of a right-to-left layout (`dir`),
+/// as `Padding` is on the other platforms.
+pub(crate) fn apply_padding(element: &HtmlElement, padding: Padding) {
+    let style = element.style();
+    let _ = style.set_property(
+        "padding-block",
+        &format!("{}px {}px", padding.top, padding.bottom),
+    );
+    let _ = style.set_property(
+        "padding-inline",
+        &format!("{}px {}px", padding.left, padding.right),
+    );
 }

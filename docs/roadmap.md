@@ -216,12 +216,15 @@ Gaps that ordinary apps run into right away and that all four platforms have nat
 counterparts for, plus the next steps of the tracks, so that they are complete in
 v0.17.0.
 
-- [ ] *(i18n)* **Writing direction** (`LayoutDirection` with `Auto`, `Ltr` and
-      `Rtl`). `userInterfaceLayoutDirection`, `gtk_widget_set_default_direction`,
-      `FlowDirection`, the `dir` attribute. First check how much each native
-      toolkit mirrors automatically, and which widgets must not be mirrored
-      (`Canvas`, number inputs, media controls). Whether `Auto` follows the
-      language given by `Settings::language` is decided then.
+- [x] *(i18n)* **Writing direction** (`Settings::layout_direction` with
+      `LayoutDirection::Auto`, `Ltr` and `Rtl`, and `Ui::layout_direction`).
+      `NSApp.userInterfaceLayoutDirection` (fixed through the arguments domain
+      before `NSApplication` starts), `gtk_widget_set_default_direction`,
+      `FlowDirection` on each window's content, and `dir` on `<html>`. The native
+      toolkits mirror their own controls; naui pins `Canvas`, pictures, the number
+      in `NumberInput` and the playback bar left to right where the toolkit would
+      mirror them, and `Padding` is mirrored with the layout. `Auto` follows
+      `Settings::language`, and without one keeps each toolkit's default.
 - [ ] **Broaden `Canvas`'s vocabulary** (images, clipping, rotation and scaling,
       gradients). What it waited on was released in v0.15.0: text width
       measurement on Windows can use the DirectWrite that `Canvas` now draws with,

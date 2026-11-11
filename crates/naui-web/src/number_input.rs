@@ -46,6 +46,9 @@ impl NumberInput {
     pub(crate) fn new(document: &Document, value: f64) -> Result<Self> {
         let input: HtmlInputElement = create(document, "input")?.unchecked_into();
         input.set_type("number");
+        // 右から左の配置でも、数の書き方と上下のボタンの側は左から右のままに
+        // する。右から左の段落では "-5" が "5-" と並んでしまう。
+        let _ = input.set_attribute("dir", "ltr");
 
         let spec = NumberSpec::default();
         let this = Self(Rc::new(NumberInputInner {

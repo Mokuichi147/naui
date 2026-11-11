@@ -24,11 +24,11 @@ use std::rc::Rc;
 
 use naui_core::{
     Align, ButtonRole, Color, DialogButtons, DialogResponse, EventResponse, GridCell, Key,
-    KeyEvent, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding,
-    Pane, Point, PointerButton, PointerPhase, PopupItem, Rect, Result, RichText, ScrollMetrics,
-    SelectionMode, SidebarItem, SidebarSection, Sizing, TableColumn, TableRow, TextColor, TextRun,
-    TextStyle, Theme, ToolbarIcon, ToolbarItem, WindowPlacement, WindowState,
-    DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
+    KeyEvent, LayoutDirection, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem,
+    Orientation, Padding, Pane, Point, PointerButton, PointerPhase, PopupItem, Rect, Result,
+    RichText, ScrollMetrics, SelectionMode, SidebarItem, SidebarSection, Sizing, TableColumn,
+    TableRow, TextColor, TextRun, TextStyle, Theme, ToolbarIcon, ToolbarItem, WindowPlacement,
+    WindowState, DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, WebWidgetExt, Widget};
 use wasm_bindgen::{JsCast, JsValue};
@@ -991,6 +991,117 @@ fn app_language_becomes_the_page_lang() {
         Some(lang) => root.set_attribute("lang", &lang).expect("lang"),
         None => root.remove_attribute("lang").expect("lang"),
     }
+}
+
+/// Puts `dir` on `<html>` back as it was when dropped, so that a failed check does
+/// not leave the tests after it mirrored.
+struct PageDirection(Option<String>);
+
+impl Drop for PageDirection {
+    fn drop(&mut self) {
+        let root = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.document_element())
+            .expect("html");
+        let _ = match &self.0 {
+            Some(dir) => root.set_attribute("dir", dir),
+            None => root.remove_attribute("dir"),
+        };
+    }
+}
+
+/// The computed `direction` of an element.
+fn direction_of(element: &Element) -> String {
+    web_sys::window()
+        .and_then(|w| w.get_computed_style(element).ok().flatten())
+        .and_then(|style| style.get_property_value("direction").ok())
+        .unwrap_or_default()
+}
+
+/// A right-to-left layout becomes `dir="rtl"` on `<html>`: rows and padding are
+/// mirrored, while the number in a `NumberInput`, the playback bar and `Canvas`
+/// stay left to right.
+#[wasm_bindgen_test]
+fn right_to_left_layout_is_mirrored() {
+    let root = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.document_element())
+        .expect("html");
+    let _restore = PageDirection(root.get_attribute("dir"));
+    naui_web::apply_layout_direction(None);
+    assert_eq!(
+        root.get_attribute("dir"),
+        _restore.0,
+        "None はページの dir に触れない"
+    );
+    naui_web::apply_layout_direction(Some(LayoutDirection::Rtl));
+    assert_eq!(root.get_attribute("dir").as_deref(), Some("rtl"));
+
+    with_ui(|ui| {
+        assert_eq!(ui.layout_direction(), LayoutDirection::Rtl);
+
+        // 横の Stack は最初の子を右に置く。
+        let stack = ui.stack(Orientation::Horizontal)?;
+        let first = ui.button("一")?;
+        let second = ui.button("二")?;
+        stack.append(&first);
+        stack.append(&second);
+        let _stack = Mounted::new(&stack);
+        let first_x = first.native_element().get_bounding_client_rect().left();
+        let second_x = second.native_element().get_bounding_client_rect().left();
+        assert!(first_x > second_x, "最初の子が右: {first_x} / {second_x}");
+
+        // Group の余白の left は先頭側 (右) に付く。
+        let group = ui.group("")?;
+        let content = ui.label("中身")?;
+        group.set_child(&content);
+        group.set_padding(Padding {
+            top: 2.0,
+            right: 20.0,
+            bottom: 2.0,
+            left: 4.0,
+        });
+        let _group = Mounted::new(&group);
+        let outer = group.native_element().get_bounding_client_rect();
+        let inner = content.native_element().get_bounding_client_rect();
+        let border = 1.0;
+        assert!(
+            (outer.right() - inner.right() - 4.0 - border).abs() < 0.5,
+            "left の余白は右: {} / {}",
+            outer.right(),
+            inner.right()
+        );
+        assert!(
+            (inner.left() - outer.left() - 20.0 - border).abs() < 0.5,
+            "right の余白は左: {} / {}",
+            outer.left(),
+            inner.left()
+        );
+
+        // 数値入力・再生バー・描画面は左から右のまま。
+        let number = ui.number_input(-5.0)?;
+        let _number = Mounted::new(&number);
+        assert_eq!(direction_of(&number.native_input()), "ltr");
+        let video = ui.video("")?;
+        let _video = Mounted::new(&video);
+        let media = video
+            .native_element()
+            .query_selector("video")
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| video.native_element());
+        assert_eq!(direction_of(&media), "ltr");
+        let canvas = ui.canvas()?;
+        let _canvas = Mounted::new(&canvas);
+        let element = canvas
+            .native_element()
+            .query_selector("canvas")
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| canvas.native_element());
+        assert_eq!(direction_of(&element), "ltr");
+        Ok(())
+    });
 }
 
 /// Setting the text a field already shows does nothing: the caret and selection

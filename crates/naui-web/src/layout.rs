@@ -404,13 +404,7 @@ impl Grid {
 
     /// The outer padding.
     pub fn set_padding(&self, padding: Padding) {
-        let _ = self.0.element.style().set_property(
-            "padding",
-            &format!(
-                "{}px {}px {}px {}px",
-                padding.top, padding.right, padding.bottom, padding.left
-            ),
-        );
+        crate::widgets::apply_padding(&self.0.element, padding);
     }
 
     /// Places a child at the given position. Missing rows and columns are added

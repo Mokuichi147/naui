@@ -51,12 +51,12 @@ fn style(element: &HtmlElement, property: &str, value: &str) {
 }
 
 /// Maps to CSS text alignment. `Fill` means nothing for text, so it is treated the
-/// same as left.
+/// same as `Start`. `start` and `end` follow the layout direction, as the columns do.
 fn text_align(align: Align) -> &'static str {
     match align {
         Align::Center => "center",
-        Align::End => "right",
-        Align::Start | Align::Fill => "left",
+        Align::End => "end",
+        Align::Start | Align::Fill => "start",
     }
 }
 

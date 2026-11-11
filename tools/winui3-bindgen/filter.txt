@@ -168,6 +168,7 @@ Microsoft.UI.Xaml.DragEventArgs
 Microsoft.UI.Xaml.DragEventHandler
 Microsoft.UI.Xaml.DragOperationDeferral
 Microsoft.UI.Xaml.ElementTheme
+Microsoft.UI.Xaml.FlowDirection
 Microsoft.UI.Xaml.FocusState
 Microsoft.UI.Xaml.FrameworkElement
 Microsoft.UI.Xaml.FrameworkTemplate

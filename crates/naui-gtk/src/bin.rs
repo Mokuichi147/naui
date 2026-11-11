@@ -675,7 +675,8 @@ pub(crate) fn to_gtk_align(align: Align) -> gtk::Align {
 /// GTK4 containers have no "inner padding", but every widget has margins on all
 /// four sides. Putting margins on the container itself shrinks the area its
 /// contents can occupy by that much, which means the same as naui's
-/// [`Padding`](naui_core::Padding).
+/// [`Padding`](naui_core::Padding). `left` is the start margin, so that the padding is
+/// mirrored with the rest of a right-to-left layout.
 pub(crate) fn apply_padding(widget: &impl IsA<gtk::Widget>, padding: naui_core::Padding) {
     let widget = widget.as_ref();
     widget.set_margin_top(to_px(padding.top));
@@ -684,19 +685,18 @@ pub(crate) fn apply_padding(widget: &impl IsA<gtk::Widget>, padding: naui_core::
     widget.set_margin_start(to_px(padding.left));
 }
 
-/// Like [`apply_padding`], but `left` and `right` stay on those physical sides in
-/// right-to-left text, where GTK puts the start margin on the right.
+/// Keeps `widget` and everything inside it left to right, also in a right-to-left
+/// layout.
 ///
-/// The widget's direction is read now, so call it again on `direction-changed`.
-pub(crate) fn apply_physical_padding(widget: &impl IsA<gtk::Widget>, padding: naui_core::Padding) {
+/// GTK4 widgets do not inherit their parent's direction: a widget whose direction
+/// is unset follows the app's default direction. So each widget inside has to be
+/// given the direction itself. Call it once the widget's own children exist.
+pub(crate) fn pin_left_to_right(widget: &impl IsA<gtk::Widget>) {
     let widget = widget.as_ref();
-    let (start, end) = if widget.direction() == gtk::TextDirection::Rtl {
-        (padding.right, padding.left)
-    } else {
-        (padding.left, padding.right)
-    };
-    widget.set_margin_top(to_px(padding.top));
-    widget.set_margin_end(to_px(end));
-    widget.set_margin_bottom(to_px(padding.bottom));
-    widget.set_margin_start(to_px(start));
+    widget.set_direction(gtk::TextDirection::Ltr);
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        pin_left_to_right(&current);
+        child = current.next_sibling();
+    }
 }

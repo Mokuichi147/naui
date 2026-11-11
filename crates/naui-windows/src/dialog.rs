@@ -60,6 +60,8 @@ pub struct Dialog(Rc<DialogInner>);
 impl Dialog {
     pub(crate) fn new(title: &str, theme: Theme) -> Result<Self> {
         let native = ContentDialog::new().map_err(|e| to_error("create the ContentDialog", e))?;
+        // ダイアログは窓の中身とは別の層に出るので、向きを継がない。
+        crate::direction::apply_app_direction(&native);
         let title_block = TextBlock::new().map_err(|e| to_error("create the dialog title", e))?;
 
         let content = StackPanel::new().map_err(|e| to_error("create the dialog content", e))?;

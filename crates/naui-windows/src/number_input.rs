@@ -128,6 +128,9 @@ impl_widget!(NumberInput, native);
 impl NumberInput {
     pub(crate) fn new(value: f64) -> Result<Self> {
         let native = XamlNumberBox::new().map_err(|e| to_error("create the NumberBox", e))?;
+        // 右から左の配置でも、数の書き方と増減ボタンの側は左から右のままにする。
+        // 右から左の段落では "-5" が "5-" と並んでしまう。
+        crate::direction::pin_left_to_right(&native);
         // 増減ボタンは既定では出ない。欄の右へ並べる Inline にする。
         native
             .SetSpinButtonPlacementMode(NumberBoxSpinButtonPlacementMode::Inline)

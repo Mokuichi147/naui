@@ -602,11 +602,15 @@ fn default_row_height(mtm: MainThreadMarker) -> f64 {
 }
 
 /// Maps to AppKit's text alignment. `Fill` means nothing for text, so it is treated
-/// the same as left.
+/// the same as `Start`, which is the left, or the right in a right-to-left layout
+/// (where the columns run from the right too).
 fn text_alignment(align: Align) -> NSTextAlignment {
+    let rtl = crate::is_rtl();
     match align {
         Align::Center => NSTextAlignment::Center,
+        Align::End if rtl => NSTextAlignment::Left,
         Align::End => NSTextAlignment::Right,
+        Align::Start | Align::Fill if rtl => NSTextAlignment::Right,
         Align::Start | Align::Fill => NSTextAlignment::Left,
     }
 }

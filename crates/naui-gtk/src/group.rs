@@ -4,13 +4,13 @@
 //! GTK4 has controls for both, so they are used as is. The line's color and the
 //! frame's border and rounded corners come from the theme (libadwaita).
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::rc::Rc;
 
 use adw::prelude::*;
 use naui_core::{Orientation, Padding, Sizing};
 
-use crate::bin::{apply_physical_padding, SizeBin};
+use crate::bin::{apply_padding, SizeBin};
 use crate::widgets::{impl_widget, Widget};
 
 // -------------------------------------------------------------- Separator
@@ -57,8 +57,6 @@ struct GroupInner {
     /// Holds the content inside the frame. The padding is its margin, so that moving
     /// the content elsewhere does not carry the padding with it.
     holder: adw::Bin,
-    /// Kept to swap the start and end margins when the text direction changes.
-    padding: Cell<Padding>,
     /// Holds the content's handle, keeping it alive along with its callbacks.
     child: RefCell<Option<Box<dyn Widget>>>,
 }
@@ -72,25 +70,16 @@ impl Group {
     pub(crate) fn new(text: &str) -> Self {
         let native = gtk::Frame::new(None);
         let holder = adw::Bin::new();
-        apply_physical_padding(&holder, naui_core::DEFAULT_GROUP_PADDING);
+        apply_padding(&holder, naui_core::DEFAULT_GROUP_PADDING);
         native.set_child(Some(&holder));
         let bin = SizeBin::wrap(&native);
         let this = Self(Rc::new(GroupInner {
             native,
             bin,
             holder,
-            padding: Cell::new(naui_core::DEFAULT_GROUP_PADDING),
             child: RefCell::new(None),
         }));
         this.set_text(text);
-
-        // 余白の左右は物理的な左右なので、文字の向きが変わったら start と end を入れ替える。
-        let weak = Rc::downgrade(&this.0);
-        this.0.holder.connect_direction_changed(move |holder, _| {
-            if let Some(inner) = weak.upgrade() {
-                apply_physical_padding(holder, inner.padding.get());
-            }
-        });
         this
     }
 
@@ -113,10 +102,10 @@ impl Group {
     /// The space between the frame and the content. The default is
     /// [`DEFAULT_GROUP_PADDING`](naui_core::DEFAULT_GROUP_PADDING).
     ///
-    /// `left` and `right` are the physical sides, also in right-to-left text.
+    /// In a right-to-left layout `left` and `right` are mirrored: `left` is the
+    /// side where the content starts (GTK's start margin).
     pub fn set_padding(&self, padding: Padding) {
-        self.0.padding.set(padding);
-        apply_physical_padding(&self.0.holder, padding);
+        apply_padding(&self.0.holder, padding);
     }
 
     /// The content inside the frame. Each call replaces it.

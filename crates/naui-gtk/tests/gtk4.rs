@@ -24,8 +24,8 @@ use gtk::glib;
 use gtk::pango;
 use naui_core::{
     Align, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
-    EventResponse, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem,
-    MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
+    EventResponse, FileFilter, FilePickerMode, Fit, GridCell, LayoutDirection, Length, ListItem,
+    MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
     PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode, SidebarItem,
     SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle, Theme, Time,
     ToolbarIcon, ToolbarItem, Track, TreeItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
@@ -258,8 +258,8 @@ fn main() {
             group_padding_spaces_the_child,
         ),
         (
-            "右から左の文字でも、グループの余白の左右は物理的な左右のまま",
-            group_padding_stays_physical_right_to_left,
+            "右から左の配置は行・列・余白を反転し、数値入力と再生バーは反転しない",
+            right_to_left_layout_is_mirrored,
         ),
         (
             "スタックの余白が中身を狭める",
@@ -2851,9 +2851,59 @@ fn group_padding_spaces_the_child(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// The padding's `left` and `right` are the physical sides, also in right-to-left
-/// text, where GTK puts the start margin on the right.
-fn group_padding_stays_physical_right_to_left(ui: &Ui) -> Result<()> {
+/// Puts GTK's default direction back when dropped, so that a failed check does not
+/// leave the tests after it mirrored.
+struct DefaultDirection(gtk::TextDirection);
+
+impl Drop for DefaultDirection {
+    fn drop(&mut self) {
+        gtk::Widget::set_default_direction(self.0);
+    }
+}
+
+/// Where `widget` sits inside `ancestor`, along x.
+fn x_in(widget: &impl IsA<gtk::Widget>, ancestor: &impl IsA<gtk::Widget>) -> f32 {
+    widget.compute_bounds(ancestor).expect("祖先の中の位置").x()
+}
+
+/// Whether `widget` and everything inside it run left to right.
+fn all_left_to_right(widget: &gtk::Widget) -> bool {
+    widget.direction() == gtk::TextDirection::Ltr && children(widget).iter().all(all_left_to_right)
+}
+
+/// A right-to-left layout mirrors rows, columns and padding, and keeps the number
+/// in a `NumberInput` and the playback bar of `Video` and `Audio` left to right.
+fn right_to_left_layout_is_mirrored(ui: &Ui) -> Result<()> {
+    let _restore = DefaultDirection(gtk::Widget::default_direction());
+    naui_gtk::apply_layout_direction(Some(LayoutDirection::Rtl));
+    assert_eq!(ui.layout_direction(), LayoutDirection::Rtl);
+
+    // 横の Stack は最初の子を右に置く。
+    let stack = ui.stack(Orientation::Horizontal)?;
+    let first = ui.button("一")?;
+    let second = ui.button("二")?;
+    stack.append(&first);
+    stack.append(&second);
+    let native = stack.native_widget();
+    native.measure(gtk::Orientation::Horizontal, -1);
+    native.measure(gtk::Orientation::Vertical, 300);
+    native.size_allocate(&gtk::Allocation::new(0, 0, 300, 40), -1);
+    let (first_x, second_x) = (
+        x_in(&bin_of(&first), &native),
+        x_in(&bin_of(&second), &native),
+    );
+    assert!(first_x > second_x, "最初の子が右: {first_x} / {second_x}");
+
+    // Grid の 0 列目は右端。
+    let grid = ui.grid()?;
+    let a = ui.label("一")?;
+    let b = ui.label("二")?;
+    grid.attach(&a, GridCell::new(0, 0));
+    grid.attach(&b, GridCell::new(1, 0));
+    let placed = lay_out_grid(&grid, 300, 40, &[&a, &b]);
+    assert!(placed[0].0 > placed[1].0, "0 列目が右: {placed:?}");
+
+    // Group の余白の left は先頭側 (右) に付く。
     let group = ui.group("")?;
     let label = ui.label("あ")?;
     group.set_child(&label);
@@ -2867,20 +2917,50 @@ fn group_padding_stays_physical_right_to_left(ui: &Ui) -> Result<()> {
         .first_child()
         .and_downcast::<gtk::Frame>()
         .expect("GtkFrame");
-    let holder = frame.child().expect("余白を持つ AdwBin");
-    assert_eq!((holder.margin_start(), holder.margin_end()), (4, 20));
+    frame.measure(gtk::Orientation::Horizontal, -1);
+    frame.measure(gtk::Orientation::Vertical, 300);
+    frame.size_allocate(&gtk::Allocation::new(0, 0, 300, 60), -1);
+    let bounds = bin_of(&label).compute_bounds(&frame).expect("中身の位置");
+    let left_gap = bounds.x();
+    let right_gap = frame.width() as f32 - bounds.x() - bounds.width();
+    assert!(
+        left_gap - right_gap > 10.0,
+        "right の 20 が左、left の 4 が右: 左 {left_gap} / 右 {right_gap}"
+    );
 
-    // 向きが変わったら start と end を入れ替える。GTK4 の向きは親から継がれず、
-    // 余白は AdwBin 自身の向きで start と end が決まるので、AdwBin の向きを変える。
-    holder.set_direction(gtk::TextDirection::Rtl);
-    assert_eq!((holder.margin_start(), holder.margin_end()), (20, 4));
-    group.set_padding(Padding {
-        left: 1.0,
-        ..Padding::symmetric(0.0, 8.0)
-    });
-    assert_eq!((holder.margin_start(), holder.margin_end()), (8, 1));
-    holder.set_direction(gtk::TextDirection::Ltr);
-    assert_eq!((holder.margin_start(), holder.margin_end()), (1, 8));
+    // 数値入力は欄とボタンの並びも書き方も左から右のまま。
+    let number = ui.number_input(-5.0)?;
+    let spin = number.native_widget();
+    assert!(all_left_to_right(&spin), "数値入力の中はすべて左から右");
+    spin.measure(gtk::Orientation::Horizontal, -1);
+    spin.measure(gtk::Orientation::Vertical, 200);
+    spin.size_allocate(&gtk::Allocation::new(0, 0, 200, 40), -1);
+    let parts = children(&spin);
+    let text = parts
+        .iter()
+        .find(|part| part.css_name() == "text")
+        .expect("入力欄");
+    let button = parts
+        .iter()
+        .find(|part| part.css_name() == "button")
+        .expect("上下のボタン");
+    assert!(
+        x_in(text, &spin) < x_in(button, &spin),
+        "欄が左、ボタンが右"
+    );
+
+    // 再生バーは反転させない。
+    let video = ui.video("")?;
+    let controls = children(&bin_of(&video))
+        .into_iter()
+        .flat_map(|child| children(&child))
+        .find(|child| child.is::<gtk::MediaControls>())
+        .expect("動画の再生バー");
+    assert!(all_left_to_right(&controls), "動画の再生バーは左から右");
+    let audio = ui.audio("")?;
+    let native = audio.native_widget();
+    assert!(native.is::<gtk::MediaControls>());
+    assert!(all_left_to_right(&native), "音声の再生バーは左から右");
     Ok(())
 }
 

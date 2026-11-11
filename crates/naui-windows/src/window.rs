@@ -686,6 +686,7 @@ impl Window {
             return;
         };
         crate::languages::apply_app_language(&root);
+        crate::direction::apply_app_direction(&root);
         if self.0.native.SetContent(&root).is_ok() {
             let _ = crate::file_drop::install(
                 &root,
@@ -1150,6 +1151,7 @@ impl Window {
                 }
             };
         crate::languages::apply_app_language(&theme_root);
+        crate::direction::apply_app_direction(&theme_root);
         if self.0.native.SetContent(&theme_root).is_ok() {
             if let Some(previous) = previous {
                 if previous != child_element {

@@ -347,7 +347,7 @@ impl MenuBar {
             (LOOK.surface)(&popup);
             style(&popup, "position", "absolute");
             style(&popup, "top", "100%");
-            style(&popup, "left", "0");
+            style(&popup, "inset-inline-start", "0");
             style(&popup, "display", "none");
             dom.build(
                 &doc,

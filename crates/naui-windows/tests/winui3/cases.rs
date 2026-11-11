@@ -9,9 +9,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use naui_core::{
-    Align, ButtonRole, Color, GridCell, MenuItem, MenuShortcut, MenuSpec, Orientation, Point, Rect,
-    Result, RichText, ScrollPolicy, SidebarItem, SidebarSection, Sizing, TextColor, TextStyle,
-    Theme, ToolbarIcon, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
+    Align, ButtonRole, Color, GridCell, LayoutDirection, MenuItem, MenuShortcut, MenuSpec,
+    Orientation, Point, Rect, Result, RichText, ScrollPolicy, SidebarItem, SidebarSection, Sizing,
+    TextColor, TextStyle, Theme, ToolbarIcon, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_windows::{run_for_test, MenuEntry, Ui, Widget};
 
@@ -403,6 +403,10 @@ const CASES: &[Case] = &[
     (
         "アプリの言語がウィンドウの中身に付き、中の要素が継ぐ",
         app_language_is_set_on_the_window_content,
+    ),
+    (
+        "右から左の配置がウィンドウの中身に付き、描画面・絵・数値入力・動画は左から右のまま",
+        right_to_left_layout_is_set_on_the_window_content,
     ),
     (
         "ウィンドウの大きさはタイトルバーとメニューバーを除いた中身の行",
@@ -2867,6 +2871,97 @@ fn app_language_is_set_on_the_window_content(ui: &Ui) -> Result<()> {
         "中の要素は根の言語を継ぐこと"
     );
     window.close();
+    Ok(())
+}
+
+/// A right-to-left layout is `FlowDirection` on the window's content, which every
+/// element inside inherits. XAML mirrors by a transform on the rendering, so the
+/// elements that draw for themselves (`Canvas`, `Image`, `Video`) and `NumberInput`
+/// are given `LeftToRight` back.
+fn right_to_left_layout_is_set_on_the_window_content(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::FlowDirection;
+
+    naui_core::set_app_layout_direction(Some(LayoutDirection::Rtl));
+    let built = (|| -> Result<_> {
+        let window = ui.window("書字方向", 400.0, 200.0)?;
+        let stack = ui.stack(Orientation::Vertical)?;
+        let row = ui.stack(Orientation::Horizontal)?;
+        let first = ui.button("一")?;
+        let second = ui.button("二")?;
+        row.append(&first);
+        row.append(&second);
+        stack.append(&row);
+        let number = ui.number_input(-5.0)?;
+        let canvas = ui.canvas()?;
+        let image = ui.image("")?;
+        let video = ui.video("")?;
+        stack.append(&number);
+        stack.append(&canvas);
+        stack.append(&image);
+        stack.append(&video);
+        window.set_child(&stack);
+        Ok((window, first, second, number, canvas, image, video))
+    })();
+    assert_eq!(ui.layout_direction(), LayoutDirection::Rtl);
+    naui_core::set_app_layout_direction(None);
+    let (window, first, second, number, canvas, image, video) = built?;
+
+    let root = window
+        .native_window()
+        .Content()
+        .expect("ウィンドウの中身")
+        .cast::<FrameworkElement>()
+        .expect("根は FrameworkElement");
+    let direction = |element: &FrameworkElement| element.FlowDirection().expect("FlowDirection");
+    assert_eq!(direction(&root), FlowDirection::RightToLeft);
+    assert_eq!(
+        direction(&native::<FrameworkElement>(&first)),
+        FlowDirection::RightToLeft,
+        "中の要素は根の向きを継ぐこと"
+    );
+    for (name, element) in [
+        ("数値入力", native::<FrameworkElement>(&number)),
+        ("描画面", native::<FrameworkElement>(&canvas)),
+        ("画像", native::<FrameworkElement>(&image)),
+        ("動画", native::<FrameworkElement>(&video)),
+    ] {
+        assert_eq!(
+            direction(&element),
+            FlowDirection::LeftToRight,
+            "{name}は左から右のまま"
+        );
+    }
+
+    // 横に並べた最初の子が右に来る (反転は描画の変換なので、窓から見た位置で比べる)。
+    window.show();
+    let first_element = native::<FrameworkElement>(&first);
+    let laid_out = || first_element.ActualWidth().unwrap_or(0.0) > 0.0;
+    pump_until(SCROLL_LAYOUT_TIMEOUT, laid_out);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !laid_out() {
+            println!("     (実寸が付かない環境なので、位置は確かめずに通す)");
+            return;
+        }
+        let x = |element: &FrameworkElement| {
+            element
+                .TransformToVisual(None)
+                .and_then(|transform| {
+                    transform.TransformPoint(windows::Foundation::Point { X: 0.0, Y: 0.0 })
+                })
+                .expect("窓から見た位置")
+                .X
+        };
+        let first_x = x(&first_element);
+        let second_x = x(&native::<FrameworkElement>(&second));
+        assert!(
+            first_x > second_x,
+            "最初の子が右に来ること: 一 {first_x} / 二 {second_x}"
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
     Ok(())
 }
 

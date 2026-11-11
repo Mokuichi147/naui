@@ -64,6 +64,23 @@ that shape are covered in
   thread reads it is undefined behavior. An app that starts threads (an async
   runtime, say) before `run` keeps the OS's glyph choice; naui's own strings still
   follow the language, and setting `PANGO_LANGUAGE` before launch works.
+- `Settings::layout_direction` is read once at startup and applies to the whole
+  app. AppKit decides the direction when `NSApplication` is created, and Auto
+  Layout's leading and trailing follow the app's direction, not a view's (a view
+  given `userInterfaceLayoutDirection` alone was not mirrored), so no platform
+  switches it per widget or while the app runs. Without `Settings::language`,
+  `LayoutDirection::Auto` leaves each toolkit's default, which differs: GTK follows
+  the locale (an untranslated app is mirrored when `LANG` is Arabic), AppKit
+  mirrors only an app localized into a right-to-left language when the system asks
+  for it (an unbundled binary stayed left to right with `AppleLanguages` set to
+  `ar`), and WinUI and the Web stay left to right. On Windows naui sets
+  `FlowDirection` on each window's content and on `Dialog` and `Sheet`; whether a
+  `Popover` (a `Flyout`) and menus follow it, and which side
+  `PopoverPosition::Left` and `Right` then mean, has not been checked on a device.
+  macOS and Linux keep `Left` and `Right` on the physical sides (GTK's popover
+  does not swap them), as does the Web. The playback bar of `Video` is AVKit's on
+  macOS, which keeps it left to right in a right-to-left app by itself; naui pins
+  it left to right on the other platforms.
 - `Ui::on_preferred_languages_change` is never called on Linux, which decides the
   languages from environment variables at startup. Elsewhere it is called only
   when the list itself changes: a change of region or format alone does not call
