@@ -2230,7 +2230,7 @@ fn row_content(row: &ListRow) -> Result<UIElement> {
     match &row.content {
         ListRowContent::Custom(content) => Ok(content.native_element()),
         ListRowContent::Item(item) => {
-            Ok(item_content(&item.label, item.detail.as_deref())?.native_element())
+            Ok(item_content(&item.label, item.detail.as_deref(), item.enabled)?.native_element())
         }
     }
 }
@@ -2264,17 +2264,21 @@ pub(crate) fn text_block(text: &str, secondary: bool) -> Result<TextBlock> {
 /// [`TextStyle::Caption`] and [`TextColor::Secondary`], so neither point size nor
 /// brush is written here. The main text's color is not set (it inherits from the
 /// row's `ListViewItem`).
-pub(crate) fn item_content(label: &str, detail: Option<&str>) -> Result<Stack> {
+pub(crate) fn item_content(label: &str, detail: Option<&str>, enabled: bool) -> Result<Stack> {
     let content = Stack::new(Orientation::Vertical)?;
     // `StackPanel` そのものを行の幅いっぱいに広げる。`Align::Start` にすると
     // `HorizontalAlignment=Left` で中身の幅まで縮み、中の文字が行からはみ出す。
     content.set_align(Align::Fill);
     content.set_spacing(DETAIL_SPACING);
-    content.append(&row_label(label)?);
+    let title = row_label(label)?;
+    // 選べない行は本文も補助も無効な色にする (macOS と同じ)。無効の色は役割の色より後に当てる。
+    title.set_disabled(!enabled);
+    content.append(&title);
     if let Some(detail) = detail {
         let sub = row_label(detail)?;
         sub.set_style(TextStyle::Caption);
         sub.set_color(TextColor::Secondary);
+        sub.set_disabled(!enabled);
         content.append(&sub);
     }
     Ok(content)

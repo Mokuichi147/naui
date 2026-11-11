@@ -63,6 +63,10 @@ const CASES: &[Case] = &[
         "ラベルの段階と役割が type ramp とテーマリソースへ写る",
         label_style_and_color_map_to_the_type_ramp,
     ),
+    (
+        "選べない行の本文は無効の色になり、選べる行は違う色のまま",
+        label_disabled_is_dimmed,
+    ),
     ("スライダーが範囲でクランプされる", slider_clamp),
     ("進捗バーが 0..1 に収まる", progress_clamp),
     (
@@ -1629,6 +1633,61 @@ fn label_style_and_color_map_to_the_type_ramp(ui: &Ui) -> Result<()> {
         );
         seen.push(current);
     }
+    Ok(())
+}
+
+/// The text of a row that cannot be selected is drawn in the disabled text color, and
+/// the text of a row that can is not.
+fn label_disabled_is_dimmed(ui: &Ui) -> Result<()> {
+    use naui_core::ListItem;
+    use naui_winui3::Microsoft::UI::Xaml::Controls::{ListViewItem, Panel};
+
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("選べる").detail("補助"),
+        ListItem::new("選べない").detail("補助").enabled(false),
+    ]);
+    let items = list.native_list_view().Items().expect("Items");
+    // 行 → 中身の入れ物 → 縦の並び → 本文 (最初の TextBlock) の文字色。
+    let title_color = |slot: u32| {
+        let row = items
+            .GetAt(slot)
+            .expect("行")
+            .cast::<ListViewItem>()
+            .expect("ListViewItem");
+        let holder = row
+            .Content()
+            .expect("中身")
+            .cast::<Panel>()
+            .expect("入れ物");
+        let column = holder
+            .Children()
+            .expect("入れ物の子")
+            .GetAt(0)
+            .expect("縦の並び")
+            .cast::<Panel>()
+            .expect("縦の並びの Panel");
+        let title = column
+            .Children()
+            .expect("縦の並びの子")
+            .GetAt(0)
+            .expect("本文")
+            .cast::<TextBlock>()
+            .expect("TextBlock");
+        title
+            .Foreground()
+            .expect("Foreground")
+            .cast::<SolidColorBrush>()
+            .expect("テーマリソースは SolidColorBrush であること")
+            .Color()
+            .expect("ブラシの色")
+    };
+    let selectable = title_color(0);
+    let unselectable = title_color(1);
+    assert!(
+        unselectable != selectable,
+        "選べない行の本文が選べる行と同じ色のまま: {selectable:?}"
+    );
     Ok(())
 }
 
