@@ -613,8 +613,7 @@ fn jpeg_size(bytes: &[u8], be16: impl Fn(usize) -> Option<u32>) -> Option<(u32, 
 /// ```
 pub fn rgba_to_premultiplied_bgra(rgba: &[u8]) -> Vec<u8> {
     let mut bgra = Vec::with_capacity(rgba.len());
-    for pixel in rgba.chunks_exact(4) {
-        let [r, g, b, a] = [pixel[0], pixel[1], pixel[2], pixel[3]];
+    for &[r, g, b, a] in rgba.as_chunks::<4>().0 {
         bgra.extend_from_slice(&[premultiply(b, a), premultiply(g, a), premultiply(r, a), a]);
     }
     bgra
@@ -626,8 +625,7 @@ pub fn rgba_to_premultiplied_bgra(rgba: &[u8]) -> Vec<u8> {
 /// That is BGRA in memory on little-endian machines and ARGB on big-endian ones.
 pub fn rgba_to_premultiplied_argb32(rgba: &[u8]) -> Vec<u8> {
     let mut argb = Vec::with_capacity(rgba.len());
-    for pixel in rgba.chunks_exact(4) {
-        let [r, g, b, a] = [pixel[0], pixel[1], pixel[2], pixel[3]];
+    for &[r, g, b, a] in rgba.as_chunks::<4>().0 {
         let word = (u32::from(a) << 24)
             | (u32::from(premultiply(r, a)) << 16)
             | (u32::from(premultiply(g, a)) << 8)
@@ -986,8 +984,10 @@ mod tests {
         );
         let argb = rgba_to_premultiplied_argb32(&rgba);
         let words: Vec<u32> = argb
-            .chunks_exact(4)
-            .map(|w| u32::from_ne_bytes(w.try_into().unwrap()))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|w| u32::from_ne_bytes(*w))
             .collect();
         assert_eq!(words, [0xFFFF0000, 0x00000000, 0x3328140A]);
     }
