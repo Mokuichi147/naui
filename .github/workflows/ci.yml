@@ -277,6 +277,18 @@ jobs:
             dbus-run-session -- \
             cargo test -p naui-core -p naui-gtk -p naui -p naui-app
 
+  # 一時: release.yml と同じ ubuntu-24.04 で apt-install を確かめる。マージ前に消す。
+  apt-24-04:
+    name: 一時 apt-install (ubuntu-24.04)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/apt-install
+        with:
+          packages: libgtk-4-dev libadwaita-1-dev build-essential pkg-config
+      - run: pkg-config --modversion gtk4 libadwaita-1
+
   web:
     name: Web (wasm / DOM)
     runs-on: ubuntu-latest
