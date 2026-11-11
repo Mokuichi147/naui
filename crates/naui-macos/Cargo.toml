@@ -22,6 +22,8 @@ block2 = "0.6"
 # objc2-av-foundation の feature 経由で既に依存グラフへ入っているものと同じ版に解決される。
 dispatch2 = { version = "0.3", default-features = false, features = ["std", "objc2"] }
 objc2-foundation = { version = "0.3", features = [
+    # 描画面の変換 (`Painter::rotate` など)。
+    "NSAffineTransform",
     "NSArray",
     "NSAttributedString",
     "NSCalendar",
@@ -44,6 +46,7 @@ objc2-foundation = { version = "0.3", features = [
 objc2-app-kit = { version = "0.3", features = [
     "NSAccessibilityProtocols",
     "NSActionCell",
+    "NSAffineTransform",
     "NSAlert",
     "NSApplication",
     "NSAppearance",
@@ -66,9 +69,12 @@ objc2-app-kit = { version = "0.3", features = [
     "NSEvent",
     "NSFont",
     "NSFontDescriptor",
+    "NSGradient",
     "NSGraphics",
+    "NSGraphicsContext",
     "NSGridView",
     "NSImage",
+    "NSImageRep",
     "NSImageView",
     "NSOpenPanel",
     "NSOutlineView",

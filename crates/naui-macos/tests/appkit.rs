@@ -16,8 +16,8 @@ use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 
 use naui_core::{
-    Align, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
-    EventResponse, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem,
+    Align, Bitmap, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
+    EventResponse, FileFilter, FilePickerMode, Fit, Gradient, GridCell, Length, ListItem, MenuItem,
     MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
     PointerButton, PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode,
     SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle,
@@ -80,6 +80,10 @@ fn main() {
         (
             "描画面が on_draw の命令を AppKit で画素に落とす",
             canvas_paints_recorded_commands,
+        ),
+        (
+            "描画面の切り抜き・回転・グラデーション・画像・文字幅が AppKit で効く",
+            canvas_draws_the_broader_vocabulary,
         ),
         (
             "描画面がマウスの押下・移動・解放を面の座標で通知する",
@@ -1407,6 +1411,142 @@ fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
     canvas.redraw();
     unsafe { view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap) };
     assert!(sizes.borrow().len() > drawn, "描き直しで呼ばれること");
+    window.close();
+    Ok(())
+}
+
+/// 4 x 4 RGBA pixels: the top two rows red, the bottom two blue.
+fn two_bands() -> Vec<u8> {
+    (0..16)
+        .flat_map(|i| {
+            if i < 8 {
+                [255, 0, 0, 255]
+            } else {
+                [0, 0, 255, 255]
+            }
+        })
+        .collect()
+}
+
+/// Clipping, rotation, gradients, images and text measurement, replayed with
+/// `addClip`, `NSAffineTransform`, `NSGradient` and `NSImage`. Each part of the
+/// surface is read back from a bitmap of the view.
+fn canvas_draws_the_broader_vocabulary(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    canvas.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(120.0))
+            .height(Length::Fixed(80.0)),
+    );
+    let red = Color::rgb(0xff, 0x00, 0x00);
+    let blue = Color::rgb(0x00, 0x00, 0xff);
+    // 上の 2 行が赤、下の 2 行が青の 4 x 4 画素。引き伸ばすと隣の画素が混ざる
+    // ので、色の境目から離れたところを読む。
+    let bitmap = Bitmap::from_pixels(4, 4, &two_bands())?;
+    let widths = Rc::new(Cell::new((0.0, 0.0)));
+    canvas.on_draw({
+        let widths = widths.clone();
+        move |painter| {
+            widths.set((
+                painter.text_width("WWWW", 12.0),
+                painter.text_width("iiii", 12.0),
+            ));
+            painter.fill_rect(Rect::new(0.0, 0.0, 120.0, 80.0), Color::WHITE);
+            // 左上: 左半分だけを残して切り抜く。
+            painter.save();
+            painter.clip_rect(Rect::new(0.0, 0.0, 20.0, 40.0));
+            painter.fill_rect(Rect::new(0.0, 0.0, 40.0, 40.0), red);
+            painter.restore();
+            // 上の中: 右へ伸びる棒を 90° 回すと下へ伸びる。
+            painter.save();
+            painter.translate(60.0, 10.0);
+            painter.rotate(std::f64::consts::FRAC_PI_2);
+            painter.fill_rect(Rect::new(0.0, -3.0, 25.0, 6.0), blue);
+            painter.restore();
+            // 右上: 左から右へ赤から青。
+            painter.fill_rect(
+                Rect::new(80.0, 0.0, 40.0, 40.0),
+                Gradient::linear(Point::new(80.0, 0.0), Point::new(120.0, 0.0))
+                    .stop(0.0, red)
+                    .stop(1.0, blue),
+            );
+            // 左下: 上の 2 行だけを引き伸ばす。中下: 全体を引き伸ばす。
+            painter.draw_image_region(
+                &bitmap,
+                Rect::new(0.0, 0.0, 4.0, 2.0),
+                Rect::new(0.0, 40.0, 40.0, 40.0),
+            );
+            painter.draw_image(&bitmap, Rect::new(40.0, 40.0, 40.0, 40.0));
+            // 右下: 中心の赤から半径 15 の青へ。外側は青のまま続く。
+            painter.fill_rect(
+                Rect::new(80.0, 40.0, 40.0, 40.0),
+                Gradient::radial(Point::new(100.0, 60.0), 15.0)
+                    .stop(0.0, red)
+                    .stop(1.0, blue),
+            );
+            // 閉じ忘れた save と、その中の変換は次の描画へ残らない。
+            painter.save();
+            painter.translate(1000.0, 0.0);
+        }
+    });
+
+    let window = ui.window("canvas", 200.0, 160.0)?;
+    window.set_child(&canvas);
+    window.show();
+    let view = canvas.native_view();
+    view.layoutSubtreeIfNeeded();
+    let bounds = view.bounds();
+    let bitmap_rep = view
+        .bitmapImageRepForCachingDisplayInRect(bounds)
+        .expect("ビットマップを用意できること");
+    // 2 回描いて、前の描画の閉じ忘れが残らないことも見る。
+    unsafe { view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap_rep) };
+    canvas.redraw();
+    unsafe { view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap_rep) };
+    let scale = bitmap_rep.pixelsWide() as f64 / bounds.size.width;
+    let read = |x: f64, y: f64| -> Color {
+        let color = bitmap_rep
+            .colorAtX_y((x * scale) as isize, (y * scale) as isize)
+            .expect("画素が読めること");
+        let srgb = color
+            .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
+            .expect("sRGB へ変換できること");
+        Color::from_unit(
+            srgb.redComponent(),
+            srgb.greenComponent(),
+            srgb.blueComponent(),
+        )
+    };
+    // ディスプレイの色空間を通るので、どの成分が勝っているかだけを見る。
+    let is_red = |c: Color| c.r > 180 && c.g < 120 && c.b < 120;
+    let is_blue = |c: Color| c.b > 180 && c.r < 120 && c.g < 140;
+    let is_white = |c: Color| c.r > 200 && c.g > 200 && c.b > 200;
+    let check = |name: &str, x: f64, y: f64, ok: &dyn Fn(Color) -> bool| {
+        let c = read(x, y);
+        assert!(ok(c), "{name} ({x}, {y}): {c}");
+    };
+    check("切り抜きの中", 10.0, 20.0, &is_red);
+    check("切り抜きの外", 30.0, 20.0, &is_white);
+    check("回した棒", 60.0, 30.0, &is_blue);
+    check("回す前の向きには無い", 75.0, 10.0, &is_white);
+    check("グラデーションの始め", 82.0, 20.0, &is_red);
+    check("グラデーションの終わり", 118.0, 20.0, &is_blue);
+    let middle = read(100.0, 20.0);
+    assert!(
+        middle.r > 60 && middle.b > 60,
+        "グラデーションの中ほどは混ざる: {middle}"
+    );
+    check("画像の一部 (上の 2 行)", 20.0, 70.0, &is_red);
+    check("画像の上半分", 60.0, 50.0, &is_red);
+    check("画像の下半分", 60.0, 70.0, &is_blue);
+    check("放射の中心", 100.0, 60.0, &is_red);
+    check("放射の外", 118.0, 78.0, &is_blue);
+
+    let (wide, narrow) = widths.get();
+    assert!(
+        wide > narrow * 1.5 && narrow > 0.0,
+        "文字幅は字形で測る (WWWW {wide}, iiii {narrow})"
+    );
     window.close();
     Ok(())
 }

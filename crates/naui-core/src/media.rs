@@ -511,6 +511,139 @@ pub fn encode_png(width: u32, height: u32, rgba: &[u8]) -> crate::Result<Vec<u8>
     Ok(png)
 }
 
+/// What [`raster_info`] reads from the start of a raster image file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RasterInfo {
+    /// The media type (`image/png`, `image/jpeg` or `image/gif`).
+    pub mime: &'static str,
+    /// The size in pixels, as the file's header declares it.
+    pub width: u32,
+    pub height: u32,
+}
+
+/// Reads the format and pixel size from the header of a PNG, JPEG or GIF file,
+/// without decoding the pixels. `None` for other formats (SVG included), for a
+/// header cut short, and for a size of 0.
+///
+/// These three are the formats every platform's decoder reads. JPEG's size is
+/// taken from the first frame header (`SOF`) before the image data.
+///
+/// ```
+/// # use naui_core::media::{encode_png, raster_info};
+/// let png = encode_png(3, 2, &[0; 3 * 2 * 4]).unwrap();
+/// let info = raster_info(&png).unwrap();
+/// assert_eq!((info.mime, info.width, info.height), ("image/png", 3, 2));
+/// assert_eq!(raster_info(b"<svg/>"), None);
+/// ```
+pub fn raster_info(bytes: &[u8]) -> Option<RasterInfo> {
+    let be16 = |at: usize| -> Option<u32> {
+        Some(u32::from(u16::from_be_bytes(
+            bytes.get(at..at + 2)?.try_into().ok()?,
+        )))
+    };
+    let (mime, width, height) = if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        // 署名の後の最初のチャンクは IHDR と決まっている。
+        if bytes.get(12..16)? != b"IHDR" {
+            return None;
+        }
+        let read = |at: usize| -> Option<u32> {
+            Some(u32::from_be_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
+        };
+        ("image/png", read(16)?, read(20)?)
+    } else if bytes.starts_with(b"GIF87a") || bytes.starts_with(b"GIF89a") {
+        let read = |at: usize| -> Option<u32> {
+            Some(u32::from(u16::from_le_bytes(
+                bytes.get(at..at + 2)?.try_into().ok()?,
+            )))
+        };
+        ("image/gif", read(6)?, read(8)?)
+    } else if bytes.starts_with(&[0xFF, 0xD8]) {
+        let (width, height) = jpeg_size(bytes, be16)?;
+        ("image/jpeg", width, height)
+    } else {
+        return None;
+    };
+    (width > 0 && height > 0).then_some(RasterInfo {
+        mime,
+        width,
+        height,
+    })
+}
+
+/// The size in a JPEG's first frame header. Walks the markers from the start of
+/// the file until one of the `SOF` markers, before the image data begins.
+fn jpeg_size(bytes: &[u8], be16: impl Fn(usize) -> Option<u32>) -> Option<(u32, u32)> {
+    let mut at = 2;
+    loop {
+        // 区切りの 0xFF は何個続いてもよい (詰め物)。
+        if *bytes.get(at)? != 0xFF {
+            return None;
+        }
+        while *bytes.get(at)? == 0xFF {
+            at += 1;
+        }
+        let marker = *bytes.get(at)?;
+        at += 1;
+        match marker {
+            // 長さを持たない印。
+            0x01 | 0xD0..=0xD7 => continue,
+            // 画像の終わりや走査の始まりまでにフレームの見出しが無かった。
+            0xD9 | 0xDA => return None,
+            _ => {}
+        }
+        let length = be16(at)? as usize;
+        // SOF0〜SOF15。C4 (ハフマン表)、C8 (予約)、CC (算術符号の条件) は違う。
+        if matches!(marker, 0xC0..=0xCF) && !matches!(marker, 0xC4 | 0xC8 | 0xCC) {
+            // 長さ (2)、精度 (1)、高さ (2)、幅 (2) の順。
+            return Some((be16(at + 5)?, be16(at + 3)?));
+        }
+        if length < 2 {
+            return None;
+        }
+        at += length;
+    }
+}
+
+/// Turns RGBA pixels with straight alpha into BGRA with premultiplied alpha, the
+/// layout of Direct2D's `B8G8R8A8` bitmaps.
+///
+/// ```
+/// # use naui_core::media::rgba_to_premultiplied_bgra;
+/// assert_eq!(rgba_to_premultiplied_bgra(&[255, 128, 0, 128]), [0, 64, 128, 128]);
+/// ```
+pub fn rgba_to_premultiplied_bgra(rgba: &[u8]) -> Vec<u8> {
+    let mut bgra = Vec::with_capacity(rgba.len());
+    for pixel in rgba.chunks_exact(4) {
+        let [r, g, b, a] = [pixel[0], pixel[1], pixel[2], pixel[3]];
+        bgra.extend_from_slice(&[premultiply(b, a), premultiply(g, a), premultiply(r, a), a]);
+    }
+    bgra
+}
+
+/// Turns RGBA pixels with straight alpha into cairo's `ARGB32`: one native-endian
+/// 32-bit word per pixel, alpha in the top byte, colors premultiplied.
+///
+/// That is BGRA in memory on little-endian machines and ARGB on big-endian ones.
+pub fn rgba_to_premultiplied_argb32(rgba: &[u8]) -> Vec<u8> {
+    let mut argb = Vec::with_capacity(rgba.len());
+    for pixel in rgba.chunks_exact(4) {
+        let [r, g, b, a] = [pixel[0], pixel[1], pixel[2], pixel[3]];
+        let word = (u32::from(a) << 24)
+            | (u32::from(premultiply(r, a)) << 16)
+            | (u32::from(premultiply(g, a)) << 8)
+            | u32::from(premultiply(b, a));
+        argb.extend_from_slice(&word.to_ne_bytes());
+    }
+    argb
+}
+
+/// `value × alpha / 255`, rounded to nearest.
+fn premultiply(value: u8, alpha: u8) -> u8 {
+    let product = u32::from(value) * u32::from(alpha) + 127;
+    // (x + (x >> 8)) >> 8 は 255 で割って丸めるのと同じ (x ≤ 255 × 255 + 127)。
+    ((product + (product >> 8)) >> 8) as u8
+}
+
 fn push_chunk(png: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
     png.extend_from_slice(&(data.len() as u32).to_be_bytes());
     let start = png.len();
@@ -811,5 +944,51 @@ mod tests {
             "https://example.com/a.png"
         );
         assert_eq!(source_url("/tmp/a.png"), "file:///tmp/a.png");
+    }
+
+    #[test]
+    fn raster_headers_give_their_size() {
+        let gif = b"GIF89a\x40\x01\xF0\x00\x80\x00\x00";
+        assert_eq!(
+            raster_info(gif),
+            Some(RasterInfo {
+                mime: "image/gif",
+                width: 320,
+                height: 240
+            })
+        );
+        // APP0 (JFIF) を飛ばし、詰め物の 0xFF の後の SOF2 (プログレッシブ) を読む。
+        let jpeg = [
+            0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x04, 0x4A, 0x46, 0xFF, 0xFF, 0xC2, 0x00, 0x0B, 0x08,
+            0x01, 0x2C, 0x02, 0x58, 0x03, 0x01, 0x22, 0x00,
+        ];
+        let info = raster_info(&jpeg).expect("JPEG の大きさを読む");
+        assert_eq!(
+            (info.mime, info.width, info.height),
+            ("image/jpeg", 600, 300)
+        );
+        // ハフマン表 (C4) はフレームの見出しではない。
+        let huffman = [
+            0xFF, 0xD8, 0xFF, 0xC4, 0x00, 0x07, 0x00, 0x01, 0x00, 0x02, 0x00,
+        ];
+        assert_eq!(raster_info(&huffman), None);
+        assert_eq!(raster_info(&jpeg[..12]), None, "途中で切れている");
+        assert_eq!(raster_info(b"GIF89a\x00\x00\x01\x00"), None, "幅が 0");
+        assert_eq!(raster_info(b"\x89PNG\r\n\x1a\n"), None);
+    }
+
+    #[test]
+    fn premultiplied_layouts() {
+        let rgba = [255, 0, 0, 255, 0, 255, 0, 0, 200, 100, 50, 51];
+        assert_eq!(
+            rgba_to_premultiplied_bgra(&rgba),
+            [0, 0, 255, 255, 0, 0, 0, 0, 10, 20, 40, 51]
+        );
+        let argb = rgba_to_premultiplied_argb32(&rgba);
+        let words: Vec<u32> = argb
+            .chunks_exact(4)
+            .map(|w| u32::from_ne_bytes(w.try_into().unwrap()))
+            .collect();
+        assert_eq!(words, [0xFFFF0000, 0x00000000, 0x3328140A]);
     }
 }
