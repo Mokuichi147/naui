@@ -1500,9 +1500,9 @@ fn canvas_draws_the_broader_vocabulary(ui: &Ui) -> Result<()> {
         .bitmapImageRepForCachingDisplayInRect(bounds)
         .expect("ビットマップを用意できること");
     // 2 回描いて、前の描画の閉じ忘れが残らないことも見る。
-    unsafe { view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap_rep) };
+    view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap_rep);
     canvas.redraw();
-    unsafe { view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap_rep) };
+    view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap_rep);
     let scale = bitmap_rep.pixelsWide() as f64 / bounds.size.width;
     let read = |x: f64, y: f64| -> Color {
         let color = bitmap_rep

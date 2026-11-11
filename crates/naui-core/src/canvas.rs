@@ -1597,9 +1597,16 @@ mod tests {
     }
 
     fn close(a: Transform, b: Transform) -> bool {
-        [a.a - b.a, a.b - b.b, a.c - b.c, a.d - b.d, a.e - b.e, a.f - b.f]
-            .iter()
-            .all(|v| v.abs() < 1e-9)
+        [
+            a.a - b.a,
+            a.b - b.b,
+            a.c - b.c,
+            a.d - b.d,
+            a.e - b.e,
+            a.f - b.f,
+        ]
+        .iter()
+        .all(|v| v.abs() < 1e-9)
     }
 
     #[test]
@@ -1764,11 +1771,8 @@ mod tests {
         // 1 色だけなら単色の塗りにし、その不透明度を掛ける。
         painter.fill_rect(
             rect,
-            Gradient::linear(Point::new(0.0, 0.0), Point::new(1.0, 0.0)).stop_with_opacity(
-                0.3,
-                red,
-                0.5,
-            ),
+            Gradient::linear(Point::new(0.0, 0.0), Point::new(1.0, 0.0))
+                .stop_with_opacity(0.3, red, 0.5),
         );
         // 色の無いもの、長さ 0 の線、半径 0 の円は塗らない。
         painter.fill_rect(

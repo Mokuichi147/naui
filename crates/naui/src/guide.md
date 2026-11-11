@@ -1594,16 +1594,18 @@ chart.redraw();
 | `Canvas` | `Grid` + `CompositionDrawingSurface` (Direct2D + DirectWrite) | `NSView` + `drawRect:` (`NSBezierPath`) | `GtkDrawingArea` (cairo + Pango) | `<canvas>` + 2D context |
 
 The `Painter` **only records** drawing commands; turning them into pixels is the
-job of the platform's 2D API (naui has neither rasterization nor font metrics).
+job of the platform's 2D API (naui has no rasterization of its own).
 Coordinates are logical pixels with the origin at the top left and right and down
 positive, and the platform applies the high-DPI scale. The vocabulary is the
 minimum shared by all four platforms — fills and strokes of rectangles, circles,
-lines, polylines, polygons and arbitrary [`Path`]s (lines and cubic Béziers), and
-single lines of text — while opacity ([`set_opacity`](Painter::set_opacity)),
-dashes ([`set_dash`](Painter::set_dash)) and text alignment
-([`set_text_align`](Painter::set_text_align)) are held as state that applies to
-later commands until changed. Circles and arcs are converted to Béziers by `Path`
-before being passed on, so they have the same shape on every platform.
+lines, polylines, polygons and arbitrary [`Path`]s (lines and cubic Béziers),
+single lines of text, gradients, images, transforms and clipping — while opacity
+([`set_opacity`](Painter::set_opacity)), dashes ([`set_dash`](Painter::set_dash)),
+text alignment ([`set_text_align`](Painter::set_text_align)), the transform and
+the clip are held as state that applies to later commands until changed.
+[`save`](Painter::save) puts the state aside and [`restore`](Painter::restore)
+brings it back, as in `<canvas>`. Circles and arcs are converted to Béziers by
+`Path` before being passed on, so they have the same shape on every platform.
 
 | Command | What it does |
 | --- | --- |
@@ -1611,13 +1613,70 @@ before being passed on, so they have the same shape on every platform.
 | `fill_circle` / `stroke_circle` | Fill and stroke of a circle |
 | `line` / `polyline` / `fill_polygon` | Line, polyline, polygon |
 | `fill_path` / `stroke_path` | An arbitrary `Path` (lines and cubic Béziers; quadratic Béziers, ellipses and arcs are converted to Béziers) |
-| `text` | A single line of text |
+| `text` / `text_width` | A single line of text, and its width as the platform draws it |
+| `draw_image` / `draw_image_region` | A [`Bitmap`], or part of one, stretched over a rectangle |
+| `translate` / `rotate` / `scale` / `apply_transform` | Move, turn and scale later drawing ([`Transform`]) |
+| `clip` / `clip_rect` | Limit later drawing to the inside of a shape |
+| `save` / `restore` | Put the state aside and bring it back |
 | `set_opacity` / `set_dash` / `set_text_align` | State that applies to later commands (opacity, dashes, text alignment) |
 
 The typeface is the platform's standard UI font, and `size` is the text size (in
 logical pixels). `at` is the **top** of the text, and horizontally it follows the
-alignment. **There is no API to measure text width** (because there are no font
-metrics).
+alignment. [`text_width`](Painter::text_width) measures a line with the font the
+platform draws it in (Core Text, Pango, DirectWrite, `measureText`), so labels can
+be laid out and given room; the widths differ slightly between platforms, as the
+fonts do.
+
+The fills take a [`Color`] or a [`Gradient`]: linear along a line, or radial out
+from a center. Each stop has its own opacity, so a color can fade out, and past
+the ends the end colors carry on. Strokes take a color only.
+
+```no_run
+# use naui::{Color, Gradient, Point, Rect, Result, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+# let chart = ui.canvas()?;
+let blue = Color::rgb(0x33, 0x66, 0xff);
+chart.on_draw(move |painter| {
+    let plot = Rect::new(40.0, 10.0, painter.width() - 50.0, painter.height() - 30.0);
+    painter.save();
+    painter.clip_rect(plot); // nothing is drawn outside the plot area
+    let fade = Gradient::linear(Point::new(0.0, plot.y), Point::new(0.0, plot.bottom()))
+        .stop_with_opacity(0.0, blue, 0.6)
+        .stop_with_opacity(1.0, blue, 0.0);
+    painter.fill_rect(plot, &fade);
+    painter.restore();
+
+    // A label turned a quarter counterclockwise, reading upward.
+    painter.save();
+    painter.translate(12.0, plot.y + plot.height / 2.0);
+    painter.rotate(-std::f64::consts::FRAC_PI_2);
+    painter.text("Sales", Point::new(0.0, 0.0), 12.0, Color::BLACK);
+    painter.restore();
+});
+# Ok(())
+# }
+```
+
+Images are drawn from a [`Bitmap`], made once from the contents of a PNG, JPEG or
+GIF file ([`Bitmap::from_bytes`]) or from RGBA pixels ([`Bitmap::from_pixels`]),
+the same sources as [`Image::set_bytes`] and [`Image::set_pixels`]. The platform
+decodes it at the first draw and keeps the result with the `Bitmap`, so drawing it
+every frame does not decode it again. Stretched images are drawn smoothly, and
+when part of an image is stretched, the pixels just outside the part can blend
+into its edges (as with `<canvas>`'s `drawImage`), so leave a transparent pixel
+between the pictures of a sheet.
+
+| | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| Transform | Kept by naui, `SetTransform` | `NSAffineTransform` `concat` | `cairo_transform` | `transform` |
+| Clipping | `PushAxisAlignedClip`, or `PushLayer` with the shape as mask | `NSBezierPath` `addClip` | `cairo_clip` | `clip` |
+| Gradients | `ID2D1LinearGradientBrush` / `ID2D1RadialGradientBrush` | `NSGradient` | cairo gradient patterns | `CanvasGradient` |
+| Images | WIC, then `DrawBitmap` | `NSImage` | `GdkTexture`, then a cairo image surface | `<img>` (files) or `<canvas>` (pixels), then `drawImage` |
+| Text width | DirectWrite | `sizeWithAttributes:` | Pango | `measureText` |
+
+On the Web the browser decodes files in the background, so an image from a file
+is missing from draws until it has loaded, and the surface is drawn again then.
+Images from pixels are drawn at once on every platform.
 
 `redraw` **does not draw on the spot**. `on_draw` is called at the next draw (the
 native drawing pass on macOS / Linux, the next frame on the Web, and the next turn
@@ -1687,10 +1746,8 @@ the surface (because the other three platforms' drawing surfaces have none
 either).
 
 Only on Windows, **the Windows App SDK has no surface for drawing pixels** (Win2D
-is a separate package). So naui places XAML's shape elements `Path` and
-`TextBlock` on a `Canvas`, and rebuilds the whole surface on every redraw. For
-drawings with more than several thousand commands, redrawing takes longer than on
-the other three platforms.
+is a separate package). So naui places a Composition drawing surface over a
+`Grid` and replays the commands onto it with Direct2D and DirectWrite.
 
 ## Navigation
 
