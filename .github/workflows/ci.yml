@@ -229,7 +229,11 @@ jobs:
 
   linux:
     name: Linux (GTK4 / libadwaita)
-    runs-on: ubuntu-latest
+    # ubuntu-latest にしない。latest は予告なく次の版へ移り、GTK の版が変わって
+    # 描画のテストが落ちる (2026-11 に 24.04 の GTK 4.14 から 26.04 の 4.22 へ
+    # 移った)。版を上げるときは、テストを直してからここを書き換える。
+    # release.yml の Linux のビルドも 24.04。
+    runs-on: ubuntu-24.04
     # ふだんは 2 分ほど。apt の取得が遅いと導入だけで 30 分かかったことがあるため、
     # いまはキャッシュから入れる (.github/actions/apt-install)。
     timeout-minutes: 45
