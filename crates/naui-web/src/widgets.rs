@@ -1597,9 +1597,8 @@ pub(crate) fn set_disabled(element: &HtmlElement, disabled: bool) {
     }
 }
 
-/// Writes `padding` as CSS padding. `left` and `right` go to the inline start and
-/// end, so that they are mirrored with the rest of a right-to-left layout (`dir`),
-/// as `Padding` is on the other platforms.
+/// Writes `padding` as CSS padding, `start` and `end` on the inline start and end,
+/// so that they are mirrored with the rest of a right-to-left layout (`dir`).
 pub(crate) fn apply_padding(element: &HtmlElement, padding: Padding) {
     let style = element.style();
     let _ = style.set_property(
@@ -1608,6 +1607,6 @@ pub(crate) fn apply_padding(element: &HtmlElement, padding: Padding) {
     );
     let _ = style.set_property(
         "padding-inline",
-        &format!("{}px {}px", padding.left, padding.right),
+        &format!("{}px {}px", padding.start, padding.end),
     );
 }

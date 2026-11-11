@@ -13,9 +13,8 @@
 //! A group's content is placed in the box's `contentView` with constraints. The
 //! box's own margins are 0 and the padding is the constants of those constraints,
 //! because `contentViewMargins` can only be the same on both sides. The padding
-//! insets a layout guide by its leading and trailing sides, so that in a
-//! right-to-left layout `left` is mirrored with the rest (as `NSStackView`'s
-//! `edgeInsets` are), and the content is tied to the guide's leading edge.
+//! insets a layout guide by its leading and trailing sides (`start` and `end`),
+//! and the content is tied to the guide's leading edge.
 //!
 //! A group's box has no natural size of its own; its size comes from the content
 //! through those constraints. On recent macOS, where `NSBox` is drawn by SwiftUI,
@@ -231,8 +230,6 @@ impl Group {
     /// The space between the frame and the content. The default is
     /// [`DEFAULT_GROUP_PADDING`](naui_core::DEFAULT_GROUP_PADDING).
     ///
-    /// In a right-to-left layout `left` and `right` are mirrored: `left` is the
-    /// side where the content starts.
     pub fn set_padding(&self, padding: Padding) {
         self.0.padding.set(padding);
         self.0.place_child();
@@ -259,8 +256,8 @@ impl Group {
 impl GroupInner {
     /// Ties the content to the inside of the box, `padding` away from its edges.
     ///
-    /// `left` is on the leading side, which is the right in a right-to-left layout.
-    /// The content's leading and top edges are fixed. The
+    /// `start` is on the leading side, which is the right in a right-to-left
+    /// layout. The content's leading and top edges are fixed. The
     /// trailing and bottom edges may not pass the inside and want to reach it just
     /// below required, so content with a maximum stops there instead of breaking the
     /// constraints.
@@ -278,13 +275,13 @@ impl GroupInner {
         constraints.extend([
             inset
                 .leadingAnchor()
-                .constraintEqualToAnchor_constant(&content.leadingAnchor(), padding.left),
+                .constraintEqualToAnchor_constant(&content.leadingAnchor(), padding.start),
             inset
                 .topAnchor()
                 .constraintEqualToAnchor_constant(&content.topAnchor(), padding.top),
             inset
                 .trailingAnchor()
-                .constraintEqualToAnchor_constant(&content.trailingAnchor(), -padding.right),
+                .constraintEqualToAnchor_constant(&content.trailingAnchor(), -padding.end),
             inset
                 .bottomAnchor()
                 .constraintEqualToAnchor_constant(&content.bottomAnchor(), -padding.bottom),

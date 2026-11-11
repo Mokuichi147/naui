@@ -223,7 +223,8 @@ v0.17.0.
       `FlowDirection` on each window's content, and `dir` on `<html>`. The native
       toolkits mirror their own controls; naui pins `Canvas`, pictures, the number
       in `NumberInput`, the Web's date and time fields and the playback bar left to
-      right where the toolkit would mirror them, and `Padding` is mirrored with the layout. `Auto` follows
+      right where the toolkit would mirror them. `Padding`'s `left` and `right`
+      became `start` and `end`, mirrored with the layout. `Auto` follows
       `Settings::language`, and without one keeps each toolkit's default.
 - [ ] **Broaden `Canvas`'s vocabulary** (images, clipping, rotation and scaling,
       gradients). What it waited on was released in v0.15.0: text width

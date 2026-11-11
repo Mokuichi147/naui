@@ -1051,15 +1051,15 @@ fn right_to_left_layout_is_mirrored() {
         let second_x = second.native_element().get_bounding_client_rect().left();
         assert!(first_x > second_x, "最初の子が右: {first_x} / {second_x}");
 
-        // Group の余白の left は先頭側 (右) に付く。
+        // Group の余白の start は先頭側 (右) に付く。
         let group = ui.group("")?;
         let content = ui.label("中身")?;
         group.set_child(&content);
         group.set_padding(Padding {
             top: 2.0,
-            right: 20.0,
             bottom: 2.0,
-            left: 4.0,
+            start: 4.0,
+            end: 20.0,
         });
         let _group = Mounted::new(&group);
         let outer = group.native_element().get_bounding_client_rect();
@@ -1067,13 +1067,13 @@ fn right_to_left_layout_is_mirrored() {
         let border = 1.0;
         assert!(
             (outer.right() - inner.right() - 4.0 - border).abs() < 0.5,
-            "left の余白は右: {} / {}",
+            "start の余白は右: {} / {}",
             outer.right(),
             inner.right()
         );
         assert!(
             (inner.left() - outer.left() - 20.0 - border).abs() < 0.5,
-            "right の余白は左: {} / {}",
+            "end の余白は左: {} / {}",
             outer.left(),
             inner.left()
         );
@@ -1243,13 +1243,13 @@ fn group_is_a_fieldset_named_by_its_legend() {
         let padding = naui_core::DEFAULT_GROUP_PADDING;
         let border = 1.0;
         assert!(
-            (inner.left() - outer.left() - padding.left - border).abs() < 0.5,
+            (inner.left() - outer.left() - padding.start - border).abs() < 0.5,
             "左の余白: {} / {}",
             outer.left(),
             inner.left()
         );
         assert!(
-            (outer.right() - inner.right() - padding.right - border).abs() < 0.5,
+            (outer.right() - inner.right() - padding.end - border).abs() < 0.5,
             "中身は右の余白まで伸びること: {} / {}",
             outer.right(),
             inner.right()

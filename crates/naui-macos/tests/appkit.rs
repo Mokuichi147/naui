@@ -3797,11 +3797,11 @@ fn group_frames_its_child(ui: &Ui) -> Result<()> {
     let frame = body.native_view().frame();
     let padding = naui_core::DEFAULT_GROUP_PADDING;
     assert!(
-        (frame.origin.x - padding.left).abs() < 0.5,
+        (frame.origin.x - padding.start).abs() < 0.5,
         "左に余白が入ること: {frame:?}"
     );
     assert!(
-        (inside.size.width - frame.size.width - padding.left - padding.right).abs() < 0.5,
+        (inside.size.width - frame.size.width - padding.start - padding.end).abs() < 0.5,
         "中身は右の余白まで伸びること: {inside:?} / {frame:?}"
     );
 

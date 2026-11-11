@@ -675,14 +675,14 @@ pub(crate) fn to_gtk_align(align: Align) -> gtk::Align {
 /// GTK4 containers have no "inner padding", but every widget has margins on all
 /// four sides. Putting margins on the container itself shrinks the area its
 /// contents can occupy by that much, which means the same as naui's
-/// [`Padding`](naui_core::Padding). `left` is the start margin, so that the padding is
-/// mirrored with the rest of a right-to-left layout.
+/// [`Padding`](naui_core::Padding). Its `start` and `end` are GTK's start and end
+/// margins, which follow the widget's direction.
 pub(crate) fn apply_padding(widget: &impl IsA<gtk::Widget>, padding: naui_core::Padding) {
     let widget = widget.as_ref();
     widget.set_margin_top(to_px(padding.top));
-    widget.set_margin_end(to_px(padding.right));
+    widget.set_margin_end(to_px(padding.end));
     widget.set_margin_bottom(to_px(padding.bottom));
-    widget.set_margin_start(to_px(padding.left));
+    widget.set_margin_start(to_px(padding.start));
 }
 
 /// Keeps `widget` and everything inside it left to right, also in a right-to-left

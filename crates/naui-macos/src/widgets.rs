@@ -1678,11 +1678,13 @@ impl Stack {
 
     pub fn set_padding(&self, padding: Padding) {
         self.0.padding.set(padding);
+        // NSStackView の edgeInsets の左右は、右から左のアプリでは入れ替わる
+        // (left が先頭側)。start と end をそのまま渡せば反転も付いてくる。
         self.0.native.setEdgeInsets(NSEdgeInsets {
             top: padding.top,
-            left: padding.left,
+            left: padding.start,
             bottom: padding.bottom,
-            right: padding.right,
+            right: padding.end,
         });
         // 交差軸いっぱいに広げている子は、余白のぶんだけ狭くなる。
         let inset = self.cross_inset();
@@ -1698,7 +1700,7 @@ impl Stack {
     fn cross_inset(&self) -> f64 {
         let padding = self.0.padding.get();
         if self.is_vertical() {
-            padding.left + padding.right
+            padding.start + padding.end
         } else {
             padding.top + padding.bottom
         }

@@ -765,9 +765,9 @@ impl Grid {
     /// The outer padding.
     pub fn set_padding(&self, padding: Padding) {
         let _ = self.0.native.SetPadding(Thickness {
-            Left: padding.left,
+            Left: padding.start,
             Top: padding.top,
-            Right: padding.right,
+            Right: padding.end,
             Bottom: padding.bottom,
         });
     }

@@ -1132,9 +1132,9 @@ impl Grid {
         let rows = self.0.native.numberOfRows();
         for index in 0..columns {
             let column = self.0.native.columnAtIndex(index);
-            column.setLeadingPadding(if index == 0 { padding.left } else { 0.0 });
+            column.setLeadingPadding(if index == 0 { padding.start } else { 0.0 });
             column.setTrailingPadding(if index == columns - 1 {
-                padding.right
+                padding.end
             } else {
                 0.0
             });

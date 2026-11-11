@@ -2842,7 +2842,7 @@ fn group_padding_spaces_the_child(ui: &Ui) -> Result<()> {
     group.set_padding(Padding::ZERO);
     let (_, bare) = measure_width(&bin);
     let expected =
-        (naui_core::DEFAULT_GROUP_PADDING.left + naui_core::DEFAULT_GROUP_PADDING.right) as i32;
+        (naui_core::DEFAULT_GROUP_PADDING.start + naui_core::DEFAULT_GROUP_PADDING.end) as i32;
     assert_eq!(padded - bare, expected, "既定の左右の余白ぶんだけ広いこと");
 
     group.set_padding(Padding::symmetric(4.0, 20.0));
@@ -2903,15 +2903,15 @@ fn right_to_left_layout_is_mirrored(ui: &Ui) -> Result<()> {
     let placed = lay_out_grid(&grid, 300, 40, &[&a, &b]);
     assert!(placed[0].0 > placed[1].0, "0 列目が右: {placed:?}");
 
-    // Group の余白の left は先頭側 (右) に付く。
+    // Group の余白の start は先頭側 (右) に付く。
     let group = ui.group("")?;
     let label = ui.label("あ")?;
     group.set_child(&label);
     group.set_padding(Padding {
         top: 2.0,
-        right: 20.0,
         bottom: 2.0,
-        left: 4.0,
+        start: 4.0,
+        end: 20.0,
     });
     let frame = bin_of(&group)
         .first_child()
@@ -2925,7 +2925,7 @@ fn right_to_left_layout_is_mirrored(ui: &Ui) -> Result<()> {
     let right_gap = frame.width() as f32 - bounds.x() - bounds.width();
     assert!(
         left_gap - right_gap > 10.0,
-        "right の 20 が左、left の 4 が右: 左 {left_gap} / 右 {right_gap}"
+        "end の 20 が左、start の 4 が右: 左 {left_gap} / 右 {right_gap}"
     );
 
     // 数値入力は欄とボタンの並びも書き方も左から右のまま。

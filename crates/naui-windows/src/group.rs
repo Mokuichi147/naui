@@ -81,11 +81,13 @@ fn load_border(xaml: &str, what: &str) -> Result<Border> {
     }
 }
 
+/// `start` goes to `Left`: XAML mirrors `Thickness` with the rest of a
+/// `RightToLeft` layout, so it is then on the right.
 fn thickness(padding: Padding) -> Thickness {
     Thickness {
-        Left: padding.left,
+        Left: padding.start,
         Top: padding.top,
-        Right: padding.right,
+        Right: padding.end,
         Bottom: padding.bottom,
     }
 }

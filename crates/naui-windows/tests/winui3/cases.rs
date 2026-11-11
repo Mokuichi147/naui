@@ -2002,7 +2002,7 @@ fn group_puts_a_heading_above_a_card(ui: &Ui) -> Result<()> {
         "中身はカードの幅いっぱいに広がること"
     );
     let padding = card.Padding().expect("Padding");
-    assert_eq!(padding.Left, naui_core::DEFAULT_GROUP_PADDING.left);
+    assert_eq!(padding.Left, naui_core::DEFAULT_GROUP_PADDING.start);
 
     group.set_padding(naui_core::Padding::all(4.0));
     assert_eq!(card.Padding().expect("Padding").Top, 4.0);
@@ -2897,9 +2897,9 @@ fn right_to_left_layout_is_set_on_the_window_content(ui: &Ui) -> Result<()> {
         group.set_child(&content);
         group.set_padding(naui_core::Padding {
             top: 2.0,
-            right: 20.0,
             bottom: 2.0,
-            left: 4.0,
+            start: 4.0,
+            end: 20.0,
         });
         stack.append(&group);
         let number = ui.number_input(-5.0)?;
@@ -2971,7 +2971,7 @@ fn right_to_left_layout_is_set_on_the_window_content(ui: &Ui) -> Result<()> {
             "最初の子が右に来ること: 一 {first_x} / 二 {second_x}"
         );
 
-        // Group の余白の left は先頭側 (右) に付く。反転した要素の原点は右上に
+        // Group の余白の start は先頭側 (右) に付く。反転した要素の原点は右上に
         // なるので、両端を窓の座標へ移してから左右を決める。
         let edges = |element: &FrameworkElement| {
             let width = element.ActualWidth().unwrap_or(0.0) as f32;
@@ -2991,7 +2991,7 @@ fn right_to_left_layout_is_set_on_the_window_content(ui: &Ui) -> Result<()> {
         let (left_gap, right_gap) = (inner_left - outer_left, outer_right - inner_right);
         assert!(
             left_gap - right_gap > 10.0,
-            "right の 20 が左、left の 4 が右: 左 {left_gap} / 右 {right_gap}"
+            "end の 20 が左、start の 4 が右: 左 {left_gap} / 右 {right_gap}"
         );
     }));
     window.close();

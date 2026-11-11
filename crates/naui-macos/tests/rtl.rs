@@ -37,7 +37,7 @@ fn main() {
             grid_columns_start_at_the_right,
         ),
         (
-            "Group の余白の left は先頭側 (右) に付く",
+            "Group の余白の start は先頭側 (右) に付く",
             group_padding_is_mirrored,
         ),
         (
@@ -129,7 +129,7 @@ fn grid_columns_start_at_the_right(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// `left` is the side where rows start, as with `Stack`'s padding (`NSStackView`'s
+/// `start` is the side where rows start, as with `Stack`'s padding (`NSStackView`'s
 /// `edgeInsets`), so the whole layout is mirrored together.
 fn group_padding_is_mirrored(ui: &Ui) -> Result<()> {
     let group = ui.group("")?;
@@ -138,9 +138,9 @@ fn group_padding_is_mirrored(ui: &Ui) -> Result<()> {
     group.set_child(&body);
     group.set_padding(Padding {
         top: 2.0,
-        right: 20.0,
         bottom: 2.0,
-        left: 4.0,
+        start: 4.0,
+        end: 20.0,
     });
     let view = group.native_view();
     let native = view.downcast_ref::<NSBox>().expect("NSBox であること");
@@ -152,11 +152,11 @@ fn group_padding_is_mirrored(ui: &Ui) -> Result<()> {
     let right_gap = inside.size.width - frame.origin.x - frame.size.width;
     assert!(
         (right_gap - 4.0).abs() < 0.5,
-        "left の余白は右に付く: {inside:?} / {frame:?}"
+        "start の余白は右に付く: {inside:?} / {frame:?}"
     );
     assert!(
         (frame.origin.x - 20.0).abs() < 0.5,
-        "right の余白は左に付く: {frame:?}"
+        "end の余白は左に付く: {frame:?}"
     );
     Ok(())
 }

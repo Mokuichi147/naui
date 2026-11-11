@@ -289,8 +289,8 @@ let settings = Settings::new("notes").layout_direction(LayoutDirection::Rtl);
 | `FlowDirection` on each window's content | `AppleTextDirection` and `NSForceRightToLeftWritingDirection` in the arguments domain | `gtk_widget_set_default_direction` | `dir` on `<html>` |
 
 Each native toolkit mirrors its own controls once it knows the direction, and
-naui leaves that to it. [`Padding`]'s `left` and `right` are mirrored with the
-rest, so `left` is the side where a row starts. A few things stay left to right:
+naui leaves that to it. [`Padding`] names its sides `start` and `end` rather than
+left and right, so it is mirrored with the rest. A few things stay left to right:
 `Canvas` (draw on the side where rows start by reading [`Ui::layout_direction`]),
 pictures, the number in a `NumberInput` (a minus sign at the start of a
 right-to-left paragraph would move to the end), the fields of `DatePicker` and
