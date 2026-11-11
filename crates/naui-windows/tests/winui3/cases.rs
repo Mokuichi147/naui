@@ -9451,9 +9451,10 @@ fn custom_rows_click_while_scrolling(
         }
         pump_until(Duration::from_millis(600), || false);
         let targets = visible_built_rows(list);
+        // 表示中の行が組み立てられていないのは、それ自体が不具合。押さずに進むと、
+        // 1 度も押さないまま通ってしまう。
         let Some(&index) = targets.get(targets.len() / 2) else {
-            println!("     (段 {step}: 表示中の組み立て済みの行が無いので、押さずに進む)");
-            continue;
+            panic!("段 {step}: 表示中の行が組み立てられていない");
         };
         if aim_at_row_point(hwnd, list, index, 40.0).is_none() {
             println!("     (段 {step}: 押す位置へ送れないので、確かめずに通す)");

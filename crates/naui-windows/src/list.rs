@@ -2272,13 +2272,18 @@ pub(crate) fn item_content(label: &str, detail: Option<&str>, enabled: bool) -> 
     content.set_spacing(DETAIL_SPACING);
     let title = row_label(label)?;
     // 選べない行は本文も補助も無効な色にする (macOS と同じ)。無効の色は役割の色より後に当てる。
-    title.set_disabled(!enabled);
+    // 選べる行には何も当てない (本文は `Style` を持たないまま、行の色を受け継ぐ)。
+    if !enabled {
+        title.set_disabled(true);
+    }
     content.append(&title);
     if let Some(detail) = detail {
         let sub = row_label(detail)?;
         sub.set_style(TextStyle::Caption);
         sub.set_color(TextColor::Secondary);
-        sub.set_disabled(!enabled);
+        if !enabled {
+            sub.set_disabled(true);
+        }
         content.append(&sub);
     }
     Ok(content)

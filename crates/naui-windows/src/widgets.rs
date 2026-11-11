@@ -463,20 +463,23 @@ const LABEL_COLOR_STYLE_KEY: &str = "NauiLabelColorStyle";
 /// Exposed so that the same look can be applied even where naui's `Label` cannot be
 /// used (such as table cells, which decide text alignment directly).
 pub(crate) fn label_style(style: TextStyle, color: TextColor) -> Option<Style> {
-    let ramp = app_resource(style.xaml_style_key())?.cast::<Style>().ok()?;
-    let Some(brush_key) = color.xaml_brush_key() else {
-        return Some(ramp);
-    };
-    let tinted = label_color_style(brush_key)?;
-    tinted.SetBasedOn(&ramp).ok()?;
-    Some(tinted)
+    ramp_with_brush(style, color.xaml_brush_key())
 }
 
 /// The `Style` of a disabled label: the type ramp of `style`, with the theme's disabled
 /// text color on top.
 fn label_disabled_style(style: TextStyle) -> Option<Style> {
+    ramp_with_brush(style, Some("TextFillColorDisabledBrush"))
+}
+
+/// The type ramp's `Style` for `style`, with a color `Style` for `brush_key` layered on
+/// top (`BasedOn`). Without a brush key, the type ramp's `Style` as it is.
+fn ramp_with_brush(style: TextStyle, brush_key: Option<&str>) -> Option<Style> {
     let ramp = app_resource(style.xaml_style_key())?.cast::<Style>().ok()?;
-    let tinted = label_color_style("TextFillColorDisabledBrush")?;
+    let Some(brush_key) = brush_key else {
+        return Some(ramp);
+    };
+    let tinted = label_color_style(brush_key)?;
     tinted.SetBasedOn(&ramp).ok()?;
     Some(tinted)
 }
