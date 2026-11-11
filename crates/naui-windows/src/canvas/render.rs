@@ -460,20 +460,22 @@ impl Renderer {
                         paint,
                         opacity,
                     } => {
-                        let fill: ID2D1Brush = match paint {
+                        let gradient_fill;
+                        let fill: &ID2D1Brush = match paint {
                             Paint::Color(color) => {
                                 brush.SetColor(&color_f(*color, *opacity));
-                                brush.cast()?
+                                &brush
                             }
                             Paint::Gradient(gradient) => {
-                                gradient_brush(context, gradient, *opacity)?
+                                gradient_fill = gradient_brush(context, gradient, *opacity)?;
+                                &gradient_fill
                             }
                         };
                         // 棒グラフや点の印に多い長方形は、ジオメトリを作らずに塗る。
                         if let Some(rect) = axis_aligned_rect(path) {
-                            context.FillRectangle(&rect, &fill);
+                            context.FillRectangle(&rect, fill);
                         } else {
-                            context.FillGeometry(&self.geometry(path)?, &fill, None);
+                            context.FillGeometry(&self.geometry(path)?, fill, None);
                         }
                     }
                     DrawCommand::Stroke {
@@ -580,7 +582,11 @@ impl Renderer {
                             }
                             None => {
                                 let geometry: ID2D1Geometry = self.geometry(path)?.cast()?;
-                                context.PushLayer(&layer_parameters(geometry), None);
+                                let mut parameters = layer_parameters(geometry);
+                                context.PushLayer(&parameters, None);
+                                // 型は `ManuallyDrop` に入っているので、自分で手放さないと
+                                // 切り抜くたびに 1 つ残る (レイヤーは自分で参照を持つ)。
+                                core::mem::ManuallyDrop::drop(&mut parameters.geometricMask);
                                 replay.clips.push(ClipKind::Layer);
                             }
                         }

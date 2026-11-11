@@ -507,6 +507,9 @@ fn draw_extras(painter: &mut naui::Painter, turn: f64, sprite: &Bitmap) {
             .stop(0.0, ACCENT_STRONG)
             .stop(1.0, ACCENT),
     );
+    // 文字も一緒に回る。
+    painter.set_text_align(Align::Center);
+    painter.text("naui", Point::new(0.0, -7.0), 12.0, Color::WHITE);
     painter.restore();
 
     // 画像を 4 倍に引き伸ばしたものと、その左上の 4 分の 1 を同じ大きさで。

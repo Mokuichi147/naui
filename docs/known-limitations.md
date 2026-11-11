@@ -173,8 +173,9 @@ that shape are covered in
   previous one (`AdwToastOverlay`'s queueing is aligned to this behavior). There is
   one action button, and the position is fixed at the bottom center.
 - `Canvas` draws single lines of text only (no wrapping or rich text), gradients
-  fill shapes but do not stroke lines, and gradients are linear or radial from one
-  center (no conical gradients with a separate focal point). Images are PNG, JPEG
+  fill shapes but do not stroke lines, and gradients are linear or radial. A radial
+  gradient spreads from its center, with no separate focal point, and there are no
+  conic (sweep) gradients. Images are PNG, JPEG
   and GIF (the first frame) only; SVG cannot be drawn. Whether a JPEG's EXIF
   orientation is applied differs by platform. Stretched parts of an image can take
   in the pixels just outside them at their edges. Its size is not decided by its
