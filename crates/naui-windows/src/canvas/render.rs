@@ -13,6 +13,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use naui_core::{
     Align, Bitmap, BitmapData, Color, DrawCommand, Gradient, GradientShape, Paint, Path,
@@ -88,6 +89,7 @@ struct Devices {
     max_surface: u32,
     /// Counts up each time the devices are made again, so that one loss reported
     /// twice (by a failed draw and by the removal event) is recovered from once.
+    /// Never reused in the process ([`next_generation`]).
     generation: u64,
     /// Absent when Direct3D cannot report removal (before Windows 10 1703).
     watch: Option<RemovalWatch>,
@@ -264,6 +266,15 @@ thread_local! {
     static RENDERER: RefCell<Slot> = const { RefCell::new(Slot(None)) };
 }
 
+/// A generation number not given to any devices before. A renderer made again after
+/// [`release`] must not start over from 0: a `Bitmap` keeps the Direct2D bitmap of
+/// the generation it was drawn with, and would hand the old device's bitmap to the
+/// new one.
+fn next_generation() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 /// Runs `f` with this thread's renderer, making it the first time. `None` when the
 /// devices cannot be made (nothing can be drawn then).
 pub(super) fn with_renderer<R>(f: impl FnOnce(&mut Renderer) -> R) -> Option<R> {
@@ -329,7 +340,7 @@ impl Renderer {
         // SAFETY: 既定の設定でファクトリを作るだけ。
         let factory: ID2D1Factory1 =
             unsafe { D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None)? };
-        let devices = Devices::new(&factory, 0)?;
+        let devices = Devices::new(&factory, next_generation())?;
         // SAFETY: 共有のファクトリを取るだけ。
         let dwrite: IDWriteFactory = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
         let font_family = HSTRING::from(pick_font_family(&dwrite));
@@ -362,7 +373,7 @@ impl Renderer {
     /// Replaces lost devices. Every surface made from the graphics devices is kept but
     /// emptied, so the caller draws all of them again.
     fn recover(&mut self) -> windows_core::Result<()> {
-        self.devices = Devices::new(&self.factory, self.devices.generation + 1)?;
+        self.devices = Devices::new(&self.factory, next_generation())?;
         for (_, device) in &self.graphics {
             let interop: ICompositionGraphicsDeviceInterop = device.cast()?;
             // SAFETY: 作り直したばかりの Direct2D デバイスを渡す。
