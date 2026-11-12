@@ -9,8 +9,14 @@
 //! ([`pin_left_to_right`]).
 //!
 //! `FlowDirection` is inherited through the visual tree, so naui sets it on each
-//! window's content. Popups that WinUI shows in a separate layer (a `ContentDialog`,
-//! flyouts) are given it where naui creates them.
+//! window's content. A `ContentDialog` is shown in a separate layer and does not
+//! inherit it, so it is given the direction where naui creates it. Flyouts and menu
+//! flyouts take their target's direction by themselves; `Flyout` then reads its
+//! `Left` and `Right` placements in that direction (see `popover.rs`).
+//!
+//! The system draws the caption buttons, and they stay at the right end in a
+//! right-to-left layout, so the title bar keeps their reserve on the physical
+//! right (see `window.rs`).
 
 use naui_core::LayoutDirection;
 use naui_winui3::Microsoft::UI::Xaml::{FlowDirection, FrameworkElement};

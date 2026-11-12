@@ -1445,16 +1445,20 @@ impl Window {
         // **`CommandBar` が実際に使っている幅**。そうしないと右の空きが
         // 置き場に含まれてしまい、つかめる場所がタイトル文字の側だけに
         // なってしまう。
+        //
+        // 右から左の配置では中身が鏡映しになり、ツールバーはタイトル文字の
+        // 左に来る。`ActualOffset` は配置の向きで数えた値なので使わず、
+        // 窓から見た位置へ移して物理的な左右の端を得る。
         let toolbar = self.0.toolbar.borrow().clone();
         let (skip_from, skip_to) = match toolbar {
             Some(toolbar) => {
-                let host = self.0.toolbar_host.borrow().clone()?;
-                let offset = f64::from(host.ActualOffset().ok()?.X);
                 let bar = toolbar
                     .native_command_bar()
                     .cast::<FrameworkElement>()
                     .ok()?;
-                (offset, offset + bar.ActualWidth().ok()?)
+                let (bar_left, bar_right) = physical_span(&bar)?;
+                let (title_left, _) = physical_span(&title_bar)?;
+                (bar_left - title_left, bar_right - title_left)
             }
             None => (width, width),
         };
@@ -1815,6 +1819,22 @@ fn effective_theme(root: &UIElement, requested: Theme) -> Theme {
         .unwrap_or(Theme::Dark)
 }
 
+/// The left and right edges of `element` as the window sees them, in logical
+/// pixels. In a right-to-left layout an element's own origin is its top right
+/// corner, so both ends are moved into the window's coordinates and ordered.
+fn physical_span(element: &FrameworkElement) -> Option<(f64, f64)> {
+    let width = element.ActualWidth().ok()? as f32;
+    let transform = element.TransformToVisual(None).ok()?;
+    let x = |at: f32| {
+        transform
+            .TransformPoint(windows::Foundation::Point { X: at, Y: 0.0 })
+            .ok()
+            .map(|point| f64::from(point.X))
+    };
+    let (a, b) = (x(0.0)?, x(width)?);
+    Some((a.min(b), a.max(b)))
+}
+
 fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent> {
     // 帯の高さは `CAPTION_HEIGHT`。システムが描く最小化・最大化・閉じるの
     // ボタンがこの高さなので、タイトル文字もツールバーもその中へ収まる。
@@ -1832,6 +1852,17 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
     // メニューバーの置き場 (2 行目) は `Auto`。付いていなければ中身が無く、
     // 高さ 0 になるので、タイトルバーと中身がそのまま隣り合う。左の余白は、
     // 見出しのボタンが持つ内側の余白とあわせてタイトル文字の左端にそろう。
+    //
+    // 右から左の配置では中身全体が鏡映しになるが、キャプションボタンは
+    // システムが描くので右端に残る。`Thickness` の左右も入れ替わるため、
+    // 控えをそのまま右に置くと左へ移り、タイトル文字とツールバーが
+    // キャプションボタンの下に入ってしまう。そこで左右の値を入れ替え、
+    // 控えを物理的な右端に保つ。
+    let (padding_left, padding_right) = if crate::direction::layout_direction().is_rtl() {
+        (CAPTION_RESERVE, 16.0)
+    } else {
+        (16.0, CAPTION_RESERVE)
+    };
     let root = XamlReader::Load(&HSTRING::from(format!(
         r##"<Grid xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
             Background="Transparent">
@@ -1841,7 +1872,7 @@ fn themed_content_root(element: &UIElement, title: &str) -> Result<ThemedContent
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
             <Grid Grid.Row="0" Background="Transparent"
-                Padding="16,0,{CAPTION_RESERVE},0">
+                Padding="{padding_left},0,{padding_right},0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>

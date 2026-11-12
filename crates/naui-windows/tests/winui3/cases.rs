@@ -405,7 +405,7 @@ const CASES: &[Case] = &[
         app_language_is_set_on_the_window_content,
     ),
     (
-        "右から左の配置がウィンドウの中身に付き、描画面・絵・数値入力・動画は左から右のまま",
+        "右から左の配置がウィンドウの中身に付き、描画面・絵・数値入力・動画は左から右のまま、タイトルバーはキャプションボタンを避ける",
         right_to_left_layout_is_set_on_the_window_content,
     ),
     (
@@ -2883,7 +2883,7 @@ fn right_to_left_layout_is_set_on_the_window_content(ui: &Ui) -> Result<()> {
 
     naui_core::set_app_layout_direction(Some(LayoutDirection::Rtl));
     let built = (|| -> Result<_> {
-        let window = ui.window("書字方向", 400.0, 200.0)?;
+        let window = ui.window("書字方向", 520.0, 200.0)?;
         let stack = ui.stack(Orientation::Vertical)?;
         let row = ui.stack(Orientation::Horizontal)?;
         let first = ui.button("一")?;
@@ -2911,13 +2911,16 @@ fn right_to_left_layout_is_set_on_the_window_content(ui: &Ui) -> Result<()> {
         stack.append(&image);
         stack.append(&video);
         window.set_child(&stack);
+        let toolbar = ui.toolbar()?;
+        toolbar.set_items(&[naui_core::ToolbarItem::new(ToolbarIcon::Open, "開く")]);
+        window.set_toolbar(&toolbar);
         Ok((
-            window, first, second, group, content, number, canvas, image, video,
+            window, first, second, group, content, number, canvas, image, video, toolbar,
         ))
     })();
     assert_eq!(ui.layout_direction(), LayoutDirection::Rtl);
     naui_core::set_app_layout_direction(None);
-    let (window, first, second, group, content, number, canvas, image, video) = built?;
+    let (window, first, second, group, content, number, canvas, image, video, toolbar) = built?;
 
     let root = window
         .native_window()
@@ -2992,6 +2995,39 @@ fn right_to_left_layout_is_set_on_the_window_content(ui: &Ui) -> Result<()> {
         assert!(
             left_gap - right_gap > 10.0,
             "end の 20 が左、start の 4 が右: 左 {left_gap} / 右 {right_gap}"
+        );
+
+        // タイトルバーの中身は鏡映しになるが、システムが描くキャプション
+        // ボタン (46 幅 × 3) は右端に残る。タイトル文字はその左に収まり、
+        // ツールバーはさらにその左 (先頭から見て後ろ) に来る。
+        let title_bar = root
+            .cast::<Grid>()
+            .expect("根は Grid")
+            .Children()
+            .and_then(|children| children.GetAt(0))
+            .expect("タイトルバー")
+            .cast::<Grid>()
+            .expect("タイトルバーは Grid");
+        let title = title_bar
+            .Children()
+            .and_then(|children| children.GetAt(0))
+            .expect("タイトル文字")
+            .cast::<FrameworkElement>()
+            .expect("タイトル文字は FrameworkElement");
+        let (_, root_right) = edges(&root);
+        let (title_left, title_right) = edges(&title);
+        assert!(
+            title_right <= root_right - 138.0,
+            "タイトル文字がキャプションボタンに重ならないこと: 文字の右端 {title_right} / 窓の右端 {root_right}"
+        );
+        let bar = toolbar
+            .native_command_bar()
+            .cast::<FrameworkElement>()
+            .expect("CommandBar");
+        let (_, bar_right) = edges(&bar);
+        assert!(
+            bar_right <= title_left,
+            "ツールバーはタイトル文字の左: ツールバーの右端 {bar_right} / 文字の左端 {title_left}"
         );
     }));
     window.close();

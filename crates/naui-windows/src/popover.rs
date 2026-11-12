@@ -17,7 +17,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{PopoverPosition, Result};
+use naui_core::{LayoutDirection, PopoverPosition, Result};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use naui_winui3::Microsoft::UI::Xaml::Controls::Flyout;
 use naui_winui3::Microsoft::UI::Xaml::Controls::Primitives::FlyoutPlacementMode;
@@ -205,13 +205,10 @@ impl Popover {
     }
 
     fn apply_placement(&self) {
-        let mode = match self.0.position.get() {
-            PopoverPosition::Top => FlyoutPlacementMode::Top,
-            PopoverPosition::Bottom => FlyoutPlacementMode::Bottom,
-            PopoverPosition::Left => FlyoutPlacementMode::Left,
-            PopoverPosition::Right => FlyoutPlacementMode::Right,
-        };
-        let _ = self.0.flyout.SetPlacement(mode);
+        let _ = self.0.flyout.SetPlacement(placement_mode(
+            self.0.position.get(),
+            crate::direction::layout_direction(),
+        ));
     }
 
     /// Shows it beside `widget`. If it is already open, it moves to `widget`.
@@ -288,5 +285,38 @@ impl Popover {
     /// The `Flyout` itself. Public as a backend-specific escape hatch.
     pub fn native_flyout(&self) -> Flyout {
         self.0.flyout.clone()
+    }
+}
+
+/// The `Placement` for `position`. `PopoverPosition::Left` and `Right` name the
+/// physical sides, as on the other platforms, but `Flyout` reads its `Left` and
+/// `Right` in the target's `FlowDirection` (in a right-to-left layout `Left`
+/// shows it on the right), so they are swapped there.
+fn placement_mode(position: PopoverPosition, direction: LayoutDirection) -> FlyoutPlacementMode {
+    let rtl = direction.is_rtl();
+    match position {
+        PopoverPosition::Top => FlyoutPlacementMode::Top,
+        PopoverPosition::Bottom => FlyoutPlacementMode::Bottom,
+        PopoverPosition::Left if rtl => FlyoutPlacementMode::Right,
+        PopoverPosition::Left => FlyoutPlacementMode::Left,
+        PopoverPosition::Right if rtl => FlyoutPlacementMode::Left,
+        PopoverPosition::Right => FlyoutPlacementMode::Right,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn left_and_right_stay_on_the_physical_sides() {
+        use LayoutDirection::{Ltr, Rtl};
+        use PopoverPosition::{Bottom, Left, Right, Top};
+        assert_eq!(placement_mode(Left, Ltr), FlyoutPlacementMode::Left);
+        assert_eq!(placement_mode(Right, Ltr), FlyoutPlacementMode::Right);
+        assert_eq!(placement_mode(Left, Rtl), FlyoutPlacementMode::Right);
+        assert_eq!(placement_mode(Right, Rtl), FlyoutPlacementMode::Left);
+        assert_eq!(placement_mode(Top, Rtl), FlyoutPlacementMode::Top);
+        assert_eq!(placement_mode(Bottom, Rtl), FlyoutPlacementMode::Bottom);
     }
 }

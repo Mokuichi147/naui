@@ -78,15 +78,21 @@ that shape are covered in
   `AppleTextDirection` turned the direction over. So `LayoutDirection::Ltr` has
   not been tried against an app AppKit would mirror on its own; naui then writes
   `AppleTextDirection` and `NSForceRightToLeftWritingDirection` as `NO`. On Windows naui sets
-  `FlowDirection` on each window's content and on `Dialog` and `Sheet`; whether a
-  `Popover` (a `Flyout`) and menus follow it, and which side
-  `PopoverPosition::Left` and `Right` then mean, has not been checked on a device.
-  macOS and Linux keep `Left` and `Right` on the physical sides (GTK's popover
-  does not swap them), as does the Web. The playback bar of `Video` is AVKit's on
-  macOS, which keeps it left to right in a right-to-left app by itself; naui pins
-  it left to right on the other platforms. The whole window's content is mirrored
-  on Windows, naui's own title bar and menu rows included; how that sits beside
-  the system caption buttons and drag regions has not been checked on a device.
+  `FlowDirection` on each window's content and on `Dialog` and `Sheet`; a
+  `Popover` (a `Flyout`), the menu bar's menus and context menus take it from the
+  element they open at. `PopoverPosition::Left` and `Right` stay on the physical
+  sides on every platform: GTK's popover does not swap them, nor do AppKit and the
+  Web, while WinUI's `Flyout` would, so naui swaps them back on Windows. The
+  playback bar of `Video` is AVKit's on macOS, which keeps it left to right in a
+  right-to-left app by itself; naui pins it left to right on the other platforms.
+  On Windows the whole window's content is mirrored, naui's own title bar and menu
+  rows included, but the system keeps the minimize, maximize and close buttons at
+  the right end, so the title and toolbar sit just left of them (the title at the
+  right, the toolbar on its left) rather than moving to the left edge as in a
+  mirrored Win32 window. On Windows the text of a `TextInput` and `TextArea`
+  (typed Latin text and the placeholder) stays at the left in a right-to-left
+  layout, while `PasswordInput` and `SearchInput` put theirs at the right; text in
+  a right-to-left script has not been tried there.
   Horizontal scroll positions in a right-to-left layout (`Scroll::scroll_to`'s
   `x` and the metrics `Scroll` reports) are left to each toolkit and have not been
   aligned: the Web's `scrollLeft` runs from 0 toward negative values there, while
