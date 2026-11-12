@@ -16,9 +16,11 @@
 //! and fill becomes a [`Path`], and a `Path` contains only straight lines and cubic
 //! Béziers. Circles and arcs are converted to Béziers here before being handed
 //! over, so they come out the same shape on every platform. Transforms are combined
-//! here too ([`Transform`]), and invalid values (infinities, NaN, transforms that
-//! squash everything flat, empty clips) are left out before reaching a platform,
-//! since each handles them differently.
+//! here too ([`Transform`]), and values each platform handles differently are left
+//! out before reaching one: transforms, clips, line widths, text sizes and image
+//! rectangles holding infinities or NaN, transforms that squash everything flat, and
+//! empty clips. The points of a filled or stroked path and the position of text are
+//! handed over as given.
 
 use std::fmt;
 use std::rc::Rc;
