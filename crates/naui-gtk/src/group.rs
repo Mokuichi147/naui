@@ -102,6 +102,8 @@ impl Group {
     /// The space between the frame and the content. The default is
     /// [`DEFAULT_GROUP_PADDING`](naui_core::DEFAULT_GROUP_PADDING).
     ///
+    /// `start` is the side where the content starts: the right in a right-to-left
+    /// layout.
     pub fn set_padding(&self, padding: Padding) {
         apply_padding(&self.0.holder, padding);
     }

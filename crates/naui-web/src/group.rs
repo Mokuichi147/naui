@@ -146,8 +146,8 @@ impl Group {
     /// The space between the frame and the content. The default is
     /// [`DEFAULT_GROUP_PADDING`](naui_core::DEFAULT_GROUP_PADDING).
     ///
-    /// In a right-to-left layout `left` and `right` are mirrored: `left` is the
-    /// side where the content starts.
+    /// `start` is the side where the content starts: the right in a right-to-left
+    /// layout.
     pub fn set_padding(&self, padding: Padding) {
         crate::widgets::apply_padding(&self.0.element, padding);
     }
