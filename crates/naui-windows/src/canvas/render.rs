@@ -610,7 +610,7 @@ impl Renderer {
 
     /// The Direct2D bitmap of `bitmap` for the current devices, made from its decoded
     /// pixels the first time and again after the devices were replaced. `None` when
-    /// it cannot be decoded.
+    /// it cannot be decoded, or the device cannot hold it (too large).
     fn d2d_bitmap(
         &self,
         context: &ID2D1DeviceContext,
@@ -641,7 +641,7 @@ impl Renderer {
             colorContext: core::mem::ManuallyDrop::new(None),
         };
         // SAFETY: 画素の列は幅 × 高さ × 4 バイトで、呼び出しの間生きている。
-        let image = unsafe {
+        let made = unsafe {
             context.CreateBitmap(
                 D2D_SIZE_U {
                     width: *width,
@@ -650,7 +650,14 @@ impl Renderer {
                 Some(pixels.as_ptr().cast()),
                 width * 4,
                 &properties,
-            )?
+            )
+        };
+        let image = match made {
+            Ok(image) => image,
+            // 装置の限度 (Direct3D 11 で 16384 画素) を超える大きさなどは、他の
+            // 環境と同じくその画像だけを描かない。装置を失ったときは作り直しへ回す。
+            Err(error) if !is_device_lost(&error) => return Ok(None),
+            Err(error) => return Err(error),
         };
         *native.device.borrow_mut() = Some((generation, image.clone()));
         Ok(Some(image))

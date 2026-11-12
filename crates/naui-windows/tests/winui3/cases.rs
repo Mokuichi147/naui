@@ -485,6 +485,10 @@ const CASES: &[Case] = &[
         canvas_draws_the_broader_vocabulary,
     ),
     (
+        "描画面は作れない大きさの画像だけを飛ばし、後ろの命令は描く",
+        canvas_skips_an_image_too_large_for_the_device,
+    ),
+    (
         "表示した描画面は物理画素の Composition の面に描かれる",
         canvas_draws_onto_a_composition_surface,
     ),
@@ -1364,6 +1368,33 @@ fn canvas_draws_the_broader_vocabulary(ui: &Ui) -> Result<()> {
     assert!(
         wide > narrow * 1.5 && narrow > 0.0,
         "文字幅は DirectWrite で測る (WWWW {wide}, iiii {narrow})"
+    );
+    Ok(())
+}
+
+/// An image wider than a Direct2D bitmap can be (16384 pixels on Direct3D 11) is
+/// left out alone, as on the other platforms; the commands after it still draw.
+fn canvas_skips_an_image_too_large_for_the_device(ui: &Ui) -> Result<()> {
+    let plain = ui.canvas()?;
+    plain.on_draw(|painter| painter.fill_rect(painter.bounds(), Color::WHITE));
+    if plain.pixels_for_test(40.0, 40.0, 1.0).is_none() {
+        println!("     (Direct2D を使えない環境なので、確かめずに通す)");
+        return Ok(());
+    }
+    let wide = Bitmap::from_pixels(40_000, 1, &[0x80; 40_000 * 4])?;
+    let canvas = ui.canvas()?;
+    canvas.on_draw(move |painter| {
+        painter.draw_image(&wide, Rect::new(0.0, 0.0, 40.0, 10.0));
+        painter.fill_rect(Rect::new(0.0, 20.0, 40.0, 20.0), Color::rgb(0xff, 0, 0));
+    });
+    // 描くのに失敗すると `None` になる (Direct2D は使えると確かめてある)。
+    let pixels = canvas
+        .pixels_for_test(40.0, 40.0, 1.0)
+        .expect("作れない画像で描画全体が失敗しない");
+    assert_eq!(
+        pixel(&pixels, 20, 30),
+        (0, 0, 0xff, 0xff),
+        "作れない画像の後ろの命令も描かれる"
     );
     Ok(())
 }
