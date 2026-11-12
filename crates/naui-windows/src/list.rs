@@ -2262,8 +2262,9 @@ pub(crate) fn text_block(text: &str, secondary: bool) -> Result<TextBlock> {
 ///
 /// The smallness and dimness of the secondary text come from
 /// [`TextStyle::Caption`] and [`TextColor::Secondary`], so neither point size nor
-/// brush is written here. The main text's color is not set (it inherits from the
-/// row's `ListViewItem`).
+/// brush is written here. On a selectable row the main text's color is not set (it
+/// inherits from the row's `ListViewItem`); on a row that cannot be selected, both
+/// texts get the disabled color.
 pub(crate) fn item_content(label: &str, detail: Option<&str>, enabled: bool) -> Result<Stack> {
     let content = Stack::new(Orientation::Vertical)?;
     // `StackPanel` そのものを行の幅いっぱいに広げる。`Align::Start` にすると
@@ -2271,7 +2272,8 @@ pub(crate) fn item_content(label: &str, detail: Option<&str>, enabled: bool) -> 
     content.set_align(Align::Fill);
     content.set_spacing(DETAIL_SPACING);
     let title = row_label(label)?;
-    // 選べない行は本文も補助も無効な色にする (macOS と同じ)。無効の色は役割の色より後に当てる。
+    // 選べない行は本文も補助も無効な色にする (macOS と同じ)。無効のあいだは役割の色を使わず、
+    // 当てる順番にもよらない。
     // 選べる行には何も当てない (本文は `Style` を持たないまま、行の色を受け継ぐ)。
     if !enabled {
         title.set_disabled(true);
