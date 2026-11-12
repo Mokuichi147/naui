@@ -182,6 +182,8 @@ struct LabelInner {
     /// can be rebuilt even when only one of them changes.
     style: Cell<TextStyle>,
     color: Cell<TextColor>,
+    /// Whether the text is dimmed as disabled (the color role is then not used).
+    disabled: Cell<bool>,
     /// The formatted content being shown. `None` while showing plain text.
     rich: RefCell<Option<RichText>>,
     on_link: LinkHandler,
@@ -219,6 +221,7 @@ impl Label {
             native,
             style: Cell::new(TextStyle::default()),
             color: Cell::new(TextColor::default()),
+            disabled: Cell::new(false),
             rich: RefCell::new(None),
             on_link: LinkHandler::default(),
         }));
@@ -328,13 +331,24 @@ impl Label {
         self.apply_text_style();
     }
 
+    /// Dims the text as disabled (the theme's disabled text color), whatever the color
+    /// role is. Used for the rows of a list that cannot be selected.
+    pub(crate) fn set_disabled(&self, disabled: bool) {
+        self.0.disabled.set(disabled);
+        self.apply_text_style();
+    }
+
     /// Applies the level and role together as a single `Style`.
     ///
     /// An element can have only one `Style`, so a `Style` holding just the color
     /// `Setter` is layered on top of the type ramp's `Style` (`BasedOn`). If either
     /// cannot be obtained, nothing is done (the previous look continues).
     fn apply_text_style(&self) {
-        let Some(style) = label_style(self.0.style.get(), self.0.color.get()) else {
+        let style = match self.0.disabled.get() {
+            true => label_disabled_style(self.0.style.get()),
+            false => label_style(self.0.style.get(), self.0.color.get()),
+        };
+        let Some(style) = style else {
             eprintln!("naui-windows: could not find the label style");
             return;
         };
@@ -449,8 +463,20 @@ const LABEL_COLOR_STYLE_KEY: &str = "NauiLabelColorStyle";
 /// Exposed so that the same look can be applied even where naui's `Label` cannot be
 /// used (such as table cells, which decide text alignment directly).
 pub(crate) fn label_style(style: TextStyle, color: TextColor) -> Option<Style> {
+    ramp_with_brush(style, color.xaml_brush_key())
+}
+
+/// The `Style` of a disabled label: the type ramp of `style`, with the theme's disabled
+/// text color on top.
+fn label_disabled_style(style: TextStyle) -> Option<Style> {
+    ramp_with_brush(style, Some("TextFillColorDisabledBrush"))
+}
+
+/// The type ramp's `Style` for `style`, with a color `Style` for `brush_key` layered on
+/// top (`BasedOn`). Without a brush key, the type ramp's `Style` as it is.
+fn ramp_with_brush(style: TextStyle, brush_key: Option<&str>) -> Option<Style> {
     let ramp = app_resource(style.xaml_style_key())?.cast::<Style>().ok()?;
-    let Some(brush_key) = color.xaml_brush_key() else {
+    let Some(brush_key) = brush_key else {
         return Some(ramp);
     };
     let tinted = label_color_style(brush_key)?;

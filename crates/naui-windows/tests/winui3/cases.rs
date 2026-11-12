@@ -63,6 +63,10 @@ const CASES: &[Case] = &[
         "ラベルの段階と役割が type ramp とテーマリソースへ写る",
         label_style_and_color_map_to_the_type_ramp,
     ),
+    (
+        "選べない行の本文は無効の色になり、選べる行は違う色のまま",
+        label_disabled_is_dimmed,
+    ),
     ("スライダーが範囲でクランプされる", slider_clamp),
     ("進捗バーが 0..1 に収まる", progress_clamp),
     (
@@ -245,6 +249,14 @@ const CASES: &[Case] = &[
     (
         "スクロールのあと表の行の余白を Shift クリックできる",
         table_shift_click_in_the_margin_after_a_scroll,
+    ),
+    (
+        "スクロールのあと自前の内容の行をクリックで選べる",
+        list_custom_rows_click_after_a_scroll,
+    ),
+    (
+        "行き来しながら自前の内容の行をクリックで選べる",
+        list_custom_rows_click_while_scrolling,
     ),
     (
         "先に選べる行が無くても、リストの見えている行は組み立てたまま",
@@ -1621,6 +1633,61 @@ fn label_style_and_color_map_to_the_type_ramp(ui: &Ui) -> Result<()> {
         );
         seen.push(current);
     }
+    Ok(())
+}
+
+/// The text of a row that cannot be selected is drawn in the disabled text color, and
+/// the text of a row that can is not.
+fn label_disabled_is_dimmed(ui: &Ui) -> Result<()> {
+    use naui_core::ListItem;
+    use naui_winui3::Microsoft::UI::Xaml::Controls::{ListViewItem, Panel};
+
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("選べる").detail("補助"),
+        ListItem::new("選べない").detail("補助").enabled(false),
+    ]);
+    let items = list.native_list_view().Items().expect("Items");
+    // 行 → 中身の入れ物 → 縦の並び → 本文 (最初の TextBlock) の文字色。
+    let title_color = |slot: u32| {
+        let row = items
+            .GetAt(slot)
+            .expect("行")
+            .cast::<ListViewItem>()
+            .expect("ListViewItem");
+        let holder = row
+            .Content()
+            .expect("中身")
+            .cast::<Panel>()
+            .expect("入れ物");
+        let column = holder
+            .Children()
+            .expect("入れ物の子")
+            .GetAt(0)
+            .expect("縦の並び")
+            .cast::<Panel>()
+            .expect("縦の並びの Panel");
+        let title = column
+            .Children()
+            .expect("縦の並びの子")
+            .GetAt(0)
+            .expect("本文")
+            .cast::<TextBlock>()
+            .expect("TextBlock");
+        title
+            .Foreground()
+            .expect("Foreground")
+            .cast::<SolidColorBrush>()
+            .expect("テーマリソースは SolidColorBrush であること")
+            .Color()
+            .expect("ブラシの色")
+    };
+    let selectable = title_color(0);
+    let unselectable = title_color(1);
+    assert!(
+        unselectable != selectable,
+        "選べない行の本文が選べる行と同じ色のまま: {selectable:?}"
+    );
     Ok(())
 }
 
@@ -9249,6 +9316,208 @@ fn list_shift_click_in_the_margin_after_a_scroll(ui: &Ui) -> Result<()> {
 /// [`list_shift_click_in_the_margin_after_a_scroll`] on a `Table`.
 fn table_shift_click_in_the_margin_after_a_scroll(ui: &Ui) -> Result<()> {
     with_shown_table_for_input(ui, 1_000, shift_click_in_margin_scenario)
+}
+
+/// Clicks rows after a scroll on a `List` whose rows are custom content (a label placed
+/// with `ListRow::new`), in single and in multiple selection. A list of plain text rows
+/// is run the same way for comparison.
+fn list_custom_rows_click_after_a_scroll(ui: &Ui) -> Result<()> {
+    for mode in [
+        naui_core::SelectionMode::Single,
+        naui_core::SelectionMode::Multiple,
+    ] {
+        println!("     (自前の内容の行, {mode:?})");
+        with_shown_custom_list_for_input(ui, 1_000, mode, custom_rows_click_scenario)?;
+    }
+    println!("     (文字の行, Single: 比べる)");
+    with_shown_list_for_input(ui, 1_000, custom_rows_click_scenario)
+}
+
+/// [`list_custom_rows_click_after_a_scroll`] with scrolling back and forth between clicks.
+fn list_custom_rows_click_while_scrolling(ui: &Ui) -> Result<()> {
+    with_shown_custom_list_for_input(
+        ui,
+        1_000,
+        naui_core::SelectionMode::Single,
+        custom_rows_click_while_scrolling,
+    )
+}
+
+/// Shows a list of `rows` custom-content rows for real input, runs `scenario`, and puts the
+/// pointer back.
+fn with_shown_custom_list_for_input(
+    ui: &Ui,
+    rows: usize,
+    mode: naui_core::SelectionMode,
+    scenario: impl FnOnce(windows::Win32::Foundation::HWND, &naui_windows::List) -> Option<()>,
+) -> Result<()> {
+    let window = ui.window("自前の内容の行への実際の入力", 300.0, 240.0)?;
+    let list = ui.list()?;
+    list.set_selection_mode(mode);
+    let row_ui = ui.clone();
+    // 利用者の行と同じく、Label を横に複数並べた行にする。
+    list.set_row_builder(rows, move |index| {
+        let row = row_ui.stack(naui_core::Orientation::Horizontal)?;
+        row.append(&row_ui.label(&format!("行 {index}"))?);
+        row.append(&row_ui.label(&format!("値 {}", index * 37 % 1000))?);
+        row.append(&row_ui.label(&format!("補足の文字列 {index} の長さ"))?);
+        Ok(naui_windows::ListRow::new(&row))
+    });
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+    run_shown_for_input(&window, &list, scenario)
+}
+
+/// Scrolls with the wheel from row 2, then clicks each row that is on screen and built,
+/// and reports the rows whose click did not select them. Each row is clicked once, so a
+/// click that is lost shows up as a failure.
+fn custom_rows_click_scenario(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+) -> Option<()> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_WHEEL,
+    };
+
+    // ポインターを一覧の上に置いてから、同じ場所で回す。
+    aim_at_row_point(hwnd, list, 2, 40.0)?;
+    for _ in 0..40 {
+        if !foreground_is_ours() {
+            println!("     (テストのウィンドウが前面に無いので、ホイールを送らずに通す)");
+            return None;
+        }
+        send_input(mouse_input(MOUSEEVENTF_WHEEL, (-480_i32) as u32));
+        pump_until(Duration::from_millis(120), || false);
+    }
+    pump_until(Duration::from_secs(2), || false);
+
+    let targets = visible_built_rows(list);
+    println!(
+        "     (位置 {:.0}、表示中の組み立て済みの行 {:?})",
+        list.scroller().VerticalOffset().unwrap_or(0.0),
+        targets
+    );
+    assert!(!targets.is_empty(), "表示中の行が組み立てられていない");
+
+    let mut failed = Vec::new();
+    for &index in targets.iter().take(8) {
+        // 押す位置は行ごとに求め直す。直前のクリックで窓が動くことがあるため。
+        if aim_at_row_point(hwnd, list, index, 40.0).is_none() {
+            println!("     ({index} 行目の位置へ送れないので、確かめずに通す)");
+            return None;
+        }
+        send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
+        send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
+        pump_until(Duration::from_secs(1), || list.selection() == [index]);
+        let selected = list.selection();
+        println!("     ({index} 行目を押した → 選択 {selected:?})");
+        if selected != [index] {
+            failed.push(index);
+        }
+    }
+    assert!(
+        failed.is_empty(),
+        "スクロールのあとクリックで選べなかった行: {failed:?}"
+    );
+    Some(())
+}
+
+/// Scrolls down and up in steps with the wheel, and after each step clicks a built row in
+/// the middle of the visible ones. Reports the steps whose click did not select that row.
+fn custom_rows_click_while_scrolling(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+) -> Option<()> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_WHEEL,
+    };
+
+    aim_at_row_point(hwnd, list, 2, 40.0)?;
+    let mut failed = Vec::new();
+    for step in 0..30 {
+        if !foreground_is_ours() {
+            println!("     (テストのウィンドウが前面に無いので、ホイールを送らずに通す)");
+            return None;
+        }
+        // 下へ 2 回、上へ 1 回を繰り返す。
+        let (notches, delta) = if step % 3 == 2 {
+            (3, 480_i32)
+        } else {
+            (5, -480_i32)
+        };
+        for _ in 0..notches {
+            send_input(mouse_input(MOUSEEVENTF_WHEEL, delta as u32));
+            pump_until(Duration::from_millis(120), || false);
+        }
+        pump_until(Duration::from_millis(600), || false);
+        let targets = visible_built_rows(list);
+        // 表示中の行が組み立てられていないのは、それ自体が不具合。押さずに進むと、
+        // 1 度も押さないまま通ってしまう。
+        let Some(&index) = targets.get(targets.len() / 2) else {
+            panic!("段 {step}: 表示中の行が組み立てられていない");
+        };
+        if aim_at_row_point(hwnd, list, index, 40.0).is_none() {
+            println!("     (段 {step}: 押す位置へ送れないので、確かめずに通す)");
+            return None;
+        }
+        send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
+        send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
+        pump_until(Duration::from_secs(1), || list.selection() == [index]);
+        let selected = list.selection();
+        println!(
+            "     (段 {step}: 位置 {:.0}、{index} 行目を押した → 選択 {selected:?})",
+            list.scroller().VerticalOffset().unwrap_or(0.0)
+        );
+        if selected != [index] {
+            failed.push((step, index));
+        }
+    }
+    assert!(
+        failed.is_empty(),
+        "行き来しながらクリックで選べなかった (段, 行): {failed:?}"
+    );
+    Some(())
+}
+
+/// The rows of the whole list that are built and lie inside the visible part of the scroll.
+fn visible_built_rows(list: &impl RowsForInput) -> Vec<usize> {
+    use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+    use windows::Foundation::Point as XamlPoint;
+
+    let scroll = list.scroller();
+    let Ok(view) = scroll
+        .TransformToVisual(None)
+        .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+    else {
+        return Vec::new();
+    };
+    let viewport = scroll.ViewportHeight().unwrap_or(0.0) as f32;
+    let Ok(items) = list.list_view().Items() else {
+        return Vec::new();
+    };
+    let count = items.Size().unwrap_or(0);
+    let mut out = Vec::new();
+    for slot in 0..count {
+        let Ok(row) = items
+            .GetAt(slot)
+            .and_then(|item| item.cast::<ListViewItem>())
+        else {
+            continue;
+        };
+        let Ok(at) = row
+            .TransformToVisual(None)
+            .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+        else {
+            continue;
+        };
+        let height = row.ActualHeight().unwrap_or(0.0) as f32;
+        if at.Y > view.Y && at.Y + height < view.Y + viewport {
+            if let Ok(position) = AutomationProperties::GetPositionInSet(&row) {
+                out.push(position as usize - 1);
+            }
+        }
+    }
+    out
 }
 
 fn shift_click_in_margin_scenario(
