@@ -281,6 +281,20 @@ impl Path {
         self.segments.is_empty()
     }
 
+    /// Whether every point, control points included, is finite (no infinity or NaN).
+    fn is_finite(&self) -> bool {
+        let finite = |p: &Point| p.x.is_finite() && p.y.is_finite();
+        self.segments.iter().all(|segment| match segment {
+            PathSegment::MoveTo(p) | PathSegment::LineTo(p) => finite(p),
+            PathSegment::CubicTo {
+                control1,
+                control2,
+                to,
+            } => finite(control1) && finite(control2) && finite(to),
+            PathSegment::Close => true,
+        })
+    }
+
     /// Moves the pen to `to` and starts a new subpath.
     pub fn move_to(mut self, to: Point) -> Self {
         self.segments.push(PathSegment::MoveTo(to));
@@ -966,7 +980,8 @@ impl Painter {
     /// already in place. The edge is antialiased.
     ///
     /// The clip only narrows; [`restore`](Self::restore) is the way to widen it again,
-    /// so call [`save`](Self::save) first. An empty path leaves nothing to draw on.
+    /// so call [`save`](Self::save) first. An empty path, or one with an infinite or
+    /// NaN coordinate, leaves nothing to draw on.
     ///
     /// ```
     /// # use naui_core::{Color, Painter, Point, Rect};
@@ -982,7 +997,9 @@ impl Painter {
         if self.state.hidden {
             return;
         }
-        if path.is_empty() {
+        // 有限でない座標は環境ごとに 0 にされたり無視されたりして、切り抜く形が
+        // 揃わない。切り抜きは後の描画すべてに効くので、空と同じく何も描かない。
+        if path.is_empty() || !path.is_finite() {
             self.state.hidden = true;
             return;
         }
@@ -1728,6 +1745,36 @@ mod tests {
         assert_eq!(painter.commands().len(), 5, "restore の後はまた描ける");
         painter.clip_rect(rect);
         assert!(matches!(painter.commands()[5], DrawCommand::Clip(_)));
+    }
+
+    #[test]
+    fn clips_with_infinite_or_nan_coordinates_hide_until_restore() {
+        let mut painter = Painter::new(100.0, 100.0);
+        let rect = Rect::new(0.0, 0.0, 10.0, 10.0);
+        painter.save();
+        painter.clip_rect(Rect::new(0.0, 0.0, f64::INFINITY, 10.0));
+        painter.fill_rect(rect, Color::BLACK);
+        painter.restore();
+        painter.save();
+        painter.clip(&Path::new().move_to(Point::default()).cubic_to(
+            Point::new(f64::NAN, 0.0),
+            Point::new(5.0, 5.0),
+            Point::new(10.0, 0.0),
+        ));
+        painter.fill_rect(rect, Color::BLACK);
+        painter.restore();
+        assert_eq!(
+            painter.commands(),
+            &[
+                DrawCommand::Save,
+                DrawCommand::Restore,
+                DrawCommand::Save,
+                DrawCommand::Restore
+            ],
+            "有限でない切り抜きは送らず、その間の描画も積まない"
+        );
+        painter.fill_rect(rect, Color::BLACK);
+        assert_eq!(painter.commands().len(), 5, "restore の後はまた描ける");
     }
 
     #[test]
