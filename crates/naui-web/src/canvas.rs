@@ -591,6 +591,8 @@ impl WebBitmap {
         options.set_type(kind);
         let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &options).ok()?;
         let url = web_sys::Url::create_object_url_with_blob(&blob).ok()?;
+        // 途中で抜けても `Drop` が手放せるよう、作ったらすぐ持つ。
+        self.url = Some(url.clone());
         let image = HtmlImageElement::new().ok()?;
         let target: &web_sys::EventTarget = image.as_ref();
         let load = self.load.clone();
@@ -612,7 +614,6 @@ impl WebBitmap {
             .ok()?,
         );
         image.set_src(&url);
-        self.url = Some(url);
         self.source = ImageSource::Image(image);
         Some(())
     }
