@@ -145,8 +145,10 @@ jobs:
         timeout-minutes: 10
         run: cargo test -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app
       # 同じテストを、exe の隣へ同梱したランタイムで走らせる。build.rs が
-      # nuget.org から部品を取ってきてテストの exe の隣 (`target/debug/deps/`)
-      # へ並べるので、naui はフレームワークパッケージではなくそちらを使う。
+      # nuget.org から部品を取ってきて `target/debug/naui-winappsdk/` へまとめ、
+      # テストが自分の exe の隣へ写す (Cargo 1.99 までは build.rs が
+      # `target/debug/deps/` へ直に並べていた)。naui はフレームワークパッケージ
+      # ではなくそちらを使う。
       - name: テスト (ランタイム同梱)
         timeout-minutes: 10
         run: cargo test -p naui-winui3 -p naui-windows --features naui-windows/self-contained
