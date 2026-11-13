@@ -60,9 +60,13 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
         run: cargo build -p naui-core -p naui-macos -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p gallery
+      - name: clippy
+        run: cargo clippy -p naui-core -p naui-macos -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p gallery --all-targets -- -D warnings
       # AppKit の統合テストは harness = false の自前ランナーで、
       # ネイティブのコントロールを実際に作って操作する。
       #

@@ -54,6 +54,12 @@ use objc2_foundation::{
 /// One test case.
 type Case = (&'static str, fn(&Ui) -> Result<()>);
 
+/// The `on_expand` notifications a tree received, as (path, expanded) pairs.
+type ExpandLog = Rc<RefCell<Vec<(Vec<usize>, bool)>>>;
+
+/// Builds the widget a test case places in the window.
+type MakeWidget<'a> = dyn Fn() -> Result<Box<dyn Widget>> + 'a;
+
 fn main() {
     let cases: &[Case] = &[
         ("ボタンのクリックがクロージャへ届く", button_click),
@@ -1290,9 +1296,9 @@ fn color_picker_reads_catalog_colors_as_srgb(ui: &Ui) -> Result<()> {
     let well = picker.native_well();
 
     // 色空間を持たないカタログ色を、ネイティブ側へ直接入れる。
-    well.setColor(unsafe { &NSColor::systemBlueColor() });
+    well.setColor(&NSColor::systemBlueColor());
     let value = picker.value();
-    let expected = unsafe { NSColor::systemBlueColor() }
+    let expected = NSColor::systemBlueColor()
         .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
         .expect("sRGB へ変換できること");
     assert_eq!(
@@ -1346,7 +1352,7 @@ fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
     let bitmap = view
         .bitmapImageRepForCachingDisplayInRect(bounds)
         .expect("ビットマップを用意できること");
-    unsafe { view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap) };
+    view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
     // ウィンドウを出したときにも 1 回描かれるので、回数ではなく大きさを見る。
     let drawn = sizes.borrow().len();
     assert!(drawn >= 1, "描くときに呼ばれること");
@@ -1405,7 +1411,7 @@ fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
 
     // 描き直しを頼むと次の描画でまた呼ばれる。
     canvas.redraw();
-    unsafe { view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap) };
+    view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
     assert!(sizes.borrow().len() > drawn, "描き直しで呼ばれること");
     window.close();
     Ok(())
@@ -3170,7 +3176,7 @@ fn set_text_with_the_same_text_keeps_the_composition(ui: &Ui) -> Result<()> {
     let selection = editor.selectedRange();
     field.set_text(&shown);
     assert!(
-        unsafe { editor.hasMarkedText() },
+        editor.hasMarkedText(),
         "同じ文字列では変換中の文字が残ること"
     );
     assert_eq!(editor.selectedRange(), selection, "カーソルが動かないこと");
@@ -3192,7 +3198,7 @@ fn set_text_with_the_same_text_keeps_the_composition(ui: &Ui) -> Result<()> {
     let selection = text_view.selectedRange();
     area.set_text(&area.text());
     assert!(
-        unsafe { text_view.hasMarkedText() },
+        text_view.hasMarkedText(),
         "複数行でも同じ文字列では変換中の文字が残ること"
     );
     assert_eq!(text_view.selectedRange(), selection);
@@ -3230,7 +3236,7 @@ fn stack_insert_keeps_focus(ui: &Ui) -> Result<()> {
             NSRange::new(NSNotFound as usize, 0),
         )
     };
-    assert!(unsafe { editor.hasMarkedText() });
+    assert!(editor.hasMarkedText());
 
     root.insert(0, &ui.label("見出し")?);
     assert!(
@@ -3244,7 +3250,7 @@ fn stack_insert_keeps_focus(ui: &Ui) -> Result<()> {
         "ほかの子を外しても入力欄のフォーカスが外れないこと"
     );
     assert!(
-        unsafe { editor.hasMarkedText() },
+        editor.hasMarkedText(),
         "ほかの子を出し入れしても変換中の文字が残ること"
     );
 
@@ -3255,7 +3261,7 @@ fn stack_insert_keeps_focus(ui: &Ui) -> Result<()> {
         "向きを変えても入力欄のフォーカスが外れないこと"
     );
     assert!(
-        unsafe { editor.hasMarkedText() },
+        editor.hasMarkedText(),
         "向きを変えても変換中の文字が残ること"
     );
     window.close();
@@ -5262,7 +5268,7 @@ fn press_key(
         key_code,
     )
     .expect("キーイベント");
-    unsafe { app.postEvent_atStart(&event, false) };
+    app.postEvent_atStart(&event, false);
     deliver_events(app);
 }
 
@@ -5339,11 +5345,11 @@ fn key_down_skips_composition(ui: &Ui) -> Result<()> {
             NSRange::new(NSNotFound as usize, 0),
         )
     };
-    assert!(unsafe { text_view.hasMarkedText() });
+    assert!(text_view.hasMarkedText());
     press_key(&app, &native, "\r", 36, NSEventModifierFlags::empty());
     assert_eq!(count.get(), 0, "変換中の Enter は届かない");
 
-    unsafe { text_view.unmarkText() };
+    text_view.unmarkText();
     press_key(&app, &native, "\r", 36, NSEventModifierFlags::empty());
     assert_eq!(count.get(), 1, "確定後は届く");
     window.close();
@@ -5797,7 +5803,7 @@ fn rich_text_link_click_reaches_on_link(ui: &Ui) -> Result<()> {
     };
     let app = NSApplication::sharedApplication(MainThreadMarker::new().expect("main"));
     let now = objc2_foundation::NSProcessInfo::processInfo().systemUptime();
-    unsafe { app.postEvent_atStart(&event(NSEventType::LeftMouseUp, now + 0.01), false) };
+    app.postEvent_atStart(&event(NSEventType::LeftMouseUp, now + 0.01), false);
     let frame_view = unsafe { content.superview() }.expect("ウィンドウの枠のビュー");
     // 欄が編集に入っていれば、当たるのはフィールドエディタで、リンクの判定は
     // それがする。アクティブでないアプリの窓は押下で編集に入らないので
@@ -6947,7 +6953,7 @@ fn menu_bar_provides_edit_shortcuts(_ui: &Ui) -> Result<()> {
     );
     // ターゲットが nil = レスポンダチェーンへ流す (編集中のコントロールへ届く)。
     assert!(
-        unsafe { paste.target() }.is_none(),
+        paste.target().is_none(),
         "ターゲットを固定せず、いま編集中のコントロールへ送ること"
     );
 
@@ -7728,7 +7734,7 @@ fn click_view(app: &NSApplication, window: &NSWindow, view: &NSView) {
             1.0,
         )
         .expect("クリックイベント");
-        unsafe { app.postEvent_atStart(&event, false) };
+        app.postEvent_atStart(&event, false);
     }
     deliver_events(app);
     pump(0.05);
@@ -7807,7 +7813,7 @@ fn list_row_activation_notifies(ui: &Ui) -> Result<()> {
     // 行クリックを受ける口が付いていること (見た目に依らない確認)。
     let table = list.native_table();
     assert!(
-        unsafe { table.target() }.is_some(),
+        table.target().is_some(),
         "行クリックを受ける target が付いていること"
     );
     assert_eq!(
@@ -7837,7 +7843,7 @@ fn list_row_activation_notifies(ui: &Ui) -> Result<()> {
     // 行ビューは表示のときに作られるので、先に作らせてから描画まで進める。
     let _ = table.viewAtColumn_row_makeIfNecessary(0, 0, true);
     content_view.layoutSubtreeIfNeeded();
-    unsafe { content_view.display() };
+    content_view.display();
 
     if !native.isKeyWindow() {
         skip("ウィンドウが key にならず、本物のクリックを配送できなかった");
@@ -7915,7 +7921,7 @@ fn shown_list_for_events(
     }
     let content_view = native.contentView().expect("contentView");
     content_view.layoutSubtreeIfNeeded();
-    unsafe { content_view.display() };
+    content_view.display();
     let key = ready(&native);
     Ok((window, list, key))
 }
@@ -7993,7 +7999,7 @@ fn list_row_activate_notifies(ui: &Ui) -> Result<()> {
             for clicks in [1, 2] {
                 for kind in [NSEventType::LeftMouseDown, NSEventType::LeftMouseUp] {
                     let event = mouse_event(&native, kind, point, clicks);
-                    unsafe { app.postEvent_atStart(&event, false) };
+                    app.postEvent_atStart(&event, false);
                 }
             }
             deliver_events(&app);
@@ -8686,7 +8692,8 @@ fn table_columns_follow_the_spec(ui: &Ui) -> Result<()> {
         .viewAtColumn_row_makeIfNecessary(1, 0, true)
         .expect("セルが作られること");
     cell.layoutSubtreeIfNeeded();
-    let field_width = unsafe { cell.downcast_ref::<objc2_app_kit::NSTableCellView>() }
+    let field_width = cell
+        .downcast_ref::<objc2_app_kit::NSTableCellView>()
         .and_then(|cell| unsafe { cell.textField() })
         .map(|field| field.frame().size.width)
         .unwrap_or_default();
@@ -8777,7 +8784,7 @@ fn list_with_many_rows_scrolls_and_selects(ui: &Ui) -> Result<()> {
     window.show();
     let content = window.native_window().contentView().expect("contentView");
     content.layoutSubtreeIfNeeded();
-    unsafe { content.display() };
+    content.display();
     pump(0.05);
     assert!(
         built.get() > 0 && built.get() < 200,
@@ -8788,7 +8795,7 @@ fn list_with_many_rows_scrolls_and_selects(ui: &Ui) -> Result<()> {
     let target = ROWS / 2;
     list.scroll_to_row(target);
     content.layoutSubtreeIfNeeded();
-    unsafe { content.display() };
+    content.display();
     let native = list.native_table();
     let visible = native.rowsInRect(native.visibleRect());
     assert!(
@@ -8818,7 +8825,7 @@ fn list_with_many_rows_scrolls_and_selects(ui: &Ui) -> Result<()> {
     // 組み立てずに聞いても同じ (矢印キーで動くときの問い合わせ)。
     list.scroll_to_row(target);
     content.layoutSubtreeIfNeeded();
-    unsafe { content.display() };
+    content.display();
     list.set_selection(&[3]);
     assert!(list.selection().is_empty(), "画面の外の行も答えを保つこと");
     list.refresh();
@@ -8882,7 +8889,7 @@ fn list_row_height_is_a_minimum(ui: &Ui) -> Result<()> {
     let native = list.native_table();
     let show = || {
         content.layoutSubtreeIfNeeded();
-        unsafe { content.display() };
+        content.display();
         for row in 0..native.numberOfRows() {
             let _ = native.viewAtColumn_row_makeIfNecessary(0, row, true);
         }
@@ -11373,7 +11380,7 @@ fn tree_expansion_notifies(ui: &Ui) -> Result<()> {
     let tree = ui.tree()?;
     tree.set_items(&sample_tree());
 
-    let seen: Rc<RefCell<Vec<(Vec<usize>, bool)>>> = Rc::new(RefCell::new(Vec::new()));
+    let seen: ExpandLog = Rc::new(RefCell::new(Vec::new()));
     tree.on_expand({
         let seen = seen.clone();
         move |path, expanded| seen.borrow_mut().push((path.to_vec(), expanded))
@@ -11534,7 +11541,7 @@ fn tree_remembers_expansion_inside_a_closed_branch(ui: &Ui) -> Result<()> {
         "docs > guide > intro.md まで開くこと"
     );
 
-    let seen: Rc<RefCell<Vec<(Vec<usize>, bool)>>> = Rc::new(RefCell::new(Vec::new()));
+    let seen: ExpandLog = Rc::new(RefCell::new(Vec::new()));
     tree.on_expand({
         let seen = seen.clone();
         move |path, expanded| seen.borrow_mut().push((path.to_vec(), expanded))
@@ -12339,7 +12346,7 @@ fn tall_tab_content_scrolls(ui: &Ui) -> Result<()> {
         .downcast::<NSScrollView>()
         .expect("NSScrollView");
     let clip = native.contentView();
-    let document = unsafe { native.documentView() }.expect("中身");
+    let document = native.documentView().expect("中身");
     let visible = clip.bounds().size.height;
     let content = document.frame().size.height;
     assert!(visible > 0.0, "タブの中でスクロールが領域を持つ");
@@ -12356,7 +12363,7 @@ fn tall_tab_content_scrolls(ui: &Ui) -> Result<()> {
     // 下端まで送れる。
     let hidden = content - visible;
     clip.scrollToPoint(NSPoint::new(0.0, hidden));
-    unsafe { native.reflectScrolledClipView(&clip) };
+    native.reflectScrolledClipView(&clip);
     assert_eq!(clip.bounds().origin.y, hidden, "最後の行まで届く");
     window.close();
     Ok(())
@@ -12396,7 +12403,7 @@ fn scroll_content_fits_beside_a_legacy_scroller(ui: &Ui) -> Result<()> {
         .layoutSubtreeIfNeeded();
 
     let clip = native.contentView();
-    let document = unsafe { native.documentView() }.expect("中身");
+    let document = native.documentView().expect("中身");
     let visible = clip.bounds().size.width;
     assert!(
         visible < native.frame().size.width,
@@ -14154,7 +14161,7 @@ fn menu_bar_keeps_the_standard_menus(ui: &Ui) -> Result<()> {
         .filter_map(|i| edit.itemAtIndex(i))
         .find(|item| item.action() == Some(sel!(paste:)))
         .expect("paste: を送る項目があること");
-    assert!(unsafe { paste.target() }.is_none());
+    assert!(paste.target().is_none());
 
     // 全体を無効にしても、⌘Q と ⌘V は取り上げない。
     menu_bar.set_enabled(false);
@@ -14208,7 +14215,7 @@ fn menu_bar_activation_notifies(ui: &Ui) -> Result<()> {
 
     // AppKit が使うのと同じ target/action の経路も確かめる。
     let item = menu_bar.native_item(&[1, 0]).expect("項目");
-    let target = unsafe { item.target() }.expect("target が設定されていること");
+    let target = item.target().expect("target が設定されていること");
     assert_eq!(
         item.action(),
         Some(sel!(invoke:)),
@@ -14282,7 +14289,7 @@ fn menu_bar_submenus_and_checks_map_to_native(ui: &Ui) -> Result<()> {
     });
 
     // AppKit と同じ target/action の経路で選ぶ。
-    let target = unsafe { sidebar.target() }.expect("target");
+    let target = sidebar.target().expect("target");
     unsafe {
         let _: () = msg_send![&*target, invoke: &*sidebar];
     }
@@ -14503,12 +14510,12 @@ fn sidebar_rows_map_to_a_source_list(ui: &Ui) -> Result<()> {
     assert_eq!(table.numberOfRows(), 7);
 
     let delegate = unsafe { table.delegate() }.expect("デリゲートがあること");
-    let is_group = |row: isize| unsafe { delegate.tableView_isGroupRow(&table, row) };
+    let is_group = |row: isize| delegate.tableView_isGroupRow(&table, row);
     assert!(!is_group(0));
     assert!(is_group(4), "見出しはグループ行になる");
-    let height = |row: isize| unsafe { delegate.tableView_heightOfRow(&table, row) };
+    let height = |row: isize| delegate.tableView_heightOfRow(&table, row);
     assert!(height(2) < height(0), "隙間の行は項目より低い");
-    let selectable = |row: isize| unsafe { delegate.tableView_shouldSelectRow(&table, row) };
+    let selectable = |row: isize| delegate.tableView_shouldSelectRow(&table, row);
     assert!(selectable(0));
     assert!(!selectable(2), "隙間は選べない");
     assert!(!selectable(4), "見出しは選べない");
@@ -14610,8 +14617,7 @@ fn sidebar_child_does_not_shrink_the_window(ui: &Ui) -> Result<()> {
         scroll.set_child(&ui.label("中身")?);
         Ok(Box::new(scroll))
     };
-    let cases: [(&str, &dyn Fn() -> Result<Box<dyn Widget>>); 2] =
-        [("ラベル", &label), ("スクロール", &scroll)];
+    let cases: [(&str, &MakeWidget<'_>); 2] = [("ラベル", &label), ("スクロール", &scroll)];
     for (name, make) in cases {
         let window = ui.window(name, 640.0, 400.0)?;
         let child = make()?;
@@ -15058,7 +15064,7 @@ fn sidebar_toggle_notifies_collapse(ui: &Ui) -> Result<()> {
     unsafe { controller.toggleSidebar(None) };
     pump_until(3.0, || seen.borrow().len() >= 3);
     pump(0.5);
-    assert_eq!(seen.borrow()[2], true);
+    assert!(seen.borrow()[2]);
     assert!(!sidebar.is_collapsed(), "通知の中で開き直せる");
     window.clear_sidebar();
     window.close();
@@ -15336,7 +15342,7 @@ fn drag_divider(
     // 試しの 1 個を積んで取り出すことで確かめてから始める。
     pump_until(3.0, || {
         let probe = event(NSEventType::LeftMouseDragged, start);
-        unsafe { app.postEvent_atStart(&probe, false) };
+        app.postEvent_atStart(&probe, false);
         unsafe {
             app.nextEventMatchingMask_untilDate_inMode_dequeue(
                 NSEventMask::LeftMouseDragged,
@@ -15350,10 +15356,10 @@ fn drag_divider(
     let steps = 4;
     for step in 1..=steps {
         let point = NSPoint::new(start.x + dx * f64::from(step) / f64::from(steps), start.y);
-        unsafe { app.postEvent_atStart(&event(NSEventType::LeftMouseDragged, point), false) };
+        app.postEvent_atStart(&event(NSEventType::LeftMouseDragged, point), false);
     }
     let end = NSPoint::new(start.x + dx, start.y);
-    unsafe { app.postEvent_atStart(&event(NSEventType::LeftMouseUp, end), false) };
+    app.postEvent_atStart(&event(NSEventType::LeftMouseUp, end), false);
     // ウィンドウの枠のビューから当てて、本物の押下と同じ受け口を選ぶ。
     let frame_view = unsafe { window.contentView().expect("contentView").superview() }
         .expect("ウィンドウの枠のビュー");
