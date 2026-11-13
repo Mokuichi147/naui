@@ -37,6 +37,10 @@ fn main() {
             grid_columns_start_at_the_right,
         ),
         (
+            "Stack の余白の start は先頭側 (右) に付く",
+            stack_padding_is_mirrored,
+        ),
+        (
             "Group の余白の start は先頭側 (右) に付く",
             group_padding_is_mirrored,
         ),
@@ -125,6 +129,63 @@ fn grid_columns_start_at_the_right(ui: &Ui) -> Result<()> {
     assert!(
         first_x > second_x,
         "0 列目が右に来ること: 一 {first_x} / 二 {second_x}"
+    );
+    Ok(())
+}
+
+/// `NSStackView`'s `edgeInsets` swap left and right in a right-to-left app (`left`
+/// is the leading side), which `Stack::set_padding` relies on to put `start` at the
+/// right. Checked on both orientations: the horizontal stack's first child keeps
+/// `start` from the right edge, and in a vertical stack aligned to the start, a text
+/// input that fills the width sits between `end` on the left and `start` on the
+/// right. (The default centered alignment centers children on the whole width, so
+/// it could not tell the two sides apart.)
+fn stack_padding_is_mirrored(ui: &Ui) -> Result<()> {
+    let padding = Padding {
+        top: 2.0,
+        bottom: 2.0,
+        start: 4.0,
+        end: 20.0,
+    };
+
+    let row = ui.stack(Orientation::Horizontal)?;
+    let first = ui.button("一")?;
+    let second = ui.button("二")?;
+    row.append(&first);
+    row.append(&second);
+    row.set_padding(padding);
+    let view = row.native_view();
+    view.setFrameSize(NSSize::new(300.0, 60.0));
+    view.layoutSubtreeIfNeeded();
+    let frame = first.native_view().frame();
+    let right_gap = view.bounds().size.width - frame.origin.x - frame.size.width;
+    assert!(
+        (right_gap - 4.0).abs() < 0.5,
+        "横: start の余白は右に付く: 一 {frame:?}"
+    );
+    let last = second.native_view().frame();
+    assert!(
+        last.origin.x >= 20.0 - 0.5,
+        "横: 最後の子は end の余白より内側: 二 {last:?}"
+    );
+
+    let column = ui.stack(Orientation::Vertical)?;
+    column.set_align(Align::Start);
+    let field = ui.text_input("中身")?;
+    column.append(&field);
+    column.set_padding(padding);
+    let view = column.native_view();
+    view.setFrameSize(NSSize::new(300.0, 100.0));
+    view.layoutSubtreeIfNeeded();
+    let frame = field.native_view().frame();
+    let right_gap = view.bounds().size.width - frame.origin.x - frame.size.width;
+    assert!(
+        (right_gap - 4.0).abs() < 0.5,
+        "縦: start の余白は右に付く: {frame:?}"
+    );
+    assert!(
+        (frame.origin.x - 20.0).abs() < 0.5,
+        "縦: end の余白は左に付く: {frame:?}"
     );
     Ok(())
 }
