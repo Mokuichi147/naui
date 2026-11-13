@@ -372,6 +372,14 @@ fn main() {
             stack_fill_cross_after_append,
         ),
         (
+            "Stack の交差軸の揃えが左右・上下で違う余白の内側に収まる",
+            stack_cross_align_respects_uneven_padding,
+        ),
+        (
+            "追加したあとの余白・揃え・向きの変更にも交差軸の子が追従する",
+            stack_cross_align_follows_changes,
+        ),
+        (
             "追加したあとの set_sizing も主軸の Fill に効く",
             stack_fill_main_after_append,
         ),
@@ -2959,6 +2967,242 @@ fn stack_fill_cross_after_append(ui: &Ui) -> Result<()> {
     assert!(
         (restored - before).abs() < 1e-6,
         "指定を戻せば中身の幅へ戻ること: {before} / {restored}"
+    );
+    Ok(())
+}
+
+/// Where a child sits on a stack's cross axis: the gap from the start edge, its
+/// length, and the gap to the end edge.
+///
+/// For a vertical stack the start is the left (the app is left to right); for a
+/// horizontal one it is the top, whichever way the stack's coordinates run.
+fn cross_span(stack: &NSView, child: &NSView, vertical: bool) -> (f64, f64, f64) {
+    let outer = stack.bounds().size;
+    let frame = child.frame();
+    if vertical {
+        let start = frame.origin.x;
+        let end = outer.width - frame.origin.x - frame.size.width;
+        (start, frame.size.width, end)
+    } else {
+        let low = frame.origin.y;
+        let high = outer.height - frame.origin.y - frame.size.height;
+        let (top, bottom) = if stack.isFlipped() {
+            (low, high)
+        } else {
+            (high, low)
+        };
+        (top, frame.size.height, bottom)
+    }
+}
+
+/// Checks that a child sits inside `start`..`end` padding on the cross axis, where
+/// `align` puts it. A child that fills is expected to span the whole inside.
+fn assert_cross_span(
+    span: (f64, f64, f64),
+    total: f64,
+    (start, end): (f64, f64),
+    align: Align,
+    fills: bool,
+    what: &str,
+) {
+    let (gap_start, length, gap_end) = span;
+    let close = |a: f64, b: f64| (a - b).abs() < 1e-6;
+    assert!(
+        gap_start >= start - 1e-6 && gap_end >= end - 1e-6,
+        "{what}: 余白 ({start}, {end}) の内側に収まること: {span:?}"
+    );
+    if fills {
+        assert!(
+            close(gap_start, start) && close(length, total - start - end),
+            "{what}: 余白を除いた範囲いっぱいになること: {span:?}"
+        );
+        return;
+    }
+    let placed = match align {
+        Align::Start => close(gap_start, start),
+        Align::End => close(gap_end, end),
+        // 余白を除いた範囲の中心にそろう。半端な幅は AppKit が画素へ丸めるので、
+        // 左右の差は 1 まで許す (1x の画面では 1 点単位に丸まる)。
+        Align::Center => ((gap_start - start) - (gap_end - end)).abs() <= 1.0 + 1e-6,
+        Align::Fill => true,
+    };
+    assert!(placed, "{what}: {align:?} の位置にあること: {span:?}");
+}
+
+/// A stack's alignment places its children inside the padding even when the two
+/// sides of the cross axis differ.
+///
+/// `NSStackView` does not do it on its own: on the cross axis it keeps the
+/// `edgeInsets` only weakly, centers on the whole view, and adds the trailing /
+/// bottom inset outward. A child that fills spilled into the padding, and one that
+/// does not was placed off center or at the very edge.
+fn stack_cross_align_respects_uneven_padding(ui: &Ui) -> Result<()> {
+    const SIZE: f64 = 300.0;
+    for vertical in [true, false] {
+        for align in [Align::Start, Align::Center, Align::End, Align::Fill] {
+            for (start, end) in [(10.0, 10.0), (4.0, 20.0), (20.0, 4.0)] {
+                let stack = ui.stack(if vertical {
+                    Orientation::Vertical
+                } else {
+                    Orientation::Horizontal
+                })?;
+                stack.set_align(align);
+                stack.set_padding(if vertical {
+                    Padding {
+                        top: 0.0,
+                        right: end,
+                        bottom: 0.0,
+                        left: start,
+                    }
+                } else {
+                    Padding {
+                        top: start,
+                        right: 0.0,
+                        bottom: end,
+                        left: 0.0,
+                    }
+                });
+                // 交差軸いっぱいを指定した子。
+                let filled = ui.text_input("Fill")?;
+                filled.set_sizing(if vertical {
+                    Sizing::fill_width()
+                } else {
+                    Sizing::fill_height()
+                });
+                // 中身の大きさの子。
+                let natural = ui.button("中身の大きさ")?;
+                // 指定はないが、縦並びでは横に伸びる子 (1 行入力)。
+                let input = ui.text_input("指定なし")?;
+                stack.append(&filled);
+                stack.append(&natural);
+                stack.append(&input);
+
+                let root = stack.native_view();
+                root.setFrameSize(NSSize::new(SIZE, SIZE));
+                root.layoutSubtreeIfNeeded();
+                let case = format!(
+                    "{} / {align:?} / 余白 ({start}, {end})",
+                    if vertical { "縦" } else { "横" }
+                );
+                for (name, view, fills) in [
+                    ("Fill の子", filled.native_view(), true),
+                    ("中身の大きさの子", natural.native_view(), false),
+                    // 縦並びの 1 行入力は横に伸びたがる。横並びでは高さは中身のまま。
+                    ("指定のない 1 行入力", input.native_view(), vertical),
+                ] {
+                    assert_cross_span(
+                        cross_span(&root, &view, vertical),
+                        SIZE,
+                        (start, end),
+                        align,
+                        fills,
+                        &format!("{case} / {name}"),
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The cross-axis placement follows padding, alignment and orientation changed after
+/// the children are in.
+fn stack_cross_align_follows_changes(ui: &Ui) -> Result<()> {
+    const SIZE: f64 = 300.0;
+    let stack = ui.stack(Orientation::Vertical)?;
+    let filled = ui.text_input("Fill")?;
+    filled.set_sizing(Sizing::fill_width());
+    let natural = ui.button("中身の大きさ")?;
+    stack.append(&filled);
+    stack.append(&natural);
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(SIZE, SIZE));
+    root.layoutSubtreeIfNeeded();
+
+    stack.set_padding(Padding {
+        top: 6.0,
+        right: 20.0,
+        bottom: 30.0,
+        left: 4.0,
+    });
+    for align in [Align::End, Align::Center, Align::Start, Align::End] {
+        stack.set_align(align);
+        root.layoutSubtreeIfNeeded();
+        let what = format!("あとから {align:?}");
+        assert_cross_span(
+            cross_span(&root, &filled.native_view(), true),
+            SIZE,
+            (4.0, 20.0),
+            align,
+            true,
+            &format!("{what} / Fill の子"),
+        );
+        assert_cross_span(
+            cross_span(&root, &natural.native_view(), true),
+            SIZE,
+            (4.0, 20.0),
+            align,
+            false,
+            &format!("{what} / 中身の大きさの子"),
+        );
+    }
+
+    // 余白を変えると、揃えたままその内側へ動く。
+    stack.set_padding(Padding {
+        top: 6.0,
+        right: 8.0,
+        bottom: 30.0,
+        left: 24.0,
+    });
+    root.layoutSubtreeIfNeeded();
+    assert_cross_span(
+        cross_span(&root, &natural.native_view(), true),
+        SIZE,
+        (24.0, 8.0),
+        Align::End,
+        false,
+        "余白の変更後 / 中身の大きさの子",
+    );
+
+    // 横並びへ切り替えると、上下の余白の内側で末尾 (下) にそろう。
+    stack.set_orientation(Orientation::Horizontal);
+    root.layoutSubtreeIfNeeded();
+    assert_cross_span(
+        cross_span(&root, &natural.native_view(), false),
+        SIZE,
+        (6.0, 30.0),
+        Align::End,
+        false,
+        "横並びへ切り替え後 / 中身の大きさの子",
+    );
+
+    // 外さずに別の Stack へ入れた子が残っていても、元の Stack の揃えや余白を
+    // 変えられる (移った子へ元の Stack の制約を張ると例外になる)。
+    let stack = ui.stack(Orientation::Vertical)?;
+    let filled = ui.text_input("Fill")?;
+    filled.set_sizing(Sizing::fill_width());
+    let moved = ui.button("移る")?;
+    stack.append(&filled);
+    stack.append(&moved);
+    let other = ui.stack(Orientation::Vertical)?;
+    other.append(&moved);
+    stack.set_align(Align::End);
+    stack.set_padding(Padding {
+        top: 0.0,
+        right: 12.0,
+        bottom: 0.0,
+        left: 2.0,
+    });
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(SIZE, SIZE));
+    root.layoutSubtreeIfNeeded();
+    assert_cross_span(
+        cross_span(&root, &filled.native_view(), true),
+        SIZE,
+        (2.0, 12.0),
+        Align::End,
+        true,
+        "子の 1 つが移ったあと / Fill の子",
     );
     Ok(())
 }

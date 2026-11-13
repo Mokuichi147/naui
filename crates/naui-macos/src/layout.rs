@@ -51,6 +51,15 @@ const PREFERRED_SIZE_PRIORITY: NSLayoutPriority = 1.0;
 /// "don't overflow" side stays required and is added separately).
 pub(crate) const CROSS_FILL_PRIORITY: NSLayoutPriority = 999.0;
 
+/// The priority placing a child at the start, center or end of a `Stack`'s cross
+/// axis, inside the padding.
+///
+/// The same as the alignment `NSStackView` places itself (`NSStackView.Align`):
+/// above its "pull to the edge" (`NSStackView.Edge.Min`, the stack's hugging
+/// priority of 250), so it decides the position, and below a child's own hugging,
+/// so it does not stretch the child.
+pub(crate) const CROSS_ALIGN_PRIORITY: NSLayoutPriority = 260.0;
+
 /// The hugging priority for `Fill`. The lower it is, the more leftover space it
 /// takes.
 const FILL_HUGGING: NSLayoutPriority = 1.0;
