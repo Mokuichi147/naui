@@ -35,7 +35,7 @@ use objc2_foundation::{
     NSUInteger, NSURL,
 };
 
-use crate::trampoline::{ActionTarget, FieldHandlers, FieldObserver, TextViewObserver};
+use crate::trampoline::{ActionTarget, FieldHandlers, FieldObserver, SharedSlot, TextViewObserver};
 
 /// The common interface implemented by naui's widgets.
 pub trait Widget: 'static {
@@ -985,7 +985,7 @@ impl PlaceholderLabel {
 /// for the duration of the call (the same shape as
 /// [`crate::trampoline::SelectHandler`]).
 #[derive(Clone, Default)]
-struct TextHandler(Rc<RefCell<Option<Box<dyn FnMut(&str)>>>>);
+struct TextHandler(SharedSlot<dyn FnMut(&str)>);
 
 impl TextHandler {
     fn set(&self, f: impl FnMut(&str) + 'static) {

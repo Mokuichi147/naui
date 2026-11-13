@@ -26,6 +26,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSSize, NSString};
 
+use crate::trampoline::SharedSlot;
 use crate::widgets::Widget;
 
 /// The order in which buttons are added to the `NSAlert`.
@@ -48,7 +49,7 @@ const ESCAPE_KEY: &str = "\u{1b}";
 /// not double-borrow, the closure is taken out only for the duration of the call
 /// (the same design as `FilePicker`'s notification).
 #[derive(Clone, Default)]
-struct ResponseHandler(Rc<RefCell<Option<Box<dyn FnMut(DialogResponse)>>>>);
+struct ResponseHandler(SharedSlot<dyn FnMut(DialogResponse)>);
 
 impl ResponseHandler {
     fn set(&self, f: impl FnMut(DialogResponse) + 'static) {

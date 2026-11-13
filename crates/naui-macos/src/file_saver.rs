@@ -18,7 +18,7 @@ use objc2::{sel, MainThreadMarker, Message};
 use objc2_app_kit::{NSButton, NSModalResponseOK, NSSavePanel, NSView};
 use objc2_foundation::{NSArray, NSString};
 
-use crate::trampoline::ActionTarget;
+use crate::trampoline::{ActionTarget, SharedSlot};
 use crate::widgets::{impl_widget, Widget};
 
 /// A single replaceable closure.
@@ -26,7 +26,7 @@ use crate::widgets::{impl_widget, Widget};
 /// So that usage such as saving again from inside the notification does not
 /// double-borrow, the closure is taken out only for the duration of the call (the
 /// same design as `FilePicker`).
-struct Handler<T: ?Sized>(Rc<RefCell<Option<Box<dyn FnMut(&T)>>>>);
+struct Handler<T: ?Sized>(SharedSlot<dyn FnMut(&T)>);
 
 impl<T: ?Sized> Default for Handler<T> {
     fn default() -> Self {

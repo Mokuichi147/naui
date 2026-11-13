@@ -31,7 +31,7 @@ use objc2_foundation::{
 };
 
 use crate::list::{selected_indices, ActivationHandler, SelectionHandler};
-use crate::trampoline::ActionTarget;
+use crate::trampoline::{ActionTarget, SharedSlot};
 use crate::widgets::Widget;
 
 /// The prefix of column identifiers. The column index is appended.
@@ -58,7 +58,7 @@ fn column_index(column: Option<&NSTableColumn>) -> Option<usize> {
 /// same table from inside the callback does not double-borrow (the same shape as
 /// [`SelectionHandler`]).
 #[derive(Clone, Default)]
-struct SortHandler(Rc<RefCell<Option<Box<dyn FnMut(usize, SortOrder)>>>>);
+struct SortHandler(SharedSlot<dyn FnMut(usize, SortOrder)>);
 
 impl SortHandler {
     fn set(&self, f: impl FnMut(usize, SortOrder) + 'static) {

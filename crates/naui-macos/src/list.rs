@@ -44,7 +44,7 @@ use objc2_foundation::{
     NSArray, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSSize, NSString,
 };
 
-use crate::trampoline::{SelectHandler, ValueHandler};
+use crate::trampoline::{SelectHandler, SharedSlot, ValueHandler};
 use crate::widgets::{Label, Stack, Widget};
 
 /// Only one column is used, so the identifier can be fixed.
@@ -60,7 +60,7 @@ const DETAIL_SPACING: f64 = 1.0;
 ///
 /// Replacing the same row's callback during the call does not double-borrow.
 #[derive(Clone, Default)]
-pub(crate) struct ActivationHandler(Rc<RefCell<Option<Box<dyn FnMut()>>>>);
+pub(crate) struct ActivationHandler(SharedSlot<dyn FnMut()>);
 
 impl ActivationHandler {
     pub(crate) fn set(&self, f: impl FnMut() + 'static) {
@@ -428,12 +428,15 @@ impl ListTableView {
     }
 }
 
+/// The closure notified with the selected rows.
+type SelectionFn = dyn FnMut(&[usize]);
+
 /// The handler notified when the selection changes.
 ///
 /// To use the same shape for single and multiple selection, the selected rows are
 /// passed in ascending order. With multiple selection it can be empty.
 #[derive(Clone, Default)]
-pub(crate) struct SelectionHandler(Rc<RefCell<Option<Box<dyn FnMut(&[usize])>>>>);
+pub(crate) struct SelectionHandler(SharedSlot<SelectionFn>);
 
 impl SelectionHandler {
     pub(crate) fn set(&self, f: impl FnMut(&[usize]) + 'static) {
