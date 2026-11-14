@@ -13,8 +13,8 @@ use naui_core::{
     ScrollTarget, Sizing, Track,
 };
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    ColumnDefinition, Grid as XamlGrid, RowDefinition, ScrollBarVisibility, ScrollMode,
-    ScrollViewer, ScrollViewerViewChangedEventArgs,
+    Border, ColumnDefinition, ContentControl, Flyout, Grid as XamlGrid, Panel, RowDefinition,
+    ScrollBarVisibility, ScrollMode, ScrollViewer, ScrollViewerViewChangedEventArgs,
 };
 use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
 use naui_winui3::Microsoft::UI::Xaml::{
@@ -564,8 +564,8 @@ pub(crate) fn clear_layout_state(element: &UIElement) {
     ROW_OWNERS.with(|owners| {
         owners.borrow_mut().remove(&key);
     });
-    CONTENT_HOLDERS.with(|holders| {
-        holders.borrow_mut().remove(&key);
+    PLACES.with(|places| {
+        places.borrow_mut().remove(&key);
     });
 }
 
@@ -576,26 +576,43 @@ pub(crate) fn clear_layout_state(element: &UIElement) {
 /// refused as a whole instead of half-placed (see "Changing and moving widgets after
 /// adding" in naui's guide).
 ///
-/// `Parent` and `VisualTreeHelper::GetParent` cannot tell: before an element is in a
-/// shown window, both are empty even for a panel's child. So this asks the panel
-/// itself, by trying to add the element to a throwaway `Grid` (and taking it out
-/// again). The content of a `ContentControl` or a `Flyout` has no parent until its
-/// template places it (never, while an `Expander` is collapsed or a `Popover` is
-/// closed), so those are remembered with [`hold_content`].
+/// `Parent` and `VisualTreeHelper::GetParent` tell only in a shown window: before
+/// that, both are empty even for a panel's child. And the content of a
+/// `ContentControl` or a `Flyout` has no parent at all until its template places it
+/// (never, while an `Expander` is collapsed or a `Popover` is closed). So naui
+/// remembers where it put each element ([`note_place`]) and checks it against the
+/// container's own children here. A place the element has since left, through
+/// naui or the native escape hatch, or whose container is gone, no longer counts.
 pub(crate) fn has_parent(element: &UIElement) -> bool {
-    held_as_content(element) || !accepts_parent(element)
+    if native_parent(element).is_some() {
+        return true;
+    }
+    let key = element_key(element);
+    // ネイティブを呼ぶ間は表を借りない。
+    let Some(place) = PLACES.with(|places| places.borrow_mut().remove(&key)) else {
+        return false;
+    };
+    let placed = place.holds(element);
+    if placed {
+        PLACES.with(|places| {
+            places.borrow_mut().insert(key, place);
+        });
+    }
+    placed
 }
 
-/// Whether a panel can take the element now.
-fn accepts_parent(element: &UIElement) -> bool {
-    let Ok(children) = XamlGrid::new().and_then(|scratch| scratch.Children()) else {
-        return true;
-    };
-    if children.Append(element).is_err() {
-        return false;
-    }
-    let _ = children.Clear();
-    true
+/// The parent WinUI reports, in a shown window.
+fn native_parent(element: &UIElement) -> Option<DependencyObject> {
+    let logical = element
+        .cast::<FrameworkElement>()
+        .ok()
+        .and_then(|framework| framework.Parent().ok());
+    logical.or_else(|| {
+        element
+            .cast::<DependencyObject>()
+            .ok()
+            .and_then(|object| VisualTreeHelper::GetParent(&object).ok())
+    })
 }
 
 /// Whether a container whose one child is `current` refuses `element`: it is in
@@ -605,29 +622,94 @@ pub(crate) fn refuses(element: &UIElement, current: Option<&UIElement>) -> bool 
     !again && has_parent(element)
 }
 
-/// Records that the element is the content of `holder` (a `ScrollViewer`, an
-/// `Expander`, a `Flyout` or a sidebar's `NavigationView`, keyed by the naui
-/// container), which gives it no parent of its own (see [`has_parent`]).
-pub(crate) fn hold_content(element: &UIElement, holder: usize) {
-    CONTENT_HOLDERS.with(|holders| {
-        holders.borrow_mut().insert(element_key(element), holder);
-    });
+/// The native container naui put an element in. Held weakly, so it does not keep the
+/// container alive.
+pub(crate) enum Place {
+    /// One of a panel's `Children`.
+    Panel(windows_core::Weak<Panel>),
+    /// A `Border`'s `Child`.
+    Border(windows_core::Weak<Border>),
+    /// The `Content` of a `ContentControl` (`ScrollViewer`, `Expander`,
+    /// `NavigationView`).
+    Content(windows_core::Weak<ContentControl>),
+    /// A `Flyout`'s `Content`.
+    Flyout(windows_core::Weak<Flyout>),
 }
 
-/// Forgets [`hold_content`], if `holder` is still the one holding the element.
-pub(crate) fn release_content(element: &UIElement, holder: usize) {
-    let key = element_key(element);
-    let _ = CONTENT_HOLDERS.try_with(|holders| {
-        let mut holders = holders.borrow_mut();
-        if holders.get(&key) == Some(&holder) {
-            holders.remove(&key);
+impl Place {
+    pub(crate) fn panel(panel: &impl Interface) -> Option<Self> {
+        panel
+            .cast::<Panel>()
+            .ok()?
+            .downgrade()
+            .ok()
+            .map(Self::Panel)
+    }
+
+    pub(crate) fn border(border: &Border) -> Option<Self> {
+        border.downgrade().ok().map(Self::Border)
+    }
+
+    pub(crate) fn content(control: &impl Interface) -> Option<Self> {
+        control
+            .cast::<ContentControl>()
+            .ok()?
+            .downgrade()
+            .ok()
+            .map(Self::Content)
+    }
+
+    pub(crate) fn flyout(flyout: &Flyout) -> Option<Self> {
+        flyout.downgrade().ok().map(Self::Flyout)
+    }
+
+    /// Whether the container is alive and still holds the element.
+    fn holds(&self, element: &UIElement) -> bool {
+        let key = element_key(element);
+        let is_element = |object: Option<windows_core::IUnknown>| {
+            object.is_some_and(|object| Interface::as_raw(&object) as usize == key)
+        };
+        match self {
+            Self::Panel(panel) => panel
+                .upgrade()
+                .and_then(|panel| panel.Children().ok())
+                .is_some_and(|children| {
+                    let mut index = 0;
+                    children.IndexOf(element, &mut index).unwrap_or(false)
+                }),
+            Self::Border(border) => is_element(
+                border
+                    .upgrade()
+                    .and_then(|border| border.Child().ok())
+                    .and_then(|child| child.cast().ok()),
+            ),
+            Self::Content(control) => is_element(
+                control
+                    .upgrade()
+                    .and_then(|control| control.Content().ok())
+                    .and_then(|content| content.cast().ok()),
+            ),
+            Self::Flyout(flyout) => is_element(
+                flyout
+                    .upgrade()
+                    .and_then(|flyout| flyout.Content().ok())
+                    .and_then(|content| content.cast().ok()),
+            ),
         }
-    });
+    }
 }
 
-fn held_as_content(element: &UIElement) -> bool {
+/// Remembers where naui put the element (see [`has_parent`]). Call it once the
+/// element is in place.
+pub(crate) fn note_place(element: &UIElement, place: Option<Place>) {
     let key = element_key(element);
-    CONTENT_HOLDERS.with(|holders| holders.borrow().contains_key(&key))
+    PLACES.with(|places| {
+        let mut places = places.borrow_mut();
+        match place {
+            Some(place) => places.insert(key, place),
+            None => places.remove(&key),
+        };
+    });
 }
 
 /// Records that the row container `owner` (a `List` or a `Table`) took the element
@@ -867,7 +949,6 @@ impl Grid {
         if has_parent(&element) {
             return;
         }
-        self.ensure_size(cell.columns_needed(), cell.rows_needed());
         let Ok(child_framework) = element.cast::<FrameworkElement>() else {
             return;
         };
@@ -896,6 +977,14 @@ impl Grid {
             .Children()
             .and_then(|children| children.Append(&placed));
         if appended.is_ok() {
+            self.ensure_size(cell.columns_needed(), cell.rows_needed());
+            note_place(
+                &element,
+                match &wrapper {
+                    Some(wrapper) => Place::panel(wrapper),
+                    None => Place::panel(&self.0.native),
+                },
+            );
             // 置き場所は添付プロパティなので、FrameworkElement として設定する。
             // Append に成功してから設定することで、すでに別の親に属している
             // 要素の追加に失敗しても、既存の配置を変更しない。
@@ -1070,6 +1159,14 @@ impl Grid {
             }
             (None, None) => {}
         }
+        // 包みに出し入れしたので、置いた場所を覚え直す。
+        note_place(
+            element,
+            match &placed.wrapper {
+                Some(wrapper) => Place::panel(wrapper),
+                None => Place::panel(&self.0.native),
+            },
+        );
         let framework = match &placed.wrapper {
             Some(wrapper) => wrapper.cast::<FrameworkElement>().ok(),
             None => Some(child_framework.clone()),
@@ -1257,9 +1354,7 @@ impl Drop for ScrollInner {
     fn drop(&mut self) {
         if let Ok(child) = self.child.try_borrow() {
             if let Some(child) = child.as_ref() {
-                let element = child.native_element();
-                clear_parent_layout(&element);
-                release_content(&element, self as *const Self as usize);
+                clear_parent_layout(&child.native_element());
             }
         }
     }
@@ -1281,9 +1376,8 @@ thread_local! {
     /// The row container that last took each element, by element key (see
     /// [`last_row_owner`]).
     static ROW_OWNERS: RefCell<HashMap<usize, usize>> = RefCell::new(HashMap::new());
-    /// The container holding each element as its content, by element key (see
-    /// [`hold_content`]).
-    static CONTENT_HOLDERS: RefCell<HashMap<usize, usize>> = RefCell::new(HashMap::new());
+    /// Where naui put each element, by element key (see [`has_parent`]).
+    static PLACES: RefCell<HashMap<usize, Place>> = RefCell::new(HashMap::new());
     /// The `Grid`s of the Stacks still alive on the Rust side, by element key.
     static STACKS: RefCell<HashMap<usize, XamlGrid>> = RefCell::new(HashMap::new());
     static SCROLLS: RefCell<Vec<Weak<ScrollInner>>> = const { RefCell::new(Vec::new()) };
@@ -1867,15 +1961,13 @@ impl Scroll {
                 self.0.horizontal_scroll_enabled.get(),
                 self.0.vertical_scroll_enabled.get(),
             );
-            let holder = Rc::as_ptr(&self.0) as usize;
             if let Some(previous) = previous {
                 if element_key(&previous) != element_key(&element) {
                     clear_parent_layout(&previous);
-                    release_content(&previous, holder);
                 }
             }
             // テンプレートが当たるまで、中身はネイティブの親を持たない。
-            hold_content(&element, holder);
+            note_place(&element, Place::content(&self.0.native));
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         }
     }

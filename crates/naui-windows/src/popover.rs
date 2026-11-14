@@ -114,19 +114,6 @@ impl PopoverInner {
     }
 }
 
-impl Drop for PopoverInner {
-    fn drop(&mut self) {
-        if let Ok(child) = self.child.try_borrow() {
-            if let Some(child) = child.as_ref() {
-                crate::layout::release_content(
-                    &child.native_element(),
-                    self as *const Self as usize,
-                );
-            }
-        }
-    }
-}
-
 /// A panel shown beside a widget (`Flyout`).
 ///
 /// It is not a widget laid out on screen, so it is not a [`Widget`]. [`crate::Ui`]
@@ -208,14 +195,10 @@ impl Popover {
         if self.0.flyout.SetContent(None).is_err() {
             return;
         }
-        let holder = Rc::as_ptr(&self.0) as usize;
         if self.0.flyout.SetContent(&element).is_ok() {
-            if let Some(current) = current {
-                crate::layout::release_content(&current, holder);
-            }
             // `Flyout` の中身は開いている間しかネイティブの親を持たない。ほかの
-            // コンテナが取らないよう、持っていることを覚える。
-            crate::layout::hold_content(&element, holder);
+            // コンテナが取らないよう、置いた場所を覚える。
+            crate::layout::note_place(&element, crate::layout::Place::flyout(&self.0.flyout));
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         } else if let Some(current) = current {
             // 入れられなかったときは前の中身へ戻す。

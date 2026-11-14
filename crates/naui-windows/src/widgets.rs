@@ -1564,6 +1564,7 @@ impl Stack {
         }
         let appended = self.0.native.Children().and_then(|c| c.Append(&element));
         if appended.is_ok() {
+            crate::layout::note_place(&element, crate::layout::Place::panel(&self.0.native));
             self.adopt(&element);
             self.0.children.borrow_mut().push(child.boxed_clone());
             self.arrange();
@@ -1588,6 +1589,7 @@ impl Stack {
             .Children()
             .and_then(|c| c.InsertAt(index as u32, &element));
         if inserted.is_ok() {
+            crate::layout::note_place(&element, crate::layout::Place::panel(&self.0.native));
             self.adopt(&element);
             children.insert(index, child.boxed_clone());
             drop(children);

@@ -2248,9 +2248,11 @@ fn row_host(row: &ListRow) -> Result<XamlGrid> {
     let children = host
         .Children()
         .map_err(|e| to_error("get the row container", e))?;
+    let content = row_content(row)?;
     children
-        .Append(&row_content(row)?)
+        .Append(&content)
         .map_err(|e| to_error("add to the row", e))?;
+    crate::layout::note_place(&content, crate::layout::Place::panel(&host));
 
     let activation = row.activation.clone();
     let handler = PointerEventHandler::new(move |_sender, args| {

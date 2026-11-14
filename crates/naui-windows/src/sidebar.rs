@@ -104,19 +104,6 @@ struct SidebarInner {
     grab: Cell<f64>,
 }
 
-impl Drop for SidebarInner {
-    fn drop(&mut self) {
-        let content = self
-            .native
-            .Content()
-            .ok()
-            .and_then(|content| content.cast::<UIElement>().ok());
-        if let Some(content) = content {
-            crate::layout::release_content(&content, self as *const Self as usize);
-        }
-    }
-}
-
 /// A handler that receives one value. The closure is taken out only for the duration
 /// of the call (to allow re-entrancy).
 #[derive(Clone)]
@@ -624,13 +611,6 @@ impl Sidebar {
 
     /// Places the window's child in the right pane. `None` empties it.
     pub(crate) fn set_content(&self, element: Option<&UIElement>) -> bool {
-        let holder = Rc::as_ptr(&self.0) as usize;
-        let previous = self
-            .0
-            .native
-            .Content()
-            .ok()
-            .and_then(|content| content.cast::<UIElement>().ok());
         let result = match element {
             Some(element) => element
                 .cast::<IInspectable>()
@@ -640,12 +620,12 @@ impl Sidebar {
         match result {
             Ok(()) => {
                 // `NavigationView` の中身は、テンプレートが当たるまでネイティブの親を
-                // 持たない。ほかのコンテナが取らないよう、持っていることを覚える。
-                if let Some(previous) = previous {
-                    crate::layout::release_content(&previous, holder);
-                }
+                // 持たない。ほかのコンテナが取らないよう、置いた場所を覚える。
                 if let Some(element) = element {
-                    crate::layout::hold_content(element, holder);
+                    crate::layout::note_place(
+                        element,
+                        crate::layout::Place::content(&self.0.native),
+                    );
                 }
                 true
             }

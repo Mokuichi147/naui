@@ -538,6 +538,12 @@ fn append_widget_cell(
     let framework = element
         .cast::<FrameworkElement>()
         .map_err(|e| to_error("convert the cell to FrameworkElement", e))?;
+    // 入れてから配置を書く。入れられなかった子 (ほかのコンテナにいる子) へは
+    // 何も書かない。
+    grid.Children()
+        .and_then(|children| children.Append(&element))
+        .map_err(|e| to_error("add the cell", e))?;
+    crate::layout::note_place(&element, crate::layout::Place::panel(grid));
     // 列の中のどこへ置くかは列の指定に従う。`Fill` は列いっぱいに広げる。
     let _ = framework.SetHorizontalAlignment(match align {
         Align::Center => HorizontalAlignment::Center,
@@ -548,9 +554,6 @@ fn append_widget_cell(
     let _ = framework.SetVerticalAlignment(VerticalAlignment::Center);
     XamlGrid::SetColumn(&framework, index as i32)
         .map_err(|e| to_error("set the cell column", e))?;
-    grid.Children()
-        .and_then(|children| children.Append(&element))
-        .map_err(|e| to_error("add the cell", e))?;
     Ok(())
 }
 

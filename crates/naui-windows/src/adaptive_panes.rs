@@ -431,7 +431,13 @@ fn put(pane: &XamlGrid, slot: &RefCell<Option<Box<dyn Widget>>>, child: &dyn Wid
         .Children()
         .and_then(|children| children.Append(&element));
     if appended.is_ok() {
+        crate::layout::note_place(&element, crate::layout::Place::panel(pane));
         *slot.borrow_mut() = Some(child.boxed_clone());
+    } else if let Some(current) = current {
+        // 入れられなかったときは前の中身へ戻す。
+        let _ = pane
+            .Children()
+            .and_then(|children| children.Append(&current));
     }
 }
 

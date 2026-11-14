@@ -518,6 +518,7 @@ impl Tabs {
         {
             return;
         }
+        crate::layout::note_place(&element, crate::layout::Place::panel(&host));
         let release = || {
             let _ = host.Children().and_then(|children| children.Clear());
         };

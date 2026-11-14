@@ -234,6 +234,7 @@ impl Group {
                     crate::layout::clear_parent_layout(&previous);
                 }
             }
+            crate::layout::note_place(&element, crate::layout::Place::border(&self.0.card));
             crate::layout::set_frame_parent(&element);
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         }

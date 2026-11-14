@@ -213,7 +213,11 @@ impl Dialog {
         let _ = children.Clear();
         let _ = children.Append(&self.0.message);
         if children.Append(&element).is_ok() {
+            crate::layout::note_place(&element, crate::layout::Place::panel(&self.0.content));
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
+        } else if let Some(current) = current {
+            // 入れられなかったときは前の中身へ戻す。
+            let _ = children.Append(&current);
         }
     }
 
