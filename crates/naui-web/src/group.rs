@@ -27,13 +27,6 @@ fn style(element: &HtmlElement, name: &str, value: &str) {
     let _ = element.style().set_property(name, value);
 }
 
-fn padding_value(padding: Padding) -> String {
-    format!(
-        "{}px {}px {}px {}px",
-        padding.top, padding.right, padding.bottom, padding.left
-    )
-}
-
 // -------------------------------------------------------------- Separator
 
 struct SeparatorInner {
@@ -111,11 +104,7 @@ impl Group {
         style(&element, "box-sizing", "border-box");
         style(&element, "border", LINE);
         style(&element, "border-radius", GROUP_RADIUS);
-        style(
-            &element,
-            "padding",
-            &padding_value(naui_core::DEFAULT_GROUP_PADDING),
-        );
+        crate::widgets::apply_padding(&element, naui_core::DEFAULT_GROUP_PADDING);
         // 中身は 1 つのマスに入れ、枠の内側いっぱいに広げる。`<legend>` は
         // マスに入らない (枠の線の上に描かれる)。
         style(&element, "display", "grid");
@@ -157,9 +146,10 @@ impl Group {
     /// The space between the frame and the content. The default is
     /// [`DEFAULT_GROUP_PADDING`](naui_core::DEFAULT_GROUP_PADDING).
     ///
-    /// `left` and `right` are the physical sides, also in right-to-left text.
+    /// `start` is the side where the content starts: the right in a right-to-left
+    /// layout.
     pub fn set_padding(&self, padding: Padding) {
-        style(&self.0.element, "padding", &padding_value(padding));
+        crate::widgets::apply_padding(&self.0.element, padding);
     }
 
     /// The content inside the frame. Each call replaces it.

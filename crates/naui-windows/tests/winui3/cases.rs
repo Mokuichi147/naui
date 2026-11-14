@@ -9,9 +9,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use naui_core::{
-    Align, ButtonRole, Color, GridCell, MenuItem, MenuShortcut, MenuSpec, Orientation, Point, Rect,
-    Result, RichText, ScrollPolicy, SidebarItem, SidebarSection, Sizing, TextColor, TextStyle,
-    Theme, ToolbarIcon, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
+    Align, ButtonRole, Color, GridCell, LayoutDirection, MenuItem, MenuShortcut, MenuSpec,
+    Orientation, Point, Rect, Result, RichText, ScrollPolicy, SidebarItem, SidebarSection, Sizing,
+    TextColor, TextStyle, Theme, ToolbarIcon, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_windows::{run_for_test, MenuEntry, Ui, Widget};
 
@@ -415,6 +415,10 @@ const CASES: &[Case] = &[
     (
         "アプリの言語がウィンドウの中身に付き、中の要素が継ぐ",
         app_language_is_set_on_the_window_content,
+    ),
+    (
+        "右から左の配置がウィンドウの中身に付き、描画面・絵・数値入力・動画は左から右のまま、タイトルバーはキャプションボタンを避ける",
+        right_to_left_layout_is_set_on_the_window_content,
     ),
     (
         "ウィンドウの大きさはタイトルバーとメニューバーを除いた中身の行",
@@ -2065,7 +2069,7 @@ fn group_puts_a_heading_above_a_card(ui: &Ui) -> Result<()> {
         "中身はカードの幅いっぱいに広がること"
     );
     let padding = card.Padding().expect("Padding");
-    assert_eq!(padding.Left, naui_core::DEFAULT_GROUP_PADDING.left);
+    assert_eq!(padding.Left, naui_core::DEFAULT_GROUP_PADDING.start);
 
     group.set_padding(naui_core::Padding::all(4.0));
     assert_eq!(card.Padding().expect("Padding").Top, 4.0);
@@ -2934,6 +2938,169 @@ fn app_language_is_set_on_the_window_content(ui: &Ui) -> Result<()> {
         "中の要素は根の言語を継ぐこと"
     );
     window.close();
+    Ok(())
+}
+
+/// A right-to-left layout is `FlowDirection` on the window's content, which every
+/// element inside inherits. XAML mirrors by a transform on the rendering, so the
+/// elements that draw for themselves (`Canvas`, `Image`, `Video`) and `NumberInput`
+/// are given `LeftToRight` back.
+fn right_to_left_layout_is_set_on_the_window_content(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::FlowDirection;
+
+    naui_core::set_app_layout_direction(Some(LayoutDirection::Rtl));
+    let built = (|| -> Result<_> {
+        let window = ui.window("書字方向", 520.0, 200.0)?;
+        let stack = ui.stack(Orientation::Vertical)?;
+        let row = ui.stack(Orientation::Horizontal)?;
+        let first = ui.button("一")?;
+        let second = ui.button("二")?;
+        row.append(&first);
+        row.append(&second);
+        stack.append(&row);
+        let group = ui.group("")?;
+        let content = ui.label("中身")?;
+        content.set_sizing(Sizing::fill_width());
+        group.set_child(&content);
+        group.set_padding(naui_core::Padding {
+            top: 2.0,
+            bottom: 2.0,
+            start: 4.0,
+            end: 20.0,
+        });
+        stack.append(&group);
+        let number = ui.number_input(-5.0)?;
+        let canvas = ui.canvas()?;
+        let image = ui.image("")?;
+        let video = ui.video("")?;
+        stack.append(&number);
+        stack.append(&canvas);
+        stack.append(&image);
+        stack.append(&video);
+        window.set_child(&stack);
+        let toolbar = ui.toolbar()?;
+        toolbar.set_items(&[naui_core::ToolbarItem::new(ToolbarIcon::Open, "開く")]);
+        window.set_toolbar(&toolbar);
+        Ok((
+            window, first, second, group, content, number, canvas, image, video, toolbar,
+        ))
+    })();
+    assert_eq!(ui.layout_direction(), LayoutDirection::Rtl);
+    naui_core::set_app_layout_direction(None);
+    let (window, first, second, group, content, number, canvas, image, video, toolbar) = built?;
+
+    let root = window
+        .native_window()
+        .Content()
+        .expect("ウィンドウの中身")
+        .cast::<FrameworkElement>()
+        .expect("根は FrameworkElement");
+    let direction = |element: &FrameworkElement| element.FlowDirection().expect("FlowDirection");
+    assert_eq!(direction(&root), FlowDirection::RightToLeft);
+    assert_eq!(
+        direction(&native::<FrameworkElement>(&first)),
+        FlowDirection::RightToLeft,
+        "中の要素は根の向きを継ぐこと"
+    );
+    for (name, element) in [
+        ("数値入力", native::<FrameworkElement>(&number)),
+        ("描画面", native::<FrameworkElement>(&canvas)),
+        ("画像", native::<FrameworkElement>(&image)),
+        ("動画", native::<FrameworkElement>(&video)),
+    ] {
+        assert_eq!(
+            direction(&element),
+            FlowDirection::LeftToRight,
+            "{name}は左から右のまま"
+        );
+    }
+
+    // 横に並べた最初の子が右に来る (反転は描画の変換なので、窓から見た位置で比べる)。
+    window.show();
+    let first_element = native::<FrameworkElement>(&first);
+    let laid_out = || first_element.ActualWidth().unwrap_or(0.0) > 0.0;
+    pump_until(SCROLL_LAYOUT_TIMEOUT, laid_out);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !laid_out() {
+            println!("     (実寸が付かない環境なので、位置は確かめずに通す)");
+            return;
+        }
+        let x = |element: &FrameworkElement| {
+            element
+                .TransformToVisual(None)
+                .and_then(|transform| {
+                    transform.TransformPoint(windows::Foundation::Point { X: 0.0, Y: 0.0 })
+                })
+                .expect("窓から見た位置")
+                .X
+        };
+        let first_x = x(&first_element);
+        let second_x = x(&native::<FrameworkElement>(&second));
+        assert!(
+            first_x > second_x,
+            "最初の子が右に来ること: 一 {first_x} / 二 {second_x}"
+        );
+
+        // Group の余白の start は先頭側 (右) に付く。反転した要素の原点は右上に
+        // なるので、両端を窓の座標へ移してから左右を決める。
+        let edges = |element: &FrameworkElement| {
+            let width = element.ActualWidth().unwrap_or(0.0) as f32;
+            let transform = element.TransformToVisual(None).expect("窓への変換");
+            let a = transform
+                .TransformPoint(windows::Foundation::Point { X: 0.0, Y: 0.0 })
+                .expect("端")
+                .X;
+            let b = transform
+                .TransformPoint(windows::Foundation::Point { X: width, Y: 0.0 })
+                .expect("端")
+                .X;
+            (a.min(b), a.max(b))
+        };
+        let (outer_left, outer_right) = edges(&native::<FrameworkElement>(&group));
+        let (inner_left, inner_right) = edges(&native::<FrameworkElement>(&content));
+        let (left_gap, right_gap) = (inner_left - outer_left, outer_right - inner_right);
+        assert!(
+            left_gap - right_gap > 10.0,
+            "end の 20 が左、start の 4 が右: 左 {left_gap} / 右 {right_gap}"
+        );
+
+        // タイトルバーの中身は鏡映しになるが、システムが描くキャプション
+        // ボタン (46 幅 × 3) は右端に残る。タイトル文字はその左に収まり、
+        // ツールバーはさらにその左 (先頭から見て後ろ) に来る。
+        let title_bar = root
+            .cast::<Grid>()
+            .expect("根は Grid")
+            .Children()
+            .and_then(|children| children.GetAt(0))
+            .expect("タイトルバー")
+            .cast::<Grid>()
+            .expect("タイトルバーは Grid");
+        let title = title_bar
+            .Children()
+            .and_then(|children| children.GetAt(0))
+            .expect("タイトル文字")
+            .cast::<FrameworkElement>()
+            .expect("タイトル文字は FrameworkElement");
+        let (_, root_right) = edges(&root);
+        let (title_left, title_right) = edges(&title);
+        assert!(
+            title_right <= root_right - 138.0,
+            "タイトル文字がキャプションボタンに重ならないこと: 文字の右端 {title_right} / 窓の右端 {root_right}"
+        );
+        let bar = toolbar
+            .native_command_bar()
+            .cast::<FrameworkElement>()
+            .expect("CommandBar");
+        let (_, bar_right) = edges(&bar);
+        assert!(
+            bar_right <= title_left,
+            "ツールバーはタイトル文字の左: ツールバーの右端 {bar_right} / 文字の左端 {title_left}"
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
     Ok(())
 }
 

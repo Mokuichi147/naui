@@ -51,6 +51,9 @@ impl EditableComboBox {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
         let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(0.0, 0.0));
         let native = NSComboBox::initWithFrame(NSComboBox::alloc(mtm), frame);
+        // `initWithFrame` で作った欄の揃えは左 (Left) のまま。自然な揃え
+        // (Natural) にし、右から左のアプリでは右へ寄せる。
+        native.setAlignment(objc2_app_kit::NSTextAlignment::Natural);
         native.setNumberOfVisibleItems(VISIBLE_ITEMS);
         // 打ちかけの文字を候補で補完する。打ち切れば候補外の文字列も残せる。
         native.setCompletes(true);

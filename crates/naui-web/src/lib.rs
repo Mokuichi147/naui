@@ -51,7 +51,9 @@ mod web_ext;
 mod widgets;
 mod window;
 
-use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Tasks, Theme};
+use naui_core::{
+    DatePickerMode, Error, LayoutDirection, Orientation, Result, Settings, Tasks, Theme,
+};
 use std::cell::Cell;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -520,6 +522,16 @@ impl Ui {
         self.0.theme.get()
     }
 
+    /// Which way the app's layout runs: the computed `direction` of `<html>`, which
+    /// follows `dir` (written by naui, or by the page itself).
+    pub fn layout_direction(&self) -> LayoutDirection {
+        if is_rtl() {
+            LayoutDirection::Rtl
+        } else {
+            LayoutDirection::Ltr
+        }
+    }
+
     /// The browser's preferred languages as BCP 47 tags, most preferred first
     /// (`navigator.languages`). The basis for choosing which translation to show.
     ///
@@ -607,6 +619,9 @@ where
     apply_theme(&document, settings.theme)?;
     naui_core::set_app_language(settings.language.as_deref());
     apply_language(settings.language.as_deref());
+    let direction = settings.resolved_layout_direction();
+    naui_core::set_app_layout_direction(direction);
+    apply_layout_direction(direction);
     let ui = Ui::new(document, settings.theme);
     build(&ui)?;
     // ウィンドウ (と、そこにぶら下がるクロージャ) をページの寿命まで保持する。
@@ -616,6 +631,36 @@ where
 
 thread_local! {
     static KEEP: RefCell<Vec<Ui>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Writes the app's layout direction to `dir` on `<html>` (`"rtl"` or `"ltr"`).
+/// `None` leaves the page's own `dir` alone; `dir="auto"`, which decides from each
+/// element's text, is never written. Public for tests.
+#[doc(hidden)]
+pub fn apply_layout_direction(direction: Option<LayoutDirection>) {
+    let (Some(direction), Ok(document)) = (direction, document()) else {
+        return;
+    };
+    if let Some(root) = document.document_element() {
+        let _ = root.set_attribute("dir", if direction.is_rtl() { "rtl" } else { "ltr" });
+    }
+}
+
+/// Whether the page's layout runs right to left (the computed `direction` of
+/// `<html>`). naui sets the direction for the whole app, so the root decides it.
+pub(crate) fn is_rtl() -> bool {
+    let Some(window) = web_sys::window() else {
+        return false;
+    };
+    let Some(root) = window.document().and_then(|d| d.document_element()) else {
+        return false;
+    };
+    window
+        .get_computed_style(&root)
+        .ok()
+        .flatten()
+        .and_then(|style| style.get_property_value("direction").ok())
+        .is_some_and(|direction| direction == "rtl")
 }
 
 /// Writes the app's language to `lang` on `<html>`, which the browser uses to choose

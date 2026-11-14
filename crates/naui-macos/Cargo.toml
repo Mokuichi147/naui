@@ -229,3 +229,9 @@ name = "appkit"
 path = "tests/appkit.rs"
 # AppKit はメインスレッドを要求するが、標準ハーネスは別スレッドで走らせるため。
 harness = false
+
+[[test]]
+name = "rtl"
+path = "tests/rtl.rs"
+# 書字方向は NSApplication を作るときに決まるので、別のプロセスで走らせる。
+harness = false

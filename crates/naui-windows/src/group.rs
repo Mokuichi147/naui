@@ -81,11 +81,13 @@ fn load_border(xaml: &str, what: &str) -> Result<Border> {
     }
 }
 
+/// `start` goes to `Left`: XAML mirrors `Thickness` with the rest of a
+/// `RightToLeft` layout, so it is then on the right.
 fn thickness(padding: Padding) -> Thickness {
     Thickness {
-        Left: padding.left,
+        Left: padding.start,
         Top: padding.top,
-        Right: padding.right,
+        Right: padding.end,
         Bottom: padding.bottom,
     }
 }
@@ -208,7 +210,8 @@ impl Group {
     /// The space between the card's edge and the content. The default is
     /// [`DEFAULT_GROUP_PADDING`](naui_core::DEFAULT_GROUP_PADDING).
     ///
-    /// `left` and `right` are the physical sides, also in right-to-left text.
+    /// `start` is the side where the content starts: the right in a right-to-left
+    /// layout.
     pub fn set_padding(&self, padding: Padding) {
         let _ = self.0.card.SetPadding(thickness(padding));
     }

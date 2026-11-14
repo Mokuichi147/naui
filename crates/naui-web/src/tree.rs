@@ -368,7 +368,7 @@ impl Tree {
         // 選択の帯を行いっぱいに出すため。
         style(
             &row,
-            "padding-left",
+            "padding-inline-start",
             &format!("{}px", 4.0 + INDENT * (path.len().saturating_sub(1)) as f64),
         );
 
@@ -482,7 +482,12 @@ impl Tree {
                 style(group, "display", if open { "block" } else { "none" });
             }
             if let Some(twisty) = &node.twisty {
-                twisty.set_text_content(Some(if open { "▾" } else { "▸" }));
+                // 閉じた印は子のある向き (行の終わり側) を指す。
+                twisty.set_text_content(Some(match (open, crate::is_rtl()) {
+                    (true, _) => "▾",
+                    (false, true) => "◂",
+                    (false, false) => "▸",
+                }));
                 let _ = node
                     .item
                     .set_attribute("aria-expanded", if open { "true" } else { "false" });
@@ -598,7 +603,13 @@ impl Tree {
             .as_ref()
             .and_then(|path| rows.iter().position(|row| row == path));
 
-        match event.key().as_str() {
+        // 右から左では、開く・子へ進むのが左、閉じる・親へ戻るのが右になる。
+        let key = match (event.key().as_str(), crate::is_rtl()) {
+            ("ArrowLeft", true) => "ArrowRight".to_owned(),
+            ("ArrowRight", true) => "ArrowLeft".to_owned(),
+            (key, _) => key.to_owned(),
+        };
+        match key.as_str() {
             "ArrowDown" => {
                 let next = at.map_or(0, |at| (at + 1).min(rows.len() - 1));
                 self.focus(&rows[next]);

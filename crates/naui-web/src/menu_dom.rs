@@ -123,7 +123,8 @@ impl MenuDom {
                 let _ = button.set_attribute("role", "menuitem");
                 let _ = button.set_attribute("aria-haspopup", "menu");
                 let _ = button.set_attribute("aria-expanded", "false");
-                trailing(doc, &button, "▸")?;
+                // サブメニューが開く側 (行の終わり側) を指す。
+                trailing(doc, &button, if crate::is_rtl() { "◂" } else { "▸" })?;
 
                 // 見出しの横へ出すため、見出しとサブメニューを位置決めの入れ物へ入れる。
                 let holder: HtmlElement = create(doc, "div")?.unchecked_into();
@@ -138,7 +139,7 @@ impl MenuDom {
                 style(&submenu, "position", "absolute");
                 // 枠と余白の分だけ上へずらし、最初の項目を見出しの高さにそろえる。
                 style(&submenu, "top", "-5px");
-                style(&submenu, "left", "100%");
+                style(&submenu, "inset-inline-start", "100%");
                 style(&submenu, "display", "none");
                 self.build(doc, &submenu, children, path, here, look, actions)?;
                 append(&holder, &submenu)?;
@@ -242,19 +243,26 @@ fn trailing(doc: &Document, button: &HtmlElement, text: &str) -> Result<()> {
     append(button, &hint)
 }
 
-/// Opens a submenu to the left of its heading when it would overflow the right edge
-/// of the viewport.
+/// Opens a submenu beside its heading on the side where rows end (the right, or the
+/// left in a right-to-left layout), and on the other side when it would overflow
+/// the viewport there.
 fn keep_beside(submenu: &HtmlElement) {
-    style(submenu, "left", "100%");
-    style(submenu, "right", "auto");
+    style(submenu, "inset-inline-start", "100%");
+    style(submenu, "inset-inline-end", "auto");
     let Some(limit) = web_sys::window()
         .and_then(|window| window.inner_width().ok())
         .and_then(|value| value.as_f64())
     else {
         return;
     };
-    if submenu.get_bounding_client_rect().right() > limit {
-        style(submenu, "left", "auto");
-        style(submenu, "right", "100%");
+    let rect = submenu.get_bounding_client_rect();
+    let overflows = if crate::is_rtl() {
+        rect.left() < 0.0
+    } else {
+        rect.right() > limit
+    };
+    if overflows {
+        style(submenu, "inset-inline-start", "auto");
+        style(submenu, "inset-inline-end", "100%");
     }
 }

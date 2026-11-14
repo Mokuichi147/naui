@@ -54,13 +54,15 @@ mod window;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Tasks, Theme};
+use naui_core::{
+    DatePickerMode, Error, LayoutDirection, Orientation, Result, Settings, Tasks, Theme,
+};
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAppearance, NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSApplication,
-    NSApplicationActivationPolicy, NSApplicationDelegate,
+    NSApplicationActivationPolicy, NSApplicationDelegate, NSUserInterfaceLayoutDirection,
 };
 use objc2_foundation::NSNotification;
 
@@ -77,6 +79,8 @@ pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
 pub use group::{Group, Separator};
 pub use languages::apply_app_language;
+#[doc(hidden)]
+pub use languages::apply_layout_direction;
 #[doc(hidden)]
 pub use languages::override_preferred_languages_for_test;
 pub use layout::{Grid, Scroll, Spacer};
@@ -490,6 +494,11 @@ impl Ui {
         self.0.theme.get()
     }
 
+    /// Which way the app's layout runs (`NSApp.userInterfaceLayoutDirection`).
+    pub fn layout_direction(&self) -> LayoutDirection {
+        layout_direction(self.0.mtm)
+    }
+
     /// The OS's preferred languages as BCP 47 tags, most preferred first (`"ja-JP"`,
     /// `"en-US"` and so on). The basis for choosing which translation to show.
     ///
@@ -599,6 +608,23 @@ define_class!(
     }
 );
 
+/// Which way the app's layout runs. AppKit decides it once for the app, when
+/// `NSApplication` is created.
+pub(crate) fn layout_direction(mtm: MainThreadMarker) -> LayoutDirection {
+    if NSApplication::sharedApplication(mtm).userInterfaceLayoutDirection()
+        == NSUserInterfaceLayoutDirection::RightToLeft
+    {
+        LayoutDirection::Rtl
+    } else {
+        LayoutDirection::Ltr
+    }
+}
+
+/// Whether the app's layout runs right to left. False off the main thread.
+pub(crate) fn is_rtl() -> bool {
+    MainThreadMarker::new().is_some_and(|mtm| layout_direction(mtm).is_rtl())
+}
+
 /// Starts the app and builds the UI inside `build`.
 ///
 /// `build` is called after the app has finished initializing. Widgets can be
@@ -617,6 +643,10 @@ where
     if let Some(tag) = settings.language.as_deref() {
         languages::apply_app_language(Some(tag));
     }
+    // 書字方向は NSApplication を作るときに一度だけ読まれる。
+    let direction = settings.resolved_layout_direction();
+    naui_core::set_app_layout_direction(direction);
+    languages::apply_layout_direction(direction);
     let app = NSApplication::sharedApplication(mtm);
     app.setActivationPolicy(NSApplicationActivationPolicy::Regular);
     let appearance = appearance_for_theme(settings.theme);

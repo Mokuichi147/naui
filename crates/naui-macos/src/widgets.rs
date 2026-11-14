@@ -25,9 +25,9 @@ use objc2_app_kit::{
     NSFontTextStyleTitle3, NSForegroundColorAttributeName, NSLayoutAttribute, NSLayoutConstraint,
     NSLayoutGuide, NSLineBreakMode, NSLinkAttributeName, NSProgressIndicator,
     NSProgressIndicatorStyle, NSResponder, NSScrollView, NSSearchField, NSSecureTextField,
-    NSSlider, NSStackView, NSStackViewDistribution, NSTextField, NSTextView, NSTintProminence,
-    NSUnderlineStyle, NSUnderlineStyleAttributeName, NSUserInterfaceLayoutOrientation, NSView,
-    NSViewFrameDidChangeNotification,
+    NSSlider, NSStackView, NSStackViewDistribution, NSTextAlignment, NSTextField, NSTextView,
+    NSTintProminence, NSUnderlineStyle, NSUnderlineStyleAttributeName,
+    NSUserInterfaceLayoutOrientation, NSView, NSViewFrameDidChangeNotification,
 };
 use objc2_foundation::{
     NSArray, NSAttributedString, NSAttributedStringKey, NSDictionary, NSEdgeInsets,
@@ -216,6 +216,9 @@ impl NauiLabel {
         this.setSelectable(false);
         this.setBezeled(false);
         this.setDrawsBackground(false);
+        // `init` で作った欄の揃えは左 (Left) のまま。`labelWithString` などと同じ
+        // 自然な揃え (Natural) にし、右から左のアプリでは右へ寄せる。
+        this.setAlignment(NSTextAlignment::Natural);
         this.setTextColor(Some(&NSColor::labelColor()));
         this.setFont(Some(&NSFont::systemFontOfSize(NSFont::systemFontSize())));
         this.setTranslatesAutoresizingMaskIntoConstraints(false);
@@ -810,6 +813,9 @@ impl_widget!(PasswordInput);
 impl PasswordInput {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
         let native = NSSecureTextField::new(mtm);
+        // `new` で作った欄の揃えは左 (Left) のまま。`labelWithString` などと同じ
+        // 自然な揃え (Natural) にし、右から左のアプリでは右へ寄せる。
+        native.setAlignment(NSTextAlignment::Natural);
         let (handlers, observer) = observe_field(mtm, &native);
         Self(Rc::new(PasswordInputInner {
             native,
@@ -878,6 +884,8 @@ impl_widget!(SearchInput);
 impl SearchInput {
     pub(crate) fn new(mtm: MainThreadMarker) -> Self {
         let native = NSSearchField::new(mtm);
+        // 揃えは自然な揃えにする (PasswordInput と同じ理由)。
+        native.setAlignment(NSTextAlignment::Natural);
         let (handlers, observer) = observe_field(mtm, &native);
         Self(Rc::new(SearchInputInner {
             native,
@@ -970,6 +978,7 @@ impl PlaceholderLabel {
         this.setSelectable(false);
         this.setBezeled(false);
         this.setDrawsBackground(false);
+        this.setAlignment(NSTextAlignment::Natural);
         this.setTextColor(Some(&NSColor::placeholderTextColor()));
         this.setFont(Some(&NSFont::systemFontOfSize(NSFont::systemFontSize())));
         this.setTranslatesAutoresizingMaskIntoConstraints(false);
@@ -1695,17 +1704,20 @@ impl Stack {
 
     pub fn set_padding(&self, padding: Padding) {
         self.0.padding.set(padding);
+        // NSStackView の edgeInsets の左右は、右から左のアプリでは入れ替わる
+        // (left が先頭側)。start と end をそのまま渡せば反転も付いてくる。
         self.0.native.setEdgeInsets(NSEdgeInsets {
             top: padding.top,
-            left: padding.left,
+            left: padding.start,
             bottom: padding.bottom,
-            right: padding.right,
+            right: padding.end,
         });
         // 子は余白の内側のガイドへ揃えてあるので、ガイドを動かせば追従する。
-        // `NSStackView` と同じく、left は先頭 (leading)、right は末尾 (trailing)。
+        // ガイドは leading / trailing に張ってあるので、start は先頭側に付き、
+        // 右から左のアプリでは右になる。
         let [leading, trailing, top, bottom] = &self.0.padding_constraints;
-        leading.setConstant(padding.left);
-        trailing.setConstant(padding.right);
+        leading.setConstant(padding.start);
+        trailing.setConstant(padding.end);
         top.setConstant(padding.top);
         bottom.setConstant(padding.bottom);
         self.invalidate_natural_size();
@@ -2024,7 +2036,11 @@ impl Stack {
             !stale
         });
         drop(children);
-        let removed = self.0.fill_constraints.borrow_mut().remove(&view_key(view));
+        let removed = self
+            .0
+            .cross_constraints
+            .borrow_mut()
+            .remove(&view_key(view));
         for constraint in removed.iter().flatten() {
             constraint.setActive(false);
         }
