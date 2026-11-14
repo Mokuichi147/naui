@@ -147,8 +147,11 @@ impl SplitViewInner {
         let slot = if index == 0 { &self.start } else { &self.end };
         if let Some(previous) = slot.borrow_mut().take() {
             let view = previous.native_view();
-            self.native.removeArrangedSubview(&view);
-            view.removeFromSuperview();
+            // 外さずに別の親へ移った前の区画は、新しい親から抜かない。
+            if crate::layout::is_placed_in(&view, &self.native) {
+                self.native.removeArrangedSubview(&view);
+                view.removeFromSuperview();
+            }
         }
 
         let view = child.native_view();

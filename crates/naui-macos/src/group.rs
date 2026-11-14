@@ -245,7 +245,11 @@ impl Group {
             return;
         };
         if let Some(previous) = self.0.child.borrow_mut().take() {
-            previous.native_view().removeFromSuperview();
+            // 外さずに別の親へ移った前の中身は、新しい親から抜かない。
+            let previous = previous.native_view();
+            if crate::layout::is_placed_in(&previous, &content) {
+                previous.removeFromSuperview();
+            }
         }
         let view = child.native_view();
         crate::layout::prepare_child(&view);
@@ -288,11 +292,13 @@ impl GroupInner {
                 .bottomAnchor()
                 .constraintEqualToAnchor_constant(&content.bottomAnchor(), -padding.bottom),
         ]);
+        // 外さずに別の親へ移った中身には張らない (共通の祖先が無く例外になる)。
         if let Some(child) = self
             .child
             .borrow()
             .as_ref()
             .map(|child| child.native_view())
+            .filter(|child| crate::layout::is_placed_in(child, &content))
         {
             let leading = child
                 .leadingAnchor()
