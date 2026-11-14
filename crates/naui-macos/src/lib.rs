@@ -37,6 +37,7 @@ mod number_input;
 mod popover;
 mod popup;
 mod radio_group;
+mod row_cell;
 mod sheet;
 mod sidebar;
 mod split_view;

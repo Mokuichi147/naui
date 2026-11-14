@@ -420,6 +420,18 @@ fn main() {
             moved_child_follows_the_new_stack,
         ),
         (
+            "外さずに別の Stack へ移した子に、元の Stack の操作が触れない",
+            stack_leaves_a_child_moved_without_removal_alone,
+        ),
+        (
+            "外さずに別の親へ移した子に、Grid などほかのコンテナの操作が触れない",
+            containers_leave_a_child_moved_without_removal_alone,
+        ),
+        (
+            "List の行・Table のセル・Dialog の中身は作り直しても戻り、移した先からは取り返さない",
+            widget_rows_come_back_after_rebuilding,
+        ),
+        (
             "移した子はスクロール位置を保ち、フォーカスは外れて変換中の文字は確定する",
             moved_widget_keeps_scroll_but_not_focus,
         ),
@@ -3697,6 +3709,694 @@ fn stack_breakpoint_follows_its_width(ui: &Ui) -> Result<()> {
         "狭まれば新しい自分の向きになる",
     );
     window.close();
+    Ok(())
+}
+
+/// A child appended to another `Stack` without being removed first stays in the old
+/// `Stack`'s list (as on the Web), but the old `Stack` no longer touches it.
+///
+/// Its operations used to place constraints and spacing on the moved child, and
+/// appending, inserting, removing, changing the spacing, or switching the orientation
+/// with a `Fill` child raised an exception (`setCustomSpacing:afterView:` for a view
+/// it does not arrange, or a constraint with no common ancestor).
+fn stack_leaves_a_child_moved_without_removal_alone(ui: &Ui) -> Result<()> {
+    let first = ui.stack(Orientation::Vertical)?;
+    let second = ui.stack(Orientation::Vertical)?;
+    let filled = ui.label("広がる")?;
+    filled.set_sizing(Sizing::fill_width());
+    let moved = ui.stack(Orientation::Horizontal)?;
+    moved.append(&ui.label("移る中身")?);
+    moved.set_sizing(Sizing::fill_width().height(Length::Fill));
+    let last = ui.label("最後")?;
+    first.append(&filled);
+    first.append(&moved);
+    first.append(&last);
+    let first_root = first.native_view();
+    first_root.setFrameSize(NSSize::new(300.0, 200.0));
+    first_root.layoutSubtreeIfNeeded();
+
+    second.set_padding(Padding::all(20.0));
+    second.append(&moved);
+    let second_root = second.native_view();
+    second_root.setFrameSize(NSSize::new(200.0, 100.0));
+    second_root.layoutSubtreeIfNeeded();
+    let in_second = |what: &str| {
+        let parent = unsafe { moved.native_view().superview() };
+        assert!(
+            parent.is_some_and(|parent| std::ptr::eq::<NSView>(&*parent, &*second_root)),
+            "{what}: 移った子は新しい親の中のままであること"
+        );
+    };
+    in_second("移した直後");
+    assert_eq!(first.len(), 3, "元の Stack の記録には残ること");
+
+    // 移った子に元の Stack の制約や間隔を張ると例外になる操作。
+    first.set_orientation(Orientation::Horizontal);
+    first.set_spacing(8.0);
+    first.set_align(Align::End);
+    first.set_padding(Padding::all(4.0));
+    first.set_orientation(Orientation::Vertical);
+    in_second("向きや間隔を変えたあと");
+
+    // 記録の位置は移った子も数える。ネイティブの並びでは、移った子を飛ばした
+    // 位置へ入る (受け皿の後ろへ回らない)。
+    first.insert(3, &ui.label("足した")?);
+    assert_eq!(
+        arranged_labels(&first),
+        ["広がる", "最後", "足した"],
+        "足した子が元の子の後ろ、受け皿の手前に並ぶこと"
+    );
+
+    // 移った子の位置を外しても、新しい親からは抜けない。
+    first.remove(1);
+    in_second("元の Stack で外したあと");
+    assert_eq!(first.len(), 3);
+    first_root.layoutSubtreeIfNeeded();
+    second_root.layoutSubtreeIfNeeded();
+    let width = moved.native_view().frame().size.width;
+    assert!(
+        (width - 160.0).abs() < 1e-6,
+        "新しい親の幅から余白を除いた幅のままであること: {width}"
+    );
+
+    // 移っていった子が戻ってきたら、古い記録は捨てて 1 つだけになる。
+    let back = ui.label("戻る")?;
+    first.append(&back);
+    second.append(&back);
+    let between = ui.label("あいだ")?;
+    first.append(&between);
+    first.append(&back);
+    assert_eq!(first.len(), 5, "戻った子の記録が重ならないこと");
+    first.set_spacing(4.0);
+    assert_eq!(
+        arranged_labels(&first),
+        ["広がる", "最後", "足した", "あいだ", "戻る"],
+        "戻った子が末尾に 1 つだけ並ぶこと"
+    );
+
+    // 末尾の記録が移っていった子でも、足した子と本当の手前の子の間は空く。
+    second.append(&back);
+    let native: Retained<objc2_app_kit::NSStackView> = first_root
+        .clone()
+        .downcast()
+        .expect("NSStackView であること");
+    first.set_spacing(4.0);
+    assert_eq!(
+        native.customSpacingAfterView(&between.native_view()),
+        0.0,
+        "後ろが移っていった子だけなら、受け皿との間は詰めること"
+    );
+    let after = ui.label("次")?;
+    first.append(&after);
+    assert_eq!(
+        native.customSpacingAfterView(&between.native_view()),
+        4.0,
+        "手前の子と足した子の間に間隔が入ること"
+    );
+    assert_eq!(
+        native.customSpacingAfterView(&after.native_view()),
+        0.0,
+        "末尾の子と受け皿の間は詰めること"
+    );
+    Ok(())
+}
+
+/// What a container does after one of its children was appended elsewhere without
+/// being removed first.
+type AfterMove<'a> = Box<dyn FnOnce() -> Result<()> + 'a>;
+
+/// Puts a child into a container with `place`, appends it to another container
+/// without removing it, then runs the old container's operations that `place`
+/// returned. The child must stay in its new parent, shown.
+fn check_moved_child<'a>(
+    ui: &'a Ui,
+    name: &str,
+    into_grid: bool,
+    place: impl FnOnce(&naui_macos::Stack) -> Result<AfterMove<'a>>,
+) -> Result<()> {
+    let child = ui.stack(Orientation::Vertical)?;
+    child.append(&ui.label("移る中身")?);
+    child.set_sizing(Sizing::fill_width().height(Length::Fill));
+    let after = place(&child)?;
+
+    let stack = ui.stack(Orientation::Vertical)?;
+    let grid = ui.grid()?;
+    let parent = if into_grid {
+        grid.attach(&child, GridCell::new(0, 0));
+        grid.native_view()
+    } else {
+        stack.append(&child);
+        stack.native_view()
+    };
+    after()?;
+    parent.setFrameSize(NSSize::new(200.0, 100.0));
+    parent.layoutSubtreeIfNeeded();
+    let what = format!("{name} → {}", if into_grid { "Grid" } else { "Stack" });
+    let view = child.native_view();
+    let superview = unsafe { view.superview() };
+    assert!(
+        superview.is_some_and(|superview| std::ptr::eq::<NSView>(&*superview, &*parent)),
+        "{what}: 移った子は新しい親の中のままであること"
+    );
+    assert!(!view.isHidden(), "{what}: 新しい親の中で隠れないこと");
+    assert!(
+        !view.translatesAutoresizingMaskIntoConstraints(),
+        "{what}: 新しい親の制約で置かれたままであること"
+    );
+    // 指定の変更は新しい親が受ける。
+    child.set_sizing(Sizing::AUTO);
+    parent.layoutSubtreeIfNeeded();
+    Ok(())
+}
+
+/// Like [`stack_leaves_a_child_moved_without_removal_alone`], for the other
+/// containers.
+///
+/// They used to raise an exception (the Grid's next layout, `Scroll::set_policy`,
+/// `Group::set_padding`, `Expander::set_child`), take the child from its new parent
+/// (removing or replacing it, switching tabs, attaching or removing a window's
+/// sidebar), or hide it there (collapsing an `Expander`).
+fn containers_leave_a_child_moved_without_removal_alone(ui: &Ui) -> Result<()> {
+    for into_grid in [false, true] {
+        let other = || ui.label("別の中身");
+        check_moved_child(
+            ui,
+            "Grid の余白・間隔・トラック",
+            into_grid,
+            |child| {
+                let grid = ui.grid()?;
+                grid.attach(child, GridCell::new(0, 0));
+                grid.attach(&ui.label("隣")?, GridCell::new(1, 0));
+                grid.native_view().layoutSubtreeIfNeeded();
+                Ok(Box::new(move || {
+                    grid.set_padding(Padding::all(4.0));
+                    grid.set_spacing(3.0, 3.0);
+                    grid.set_column_track(0, Track::Fill(1.0));
+                    grid.set_row_track(0, Track::Fill(1.0));
+                    grid.attach(&ui.label("足した")?, GridCell::new(0, 1));
+                    grid.native_view().layoutSubtreeIfNeeded();
+                    Ok(())
+                }))
+            },
+        )?;
+        for (name, op) in [("remove", 0), ("clear", 1), ("replace", 2)] {
+            check_moved_child(ui, &format!("Grid の {name}"), into_grid, |child| {
+                let grid = ui.grid()?;
+                grid.attach(child, GridCell::new(0, 0));
+                let replacement = other()?;
+                Ok(Box::new(move || {
+                    match op {
+                        0 => grid.remove(GridCell::new(0, 0)),
+                        1 => grid.clear(),
+                        _ => grid.replace(&replacement, GridCell::new(0, 0)),
+                    }
+                    assert_eq!(grid.len(), usize::from(op == 2));
+                    grid.native_view().layoutSubtreeIfNeeded();
+                    Ok(())
+                }))
+            })?;
+        }
+        check_moved_child(ui, "Scroll", into_grid, |child| {
+            let scroll = ui.scroll()?;
+            scroll.set_child(child);
+            let replacement = other()?;
+            Ok(Box::new(move || {
+                scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+                scroll.set_child(&replacement);
+                Ok(())
+            }))
+        })?;
+        check_moved_child(ui, "Group", into_grid, |child| {
+            let group = ui.group("見出し")?;
+            group.set_child(child);
+            let replacement = other()?;
+            Ok(Box::new(move || {
+                group.set_padding(Padding::all(3.0));
+                group.set_child(&replacement);
+                Ok(())
+            }))
+        })?;
+        check_moved_child(ui, "Expander", into_grid, |child| {
+            let expander = ui.expander("開く")?;
+            expander.set_child(child);
+            expander.set_expanded(true);
+            let replacement = other()?;
+            Ok(Box::new(move || {
+                expander.set_expanded(false);
+                expander.set_child(&replacement);
+                Ok(())
+            }))
+        })?;
+        for detail in [false, true] {
+            check_moved_child(ui, "AdaptivePanes", into_grid, |child| {
+                let panes = ui.adaptive_panes()?;
+                if detail {
+                    panes.set_list(&ui.label("一覧")?);
+                    panes.set_detail(child);
+                } else {
+                    panes.set_list(child);
+                    panes.set_detail(&ui.label("詳細")?);
+                }
+                let replacement = other()?;
+                Ok(Box::new(move || {
+                    panes.set_breakpoint(2000.0);
+                    panes.show(Pane::Detail);
+                    panes.go_back();
+                    if detail {
+                        panes.set_detail(&replacement);
+                    } else {
+                        panes.set_list(&replacement);
+                    }
+                    Ok(())
+                }))
+            })?;
+        }
+        for end in [false, true] {
+            check_moved_child(ui, "SplitView", into_grid, |child| {
+                let split = ui.split_view(Orientation::Horizontal)?;
+                let side = ui.label("反対側")?;
+                if end {
+                    split.set_start(&side);
+                    split.set_end(child);
+                } else {
+                    split.set_start(child);
+                    split.set_end(&side);
+                }
+                let replacement = other()?;
+                Ok(Box::new(move || {
+                    split.set_position(100.0);
+                    if end {
+                        split.set_end(&replacement);
+                    } else {
+                        split.set_start(&replacement);
+                    }
+                    split.native_view().layoutSubtreeIfNeeded();
+                    Ok(())
+                }))
+            })?;
+        }
+        check_moved_child(ui, "Tabs", into_grid, |child| {
+            let tabs = ui.tabs()?;
+            tabs.add_tab("一", child);
+            tabs.add_tab("二", &ui.label("二")?);
+            tabs.set_selected(0);
+            Ok(Box::new(move || {
+                tabs.set_selected(1);
+                tabs.set_selected(0);
+                tabs.remove_tab(0);
+                tabs.clear();
+                Ok(())
+            }))
+        })?;
+        check_moved_child(ui, "Popover", into_grid, |child| {
+            let (window, button) = popover_window(ui, "移る")?;
+            let popover = ui.popover()?;
+            popover.set_child(child);
+            let replacement = other()?;
+            Ok(Box::new(move || {
+                // 開くときに中身の幅を決め直す経路も通す。
+                popover.open(&button);
+                popover.close();
+                popover.set_child(&replacement);
+                window.close();
+                Ok(())
+            }))
+        })?;
+        check_moved_child(ui, "Window", into_grid, |child| {
+            let window = ui.window("移る", 400.0, 300.0)?;
+            window.set_child(child);
+            let replacement = other()?;
+            Ok(Box::new(move || {
+                window.set_size(500.0, 400.0);
+                window.set_child(&replacement);
+                window.close();
+                Ok(())
+            }))
+        })?;
+        check_moved_child(ui, "Sheet", into_grid, |child| {
+            let (window, _) = popover_window(ui, "移る")?;
+            let sheet = ui.sheet("移る")?;
+            sheet.set_child(child);
+            let replacement = other()?;
+            Ok(Box::new(move || {
+                // 開くときに中身の幅を決め直す経路も通す。
+                sheet.open();
+                assert!(sheet.is_open(), "Sheet: 開けること");
+                sheet.close();
+                sheet.set_title("");
+                sheet.set_child(&replacement);
+                window.close();
+                Ok(())
+            }))
+        })?;
+        check_moved_child(ui, "Dialog", into_grid, |child| {
+            let dialog = ui.dialog("移る")?;
+            dialog.set_child(child);
+            // 一度組み立てて、中身を alert の中へ入れておく。
+            dialog.native_alert().layout();
+            Ok(Box::new(move || {
+                let alert = dialog.native_alert();
+                alert.layout();
+                assert!(
+                    alert.accessoryView().is_none(),
+                    "Dialog: 移った中身を alert へ戻さないこと"
+                );
+                Ok(())
+            }))
+        })?;
+        check_moved_child(ui, "List の行", into_grid, |child| {
+            let list = ui.list()?;
+            list.set_rows(&[ListRow::new(child)]);
+            let native = list.native_table();
+            let show = move || {
+                let _ = native.viewAtColumn_row_makeIfNecessary(0, 0, true);
+            };
+            show();
+            let replacement = other()?;
+            Ok(Box::new(move || {
+                list.native_table().reloadData();
+                show();
+                list.refresh();
+                show();
+                // 中身の移った行は空になるが、高さは決まる。
+                let row_height = || {
+                    list.native_view().layoutSubtreeIfNeeded();
+                    list.native_table().rectOfRow(0).size.height
+                };
+                list.native_view().setFrameSize(NSSize::new(200.0, 300.0));
+                assert!(row_height() > 0.0, "List: 空の行にも高さがあること");
+                list.set_row_height(40.0);
+                show();
+                assert_eq!(row_height(), 40.0, "List: 空の行も指定の高さになること");
+                list.set_rows(&[ListRow::new(&replacement)]);
+                show();
+                Ok(())
+            }))
+        })?;
+        check_moved_child(ui, "List の組み立てた行", into_grid, |child| {
+            let list = ui.list()?;
+            let content = child.clone();
+            list.set_row_builder(1, move |_| Ok(ListRow::new(&content)));
+            let native = list.native_table();
+            let _ = native.viewAtColumn_row_makeIfNecessary(0, 0, true);
+            Ok(Box::new(move || {
+                // 組み立て済みの行を、組み立て直さずに出し直す。
+                native.reloadData();
+                let _ = native.viewAtColumn_row_makeIfNecessary(0, 0, true);
+                // データソースは List が持っているので、最後まで生かしておく。
+                drop(list);
+                Ok(())
+            }))
+        })?;
+        check_moved_child(ui, "Table のセル", into_grid, |child| {
+            let table = ui.table()?;
+            table.set_columns(&TableColumn::list(["名前", "中身"]));
+            let content = child.clone();
+            table.set_row_builder(1, move |_| Ok(TableCells::new().text("行").cell(&content)));
+            let native = table.native_table();
+            let _ = native.viewAtColumn_row_makeIfNecessary(1, 0, true);
+            Ok(Box::new(move || {
+                // 組み立て済みの行を、組み立て直さずに出し直す。
+                table.set_columns(&TableColumn::list(["名前", "中身", "三"]));
+                let _ = native.viewAtColumn_row_makeIfNecessary(1, 0, true);
+                native.reloadData();
+                let _ = native.viewAtColumn_row_makeIfNecessary(1, 0, true);
+                Ok(())
+            }))
+        })?;
+        for case in 0..3 {
+            check_moved_child(ui, "Window のサイドバー", into_grid, |child| {
+                let window = ui.window("移る", 400.0, 300.0)?;
+                let sidebar = ui.sidebar()?;
+                if case > 0 {
+                    window.set_sidebar(&sidebar);
+                }
+                window.set_child(child);
+                let replacement = other()?;
+                Ok(Box::new(move || {
+                    match case {
+                        // 移ったあとにサイドバーを付ける。
+                        0 => window.set_sidebar(&sidebar),
+                        // サイドバーの右の区画の中身を差し替える。
+                        1 => window.set_child(&replacement),
+                        // サイドバーを外す。
+                        _ => window.clear_sidebar(),
+                    }
+                    window.set_size(500.0, 400.0);
+                    window.close();
+                    Ok(())
+                }))
+            })?;
+        }
+    }
+    Ok(())
+}
+
+/// Whether `view` is directly in the cell the table shows at `column` of row `row`,
+/// making the cell if it is not made yet.
+fn is_in_cell(
+    table: &objc2_app_kit::NSTableView,
+    view: &NSView,
+    column: isize,
+    row: isize,
+) -> bool {
+    let cell = table.viewAtColumn_row_makeIfNecessary(column, row, true);
+    let parent = unsafe { view.superview() };
+    match (cell, parent) {
+        (Some(cell), Some(parent)) => std::ptr::eq::<NSView>(&*cell, &*parent),
+        _ => false,
+    }
+}
+
+/// List rows, Table cells and a Dialog's content made from widgets come back after
+/// they are rebuilt, and take a widget from wherever it was when it is handed to them.
+///
+/// The counterpart of [`containers_leave_a_child_moved_without_removal_alone`]: these
+/// put the widget in place only when it is shown, so they must tell their own earlier
+/// cells from a parent the widget moved to.
+fn widget_rows_come_back_after_rebuilding(ui: &Ui) -> Result<()> {
+    // List: 渡した行。
+    let content = ui.label("行の中身")?;
+    let view = content.native_view();
+    let list = ui.list()?;
+    let mut rows = vec![ListRow::new(&content)];
+    for index in 1..200 {
+        rows.push(ListRow::new(&ui.label(&format!("行 {index}"))?));
+    }
+    list.set_rows(&rows);
+    let native = list.native_table();
+    let scroll = list.native_view();
+    scroll.setFrameSize(NSSize::new(200.0, 100.0));
+    scroll.layoutSubtreeIfNeeded();
+    assert!(
+        is_in_cell(&native, &view, 0, 0),
+        "List: 最初は行の中にあること"
+    );
+    for step in [
+        "reloadData",
+        "続けて reloadData",
+        "refresh",
+        "set_row_height",
+        "スクロール",
+    ] {
+        match step {
+            "refresh" => list.refresh(),
+            "set_row_height" => list.set_row_height(40.0),
+            "スクロール" => {
+                list.scroll_to_row(199);
+                scroll.layoutSubtreeIfNeeded();
+                list.scroll_to_row(0);
+                scroll.layoutSubtreeIfNeeded();
+            }
+            _ => native.reloadData(),
+        }
+        assert!(
+            is_in_cell(&native, &view, 0, 0),
+            "List: {step} のあとも行の中にあること"
+        );
+    }
+
+    // 別の List へ渡すと、そちらへ移り、前の List は取り返さない。
+    let second = ui.list()?;
+    second.set_rows(&[ListRow::new(&content)]);
+    let second_native = second.native_table();
+    assert!(
+        is_in_cell(&second_native, &view, 0, 0),
+        "List: 別の List へ渡すとそちらへ移ること"
+    );
+    native.reloadData();
+    let _ = native.viewAtColumn_row_makeIfNecessary(0, 0, true);
+    list.refresh();
+    let _ = native.viewAtColumn_row_makeIfNecessary(0, 0, true);
+    assert!(
+        is_in_cell(&second_native, &view, 0, 0),
+        "List: 後から渡した List から取り返さないこと"
+    );
+
+    // Stack の中の子を渡すと、行へ移る。
+    let stack = ui.stack(Orientation::Vertical)?;
+    let moving = ui.label("Stack から")?;
+    stack.append(&moving);
+    second.set_rows(&[ListRow::new(&moving)]);
+    assert!(
+        is_in_cell(&second_native, &moving.native_view(), 0, 0),
+        "List: Stack の中の子を渡すと行へ移ること"
+    );
+    stack.set_spacing(2.0);
+    stack.native_view().layoutSubtreeIfNeeded();
+
+    // List: 組み立てる行。毎回同じウィジェットを返す。
+    let built = ui.label("組み立てた中身")?;
+    let built_view = built.native_view();
+    let builder_list = ui.list()?;
+    let built_for_rows = built.clone();
+    builder_list.set_row_builder(1, move |_| Ok(ListRow::new(&built_for_rows)));
+    let builder_native = builder_list.native_table();
+    assert!(is_in_cell(&builder_native, &built_view, 0, 0));
+    builder_native.reloadData();
+    assert!(
+        is_in_cell(&builder_native, &built_view, 0, 0),
+        "List: 組み立て済みの行を出し直しても行の中にあること"
+    );
+    builder_list.refresh();
+    assert!(
+        is_in_cell(&builder_native, &built_view, 0, 0),
+        "List: 組み立て直しても行の中にあること"
+    );
+    // 移したあと AppKit が出し直しても奪わず、refresh で渡し直すと行へ戻る。
+    let holder = ui.stack(Orientation::Vertical)?;
+    holder.append(&built);
+    builder_native.reloadData();
+    builder_list.set_row_height(30.0);
+    let _ = builder_native.viewAtColumn_row_makeIfNecessary(0, 0, true);
+    assert!(
+        unsafe { built_view.superview() }
+            .is_some_and(|parent| std::ptr::eq::<NSView>(&*parent, &*holder.native_view())),
+        "List: 移したあとの出し直しでは奪わないこと"
+    );
+    builder_list.refresh();
+    assert!(
+        is_in_cell(&builder_native, &built_view, 0, 0),
+        "List: refresh で渡し直すと行へ戻ること"
+    );
+
+    // Table: 組み立てたセル。
+    let cell_content = ui.label("セルの中身")?;
+    let cell_view = cell_content.native_view();
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["名前", "中身"]));
+    let cell_for_rows = cell_content.clone();
+    table.set_row_builder(1, move |_| {
+        Ok(TableCells::new().text("行").cell(&cell_for_rows))
+    });
+    let table_native = table.native_table();
+    assert!(is_in_cell(&table_native, &cell_view, 1, 0));
+    table.set_columns(&TableColumn::list(["名前", "中身", "三"]));
+    assert!(
+        is_in_cell(&table_native, &cell_view, 1, 0),
+        "Table: 列を差し替えてもセルの中にあること"
+    );
+    table_native.reloadData();
+    assert!(is_in_cell(&table_native, &cell_view, 1, 0));
+    table.refresh();
+    assert!(
+        is_in_cell(&table_native, &cell_view, 1, 0),
+        "Table: 組み立て直してもセルの中にあること"
+    );
+    let holder = ui.stack(Orientation::Vertical)?;
+    holder.append(&cell_content);
+    table_native.reloadData();
+    table.set_columns(&TableColumn::list(["名前", "中身"]));
+    let _ = table_native.viewAtColumn_row_makeIfNecessary(1, 0, true);
+    assert!(
+        unsafe { cell_view.superview() }
+            .is_some_and(|parent| std::ptr::eq::<NSView>(&*parent, &*holder.native_view())),
+        "Table: 移したあとの出し直しでは奪わないこと"
+    );
+    table.refresh();
+    assert!(
+        is_in_cell(&table_native, &cell_view, 1, 0),
+        "Table: refresh で渡し直すとセルへ戻ること"
+    );
+
+    // 渡しただけでまだ置かれていない子を、前の持ち主が出し直しても取り返さない。
+    let pending = ui.label("渡しただけ")?;
+    let pending_view = pending.native_view();
+    let from = ui.list()?;
+    from.set_rows(&[ListRow::new(&pending)]);
+    let from_native = from.native_table();
+    assert!(is_in_cell(&from_native, &pending_view, 0, 0));
+    // List → List
+    let to = ui.list()?;
+    to.set_rows(&[ListRow::new(&pending)]);
+    from_native.reloadData();
+    let _ = from_native.viewAtColumn_row_makeIfNecessary(0, 0, true);
+    assert!(
+        is_in_cell(&to.native_table(), &pending_view, 0, 0),
+        "List → List: 前の List が先に出し直しても、渡した先の行に入ること"
+    );
+    // List → Dialog
+    let pending_dialog = ui.dialog("渡した先")?;
+    pending_dialog.set_child(&pending);
+    to.native_table().reloadData();
+    let _ = to
+        .native_table()
+        .viewAtColumn_row_makeIfNecessary(0, 0, true);
+    let alert = pending_dialog.native_alert();
+    assert!(
+        alert
+            .accessoryView()
+            .is_some_and(|accessory| std::ptr::eq::<NSView>(&*accessory, &*pending_view)),
+        "List → Dialog: 前の List が先に出し直しても、Dialog に載ること"
+    );
+    alert.layout();
+    // Dialog → Table
+    let pending_table = ui.table()?;
+    pending_table.set_columns(&TableColumn::list(["中身"]));
+    let for_table = pending.clone();
+    pending_table.set_row_builder(1, move |_| Ok(TableCells::new().cell(&for_table)));
+    // 組み立ては表示のときなので、先に行を作らせて引き取らせる。
+    let _ = pending_table
+        .native_table()
+        .viewAtColumn_row_makeIfNecessary(0, 0, true);
+    assert!(is_in_cell(
+        &pending_table.native_table(),
+        &pending_view,
+        0,
+        0
+    ));
+    // Table → Dialog → List: Dialog が組み立て直す前に List へ渡す。
+    pending_dialog.set_child(&pending);
+    let last = ui.list()?;
+    last.set_rows(&[ListRow::new(&pending)]);
+    pending_dialog.native_alert().layout();
+    pending_table.native_table().reloadData();
+    let _ = pending_table
+        .native_table()
+        .viewAtColumn_row_makeIfNecessary(0, 0, true);
+    assert!(
+        is_in_cell(&last.native_table(), &pending_view, 0, 0),
+        "Dialog・Table → List: 前の持ち主が先に組み立て直しても、List の行に入ること"
+    );
+
+    // Dialog: 続けて組み立てても、中身は新しい alert へ移る。
+    let field = ui.text_input("メモ")?;
+    let field_view = field.native_view();
+    let dialog = ui.dialog("二度")?;
+    dialog.set_child(&field);
+    for round in 0..2 {
+        let alert = dialog.native_alert();
+        alert.layout();
+        let accessory = alert.accessoryView();
+        assert!(
+            accessory.is_some_and(|accessory| std::ptr::eq::<NSView>(&*accessory, &*field_view)),
+            "Dialog: {round} 回目も中身が載ること"
+        );
+        assert!(
+            unsafe { field_view.superview() }.is_some(),
+            "Dialog: {round} 回目も alert の中に置かれること"
+        );
+    }
     Ok(())
 }
 

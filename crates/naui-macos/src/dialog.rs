@@ -22,10 +22,12 @@ use naui_core::{DialogButtons, DialogResponse};
 use objc2::rc::Retained;
 use objc2::MainThreadMarker;
 use objc2_app_kit::{
-    NSAlert, NSAlertFirstButtonReturn, NSApplication, NSModalResponse, NSModalResponseAbort, NSView,
+    NSAlert, NSAlertFirstButtonReturn, NSApplication, NSModalResponse, NSModalResponseAbort,
+    NSView, NSWindow,
 };
 use objc2_foundation::{NSSize, NSString};
 
+use crate::row_cell::CellOwner;
 use crate::trampoline::SharedSlot;
 use crate::widgets::Widget;
 
@@ -74,6 +76,12 @@ struct DialogInner {
     message: RefCell<String>,
     /// The content widget. Kept alive along with its trampolines.
     child: RefCell<Option<Box<dyn Widget>>>,
+    /// The window of the last `NSAlert` that took the content. The content is taken
+    /// again only from there (see [`Dialog::build`]).
+    last_window: RefCell<Option<Retained<NSWindow>>>,
+    /// The mark telling whether this dialog took the content last
+    /// ([`crate::row_cell::claim`]).
+    owner: CellOwner,
     buttons: RefCell<DialogButtons>,
     on_response: ResponseHandler,
     open: Cell<bool>,
@@ -93,6 +101,8 @@ impl Dialog {
             title: RefCell::new(title.to_string()),
             message: RefCell::new(String::new()),
             child: RefCell::new(None),
+            last_window: RefCell::new(None),
+            owner: CellOwner::new(),
             buttons: RefCell::new(DialogButtons::new()),
             on_response: ResponseHandler::default(),
             open: Cell::new(false),
@@ -118,7 +128,11 @@ impl Dialog {
     }
 
     /// The widget placed between the body text and the buttons. Each call replaces it.
+    ///
+    /// The widget leaves its current parent now, though it is put in place only when
+    /// the dialog is built.
     pub fn set_child(&self, child: &dyn Widget) {
+        crate::row_cell::claim(&child.native_view(), self.0.owner);
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
     }
 
@@ -186,6 +200,21 @@ impl Dialog {
         self.build().0
     }
 
+    /// Whether a new `NSAlert` may take the content `view`: it is still in the window of
+    /// the last alert that took it, or in no parent with this dialog as its last taker.
+    /// A widget the app moved or handed elsewhere after [`set_child`](Self::set_child)
+    /// stays there.
+    fn may_take(&self, view: &NSView) -> bool {
+        if unsafe { view.superview() }.is_none() {
+            return self.0.owner.is_last_taker_of(view);
+        }
+        let last = self.0.last_window.borrow();
+        match (view.window(), last.as_deref()) {
+            (Some(window), Some(last)) => std::ptr::eq::<NSWindow>(&*window, last),
+            _ => false,
+        }
+    }
+
     /// Creates the `NSAlert` and the sequence of roles of the added buttons.
     ///
     /// Response codes come back in the order the buttons were added, so that order is
@@ -195,14 +224,22 @@ impl Dialog {
         alert.setMessageText(&NSString::from_str(&self.0.title.borrow()));
         alert.setInformativeText(&NSString::from_str(&self.0.message.borrow()));
 
-        if let Some(child) = self.0.child.borrow().as_deref() {
-            let view = child.native_view();
+        // 渡したあとにアプリが別の親へ移した中身は、そこから取り返さない。
+        // 取るのは、どこにもないときと、前に組み立てた alert の中にあるときだけ。
+        let child = self
+            .0
+            .child
+            .borrow()
+            .as_deref()
+            .map(|child| child.native_view());
+        if let Some(view) = child.filter(|view| self.may_take(view)) {
             // `NSAlert` は accessoryView の **frame** を見て場所を空ける。
             // 制約に任せる (translatesAutoresizingMaskIntoConstraints = false)
             // ままだと、frame を入れても潰れてしまうので戻しておく。
             view.setTranslatesAutoresizingMaskIntoConstraints(true);
             view.setFrameSize(accessory_size(&view));
             alert.setAccessoryView(Some(&view));
+            *self.0.last_window.borrow_mut() = Some(alert.window());
         }
 
         let buttons = self.0.buttons.borrow().resolved();

@@ -23,10 +23,10 @@ use objc2::runtime::{NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
     NSApplication, NSBezelStyle, NSButton, NSButtonType, NSColor, NSControlStateValueOff,
-    NSControlStateValueOn, NSLayoutAttribute, NSLayoutConstraintOrientation, NSPathControl,
-    NSPathControlItem, NSPathStyle, NSSegmentDistribution, NSSegmentStyle, NSSegmentSwitchTracking,
-    NSSegmentedControl, NSStackView, NSStackViewDistribution, NSTabView, NSTabViewItem,
-    NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSWorkspace,
+    NSControlStateValueOn, NSLayoutAttribute, NSLayoutConstraint, NSLayoutConstraintOrientation,
+    NSPathControl, NSPathControlItem, NSPathStyle, NSSegmentDistribution, NSSegmentStyle,
+    NSSegmentSwitchTracking, NSSegmentedControl, NSStackView, NSStackViewDistribution, NSTabView,
+    NSTabViewItem, NSTextField, NSUserInterfaceLayoutOrientation, NSView, NSWorkspace,
 };
 use objc2_foundation::{NSArray, NSEdgeInsets, NSString, NSURL};
 
@@ -214,12 +214,53 @@ impl Tabs {
     }
 
     /// Adds one tab. `child` becomes that tab's content.
+    ///
+    /// The tab's view is a plain view naui owns, with `child` pinned to its edges.
+    /// `NSTabView` takes the selected tab's view out when the selection changes or
+    /// the tab is removed; with the child as the tab's view, a child that had been
+    /// appended to another container without being removed would be taken from that
+    /// new parent.
     pub fn add_tab(&self, label: &str, child: &dyn Widget) {
         let item = NSTabViewItem::new();
         item.setLabel(&NSString::from_str(label));
-        item.setView(Some(&child.native_view()));
+        let host = NSView::new(MainThreadMarker::from(&*self.0.native));
+        let view = child.native_view();
+        crate::layout::prepare_child(&view);
+        host.addSubview(&view);
+        // タブの中身の大きさは NSTabView が決める (受け皿の枠を置く)。中身は
+        // 受け皿いっぱいに置き、末尾と下は必須から 1 段下げて、上限や最小を
+        // 持つ中身とぶつからないようにする。
+        let trailing = view
+            .trailingAnchor()
+            .constraintEqualToAnchor(&host.trailingAnchor());
+        let bottom = view
+            .bottomAnchor()
+            .constraintEqualToAnchor(&host.bottomAnchor());
+        trailing.setPriority(crate::layout::CROSS_FILL_PRIORITY);
+        bottom.setPriority(crate::layout::CROSS_FILL_PRIORITY);
+        let constraints = [
+            view.leadingAnchor()
+                .constraintEqualToAnchor(&host.leadingAnchor()),
+            view.topAnchor().constraintEqualToAnchor(&host.topAnchor()),
+            trailing,
+            bottom,
+        ];
+        NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&constraints));
+        item.setView(Some(&host));
         self.0.native.addTabViewItem(&item);
         self.0.children.borrow_mut().push(child.boxed_clone());
+    }
+
+    /// Takes the content out of a removed tab's view, unless it has moved to another
+    /// parent (see [`crate::layout::is_placed_in`]).
+    fn release_content(item: &NSTabViewItem, child: &dyn Widget) {
+        let view = child.native_view();
+        let placed = item
+            .view(MainThreadMarker::from(&*view))
+            .is_some_and(|host| crate::layout::is_placed_in(&view, &host));
+        if placed {
+            view.removeFromSuperview();
+        }
     }
 
     /// Removes one tab. Does nothing if out of range.
@@ -234,7 +275,8 @@ impl Tabs {
         let item = self.0.native.tabViewItemAtIndex(index as isize);
         let previous = self.0.silent.replace(true);
         self.0.native.removeTabViewItem(&item);
-        self.0.children.borrow_mut().remove(index);
+        let child = self.0.children.borrow_mut().remove(index);
+        Self::release_content(&item, &*child);
         // 選択の寄せ先は環境任せにせず、4 バックエンドで同じ形にそろえる。
         let left = self.len();
         let selected = match selected {
@@ -252,12 +294,13 @@ impl Tabs {
     /// Removes every tab.
     pub fn clear(&self) {
         let previous = self.0.silent.replace(true);
-        while self.0.native.numberOfTabViewItems() > 0 {
+        let children = std::mem::take(&mut *self.0.children.borrow_mut());
+        for child in &children {
             let item = self.0.native.tabViewItemAtIndex(0);
             self.0.native.removeTabViewItem(&item);
+            Self::release_content(&item, &**child);
         }
         self.0.silent.set(previous);
-        self.0.children.borrow_mut().clear();
     }
 
     pub fn len(&self) -> usize {

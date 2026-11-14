@@ -1656,7 +1656,7 @@ impl Stack {
         }
         // 前の主軸で Auto の子に付けた強い hugging を外し、最初から新しい
         // 向きで入れた子と同じ優先度にする。
-        for child in self.0.children.borrow().iter() {
+        for child in self.held_children() {
             crate::layout::release_auto_size(&child.native_view(), vertical);
         }
         self.0.native.setOrientation(if vertical {
@@ -1675,14 +1675,7 @@ impl Stack {
         }
 
         // 子の側は、入れたときと同じ手順で新しい向きに合わせる。
-        let children: Vec<Box<dyn Widget>> = self
-            .0
-            .children
-            .borrow()
-            .iter()
-            .map(|child| child.boxed_clone())
-            .collect();
-        for child in &children {
+        for child in self.held_children() {
             child.nested_in_stack(vertical);
             self.apply_child_layout(&child.native_view());
         }
@@ -1772,9 +1765,7 @@ impl Stack {
         self.unmount(&*child);
         self.update_tail();
         // 末尾が変わったら、新しい末尾と受け皿の間を詰め直す。
-        if index == self.len() && index > 0 {
-            self.update_spacing_after(index - 1);
-        }
+        self.update_spacing_before(index);
         self.invalidate_natural_size();
     }
 
@@ -1791,32 +1782,43 @@ impl Stack {
     /// Places a child at `index` and sets up the constraints its specification needs.
     fn mount(&self, index: usize, child: &dyn Widget) {
         let view = child.native_view();
+        // 移っていった子が戻ってきたら、残っていた古い記録は捨てる。
+        let index = self.forget_moved(&view, index);
         crate::layout::prepare_child(&view);
         // 入れ子の `Stack` は、余りを吸うのを外側へ譲る。
         child.nested_in_stack(self.is_vertical());
         // 受け皿は常に末尾にいるので、子の数以下の位置はその手前になる。
+        // ネイティブの並びには移っていった子がいないので、その分を詰める。
+        let native_index = self.0.children.borrow()[..index]
+            .iter()
+            .filter(|child| self.holds(&child.native_view()))
+            .count();
         self.0
             .native
-            .insertArrangedSubview_atIndex(&view, index as isize);
+            .insertArrangedSubview_atIndex(&view, native_index as isize);
         self.0
             .children
             .borrow_mut()
             .insert(index, child.boxed_clone());
         self.apply_child_layout(&view);
         self.update_tail();
-        if index > 0 {
-            self.update_spacing_after(index - 1);
-        }
+        self.update_spacing_before(index);
         self.update_spacing_after(index);
         self.invalidate_natural_size();
     }
 
     /// Takes a child out of the view hierarchy, along with the constraints placed for
     /// it.
+    ///
+    /// A child that has moved to another parent is left where it is: only this
+    /// stack's record of it goes.
     fn unmount(&self, child: &dyn Widget) {
         let view = child.native_view();
-        self.0.native.removeArrangedSubview(&view);
-        view.removeFromSuperview();
+        let held = self.holds(&view);
+        if held {
+            self.0.native.removeArrangedSubview(&view);
+            view.removeFromSuperview();
+        }
         let removed = self
             .0
             .cross_constraints
@@ -1825,7 +1827,10 @@ impl Stack {
         for constraint in removed.iter().flatten() {
             constraint.setActive(false);
         }
-        child.left_stack();
+        // 入れ子の扱いは、もう新しい親のもの。
+        if held {
+            child.left_stack();
+        }
     }
 
     /// Redoes the constraints of a child whose specification changed.
@@ -1850,6 +1855,10 @@ impl Stack {
     /// Decides the main-axis hugging and the cross-axis constraints from the child's
     /// specification.
     fn apply_child_layout(&self, view: &NSView) {
+        // 移っていった子へ張ると、共通の祖先のない制約になり例外が出る。
+        if !self.holds(view) {
+            return;
+        }
         let vertical = self.is_vertical();
         if !crate::layout::wants_fill(view, !vertical) {
             crate::layout::keep_auto_size(view, !vertical);
@@ -1942,9 +1951,7 @@ impl Stack {
     fn update_tail(&self) {
         let vertical = self.is_vertical();
         let wants_tail = !self
-            .0
-            .children
-            .borrow()
+            .held_children()
             .iter()
             .any(|child| crate::layout::wants_fill(&child.native_view(), !vertical));
         if self.0.tail_spacer_active.replace(wants_tail) == wants_tail {
@@ -1968,19 +1975,77 @@ impl Stack {
     /// Between children it is the specified spacing; between the last child and the
     /// tail spacer it is 0 (spacing in front of the tail spacer would add that much
     /// blank space).
+    ///
+    /// Children that have moved to another parent are skipped: they are not in the
+    /// native arrangement, and `setCustomSpacing:afterView:` raises an exception for
+    /// a view that is not arranged.
     fn update_spacing_after(&self, index: usize) {
         let children = self.0.children.borrow();
         let Some(child) = children.get(index) else {
             return;
         };
-        let spacing = if index + 1 < children.len() {
-            self.0.spacing.get()
-        } else {
-            0.0
-        };
+        let view = child.native_view();
+        if !self.holds(&view) {
+            return;
+        }
+        let followed = children[index + 1..]
+            .iter()
+            .any(|next| self.holds(&next.native_view()));
+        let spacing = if followed { self.0.spacing.get() } else { 0.0 };
+        self.0.native.setCustomSpacing_afterView(spacing, &view);
+    }
+
+    /// Decides the spacing after the nearest child in front of `index` that is still
+    /// in this stack (records of children that moved away are skipped).
+    fn update_spacing_before(&self, index: usize) {
+        let previous = self.0.children.borrow()[..index.min(self.len())]
+            .iter()
+            .rposition(|child| self.holds(&child.native_view()));
+        if let Some(previous) = previous {
+            self.update_spacing_after(previous);
+        }
+    }
+
+    /// Drops the records of `view` left from before it moved to another parent, and
+    /// returns `index` shifted by the records dropped in front of it.
+    fn forget_moved(&self, view: &NSView, index: usize) -> usize {
+        if self.holds(view) {
+            return index;
+        }
+        let mut children = self.0.children.borrow_mut();
+        let mut shifted = index;
+        let mut position = 0;
+        children.retain(|child| {
+            let stale = std::ptr::eq::<NSView>(&*child.native_view(), view);
+            if stale && position < index {
+                shifted -= 1;
+            }
+            position += 1;
+            !stale
+        });
+        drop(children);
+        let removed = self.0.fill_constraints.borrow_mut().remove(&view_key(view));
+        for constraint in removed.iter().flatten() {
+            constraint.setActive(false);
+        }
+        shifted
+    }
+
+    /// Whether `view` is still in this stack (see [`crate::layout::is_placed_in`]).
+    fn holds(&self, view: &NSView) -> bool {
+        crate::layout::is_placed_in(view, &self.0.native)
+    }
+
+    /// The children still in this stack (see [`holds`](Self::holds)), cloned so that
+    /// callbacks may touch `children` while they are walked.
+    fn held_children(&self) -> Vec<Box<dyn Widget>> {
         self.0
-            .native
-            .setCustomSpacing_afterView(spacing, &child.native_view());
+            .children
+            .borrow()
+            .iter()
+            .filter(|child| self.holds(&child.native_view()))
+            .map(|child| child.boxed_clone())
+            .collect()
     }
 
     /// The number of children added.
