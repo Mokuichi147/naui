@@ -360,6 +360,13 @@ struct TableInner {
     sort_handler: SortHandler,
     columns: RefCell<Vec<TableColumn>>,
     rows: Rc<RowsState>,
+    /// Marks the cells and their widgets as this table's (see [`crate::handover`]).
+    owner: crate::handover::Owner,
+    /// The rows built since the app last handed rows over ([`Table::set_row_builder`],
+    /// [`Table::refresh`]) whose widgets were claimed. Building such a row again (when
+    /// it scrolls back into view, the columns change or the rows are sorted) does not
+    /// take its widgets back from a container the app has put them in since.
+    claimed: RefCell<std::collections::HashSet<usize>>,
     /// The range of rows currently built. With many rows, only those around the screen.
     window: Cell<RowWindow>,
     /// The contents of the built rows, in the same order as `row_elements`.
@@ -471,6 +478,8 @@ impl Table {
             sort_handler: SortHandler::default(),
             columns: RefCell::new(Vec::new()),
             rows: Rc::new(RowsState::default()),
+            owner: crate::handover::Owner::new(),
+            claimed: RefCell::new(std::collections::HashSet::new()),
             window: Cell::new(RowWindow::default()),
             realized: RefCell::new(Vec::new()),
             row_height: Cell::new(0.0),
@@ -589,11 +598,17 @@ impl Table {
     /// });
     /// # }
     /// ```
+    ///
+    /// A cell's widget is put in its cell each time the row is built. The first time
+    /// each row is built after this call or [`Table::refresh`], the widget is taken out
+    /// of wherever it is now. Building the row again when it scrolls back into view does
+    /// not take it back from a container the app has put it in since.
     pub fn set_row_builder(
         &self,
         count: usize,
         build: impl FnMut(usize) -> Result<TableCells> + 'static,
     ) {
+        self.0.claimed.borrow_mut().clear();
         self.0.rows.set_builder(count, build);
         self.reset_rows();
     }
@@ -620,8 +635,15 @@ impl Table {
         self.0.rows.set_selectable(selectable);
     }
 
-    /// Rebuilds the visible rows. The row count and selection stay.
+    /// Rebuilds the visible rows. The row count and selection stay. The cells' widgets
+    /// are handed over again.
     pub fn refresh(&self) {
+        self.0.claimed.borrow_mut().clear();
+        self.rebuild_rows();
+    }
+
+    /// Rebuilds the visible rows, without handing their widgets over again.
+    fn rebuild_rows(&self) {
         let _ = self.build_window();
         let picked = self.selection();
         self.write_selection(&picked);
@@ -643,7 +665,7 @@ impl Table {
             .set((height > 0.0).then_some(height));
         // 指定を外したときは、組み立て直した行から測り直す。
         self.0.row_height.set(height.max(0.0));
-        self.refresh();
+        self.rebuild_rows();
     }
 
     /// The row height (logical pixels). 0 if no row has been built yet.
@@ -896,6 +918,14 @@ impl Table {
             let Some(cells) = self.0.rows.cells(index) else {
                 continue;
             };
+            // アプリが行を渡し直してから初めて組み立てた行は、中身を引き取る。
+            if self.0.claimed.borrow_mut().insert(index) {
+                for column in 0..columns.len() {
+                    if let Some(CellContent::Widget(content)) = cells.content(column) {
+                        self.0.owner.claim(&content.native_element());
+                    }
+                }
+            }
             let element: HtmlElement = create(&self.0.document, "tr")?.unchecked_into();
             let _ = element.set_attribute("id", &self.row_id(index));
             let _ = element.set_attribute("aria-selected", "false");
@@ -915,8 +945,13 @@ impl Table {
                 style(&cell, "border-bottom", "1px solid");
                 style(&cell, "border-color", "GrayText");
                 match cells.content(column_index) {
+                    // 外さずにほかへ移った中身は、移った先に残して空のセルにする。
                     Some(CellContent::Widget(content)) => {
-                        let _ = cell.append_child(&content.native_element());
+                        self.0.owner.mark_cell(&cell);
+                        let content = content.native_element();
+                        if self.0.owner.may_take(&content) {
+                            let _ = cell.append_child(&content);
+                        }
                     }
                     // 列より短い行は、足りない分が空のセルになる。
                     Some(CellContent::Text(text)) => {
