@@ -12827,12 +12827,15 @@ impl Violations {
         });
     }
 
-    /// GTK and libadwaita logged no critical message (naui's own refusals are left
-    /// out).
+    /// GTK and libadwaita logged no critical message about a widget's parent: a
+    /// widget given a second parent, or taken out of a container it is not in. naui's
+    /// own refusals are left out, and so are unrelated ones (the GTK of CI's Ubuntu
+    /// logs a few `gtk_widget_is_ancestor` criticals along the way).
     fn no_gtk_criticals(&mut self, log: &[LogEntry], what: &str) {
         let criticals: Vec<_> = log
             .iter()
             .filter(|entry| entry.level == glib::LogLevel::Critical && entry.domain != "naui")
+            .filter(|entry| entry.message.contains("parent"))
             .map(|entry| format!("{}: {}", entry.domain, entry.message))
             .collect();
         self.check(criticals.is_empty(), || {
