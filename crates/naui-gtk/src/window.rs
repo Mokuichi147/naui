@@ -998,9 +998,16 @@ impl Window {
     }
 
     /// Replaces the window's content.
+    ///
+    /// A widget still in another container is refused, as GTK refuses it, and the
+    /// previous content stays.
     pub fn set_child(&self, child: &dyn Widget) {
         let bin = child.size_bin();
         let previous = self.0.child.borrow().as_ref().map(|child| child.size_bin());
+        let mine = previous.as_ref() == Some(&bin);
+        if crate::handover::refuses(&bin, mine, "Window::set_child") {
+            return;
+        }
         if let Some(previous) = previous {
             if previous != bin {
                 crate::interaction::clear_focus(&previous);

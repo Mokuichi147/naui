@@ -607,8 +607,14 @@ impl Tabs {
     }
 
     /// Adds one tab. `child` becomes that tab's content.
+    ///
+    /// A widget still in another container (or already in these tabs) is refused, as
+    /// GTK refuses it: no tab is added.
     pub fn add_tab(&self, label: &str, child: &dyn Widget) {
         let bin = child.size_bin();
+        if crate::handover::refuses(&bin, false, "Tabs::add_tab") {
+            return;
+        }
         bin.fill_parent();
         self.0
             .native

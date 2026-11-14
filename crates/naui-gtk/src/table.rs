@@ -16,6 +16,7 @@
 //! has no mechanism for it).
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use gtk::glib;
@@ -28,6 +29,7 @@ use naui_core::{
 
 use crate::bin::SizeBin;
 use crate::callback::{SelectionNotifier, SortNotifier};
+use crate::handover::Owner;
 use crate::list::ActivationHandler;
 use crate::widgets::{impl_widget, without_signal, Widget};
 
@@ -329,6 +331,13 @@ struct TableInner {
     bin: SizeBin,
     columns: RefCell<Vec<TableColumn>>,
     rows: Rc<RowsState>,
+    /// Marks the cells' widgets as this table's (see [`crate::handover`]).
+    owner: Owner,
+    /// The rows built since the app last handed rows over ([`Table::set_row_builder`],
+    /// [`Table::refresh`]) whose widgets were claimed. Building such a row again (when
+    /// it scrolls back into view, the columns change or the rows are sorted) does not
+    /// claim its widgets again.
+    claimed: RefCell<HashSet<usize>>,
     /// The range of rows currently built. With many rows, only those around the screen.
     window: Cell<RowWindow>,
     /// The first row the `GtkListBox` has now. `window` moves ahead of it just before the
@@ -420,6 +429,8 @@ impl Table {
             bin,
             columns: RefCell::new(Vec::new()),
             rows: Rc::new(RowsState::default()),
+            owner: Owner::new(),
+            claimed: RefCell::new(HashSet::new()),
             window: Cell::new(RowWindow::default()),
             built_start: Cell::new(0),
             rebuilding: Cell::new(false),
@@ -543,6 +554,7 @@ impl Table {
     /// spacers above and below carry the height of the rest, so the scroll bar length
     /// still reflects all the rows).
     pub fn set_rows(&self, rows: &[TableRow]) {
+        self.0.claimed.borrow_mut().clear();
         self.0.rows.set_rows(rows);
         self.reset_rows();
     }
@@ -563,11 +575,18 @@ impl Table {
     /// });
     /// # }
     /// ```
+    ///
+    /// A cell's widget is placed each time its row is built. The first time each row
+    /// is built after this call or [`Table::refresh`], the widget is handed over: one
+    /// still in another container is refused, as GTK refuses it, and its cell is left
+    /// empty. Building the row again when it scrolls back into view does not take the
+    /// widget back from a container the app has put it in since.
     pub fn set_row_builder(
         &self,
         count: usize,
         build: impl FnMut(usize) -> Result<TableCells> + 'static,
     ) {
+        self.0.claimed.borrow_mut().clear();
         self.0.rows.set_builder(count, build);
         self.reset_rows();
     }
@@ -594,8 +613,32 @@ impl Table {
         self.0.rows.set_selectable(selectable);
     }
 
-    /// Rebuilds the visible rows. The row count and selection stay.
+    /// Rebuilds the visible rows. The row count and selection stay. The cells' widgets
+    /// are handed over again.
     pub fn refresh(&self) {
+        self.0.claimed.borrow_mut().clear();
+        self.rebuild_rows();
+    }
+
+    /// Takes the widgets of a row's cells as this table's, if they have no parent or
+    /// are in one of this table's rows (see [`crate::handover`]).
+    fn claim(&self, cells: &TableCells) {
+        for index in 0..cells.len() {
+            let Some(CellContent::Widget(widget)) = cells.content(index) else {
+                continue;
+            };
+            let bin = widget.size_bin();
+            let in_own_row = bin
+                .parent()
+                .and_then(|content| content.parent())
+                .and_then(|row| row.parent())
+                .is_some_and(|list| list == *self.0.list.upcast_ref::<gtk::Widget>());
+            self.0.owner.claim(&bin, in_own_row, "Table");
+        }
+    }
+
+    /// Rebuilds the visible rows, without handing their widgets over again.
+    fn rebuild_rows(&self) {
         let picked = self.selection();
         self.build_window();
         without_signal(&self.0.list, &self.0.handler, || self.show(&picked));
@@ -617,7 +660,7 @@ impl Table {
             .set((height > 0.0).then_some(height as i32));
         // 指定を外したときは、組み立て直した行から測り直す。
         self.0.row_height.set(height.max(0.0));
-        self.refresh();
+        self.rebuild_rows();
     }
 
     /// The row height (logical pixels). 0 if no row has been built yet.
@@ -880,13 +923,18 @@ impl Table {
         let mut realized = Vec::with_capacity(window.len());
         without_signal(&self.0.list, &self.0.handler, || {
             while let Some(row) = self.0.list.first_child() {
+                release_cells(&row);
                 self.0.list.remove(&row);
             }
             for index in window.indices() {
                 let Some(cells) = self.0.rows.cells(index) else {
                     continue;
                 };
-                let row = build_row(&cells, &columns, &groups, uniform);
+                // アプリが行を渡し直してから初めて組み立てた行は、中身を引き取る。
+                if self.0.claimed.borrow_mut().insert(index) {
+                    self.claim(&cells);
+                }
+                let row = build_row(&cells, &columns, &groups, uniform, self.0.owner);
                 if let Some(height) = fixed_height {
                     row.set_size_request(-1, height);
                 }
@@ -1136,12 +1184,31 @@ impl Table {
     }
 }
 
+/// Takes the widgets out of a row about to be removed, so the next build can place them
+/// again.
+fn release_cells(row: &gtk::Widget) {
+    let Some(content) = row
+        .downcast_ref::<gtk::ListBoxRow>()
+        .and_then(|row| row.child())
+        .and_downcast::<gtk::Box>()
+    else {
+        return;
+    };
+    while let Some(cell) = content.first_child() {
+        content.remove(&cell);
+    }
+}
+
 /// Builds one row. Cells are in the same order as the columns.
+///
+/// A widget goes in only if `owner` may place it (see [`crate::handover`]). Otherwise
+/// its cell is left empty, and nothing is written on the widget.
 fn build_row(
     cells: &TableCells,
     columns: &[TableColumn],
     groups: &[gtk::SizeGroup],
     uniform: bool,
+    owner: Owner,
 ) -> gtk::ListBoxRow {
     let content = gtk::Box::new(gtk::Orientation::Horizontal, CELL_SPACING);
     content.set_margin_top(VERTICAL_MARGIN);
@@ -1151,7 +1218,7 @@ fn build_row(
 
     for (index, column) in columns.iter().enumerate() {
         match cells.content(index) {
-            Some(CellContent::Widget(widget)) => {
+            Some(CellContent::Widget(widget)) if owner.may_place(&widget.size_bin()) => {
                 let bin = widget.size_bin();
                 bin.fill_parent();
                 apply_column_width(&bin, column);
@@ -1171,7 +1238,8 @@ fn build_row(
                 groups[index].add_widget(&label);
                 content.append(&label);
             }
-            None => {
+            // 置けない中身のセルも、空のセルにする。
+            Some(CellContent::Widget(_)) | None => {
                 let label = cell_label("", column, uniform);
                 groups[index].add_widget(&label);
                 content.append(&label);
