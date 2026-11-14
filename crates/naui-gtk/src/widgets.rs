@@ -1425,8 +1425,14 @@ impl Stack {
         }
     }
 
+    ///
+    /// A widget still in another container (or already in this one) is refused, as
+    /// GTK refuses it: nothing changes.
     pub fn append(&self, child: &dyn Widget) {
         let bin = child.size_bin();
+        if crate::handover::refuses(&bin, false, "Stack::append") {
+            return;
+        }
         bin.set_cross_align(self.0.align.get(), self.0.vertical.get());
         self.0.native.append(&bin);
         self.0.children.borrow_mut().push(child.boxed_clone());
@@ -1434,10 +1440,16 @@ impl Stack {
 
     /// Inserts a child at the given position. If `index` is at least the current
     /// count, it is appended at the end.
+    ///
+    /// A widget still in another container is refused, the same as with
+    /// [`append`](Self::append).
     pub fn insert(&self, index: usize, child: &dyn Widget) {
+        let bin = child.size_bin();
+        if crate::handover::refuses(&bin, false, "Stack::insert") {
+            return;
+        }
         let mut children = self.0.children.borrow_mut();
         let index = index.min(children.len());
-        let bin = child.size_bin();
         bin.set_cross_align(self.0.align.get(), self.0.vertical.get());
         // `GtkBox` は「この子の後ろへ」で場所を指す。先頭は `None`。
         let after = index

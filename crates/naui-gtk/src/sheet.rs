@@ -18,6 +18,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
+use gtk::glib;
 use naui_core::{default_response, DialogButtons, DialogResponse, EnabledButtons, SHEET_MIN_WIDTH};
 
 use crate::callback::Notifier;
@@ -59,6 +60,11 @@ struct SheetInner {
     on_response: Notifier<DialogResponse>,
     current: RefCell<Option<Current>>,
     open: Cell<bool>,
+    /// Marks the content as this sheet's (see [`crate::handover`]).
+    owner: crate::handover::Owner,
+    /// The boxes the content went in, one per opening. A dialog closed a moment ago
+    /// may still hold the content while it animates out.
+    holders: RefCell<Vec<glib::WeakRef<adw::Bin>>>,
 }
 
 /// A modal dialog with arbitrary content (`AdwDialog`).
@@ -78,6 +84,8 @@ impl Sheet {
             on_response: Notifier::default(),
             current: RefCell::new(None),
             open: Cell::new(false),
+            owner: crate::handover::Owner::new(),
+            holders: RefCell::new(Vec::new()),
         }))
     }
 
@@ -94,7 +102,17 @@ impl Sheet {
     }
 
     /// The content. Each call replaces it.
+    ///
+    /// A widget still in another container is refused, and the previous content
+    /// stays. The content is placed each time the sheet opens, so if the app puts it
+    /// in another container in the meantime, the sheet opens without it and leaves it
+    /// there.
     pub fn set_child(&self, child: &dyn Widget) {
+        let bin = child.size_bin();
+        let in_own = self.own_holder_of(&bin).is_some();
+        if !self.0.owner.claim(&bin, in_own, "Sheet::set_child") {
+            return;
+        }
         let previous = self.0.child.replace(Some(child.boxed_clone()));
         // フォーカスを外すと on_focus_change がその場で呼ばれ、その中でシートを
         // 閉じたり中身を差し替えたりできる。借用を手放してから触る。
@@ -112,8 +130,38 @@ impl Sheet {
             .as_ref()
             .is_some_and(|current| current.size_bin() == child.size_bin());
         if self.holder().as_ref() == Some(&holder) && still_this {
-            place_child(&holder, child);
+            self.place_child(&holder, child);
         }
+    }
+
+    /// The box of this sheet's that holds `bin`, if one does.
+    fn own_holder_of(&self, bin: &crate::bin::SizeBin) -> Option<adw::Bin> {
+        let parent = bin.parent()?.downcast::<adw::Bin>().ok()?;
+        self.0
+            .holders
+            .borrow()
+            .iter()
+            .any(|holder| holder.upgrade().as_ref() == Some(&parent))
+            .then_some(parent)
+    }
+
+    /// Puts the content into `holder`, taking it out of this sheet's previous box
+    /// first: a dialog closed a moment ago may still hold it while it animates out.
+    ///
+    /// Content the app has put in another container since is left there.
+    fn place_child(&self, holder: &adw::Bin, child: &dyn Widget) {
+        let bin = child.size_bin();
+        if bin.parent().as_ref() == Some(holder.upcast_ref()) {
+            return;
+        }
+        if let Some(previous) = self.own_holder_of(&bin) {
+            previous.set_child(None::<&gtk::Widget>);
+        }
+        if !self.0.owner.may_place(&bin) {
+            return;
+        }
+        bin.fill_parent();
+        holder.set_child(Some(&bin));
     }
 
     /// The box the content goes in, of the dialog open now.
@@ -225,6 +273,11 @@ impl Sheet {
         holder.set_margin_end(MARGIN);
         holder.set_margin_top(MARGIN);
         holder.set_margin_bottom(MARGIN);
+        {
+            let mut holders = self.0.holders.borrow_mut();
+            holders.retain(|holder| holder.upgrade().is_some());
+            holders.push(holder.downgrade());
+        }
         // 前のダイアログから外すとフォーカスの通知が走り、その中で中身を
         // 差し替えられる。借用を手放してから触る。
         let child = self
@@ -234,7 +287,7 @@ impl Sheet {
             .as_ref()
             .map(|child| child.boxed_clone());
         if let Some(child) = child {
-            place_child(&holder, child.as_ref());
+            self.place_child(&holder, child.as_ref());
         }
         let toolbar = adw::ToolbarView::new();
         toolbar.set_width_request(SHEET_MIN_WIDTH as i32);
@@ -309,17 +362,4 @@ impl Sheet {
             .as_ref()
             .map(|current| current.native.clone())
     }
-}
-
-/// Puts the content into `holder`, taking it out of the previous dialog first: a
-/// dialog closed a moment ago may still hold it while it animates out.
-fn place_child(holder: &adw::Bin, child: &dyn Widget) {
-    let bin = child.size_bin();
-    if let Some(previous) = bin.parent().and_then(|p| p.downcast::<adw::Bin>().ok()) {
-        if &previous != holder {
-            previous.set_child(None::<&gtk::Widget>);
-        }
-    }
-    bin.fill_parent();
-    holder.set_child(Some(&bin));
 }

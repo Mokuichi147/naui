@@ -43,6 +43,9 @@ mod imp {
         pub spinner_maximum: Cell<i32>,
         /// Where it is placed. Read when the size specification changes.
         pub(crate) placement: Cell<super::Placement>,
+        /// The owner that took it last among those that place it later (`List`,
+        /// `Table`, `Dialog`, `Sheet`). 0 if none has (see [`crate::handover`]).
+        pub(crate) last_taker: Cell<u64>,
     }
 
     #[glib::object_subclass]
@@ -384,6 +387,15 @@ impl SizeBin {
         } else {
             minimum
         }
+    }
+
+    /// The owner that took it last (see [`crate::handover`]). 0 if none has.
+    pub(crate) fn last_taker(&self) -> u64 {
+        self.imp().last_taker.get()
+    }
+
+    pub(crate) fn set_last_taker(&self, owner: u64) {
+        self.imp().last_taker.set(owner);
     }
 
     /// Applies the size specification. Each call discards the previous one.

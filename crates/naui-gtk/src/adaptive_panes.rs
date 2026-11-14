@@ -160,13 +160,29 @@ impl AdaptivePanes {
     }
 
     /// The list pane. Each call replaces it.
+    ///
+    /// A widget still in another container is refused, as GTK refuses it, and the
+    /// previous pane stays.
     pub fn set_list(&self, child: &dyn Widget) {
-        put(&self.0.list_pane, &self.0.list, child);
+        put(
+            &self.0.list_pane,
+            &self.0.list,
+            child,
+            "AdaptivePanes::set_list",
+        );
     }
 
     /// The detail pane. Each call replaces it.
+    ///
+    /// A widget still in another container is refused, as GTK refuses it, and the
+    /// previous pane stays.
     pub fn set_detail(&self, child: &dyn Widget) {
-        put(&self.0.detail_pane, &self.0.detail, child);
+        put(
+            &self.0.detail_pane,
+            &self.0.detail,
+            child,
+            "AdaptivePanes::set_detail",
+        );
     }
 
     /// The narrowest width at which both panes are shown.
@@ -338,13 +354,18 @@ fn use_pixels(native: &adw::NavigationSplitView) {
     native.set_property_from_value(PROPERTY, &px);
 }
 
-/// Puts `child` into a pane, replacing what was there.
-fn put(pane: &SizeBin, slot: &RefCell<Option<Box<dyn Widget>>>, child: &dyn Widget) {
+/// Puts `child` into a pane, replacing what was there. A widget still in another
+/// container is refused, and the pane keeps what it has.
+fn put(pane: &SizeBin, slot: &RefCell<Option<Box<dyn Widget>>>, child: &dyn Widget, name: &str) {
+    let bin = child.size_bin();
+    let mine = bin.parent().as_ref() == Some(pane.upcast_ref());
+    if crate::handover::refuses(&bin, mine, name) {
+        return;
+    }
     while let Some(previous) = pane.first_child() {
         crate::interaction::clear_focus(&previous);
         previous.unparent();
     }
-    let bin = child.size_bin();
     // 区画の中身は、配られた場所いっぱいに置く (`SplitView` と同じ扱い)。
     bin.fill_parent();
     bin.set_parent(pane);
