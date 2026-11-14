@@ -412,6 +412,10 @@ fn main() {
             moved_child_follows_the_new_stack,
         ),
         (
+            "外さずに別の Stack へ移した子に、元の Stack の操作が触れない",
+            stack_leaves_a_child_moved_without_removal_alone,
+        ),
+        (
             "移した子はスクロール位置を保ち、フォーカスは外れて変換中の文字は確定する",
             moved_widget_keeps_scroll_but_not_focus,
         ),
@@ -3453,6 +3457,115 @@ fn stack_breakpoint_follows_its_width(ui: &Ui) -> Result<()> {
         "狭まれば新しい自分の向きになる",
     );
     window.close();
+    Ok(())
+}
+
+/// A child appended to another `Stack` without being removed first stays in the old
+/// `Stack`'s list (as on the Web), but the old `Stack` no longer touches it.
+///
+/// Its operations used to place constraints and spacing on the moved child, and
+/// appending, inserting, removing, changing the spacing, or switching the orientation
+/// with a `Fill` child raised an exception (`setCustomSpacing:afterView:` for a view
+/// it does not arrange, or a constraint with no common ancestor).
+fn stack_leaves_a_child_moved_without_removal_alone(ui: &Ui) -> Result<()> {
+    let first = ui.stack(Orientation::Vertical)?;
+    let second = ui.stack(Orientation::Vertical)?;
+    let filled = ui.label("広がる")?;
+    filled.set_sizing(Sizing::fill_width());
+    let moved = ui.stack(Orientation::Horizontal)?;
+    moved.append(&ui.label("移る中身")?);
+    moved.set_sizing(Sizing::fill_width().height(Length::Fill));
+    let last = ui.label("最後")?;
+    first.append(&filled);
+    first.append(&moved);
+    first.append(&last);
+    let first_root = first.native_view();
+    first_root.setFrameSize(NSSize::new(300.0, 200.0));
+    first_root.layoutSubtreeIfNeeded();
+
+    second.set_padding(Padding::all(20.0));
+    second.append(&moved);
+    let second_root = second.native_view();
+    second_root.setFrameSize(NSSize::new(200.0, 100.0));
+    second_root.layoutSubtreeIfNeeded();
+    let in_second = |what: &str| {
+        let parent = unsafe { moved.native_view().superview() };
+        assert!(
+            parent.is_some_and(|parent| std::ptr::eq::<NSView>(&*parent, &*second_root)),
+            "{what}: 移った子は新しい親の中のままであること"
+        );
+    };
+    in_second("移した直後");
+    assert_eq!(first.len(), 3, "元の Stack の記録には残ること");
+
+    // 移った子に元の Stack の制約や間隔を張ると例外になる操作。
+    first.set_orientation(Orientation::Horizontal);
+    first.set_spacing(8.0);
+    first.set_align(Align::End);
+    first.set_padding(Padding::all(4.0));
+    first.set_orientation(Orientation::Vertical);
+    in_second("向きや間隔を変えたあと");
+
+    // 記録の位置は移った子も数える。ネイティブの並びでは、移った子を飛ばした
+    // 位置へ入る (受け皿の後ろへ回らない)。
+    first.insert(3, &ui.label("足した")?);
+    assert_eq!(
+        arranged_labels(&first),
+        ["広がる", "最後", "足した"],
+        "足した子が元の子の後ろ、受け皿の手前に並ぶこと"
+    );
+
+    // 移った子の位置を外しても、新しい親からは抜けない。
+    first.remove(1);
+    in_second("元の Stack で外したあと");
+    assert_eq!(first.len(), 3);
+    first_root.layoutSubtreeIfNeeded();
+    second_root.layoutSubtreeIfNeeded();
+    let width = moved.native_view().frame().size.width;
+    assert!(
+        (width - 160.0).abs() < 1e-6,
+        "新しい親の幅から余白を除いた幅のままであること: {width}"
+    );
+
+    // 移っていった子が戻ってきたら、古い記録は捨てて 1 つだけになる。
+    let back = ui.label("戻る")?;
+    first.append(&back);
+    second.append(&back);
+    let between = ui.label("あいだ")?;
+    first.append(&between);
+    first.append(&back);
+    assert_eq!(first.len(), 5, "戻った子の記録が重ならないこと");
+    first.set_spacing(4.0);
+    assert_eq!(
+        arranged_labels(&first),
+        ["広がる", "最後", "足した", "あいだ", "戻る"],
+        "戻った子が末尾に 1 つだけ並ぶこと"
+    );
+
+    // 末尾の記録が移っていった子でも、足した子と本当の手前の子の間は空く。
+    second.append(&back);
+    let native: Retained<objc2_app_kit::NSStackView> = first_root
+        .clone()
+        .downcast()
+        .expect("NSStackView であること");
+    first.set_spacing(4.0);
+    assert_eq!(
+        native.customSpacingAfterView(&between.native_view()),
+        0.0,
+        "後ろが移っていった子だけなら、受け皿との間は詰めること"
+    );
+    let after = ui.label("次")?;
+    first.append(&after);
+    assert_eq!(
+        native.customSpacingAfterView(&between.native_view()),
+        4.0,
+        "手前の子と足した子の間に間隔が入ること"
+    );
+    assert_eq!(
+        native.customSpacingAfterView(&after.native_view()),
+        0.0,
+        "末尾の子と受け皿の間は詰めること"
+    );
     Ok(())
 }
 
