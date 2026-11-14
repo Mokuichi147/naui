@@ -23,10 +23,10 @@ use objc2_app_kit::{
     NSFontDescriptorSymbolicTraits, NSFontTextStyle, NSFontTextStyleBody, NSFontTextStyleHeadline,
     NSFontTextStyleLargeTitle, NSFontTextStyleSubheadline, NSFontTextStyleTitle1,
     NSFontTextStyleTitle3, NSForegroundColorAttributeName, NSLayoutAttribute, NSLayoutConstraint,
-    NSLineBreakMode, NSLinkAttributeName, NSProgressIndicator, NSProgressIndicatorStyle,
-    NSResponder, NSScrollView, NSSearchField, NSSecureTextField, NSSlider, NSStackView,
-    NSStackViewDistribution, NSTextField, NSTextView, NSTintProminence, NSUnderlineStyle,
-    NSUnderlineStyleAttributeName, NSUserInterfaceLayoutOrientation, NSView,
+    NSLayoutGuide, NSLineBreakMode, NSLinkAttributeName, NSProgressIndicator,
+    NSProgressIndicatorStyle, NSResponder, NSScrollView, NSSearchField, NSSecureTextField,
+    NSSlider, NSStackView, NSStackViewDistribution, NSTextField, NSTextView, NSTintProminence,
+    NSUnderlineStyle, NSUnderlineStyleAttributeName, NSUserInterfaceLayoutOrientation, NSView,
     NSViewFrameDidChangeNotification,
 };
 use objc2_foundation::{
@@ -1354,10 +1354,22 @@ struct StackInner {
     align: Cell<Align>,
     /// Holds the children's handles, keeping them alive along with their trampolines.
     children: RefCell<Vec<Box<dyn Widget>>>,
-    /// The constraints tying children with `Fill` on the cross axis to the stack's width
-    /// / height, looked up by the child's view (its address). Kept because the
-    /// constants change when the padding changes.
-    fill_constraints: RefCell<HashMap<usize, [Retained<NSLayoutConstraint>; 2]>>,
+    /// The area inside the padding. Children are aligned to it on the cross axis.
+    ///
+    /// `NSStackView` keeps its children inside `edgeInsets` on the cross axis only at
+    /// its hugging priority (250); its required edge constraints are `>= 0`. Its own
+    /// alignment does not follow the insets either: `CenterX` / `CenterY` centers on
+    /// the whole view, and `Trailing` / `Bottom` adds the inset outward
+    /// (`child.right == stack.right + inset`). So the native alignment is always
+    /// `NotAnAttribute`, and the alignment is placed against this guide instead.
+    padding_guide: Retained<NSLayoutGuide>,
+    /// The guide's leading, trailing, top and bottom distances from the stack. Their
+    /// constants follow the padding.
+    padding_constraints: [Retained<NSLayoutConstraint>; 4],
+    /// The cross-axis constraints placed for each child (alignment, and `Fill`), looked
+    /// up by the child's view (its address). Made again when the alignment, the
+    /// orientation or the child's specification changes.
+    cross_constraints: RefCell<HashMap<usize, Vec<Retained<NSLayoutConstraint>>>>,
     padding: Cell<Padding>,
     spacing: Cell<f64>,
     /// The orientation the app gave and the breakpoint, which decide the orientation
@@ -1458,11 +1470,31 @@ impl Stack {
             // Auto の子のどれかへ余りを配ってしまう。GravityAreas は
             // 子の hugging priority に従うため、Fill / Spacer だけが余りを受ける。
             native.setDistribution(NSStackViewDistribution::GravityAreas);
-            native.setAlignment(if orientation.is_vertical() {
-                NSLayoutAttribute::CenterX
-            } else {
-                NSLayoutAttribute::CenterY
-            });
+            // 交差軸の揃えは `padding_guide` へ自前で張る (理由はその説明に)。
+            native.setAlignment(NSLayoutAttribute::NotAnAttribute);
+        }
+        let padding_guide = NSLayoutGuide::new();
+        native.addLayoutGuide(&padding_guide);
+        let padding_constraints = [
+            padding_guide
+                .leadingAnchor()
+                .constraintEqualToAnchor(&native.leadingAnchor()),
+            native
+                .trailingAnchor()
+                .constraintEqualToAnchor(&padding_guide.trailingAnchor()),
+            padding_guide
+                .topAnchor()
+                .constraintEqualToAnchor(&native.topAnchor()),
+            native
+                .bottomAnchor()
+                .constraintEqualToAnchor(&padding_guide.bottomAnchor()),
+        ];
+        // 余白の合計より小さくされても衝突しないよう、末尾と下だけ必須から
+        // 1 段下げる (通常の大きさでは必ず満たされる)。
+        padding_constraints[1].setPriority(crate::layout::CROSS_FILL_PRIORITY);
+        padding_constraints[3].setPriority(crate::layout::CROSS_FILL_PRIORITY);
+        for constraint in &padding_constraints {
+            constraint.setActive(true);
         }
         let spacing = native.spacing();
         let tail_spacer = NSView::new(mtm);
@@ -1494,7 +1526,9 @@ impl Stack {
             sizing: Cell::new(naui_core::Sizing::AUTO),
             align: Cell::new(Align::default()),
             children: RefCell::new(Vec::new()),
-            fill_constraints: RefCell::new(HashMap::new()),
+            padding_guide,
+            padding_constraints,
+            cross_constraints: RefCell::new(HashMap::new()),
             padding: Cell::new(Padding::ZERO),
             spacing: Cell::new(spacing),
             arrangement: Cell::new(StackArrangement::new(orientation)),
@@ -1630,7 +1664,6 @@ impl Stack {
         } else {
             NSUserInterfaceLayoutOrientation::Horizontal
         });
-        self.set_align(self.0.align.get());
 
         // 受け皿を 0 に保つ制約は軸ごとのものなので、作り直す。
         let tail_zero = crate::layout::tail_zero_constraint(&self.0.tail_spacer, vertical);
@@ -1675,24 +1708,14 @@ impl Stack {
             bottom: padding.bottom,
             right: padding.right,
         });
-        // 交差軸いっぱいに広げている子は、余白のぶんだけ狭くなる。
-        let inset = self.cross_inset();
-        for pair in self.0.fill_constraints.borrow().values() {
-            for constraint in pair {
-                constraint.setConstant(-inset);
-            }
-        }
+        // 子は余白の内側のガイドへ揃えてあるので、ガイドを動かせば追従する。
+        // `NSStackView` と同じく、left は先頭 (leading)、right は末尾 (trailing)。
+        let [leading, trailing, top, bottom] = &self.0.padding_constraints;
+        leading.setConstant(padding.left);
+        trailing.setConstant(padding.right);
+        top.setConstant(padding.top);
+        bottom.setConstant(padding.bottom);
         self.invalidate_natural_size();
-    }
-
-    /// The total padding taken in the cross-axis direction.
-    fn cross_inset(&self) -> f64 {
-        let padding = self.0.padding.get();
-        if self.is_vertical() {
-            padding.left + padding.right
-        } else {
-            padding.top + padding.bottom
-        }
     }
 
     fn is_vertical(&self) -> bool {
@@ -1705,19 +1728,17 @@ impl Stack {
         crate::layout::invalidate_ancestors(&self.0.native);
     }
 
+    /// Aligns the children on the cross axis, inside the padding.
+    ///
+    /// `NSStackView.alignment` stays `NotAnAttribute`; the alignment is placed per
+    /// child against the area inside the padding (see `padding_guide`).
     pub fn set_align(&self, align: Align) {
-        self.0.align.set(align);
-        let vertical = self.is_vertical();
-        let attr = match (align, vertical) {
-            (Align::Fill, _) => NSLayoutAttribute::NotAnAttribute,
-            (Align::Start, true) => NSLayoutAttribute::Leading,
-            (Align::Center, true) => NSLayoutAttribute::CenterX,
-            (Align::End, true) => NSLayoutAttribute::Trailing,
-            (Align::Start, false) => NSLayoutAttribute::Top,
-            (Align::Center, false) => NSLayoutAttribute::CenterY,
-            (Align::End, false) => NSLayoutAttribute::Bottom,
-        };
-        self.0.native.setAlignment(attr);
+        if self.0.align.replace(align) == align {
+            return;
+        }
+        for child in self.0.children.borrow().iter() {
+            self.place_cross(&child.native_view());
+        }
     }
 
     /// Appends a child at the end.
@@ -1798,13 +1819,11 @@ impl Stack {
         view.removeFromSuperview();
         let removed = self
             .0
-            .fill_constraints
+            .cross_constraints
             .borrow_mut()
             .remove(&view_key(&view));
-        if let Some(pair) = removed {
-            for constraint in &pair {
-                constraint.setActive(false);
-            }
+        for constraint in removed.iter().flatten() {
+            constraint.setActive(false);
         }
         child.left_stack();
     }
@@ -1828,42 +1847,91 @@ impl Stack {
         self.invalidate_natural_size();
     }
 
-    /// Decides the main-axis hugging and the cross-axis `Fill` constraints from the
-    /// child's specification.
+    /// Decides the main-axis hugging and the cross-axis constraints from the child's
+    /// specification.
     fn apply_child_layout(&self, view: &NSView) {
         let vertical = self.is_vertical();
         if !crate::layout::wants_fill(view, !vertical) {
             crate::layout::keep_auto_size(view, !vertical);
         }
+        self.place_cross(view);
+    }
 
-        let previous = self.0.fill_constraints.borrow_mut().remove(&view_key(view));
-        if let Some(pair) = previous {
-            for constraint in &pair {
-                constraint.setActive(false);
-            }
+    /// Places a child on the cross axis inside the padding: the alignment, and for
+    /// `Fill`, the size of the area inside the padding.
+    fn place_cross(&self, view: &NSView) {
+        let previous = self
+            .0
+            .cross_constraints
+            .borrow_mut()
+            .remove(&view_key(view));
+        for constraint in previous.iter().flatten() {
+            constraint.setActive(false);
         }
-        // 縦並びの交差軸は横方向。
-        if !crate::layout::wants_fill(view, vertical) {
+
+        // 外さずに別の親へ入れられた子は、もうこの Stack の中にいない。共通の
+        // 祖先のない制約は有効にできない (例外になる) ので、張らずにおく。
+        // superview は読むだけ。
+        let parent = unsafe { view.superview() };
+        let inside =
+            parent.is_some_and(|parent| std::ptr::eq::<NSView>(&*parent, &**self.0.native));
+        if !inside {
             return;
         }
-        let inset = self.cross_inset();
-        let (child, parent) = if vertical {
-            (view.widthAnchor(), self.0.native.widthAnchor())
-        } else {
-            (view.heightAnchor(), self.0.native.heightAnchor())
+        let vertical = self.is_vertical();
+        let guide = &self.0.padding_guide;
+        let mut constraints = Vec::new();
+        // 縦並びの交差軸は横方向。
+        let align = match (self.0.align.get(), vertical) {
+            (Align::Fill, _) => None,
+            (Align::Start, true) => Some(
+                view.leadingAnchor()
+                    .constraintEqualToAnchor(&guide.leadingAnchor()),
+            ),
+            (Align::Center, true) => Some(
+                view.centerXAnchor()
+                    .constraintEqualToAnchor(&guide.centerXAnchor()),
+            ),
+            (Align::End, true) => Some(
+                view.trailingAnchor()
+                    .constraintEqualToAnchor(&guide.trailingAnchor()),
+            ),
+            (Align::Start, false) => {
+                Some(view.topAnchor().constraintEqualToAnchor(&guide.topAnchor()))
+            }
+            (Align::Center, false) => Some(
+                view.centerYAnchor()
+                    .constraintEqualToAnchor(&guide.centerYAnchor()),
+            ),
+            (Align::End, false) => Some(
+                view.bottomAnchor()
+                    .constraintEqualToAnchor(&guide.bottomAnchor()),
+            ),
         };
-        // 「はみ出さない」は必須、「親に合わせる」は 1 段下。上限
-        // (`max_width` など) を付けた子は、上限のほうが勝つ。
-        let at_most = child.constraintLessThanOrEqualToAnchor_constant(&parent, -inset);
-        let equal = child.constraintEqualToAnchor_constant(&parent, -inset);
-        equal.setPriority(crate::layout::CROSS_FILL_PRIORITY);
-        for constraint in [&at_most, &equal] {
+        if let Some(align) = align {
+            align.setPriority(crate::layout::CROSS_ALIGN_PRIORITY);
+            constraints.push(align);
+        }
+        if crate::layout::wants_fill(view, vertical) {
+            let (child, inside) = if vertical {
+                (view.widthAnchor(), guide.widthAnchor())
+            } else {
+                (view.heightAnchor(), guide.heightAnchor())
+            };
+            // 「はみ出さない」は必須、「余白の内側に合わせる」は 1 段下。上限
+            // (`max_width` など) を付けた子は、上限のほうが勝つ。
+            let at_most = child.constraintLessThanOrEqualToAnchor(&inside);
+            let equal = child.constraintEqualToAnchor(&inside);
+            equal.setPriority(crate::layout::CROSS_FILL_PRIORITY);
+            constraints.extend([at_most, equal]);
+        }
+        for constraint in &constraints {
             constraint.setActive(true);
         }
         self.0
-            .fill_constraints
+            .cross_constraints
             .borrow_mut()
-            .insert(view_key(view), [at_most, equal]);
+            .insert(view_key(view), constraints);
     }
 
     /// Places the tail spacer when no child has `Fill` on the main axis, and removes it
