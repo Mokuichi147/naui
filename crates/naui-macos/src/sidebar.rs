@@ -416,7 +416,13 @@ impl ContentFrame {
 
     /// Places the child to fill the stand.
     fn place_content(&self) {
-        let Some(view) = self.ivars().borrow().clone() else {
+        // 外さずに別の親へ移った中身の枠には触れない。
+        let Some(view) = self
+            .ivars()
+            .borrow()
+            .clone()
+            .filter(|view| crate::layout::is_placed_in(view, self))
+        else {
             return;
         };
         let frame = self.bounds();
@@ -426,7 +432,8 @@ impl ContentFrame {
     }
 
     fn set_content(&self, view: Option<Retained<NSView>>) {
-        if let Some(old) = self.ivars().borrow_mut().take() {
+        let old = self.ivars().borrow_mut().take();
+        if let Some(old) = old.filter(|old| crate::layout::is_placed_in(old, self)) {
             old.removeFromSuperview();
         }
         let Some(view) = view else {
@@ -442,8 +449,13 @@ impl ContentFrame {
         self.place_content();
     }
 
+    /// Takes the content out and returns it. Content that has moved to another
+    /// parent without being removed is left there, and `None` is returned.
     fn take_content(&self) -> Option<Retained<NSView>> {
         let view = self.ivars().borrow_mut().take()?;
+        if !crate::layout::is_placed_in(&view, self) {
+            return None;
+        }
         view.removeFromSuperview();
         Some(view)
     }

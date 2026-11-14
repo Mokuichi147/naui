@@ -416,6 +416,10 @@ fn main() {
             stack_leaves_a_child_moved_without_removal_alone,
         ),
         (
+            "外さずに別の親へ移した子に、Grid などほかのコンテナの操作が触れない",
+            containers_leave_a_child_moved_without_removal_alone,
+        ),
+        (
             "移した子はスクロール位置を保ち、フォーカスは外れて変換中の文字は確定する",
             moved_widget_keeps_scroll_but_not_focus,
         ),
@@ -3566,6 +3570,226 @@ fn stack_leaves_a_child_moved_without_removal_alone(ui: &Ui) -> Result<()> {
         0.0,
         "末尾の子と受け皿の間は詰めること"
     );
+    Ok(())
+}
+
+/// What a container does after one of its children was appended elsewhere without
+/// being removed first.
+type AfterMove<'a> = Box<dyn FnOnce() -> Result<()> + 'a>;
+
+/// Puts a child into a container with `place`, appends it to another container
+/// without removing it, then runs the old container's operations that `place`
+/// returned. The child must stay in its new parent, shown.
+fn check_moved_child<'a>(
+    ui: &'a Ui,
+    name: &str,
+    into_grid: bool,
+    place: impl FnOnce(&naui_macos::Stack) -> Result<AfterMove<'a>>,
+) -> Result<()> {
+    let child = ui.stack(Orientation::Vertical)?;
+    child.append(&ui.label("移る中身")?);
+    child.set_sizing(Sizing::fill_width().height(Length::Fill));
+    let after = place(&child)?;
+
+    let stack = ui.stack(Orientation::Vertical)?;
+    let grid = ui.grid()?;
+    let parent = if into_grid {
+        grid.attach(&child, GridCell::new(0, 0));
+        grid.native_view()
+    } else {
+        stack.append(&child);
+        stack.native_view()
+    };
+    after()?;
+    parent.setFrameSize(NSSize::new(200.0, 100.0));
+    parent.layoutSubtreeIfNeeded();
+    let what = format!("{name} → {}", if into_grid { "Grid" } else { "Stack" });
+    let view = child.native_view();
+    let superview = unsafe { view.superview() };
+    assert!(
+        superview.is_some_and(|superview| std::ptr::eq::<NSView>(&*superview, &*parent)),
+        "{what}: 移った子は新しい親の中のままであること"
+    );
+    assert!(!view.isHidden(), "{what}: 新しい親の中で隠れないこと");
+    // 指定の変更は新しい親が受ける。
+    child.set_sizing(Sizing::AUTO);
+    parent.layoutSubtreeIfNeeded();
+    Ok(())
+}
+
+/// Like [`stack_leaves_a_child_moved_without_removal_alone`], for the other
+/// containers.
+///
+/// They used to raise an exception (the Grid's next layout, `Scroll::set_policy`,
+/// `Group::set_padding`, `Expander::set_child`), take the child from its new parent
+/// (removing or replacing it, switching tabs, attaching or removing a window's
+/// sidebar), or hide it there (collapsing an `Expander`).
+fn containers_leave_a_child_moved_without_removal_alone(ui: &Ui) -> Result<()> {
+    for into_grid in [false, true] {
+        let other = || ui.label("別の中身");
+        check_moved_child(
+            ui,
+            "Grid の余白・間隔・トラック",
+            into_grid,
+            |child| {
+                let grid = ui.grid()?;
+                grid.attach(child, GridCell::new(0, 0));
+                grid.attach(&ui.label("隣")?, GridCell::new(1, 0));
+                grid.native_view().layoutSubtreeIfNeeded();
+                Ok(Box::new(move || {
+                    grid.set_padding(Padding::all(4.0));
+                    grid.set_spacing(3.0, 3.0);
+                    grid.set_column_track(0, Track::Fill(1.0));
+                    grid.set_row_track(0, Track::Fill(1.0));
+                    grid.attach(&ui.label("足した")?, GridCell::new(0, 1));
+                    grid.native_view().layoutSubtreeIfNeeded();
+                    Ok(())
+                }))
+            },
+        )?;
+        for (name, op) in [("remove", 0), ("clear", 1), ("replace", 2)] {
+            check_moved_child(ui, &format!("Grid の {name}"), into_grid, |child| {
+                let grid = ui.grid()?;
+                grid.attach(child, GridCell::new(0, 0));
+                let replacement = other()?;
+                Ok(Box::new(move || {
+                    match op {
+                        0 => grid.remove(GridCell::new(0, 0)),
+                        1 => grid.clear(),
+                        _ => grid.replace(&replacement, GridCell::new(0, 0)),
+                    }
+                    assert_eq!(grid.len(), usize::from(op == 2));
+                    grid.native_view().layoutSubtreeIfNeeded();
+                    Ok(())
+                }))
+            })?;
+        }
+        check_moved_child(ui, "Scroll", into_grid, |child| {
+            let scroll = ui.scroll()?;
+            scroll.set_child(child);
+            let replacement = other()?;
+            Ok(Box::new(move || {
+                scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+                scroll.set_child(&replacement);
+                Ok(())
+            }))
+        })?;
+        check_moved_child(ui, "Group", into_grid, |child| {
+            let group = ui.group("見出し")?;
+            group.set_child(child);
+            let replacement = other()?;
+            Ok(Box::new(move || {
+                group.set_padding(Padding::all(3.0));
+                group.set_child(&replacement);
+                Ok(())
+            }))
+        })?;
+        check_moved_child(ui, "Expander", into_grid, |child| {
+            let expander = ui.expander("開く")?;
+            expander.set_child(child);
+            expander.set_expanded(true);
+            let replacement = other()?;
+            Ok(Box::new(move || {
+                expander.set_expanded(false);
+                expander.set_child(&replacement);
+                Ok(())
+            }))
+        })?;
+        for detail in [false, true] {
+            check_moved_child(ui, "AdaptivePanes", into_grid, |child| {
+                let panes = ui.adaptive_panes()?;
+                if detail {
+                    panes.set_list(&ui.label("一覧")?);
+                    panes.set_detail(child);
+                } else {
+                    panes.set_list(child);
+                    panes.set_detail(&ui.label("詳細")?);
+                }
+                let replacement = other()?;
+                Ok(Box::new(move || {
+                    panes.set_breakpoint(2000.0);
+                    panes.show(Pane::Detail);
+                    panes.go_back();
+                    if detail {
+                        panes.set_detail(&replacement);
+                    } else {
+                        panes.set_list(&replacement);
+                    }
+                    Ok(())
+                }))
+            })?;
+        }
+        for end in [false, true] {
+            check_moved_child(ui, "SplitView", into_grid, |child| {
+                let split = ui.split_view(Orientation::Horizontal)?;
+                let side = ui.label("反対側")?;
+                if end {
+                    split.set_start(&side);
+                    split.set_end(child);
+                } else {
+                    split.set_start(child);
+                    split.set_end(&side);
+                }
+                let replacement = other()?;
+                Ok(Box::new(move || {
+                    split.set_position(100.0);
+                    if end {
+                        split.set_end(&replacement);
+                    } else {
+                        split.set_start(&replacement);
+                    }
+                    split.native_view().layoutSubtreeIfNeeded();
+                    Ok(())
+                }))
+            })?;
+        }
+        check_moved_child(ui, "Tabs", into_grid, |child| {
+            let tabs = ui.tabs()?;
+            tabs.add_tab("一", child);
+            tabs.add_tab("二", &ui.label("二")?);
+            tabs.set_selected(0);
+            Ok(Box::new(move || {
+                tabs.set_selected(1);
+                tabs.set_selected(0);
+                tabs.remove_tab(0);
+                tabs.clear();
+                Ok(())
+            }))
+        })?;
+        check_moved_child(ui, "Popover", into_grid, |child| {
+            let popover = ui.popover()?;
+            popover.set_child(child);
+            let replacement = other()?;
+            Ok(Box::new(move || {
+                popover.set_child(&replacement);
+                Ok(())
+            }))
+        })?;
+        for case in 0..3 {
+            check_moved_child(ui, "Window のサイドバー", into_grid, |child| {
+                let window = ui.window("移る", 400.0, 300.0)?;
+                let sidebar = ui.sidebar()?;
+                if case > 0 {
+                    window.set_sidebar(&sidebar);
+                }
+                window.set_child(child);
+                let replacement = other()?;
+                Ok(Box::new(move || {
+                    match case {
+                        // 移ったあとにサイドバーを付ける。
+                        0 => window.set_sidebar(&sidebar),
+                        // サイドバーの右の区画の中身を差し替える。
+                        1 => window.set_child(&replacement),
+                        // サイドバーを外す。
+                        _ => window.clear_sidebar(),
+                    }
+                    window.set_size(500.0, 400.0);
+                    window.close();
+                    Ok(())
+                }))
+            })?;
+        }
+    }
     Ok(())
 }
 

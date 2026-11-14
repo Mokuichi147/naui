@@ -1963,16 +1963,9 @@ impl Stack {
         shifted
     }
 
-    /// Whether `view` is still in this stack.
-    ///
-    /// A child appended to another container without being removed here first stays
-    /// in `children` (as on the Web, where the old stack keeps its record too), but it
-    /// now belongs to the new parent, so this stack must not place constraints or
-    /// spacing on it, change its nesting, or take it out.
+    /// Whether `view` is still in this stack (see [`crate::layout::is_placed_in`]).
     fn holds(&self, view: &NSView) -> bool {
-        // superview は読むだけ。
-        let parent = unsafe { view.superview() };
-        parent.is_some_and(|parent| std::ptr::eq::<NSView>(&*parent, &**self.0.native))
+        crate::layout::is_placed_in(view, &self.0.native)
     }
 
     /// The children still in this stack (see [`holds`](Self::holds)), cloned so that

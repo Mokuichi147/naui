@@ -351,6 +351,20 @@ pub(crate) fn unregister_container(native: &NSView) {
     });
 }
 
+/// Whether `view` is still directly inside `host`, the view a container put it in.
+///
+/// A widget handed to another container without being removed from this one first
+/// stays in this container's records (as on the Web, where the old container keeps
+/// its record too), but it now belongs to the new parent. The old container must not
+/// place constraints on it (one with no common ancestor raises an exception), set
+/// its frame, spacing or visibility, or take it out (that would take it from the new
+/// parent).
+pub(crate) fn is_placed_in(view: &NSView, host: &NSView) -> bool {
+    // superview は読むだけ。
+    let parent = unsafe { view.superview() };
+    parent.is_some_and(|parent| std::ptr::eq::<NSView>(&*parent, host))
+}
+
 /// If `view`'s parent is a registered container, has it redo its side for `view`.
 fn refresh_in_container(view: &NSView) {
     let Some(parent) = (unsafe { view.superview() }) else {
@@ -530,6 +544,12 @@ define_class!(
 );
 
 impl ContentSizedGridView {
+    /// Whether a child counts toward the sizes of its tracks: shown, and still in
+    /// this grid (see [`is_placed_in`]).
+    fn counts(&self, view: &NSView) -> bool {
+        !view.isHidden() && is_placed_in(view, self)
+    }
+
     fn new(
         mtm: MainThreadMarker,
         row_tracks: Rc<RefCell<Vec<Track>>>,
@@ -561,7 +581,7 @@ impl ContentSizedGridView {
             let desired = cells
                 .iter()
                 .filter(|(view, cell)| {
-                    !view.isHidden()
+                    self.counts(view)
                         && index >= cell.row
                         && index < cell.row.saturating_add(cell.row_span)
                 })
@@ -614,7 +634,7 @@ impl ContentSizedGridView {
             let desired = cells
                 .iter()
                 .filter(|(view, cell)| {
-                    !view.isHidden()
+                    self.counts(view)
                         && index >= cell.column
                         && index < cell.column.saturating_add(cell.column_span.max(1))
                         && auto_only(cell)
@@ -663,6 +683,11 @@ impl ContentSizedGridView {
         );
         let mut changed = false;
         for grow in grows.iter_mut() {
+            // 外さずに別の親へ移った子の希望は、AppKit がもう外している。
+            // 張り直すと共通の祖先のない制約になり例外が出る。
+            if !is_placed_in(&grow.view, self) {
+                continue;
+            }
             let (needs, room, split) = if grow.horizontal {
                 (&widths, size.width, &splits.0)
             } else {
@@ -717,7 +742,7 @@ impl ContentSizedGridView {
         let count = needs.len();
         let mut covered = vec![false; count];
         for (view, cell) in self.ivars().cells.borrow().iter() {
-            if view.isHidden() {
+            if !self.counts(view) {
                 continue;
             }
             let (start, span) = if horizontal {
@@ -886,7 +911,7 @@ impl ContentSizedGridView {
                 cell.row_span.max(1)
             }
         };
-        let mut visible: Vec<_> = cells.iter().filter(|(view, _)| !view.isHidden()).collect();
+        let mut visible: Vec<_> = cells.iter().filter(|(view, _)| self.counts(view)).collect();
         // 単独の子の最小を先に確保する。追加順に処理すると、またぐ子が先のときに
         // 仮の取り分へ後から最小を重ね、必要な合計を過大評価してしまう。
         visible.sort_by_key(|(_, cell)| span(cell));
@@ -1430,7 +1455,10 @@ impl Grid {
             .native
             .cellAtColumnIndex_rowIndex(placed.column as isize, placed.row as isize);
         target.setContentView(None);
-        view.removeFromSuperview();
+        // 外さずに別の親へ移った子は、記録とセルから外すだけにする。
+        if is_placed_in(&view, &self.0.native) {
+            view.removeFromSuperview();
+        }
     }
 
     /// How a column's width is determined.
@@ -1792,8 +1820,16 @@ impl Scroll {
         self.0.horizontal.set(horizontal);
         self.0.vertical.set(vertical);
         self.apply_policy();
-        // 制約は許可によって変わるので、子があれば張り直す。
-        let child = self.0.child.borrow().as_ref().map(|c| c.native_view());
+        // 制約は許可によって変わるので、子があれば張り直す。外さずに別の親へ
+        // 移った子には張らない (共通の祖先が無く例外になる)。
+        let clip = self.0.native.contentView();
+        let child = self
+            .0
+            .child
+            .borrow()
+            .as_ref()
+            .map(|c| c.native_view())
+            .filter(|view| is_placed_in(view, &clip));
         if let Some(view) = child {
             self.attach_child_constraints(&view);
         }
