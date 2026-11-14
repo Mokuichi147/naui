@@ -23,8 +23,8 @@ use gtk::gio;
 use gtk::glib;
 use gtk::pango;
 use naui_core::{
-    Align, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
-    EventResponse, FileFilter, FilePickerMode, Fit, GridCell, Length, ListItem, MenuItem,
+    Align, Bitmap, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
+    EventResponse, FileFilter, FilePickerMode, Fit, Gradient, GridCell, Length, ListItem, MenuItem,
     MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
     PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode, SidebarItem,
     SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle, Theme, Time,
@@ -67,6 +67,10 @@ fn main() {
         (
             "描画面が on_draw の命令を cairo で画素に落とす",
             canvas_paints_recorded_commands,
+        ),
+        (
+            "描画面の切り抜き・回転・グラデーション・画像・文字幅が cairo で効く",
+            canvas_draws_the_broader_vocabulary,
         ),
         (
             "描画面がポインターの押下・移動・解放を面の座標で通知する",
@@ -1367,6 +1371,138 @@ fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
     assert!(
         (50..64).all(|y| !dark(114, y)),
         "右端より右には描かないこと"
+    );
+    window.close();
+    Ok(())
+}
+
+/// 4 x 4 RGBA pixels: the top two rows red, the bottom two blue.
+fn two_bands() -> Vec<u8> {
+    (0..16)
+        .flat_map(|i| {
+            if i < 8 {
+                [255, 0, 0, 255]
+            } else {
+                [0, 0, 255, 255]
+            }
+        })
+        .collect()
+}
+
+/// Clipping, rotation, gradients, images and text measurement, replayed with
+/// cairo's `clip`, `transform`, gradient patterns and image surfaces. The widget's
+/// snapshot is drawn into a cairo image and each part of the surface is read.
+fn canvas_draws_the_broader_vocabulary(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    canvas.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(120.0))
+            .height(Length::Fixed(80.0)),
+    );
+    let red = Color::rgb(0xff, 0x00, 0x00);
+    let blue = Color::rgb(0x00, 0x00, 0xff);
+    // 上の 2 行が赤、下の 2 行が青の 4 x 4 画素。画素のままのものと、PNG に
+    // 包んで GDK に読ませるものの両方を描く。引き伸ばすと隣の画素が混ざるので、
+    // 色の境目から離れたところを読む。
+    let rgba = two_bands();
+    let pixels = Bitmap::from_pixels(4, 4, &rgba)?;
+    let png = Bitmap::from_bytes(&naui_core::media::encode_png(4, 4, &rgba)?)?;
+    let widths = Rc::new(Cell::new((0.0, 0.0)));
+    canvas.on_draw({
+        let widths = widths.clone();
+        move |painter| {
+            widths.set((
+                painter.text_width("WWWW", 12.0),
+                painter.text_width("iiii", 12.0),
+            ));
+            painter.fill_rect(painter.bounds(), Color::WHITE);
+            // 左上: 左半分だけを残して切り抜く。
+            painter.save();
+            painter.clip_rect(Rect::new(0.0, 0.0, 20.0, 40.0));
+            painter.fill_rect(Rect::new(0.0, 0.0, 40.0, 40.0), red);
+            painter.restore();
+            // 上の中: 右へ伸びる棒を 90° 回すと下へ伸びる。
+            painter.save();
+            painter.translate(60.0, 10.0);
+            painter.rotate(std::f64::consts::FRAC_PI_2);
+            painter.fill_rect(Rect::new(0.0, -3.0, 25.0, 6.0), blue);
+            painter.restore();
+            // 右上: 左から右へ赤から青。
+            painter.fill_rect(
+                Rect::new(80.0, 0.0, 40.0, 40.0),
+                Gradient::linear(Point::new(80.0, 0.0), Point::new(120.0, 0.0))
+                    .stop(0.0, red)
+                    .stop(1.0, blue),
+            );
+            // 左下: 上の 2 行だけを引き伸ばす。中下: 全体を引き伸ばす。
+            painter.draw_image_region(
+                &pixels,
+                Rect::new(0.0, 0.0, 4.0, 2.0),
+                Rect::new(0.0, 40.0, 40.0, 40.0),
+            );
+            painter.draw_image(&png, Rect::new(40.0, 40.0, 40.0, 40.0));
+            // 右下: 中心の赤から半径 15 の青へ。外側は青のまま続く。
+            painter.fill_rect(
+                Rect::new(80.0, 40.0, 40.0, 40.0),
+                Gradient::radial(Point::new(100.0, 60.0), 15.0)
+                    .stop(0.0, red)
+                    .stop(1.0, blue),
+            );
+            // 閉じ忘れた save と、その中の変換は次の描画へ残らない。
+            painter.save();
+            painter.translate(1000.0, 0.0);
+        }
+    });
+
+    let window = ui.window("canvas", 200.0, 160.0)?;
+    window.set_child(&canvas);
+    window.show();
+    let area = canvas.native_area();
+    tick(&area);
+
+    let snapshot = gtk::Snapshot::new();
+    bin_of(&canvas).snapshot_child(&area, &snapshot);
+    let node = snapshot.to_node().expect("描いたものがあること");
+    let mut surface =
+        gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 120, 80).expect("画像の生成");
+    let cr = gtk::cairo::Context::new(&surface).expect("コンテキストの生成");
+    node.draw(&cr);
+    drop(cr);
+    surface.flush();
+    let stride = surface.stride() as usize;
+    let data = surface.data().expect("画素の読み出し");
+    let read = |x: usize, y: usize| -> Color {
+        let i = y * stride + x * 4;
+        Color::rgb(data[i + 2], data[i + 1], data[i])
+    };
+    let is_red = |c: Color| c.r > 200 && c.g < 60 && c.b < 60;
+    let is_blue = |c: Color| c.b > 200 && c.r < 60 && c.g < 60;
+    let is_white = |c: Color| c.r > 240 && c.g > 240 && c.b > 240;
+    let check = |name: &str, x: usize, y: usize, ok: &dyn Fn(Color) -> bool| {
+        let c = read(x, y);
+        assert!(ok(c), "{name} ({x}, {y}): {c}");
+    };
+    check("切り抜きの中", 10, 20, &is_red);
+    check("切り抜きの外", 30, 20, &is_white);
+    check("回した棒", 60, 30, &is_blue);
+    check("回す前の向きには無い", 75, 10, &is_white);
+    check("グラデーションの始め", 81, 20, &is_red);
+    check("グラデーションの終わり", 119, 20, &is_blue);
+    let middle = read(100, 20);
+    assert!(
+        middle.r > 60 && middle.b > 60,
+        "グラデーションの中ほどは混ざる: {middle}"
+    );
+    check("画像の一部 (上の 2 行)", 20, 70, &is_red);
+    check("PNG の上半分", 60, 50, &is_red);
+    check("PNG の下半分", 60, 70, &is_blue);
+    check("放射の中心", 100, 60, &is_red);
+    check("放射の外", 118, 78, &is_blue);
+
+    let (wide, narrow) = widths.get();
+    assert!(
+        wide > narrow * 1.5 && narrow > 0.0,
+        "文字幅は字形で測る (WWWW {wide}, iiii {narrow})"
     );
     window.close();
     Ok(())

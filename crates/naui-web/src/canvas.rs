@@ -32,16 +32,18 @@
 //! `Handled` is `preventDefault` called to stop page scrolling.
 
 use std::cell::{Cell, RefCell};
-use std::rc::Rc;
+use std::rc::{Rc, Weak};
 
 use naui_core::{
-    Align, DrawCommand, EventResponse, Painter, Path, PathSegment, Point, PointerButton,
-    PointerEvent, PointerPhase, Result, WheelHandler, WHEEL_STEP,
+    Align, Bitmap, BitmapData, Color, DrawCommand, EventResponse, Gradient, GradientShape, Paint,
+    Painter, Path, PathSegment, Point, PointerButton, PointerEvent, PointerPhase, Rect, Result,
+    WheelHandler, WHEEL_STEP,
 };
 use wasm_bindgen::closure::Closure;
-use wasm_bindgen::{JsCast, JsValue};
+use wasm_bindgen::{Clamped, JsCast, JsValue};
 use web_sys::{
-    CanvasRenderingContext2d, Document, Element, HtmlCanvasElement, HtmlElement, ResizeObserver,
+    CanvasGradient, CanvasRenderingContext2d, Document, Element, HtmlCanvasElement, HtmlElement,
+    HtmlImageElement, ImageData, ResizeObserver,
 };
 
 use crate::to_error;
@@ -231,20 +233,7 @@ impl Canvas {
     /// Requests a redraw. Nothing is drawn on the spot; `on_draw` is called on the next
     /// frame.
     pub fn redraw(&self) {
-        if self.0.scheduled.replace(true) {
-            return;
-        }
-        let frame = self.0.frame.borrow();
-        let (Some(window), Some(frame)) = (web_sys::window(), frame.as_ref()) else {
-            self.0.scheduled.set(false);
-            return;
-        };
-        if window
-            .request_animation_frame(frame.as_ref().unchecked_ref())
-            .is_err()
-        {
-            self.0.scheduled.set(false);
-        }
+        self.0.schedule();
     }
 
     /// Pointer (mouse, touch, pen) presses, moves and releases. Positions are CSS
@@ -297,6 +286,24 @@ fn web_buttons_bit(button: i16) -> u16 {
 }
 
 impl CanvasInner {
+    /// Draws on the next frame. Requests made before it runs collapse into one.
+    fn schedule(&self) {
+        if self.scheduled.replace(true) {
+            return;
+        }
+        let frame = self.frame.borrow();
+        let (Some(window), Some(frame)) = (web_sys::window(), frame.as_ref()) else {
+            self.scheduled.set(false);
+            return;
+        };
+        if window
+            .request_animation_frame(frame.as_ref().unchecked_ref())
+            .is_err()
+        {
+            self.scheduled.set(false);
+        }
+    }
+
     /// Converts a mouse event's position into CSS pixels with the surface's top left as
     /// origin.
     ///
@@ -369,7 +376,14 @@ impl CanvasInner {
             self.canvas.set_height(pixel_height);
         }
 
-        let mut painter = Painter::new(width, height);
+        let measured = self.context.clone();
+        let mut painter = Painter::with_text_measure(width, height, move |text, size| {
+            measured.set_font(&font(size));
+            measured
+                .measure_text(text)
+                .map(|metrics| metrics.width())
+                .unwrap_or(0.0)
+        });
         let Some(mut draw) = self.draw.borrow_mut().take() else {
             return;
         };
@@ -384,7 +398,7 @@ impl CanvasInner {
         let _ = context.reset_transform();
         context.clear_rect(0.0, 0.0, f64::from(pixel_width), f64::from(pixel_height));
         let _ = context.scale(ratio, ratio);
-        replay(context, painter.commands());
+        replay(self, &painter.into_commands());
     }
 }
 
@@ -397,17 +411,29 @@ impl Drop for CanvasInner {
 }
 
 /// Draws the commands recorded in the [`Painter`] into the 2D context.
-fn replay(context: &CanvasRenderingContext2d, commands: &[DrawCommand]) {
+///
+/// The context keeps its state from one draw to the next, so the whole replay sits
+/// inside one `save` and every `Save` left open is restored at the end: a clip or
+/// transform must not reach the next frame.
+fn replay(inner: &Rc<CanvasInner>, commands: &[DrawCommand]) {
+    let context = &inner.context;
+    context.save();
+    let mut depth = 0_usize;
     for command in commands {
         match command {
             DrawCommand::Fill {
                 path,
-                color,
+                paint,
                 opacity,
             } => {
                 trace(context, path);
                 context.set_global_alpha(*opacity);
-                context.set_fill_style_str(&color.to_hex());
+                match paint {
+                    Paint::Color(color) => context.set_fill_style_str(&color.to_hex()),
+                    Paint::Gradient(gradient) => {
+                        context.set_fill_style_canvas_gradient(&canvas_gradient(context, gradient))
+                    }
+                }
                 context.fill();
             }
             DrawCommand::Stroke {
@@ -440,7 +466,7 @@ fn replay(context: &CanvasRenderingContext2d, commands: &[DrawCommand]) {
             } => {
                 context.set_global_alpha(*opacity);
                 context.set_fill_style_str(&color.to_hex());
-                context.set_font(&format!("{size}px system-ui, sans-serif"));
+                context.set_font(&font(*size));
                 context.set_text_baseline("top");
                 context.set_text_align(match align {
                     Align::Center => "center",
@@ -449,8 +475,202 @@ fn replay(context: &CanvasRenderingContext2d, commands: &[DrawCommand]) {
                 });
                 let _ = context.fill_text(text, at.x, at.y);
             }
+            DrawCommand::Image {
+                bitmap,
+                source,
+                dest,
+                opacity,
+            } => draw_image(inner, bitmap, *source, *dest, *opacity),
+            DrawCommand::Save => {
+                context.save();
+                depth += 1;
+            }
+            DrawCommand::Restore => {
+                if depth > 0 {
+                    context.restore();
+                    depth -= 1;
+                }
+            }
+            DrawCommand::Transform(t) => {
+                // 今の変換の前に掛ける (`setTransform` は描画面の倍率を消すので使わない)。
+                let _ = context.transform(t.a, t.b, t.c, t.d, t.e, t.f);
+            }
+            DrawCommand::Clip(path) => {
+                trace(context, path);
+                context.clip();
+            }
         }
     }
+    for _ in 0..=depth {
+        context.restore();
+    }
+}
+
+/// The CSS font of text drawn at `size` (CSS pixels).
+fn font(size: f64) -> String {
+    format!("{size}px system-ui, sans-serif")
+}
+
+/// A `CanvasGradient` with `gradient`'s stops. Both kinds carry the end colors on
+/// past their ends.
+fn canvas_gradient(context: &CanvasRenderingContext2d, gradient: &Gradient) -> CanvasGradient {
+    let made = match gradient.shape() {
+        GradientShape::Linear { start, end } => {
+            context.create_linear_gradient(start.x, start.y, end.x, end.y)
+        }
+        GradientShape::Radial { center, radius } => context
+            .create_radial_gradient(center.x, center.y, 0.0, center.x, center.y, radius)
+            .unwrap_or_else(|_| context.create_linear_gradient(0.0, 0.0, 0.0, 0.0)),
+    };
+    for stop in gradient.stops() {
+        let _ = made.add_color_stop(stop.offset as f32, &rgba(stop.color, stop.opacity));
+    }
+    made
+}
+
+/// A CSS color with alpha.
+fn rgba(color: Color, opacity: f64) -> String {
+    format!("rgb({} {} {} / {opacity})", color.r, color.g, color.b)
+}
+
+/// What `drawImage` draws a [`Bitmap`] from, kept with it.
+///
+/// Pixels are put into a `<canvas>` of their size, ready at once (`putImageData`
+/// ignores the transform, the clip and the opacity, so it cannot draw them
+/// directly). Files are handed to an `<img>` through a `Blob` URL: the browser
+/// decodes them in the background, so a file is not drawn until it has loaded, and
+/// every surface that tried to draw it before then is drawn again when it has.
+struct WebBitmap {
+    source: ImageSource,
+    load: Rc<Load>,
+    /// The `Blob` URL of a file, released with the image.
+    url: Option<String>,
+    _listeners: Vec<crate::widgets::Listener>,
+}
+
+enum ImageSource {
+    Image(HtmlImageElement),
+    Canvas(HtmlCanvasElement),
+    /// It could not be made; nothing is drawn.
+    None,
+}
+
+#[derive(Default)]
+struct Load {
+    ready: Cell<bool>,
+    /// The surfaces to draw again once it has loaded.
+    waiting: RefCell<Vec<Weak<CanvasInner>>>,
+}
+
+impl WebBitmap {
+    fn new(bitmap: &Bitmap) -> Self {
+        let load = Rc::new(Load::default());
+        let mut this = Self {
+            source: ImageSource::None,
+            load,
+            url: None,
+            _listeners: Vec::new(),
+        };
+        match bitmap.data() {
+            BitmapData::Pixels(rgba) => {
+                if let Some(canvas) = pixel_canvas(bitmap.width(), bitmap.height(), rgba) {
+                    this.source = ImageSource::Canvas(canvas);
+                    this.load.ready.set(true);
+                }
+            }
+            BitmapData::Encoded(bytes) => {
+                let _ = this.load_file(bytes, bitmap.mime().unwrap_or(""));
+            }
+        }
+        this
+    }
+
+    fn load_file(&mut self, bytes: &[u8], kind: &str) -> Option<()> {
+        let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(bytes));
+        let options = web_sys::BlobPropertyBag::new();
+        options.set_type(kind);
+        let blob = web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &options).ok()?;
+        let url = web_sys::Url::create_object_url_with_blob(&blob).ok()?;
+        // 途中で抜けても `Drop` が手放せるよう、作ったらすぐ持つ。
+        self.url = Some(url.clone());
+        let image = HtmlImageElement::new().ok()?;
+        let target: &web_sys::EventTarget = image.as_ref();
+        let load = self.load.clone();
+        self._listeners.push(
+            crate::widgets::Listener::attach(target, "load", move || {
+                load.ready.set(true);
+                let waiting = std::mem::take(&mut *load.waiting.borrow_mut());
+                for canvas in waiting.iter().filter_map(Weak::upgrade) {
+                    canvas.schedule();
+                }
+            })
+            .ok()?,
+        );
+        let load = self.load.clone();
+        self._listeners.push(
+            crate::widgets::Listener::attach(target, "error", move || {
+                load.waiting.borrow_mut().clear();
+            })
+            .ok()?,
+        );
+        image.set_src(&url);
+        self.source = ImageSource::Image(image);
+        Some(())
+    }
+}
+
+impl Drop for WebBitmap {
+    fn drop(&mut self) {
+        if let Some(url) = self.url.take() {
+            let _ = web_sys::Url::revoke_object_url(&url);
+        }
+    }
+}
+
+/// A `<canvas>` of `width` × `height` holding the pixels.
+fn pixel_canvas(width: u32, height: u32, rgba: &[u8]) -> Option<HtmlCanvasElement> {
+    let document = web_sys::window()?.document()?;
+    let canvas: HtmlCanvasElement = document.create_element("canvas").ok()?.dyn_into().ok()?;
+    canvas.set_width(width);
+    canvas.set_height(height);
+    let context: CanvasRenderingContext2d = canvas.get_context("2d").ok()??.dyn_into().ok()?;
+    let data = ImageData::new_with_u8_clamped_array_and_sh(Clamped(rgba), width, height).ok()?;
+    context.put_image_data(&data, 0.0, 0.0).ok()?;
+    Some(canvas)
+}
+
+/// Draws the `source` part of the image over `dest`, or, for a file still loading,
+/// asks to be drawn again once it has.
+fn draw_image(inner: &Rc<CanvasInner>, bitmap: &Bitmap, source: Rect, dest: Rect, opacity: f64) {
+    let native = bitmap.native(WebBitmap::new);
+    if !native.load.ready.get() {
+        if matches!(native.source, ImageSource::Image(_)) {
+            let mut waiting = native.load.waiting.borrow_mut();
+            waiting.retain(|canvas| canvas.strong_count() != 0);
+            if !waiting
+                .iter()
+                .any(|canvas| canvas.ptr_eq(&Rc::downgrade(inner)))
+            {
+                waiting.push(Rc::downgrade(inner));
+            }
+        }
+        return;
+    }
+    let context = &inner.context;
+    context.set_global_alpha(opacity);
+    let (sx, sy, sw, sh) = (source.x, source.y, source.width, source.height);
+    let (dx, dy, dw, dh) = (dest.x, dest.y, dest.width, dest.height);
+    let _ = match &native.source {
+        ImageSource::Image(image) => context
+            .draw_image_with_html_image_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+                image, sx, sy, sw, sh, dx, dy, dw, dh,
+            ),
+        ImageSource::Canvas(canvas) => context
+            .draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+                canvas, sx, sy, sw, sh, dx, dy, dw, dh,
+            ),
+        ImageSource::None => Ok(()),
+    };
 }
 
 fn trace(context: &CanvasRenderingContext2d, path: &Path) {

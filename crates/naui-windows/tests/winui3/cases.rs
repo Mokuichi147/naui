@@ -9,9 +9,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use naui_core::{
-    Align, ButtonRole, Color, GridCell, MenuItem, MenuShortcut, MenuSpec, Orientation, Point, Rect,
-    Result, RichText, ScrollPolicy, SidebarItem, SidebarSection, Sizing, TextColor, TextStyle,
-    Theme, ToolbarIcon, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
+    Align, Bitmap, ButtonRole, Color, Gradient, GridCell, MenuItem, MenuShortcut, MenuSpec,
+    Orientation, Point, Rect, Result, RichText, ScrollPolicy, SidebarItem, SidebarSection, Sizing,
+    TextColor, TextStyle, Theme, ToolbarIcon, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_windows::{run_for_test, MenuEntry, Ui, Widget};
 
@@ -491,6 +491,14 @@ const CASES: &[Case] = &[
     (
         "描画面の命令が Direct2D で画素になる",
         canvas_commands_become_pixels,
+    ),
+    (
+        "描画面の切り抜き・回転・グラデーション・画像・文字幅が Direct2D で効く",
+        canvas_draws_the_broader_vocabulary,
+    ),
+    (
+        "描画面は作れない大きさの画像だけを飛ばし、後ろの命令は描く",
+        canvas_skips_an_image_too_large_for_the_device,
     ),
     (
         "表示した描画面は物理画素の Composition の面に描かれる",
@@ -1244,6 +1252,161 @@ fn canvas_commands_become_pixels(ui: &Ui) -> Result<()> {
         pixel(&wide, wide.0 - 10, 5),
         (0, 0, 0xff, 0xff),
         "倍率を下げて右端まで描くこと"
+    );
+    Ok(())
+}
+
+/// 4 x 4 RGBA pixels: the top two rows red, the bottom two blue.
+fn two_bands() -> Vec<u8> {
+    (0..16)
+        .flat_map(|i| {
+            if i < 8 {
+                [255, 0, 0, 255]
+            } else {
+                [0, 0, 255, 255]
+            }
+        })
+        .collect()
+}
+
+/// Clipping, rotation, gradients, images and text measurement. Direct2D keeps no
+/// stack of states, so naui keeps the transforms and pushes clips itself: a
+/// rectangle along the axes becomes an axis-aligned clip, anything else (a circle,
+/// a turned rectangle) a layer with a geometric mask. Files are decoded by WIC.
+fn canvas_draws_the_broader_vocabulary(ui: &Ui) -> Result<()> {
+    let red = Color::rgb(0xff, 0x00, 0x00);
+    let blue = Color::rgb(0x00, 0x00, 0xff);
+    let rgba = two_bands();
+    let pixels = Bitmap::from_pixels(4, 4, &rgba)?;
+    let png = Bitmap::from_bytes(&naui_core::media::encode_png(4, 4, &rgba)?)?;
+    let widths = Rc::new(Cell::new((0.0, 0.0)));
+    let canvas = ui.canvas()?;
+    canvas.on_draw({
+        let widths = widths.clone();
+        move |painter| {
+            widths.set((
+                painter.text_width("WWWW", 12.0),
+                painter.text_width("iiii", 12.0),
+            ));
+            painter.fill_rect(painter.bounds(), Color::WHITE);
+            // 左上: 左半分だけを残して切り抜く。
+            painter.save();
+            painter.clip_rect(Rect::new(0.0, 0.0, 20.0, 40.0));
+            painter.fill_rect(Rect::new(0.0, 0.0, 40.0, 40.0), red);
+            painter.restore();
+            // 上の中: 右へ伸びる棒を 90° 回すと下へ伸びる。
+            painter.save();
+            painter.translate(60.0, 10.0);
+            painter.rotate(std::f64::consts::FRAC_PI_2);
+            painter.fill_rect(Rect::new(0.0, -3.0, 25.0, 6.0), blue);
+            painter.restore();
+            // 上の 3 つ目: 左から右へ赤から青。
+            painter.fill_rect(
+                Rect::new(80.0, 0.0, 40.0, 40.0),
+                Gradient::linear(Point::new(80.0, 0.0), Point::new(120.0, 0.0))
+                    .stop(0.0, red)
+                    .stop(1.0, blue),
+            );
+            // 右上: 動かした先で円に切り抜く (レイヤーの型も変換に従う)。
+            painter.save();
+            painter.translate(140.0, 20.0);
+            painter.clip(&naui_core::Path::new().circle(Point::new(0.0, 0.0), 10.0));
+            painter.fill_rect(Rect::new(-20.0, -20.0, 40.0, 40.0), red);
+            painter.restore();
+            // 左下: 上の 2 行だけを引き伸ばす。中下: PNG の全体を引き伸ばす。
+            painter.draw_image_region(
+                &pixels,
+                Rect::new(0.0, 0.0, 4.0, 2.0),
+                Rect::new(0.0, 40.0, 40.0, 40.0),
+            );
+            painter.draw_image(&png, Rect::new(40.0, 40.0, 40.0, 40.0));
+            // 下の 3 つ目: 中心の赤から半径 15 の青へ。外側は青のまま続く。
+            painter.fill_rect(
+                Rect::new(80.0, 40.0, 40.0, 40.0),
+                Gradient::radial(Point::new(100.0, 60.0), 15.0)
+                    .stop(0.0, red)
+                    .stop(1.0, blue),
+            );
+            // 右下: 45° 回した正方形で切り抜くと菱形になる (外接矩形ではない)。
+            painter.save();
+            painter.translate(140.0, 60.0);
+            painter.rotate(std::f64::consts::FRAC_PI_4);
+            painter.clip_rect(Rect::new(-5.0, -5.0, 10.0, 10.0));
+            painter.fill_rect(Rect::new(-20.0, -20.0, 40.0, 40.0), blue);
+            painter.restore();
+            // 閉じ忘れた save と、その中の切り抜きは EndDraw を壊さない。
+            painter.save();
+            painter.clip(&naui_core::Path::new().circle(Point::new(0.0, 0.0), 1.0));
+        }
+    });
+
+    let Some(drawn) = canvas.pixels_for_test(160.0, 80.0, 1.0) else {
+        println!("     (Direct2D を使えない環境なので、確かめずに通す)");
+        return Ok(());
+    };
+    let read = |x: u32, y: u32| {
+        let (b, g, r, _) = pixel(&drawn, x, y);
+        Color::rgb(r, g, b)
+    };
+    let is_red = |c: Color| c.r > 200 && c.g < 60 && c.b < 60;
+    let is_blue = |c: Color| c.b > 200 && c.r < 60 && c.g < 60;
+    let is_white = |c: Color| c.r > 240 && c.g > 240 && c.b > 240;
+    let check = |name: &str, x: u32, y: u32, ok: &dyn Fn(Color) -> bool| {
+        let c = read(x, y);
+        assert!(ok(c), "{name} ({x}, {y}): {c}");
+    };
+    check("切り抜きの中", 10, 20, &is_red);
+    check("切り抜きの外", 30, 20, &is_white);
+    check("回した棒", 60, 30, &is_blue);
+    check("回す前の向きには無い", 75, 10, &is_white);
+    check("グラデーションの始め", 81, 20, &is_red);
+    check("グラデーションの終わり", 118, 20, &is_blue);
+    let middle = read(100, 20);
+    assert!(
+        middle.r > 60 && middle.b > 60,
+        "グラデーションの中ほどは混ざる: {middle}"
+    );
+    check("動かした円の中", 140, 20, &is_red);
+    check("円の外 (四角の隅)", 123, 3, &is_white);
+    check("画像の一部 (上の 2 行)", 20, 70, &is_red);
+    check("PNG の上半分", 60, 50, &is_red);
+    check("PNG の下半分", 60, 70, &is_blue);
+    check("放射の中心", 100, 60, &is_red);
+    check("放射の外", 118, 78, &is_blue);
+    check("菱形の中", 140, 55, &is_blue);
+    check("菱形の外 (外接矩形の隅)", 135, 55, &is_white);
+
+    let (wide, narrow) = widths.get();
+    assert!(
+        wide > narrow * 1.5 && narrow > 0.0,
+        "文字幅は DirectWrite で測る (WWWW {wide}, iiii {narrow})"
+    );
+    Ok(())
+}
+
+/// An image wider than a Direct2D bitmap can be (16384 pixels on Direct3D 11) is
+/// left out alone, as on the other platforms; the commands after it still draw.
+fn canvas_skips_an_image_too_large_for_the_device(ui: &Ui) -> Result<()> {
+    let plain = ui.canvas()?;
+    plain.on_draw(|painter| painter.fill_rect(painter.bounds(), Color::WHITE));
+    if plain.pixels_for_test(40.0, 40.0, 1.0).is_none() {
+        println!("     (Direct2D を使えない環境なので、確かめずに通す)");
+        return Ok(());
+    }
+    let wide = Bitmap::from_pixels(40_000, 1, &[0x80; 40_000 * 4])?;
+    let canvas = ui.canvas()?;
+    canvas.on_draw(move |painter| {
+        painter.draw_image(&wide, Rect::new(0.0, 0.0, 40.0, 10.0));
+        painter.fill_rect(Rect::new(0.0, 20.0, 40.0, 20.0), Color::rgb(0xff, 0, 0));
+    });
+    // 描くのに失敗すると `None` になる (Direct2D は使えると確かめてある)。
+    let pixels = canvas
+        .pixels_for_test(40.0, 40.0, 1.0)
+        .expect("作れない画像で描画全体が失敗しない");
+    assert_eq!(
+        pixel(&pixels, 20, 30),
+        (0, 0, 0xff, 0xff),
+        "作れない画像の後ろの命令も描かれる"
     );
     Ok(())
 }

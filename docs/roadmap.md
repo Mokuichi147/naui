@@ -222,11 +222,11 @@ v0.17.0.
       toolkit mirrors automatically, and which widgets must not be mirrored
       (`Canvas`, number inputs, media controls). Whether `Auto` follows the
       language given by `Settings::language` is decided then.
-- [ ] **Broaden `Canvas`'s vocabulary** (images, clipping, rotation and scaling,
-      gradients). What it waited on was released in v0.15.0: text width
-      measurement on Windows can use the DirectWrite that `Canvas` now draws with,
-      and image drawing can build on the image sources `Image::set_bytes` and
-      `set_pixels` read.
+- [x] **Broaden `Canvas`'s vocabulary** (images, clipping, rotation and scaling,
+      gradients, text width measurement). `Painter` gained `save` / `restore`,
+      transforms, `clip`, gradient fills, `draw_image` with `Bitmap` (from the
+      same file bytes and pixels as `Image::set_bytes` and `set_pixels`), and
+      `text_width` measured by each platform's text engine.
 - [ ] **Images on the clipboard.** Copying and pasting images: `NSPasteboard` on
       macOS, `GdkTexture` on GTK, `DataPackage.SetBitmap` on WinUI, and the
       Clipboard API's `image/png` on the Web, which depends on the browser's
@@ -315,8 +315,9 @@ when work starts. Items that did not fit the approach have moved to
       them needs the core.
 - [ ] *(drawing)* **`naui-charts`.** Line, bar and scatter charts in a separate
       crate drawing on `Canvas`. Plot areas must not draw outside their bounds, so
-      it waits for `Canvas`'s clipping (P1). Windows's `Canvas` keeps up with
-      charts of many points since v0.15.0.
+      it waits for `Canvas`'s clipping, implemented for v0.17.0 along with text
+      width measurement for laying out axis labels. Windows's `Canvas` keeps up
+      with charts of many points since v0.15.0.
 - [ ] *(drawing)* **`naui-wgpu`.** A separate crate that connects a wgpu surface
       through `NativeHost` on all four platforms, and checks basic 2D and 3D
       drawing, resizing and scale-factor changes. It waits for `NativeHost`,

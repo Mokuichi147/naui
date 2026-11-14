@@ -1,4 +1,5 @@
 //! 描画面 (`Canvas`)。棒グラフと図形を、`Painter` の命令だけで描く。
+//! 回転・切り抜き・グラデーション・画像・文字幅の計測も使う。
 //!
 //! ここで描いているものは naui の中に「棒グラフ」や「円」の部品があるわけでは
 //! なく、`on_draw` の中で矩形や円の**命令を積んでいる**だけ。積んだ命令を
@@ -10,8 +11,8 @@ use std::f64::consts::{FRAC_PI_2, TAU};
 use std::rc::Rc;
 
 use naui::{
-    Align, Color, EventResponse, Length, Path, Point, PointerButton, PointerPhase, Rect, Result,
-    Sizing, Ui, WHEEL_STEP,
+    Align, Bitmap, Color, EventResponse, Gradient, Length, Path, Point, PointerButton,
+    PointerPhase, Rect, Result, Sizing, Ui, WHEEL_STEP,
 };
 
 use crate::parts::{self, Notice};
@@ -287,6 +288,42 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     slider_row.append(&angle_slider);
     pane.append(&slider_row);
 
+    // 回転・切り抜き・グラデーション・画像・文字幅。左は枠からはみ出す波を枠で
+    // 切り抜き、下へ薄れるグラデーションで塗る。中央の正方形はスライダーで回り、
+    // 右はアプリが作った 16 x 16 画素の画像を引き伸ばしたものと、その一部。
+    // 札の背景は文字幅を測ってから敷く。
+    parts::group(ui, &pane, "Transforms, clips, gradients and images")?;
+
+    let turn = Rc::new(Cell::new(0.1));
+    let sprite = Bitmap::from_pixels(16, 16, &sprite_pixels())?;
+    let extras = ui.canvas()?;
+    extras.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(180.0)),
+    );
+    extras.on_draw({
+        let turn = turn.clone();
+        move |painter| draw_extras(painter, turn.get(), &sprite)
+    });
+    pane.append(&extras);
+
+    let turn_slider = ui.slider(0.0, 1.0)?;
+    turn_slider.set_value(turn.get());
+    turn_slider.set_sizing(Sizing::new().width(Length::Fixed(240.0)));
+    turn_slider.on_change({
+        let turn = turn.clone();
+        let extras = extras.clone();
+        move |value| {
+            turn.set(value);
+            extras.redraw();
+        }
+    });
+    let turn_row = parts::row(ui)?;
+    turn_row.append(&ui.label("Turn")?);
+    turn_row.append(&turn_slider);
+    pane.append(&turn_row);
+
     // ホイール (トラックパッドの 2 本指のスクロール) でポインターの位置を中心に
     // 拡大縮小する。主ボタンか中ボタンでつかむと動かせて、副ボタン (右クリック)
     // で元に戻る。on_wheel で Handled を返しているので、図の上ではページは
@@ -413,4 +450,87 @@ fn draw_zoomable(painter: &mut naui::Painter, view: &ViewState) {
         11.0,
         INK,
     );
+}
+
+/// 16 x 16 画素の画像。左上から右下へ色が変わり、市松の目が透ける。
+fn sprite_pixels() -> Vec<u8> {
+    let mut rgba = Vec::with_capacity(16 * 16 * 4);
+    for y in 0..16_u32 {
+        for x in 0..16_u32 {
+            let alpha = if (x / 4 + y / 4) % 2 == 0 { 255 } else { 120 };
+            rgba.extend_from_slice(&[(x * 16) as u8, 0x66, (y * 16) as u8, alpha]);
+        }
+    }
+    rgba
+}
+
+/// 回転・切り抜き・グラデーション・画像・文字幅を使う図。
+fn draw_extras(painter: &mut naui::Painter, turn: f64, sprite: &Bitmap) {
+    let bounds = painter.bounds();
+    painter.fill_rect(bounds, PAPER);
+    painter.stroke_rect(bounds.inset(0.5), FRAME, 1.0);
+
+    // 枠からはみ出す波を、枠で切り抜く。下の塗りは下へ行くほど薄れる。
+    let plot = Rect::new(16.0, 36.0, 180.0, 120.0);
+    let wave: Vec<Point> = (0..=40)
+        .map(|i| {
+            let x = plot.x - 20.0 + f64::from(i) * 5.5;
+            let y = plot.y + plot.height / 2.0 - (f64::from(i) * 0.2).sin() * 75.0;
+            Point::new(x, y)
+        })
+        .collect();
+    let area = Path::new()
+        .polyline(&wave)
+        .line_to(Point::new(wave[wave.len() - 1].x, plot.bottom()))
+        .line_to(Point::new(wave[0].x, plot.bottom()))
+        .close();
+    painter.save();
+    painter.clip_rect(plot);
+    painter.fill_path(
+        &area,
+        Gradient::linear(Point::new(0.0, plot.y), Point::new(0.0, plot.bottom()))
+            .stop_with_opacity(0.0, ACCENT, 0.6)
+            .stop_with_opacity(1.0, ACCENT, 0.0),
+    );
+    painter.polyline(&wave, ACCENT, 2.0);
+    painter.restore();
+    painter.stroke_rect(plot, FRAME, 1.0);
+
+    // 中心で回る正方形。中心から外へ広がるグラデーションも一緒に回る。
+    let center = Point::new(plot.right() + 90.0, plot.y + plot.height / 2.0);
+    painter.save();
+    painter.translate(center.x, center.y);
+    painter.rotate(turn * TAU);
+    painter.fill_rect(
+        Rect::new(-40.0, -40.0, 80.0, 80.0),
+        Gradient::radial(Point::new(0.0, 0.0), 57.0)
+            .stop(0.0, ACCENT_STRONG)
+            .stop(1.0, ACCENT),
+    );
+    // 文字も一緒に回る。
+    painter.set_text_align(Align::Center);
+    painter.text("naui", Point::new(0.0, -7.0), 12.0, Color::WHITE);
+    painter.restore();
+
+    // 画像を 4 倍に引き伸ばしたものと、その左上の 4 分の 1 を同じ大きさで。
+    let image = Rect::new(center.x + 80.0, plot.y + 28.0, 64.0, 64.0);
+    painter.draw_image(sprite, image);
+    painter.draw_image_region(
+        sprite,
+        Rect::new(0.0, 0.0, 8.0, 8.0),
+        Rect::new(image.right() + 12.0, image.y, 64.0, 64.0),
+    );
+
+    // 札。文字幅を測ってから、その幅の背景を敷く。
+    let labels = [
+        ("clip + gradient", Point::new(plot.x, 10.0)),
+        ("rotate", Point::new(center.x - 40.0, 10.0)),
+        ("draw_image", Point::new(image.x, 10.0)),
+    ];
+    painter.set_text_align(Align::Start);
+    for (label, at) in labels {
+        let width = painter.text_width(label, 11.0);
+        painter.fill_rect(Rect::new(at.x - 4.0, at.y - 3.0, width + 8.0, 19.0), FRAME);
+        painter.text(label, at, 11.0, INK);
+    }
 }

@@ -23,12 +23,12 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use naui_core::{
-    Align, ButtonRole, Color, DialogButtons, DialogResponse, EventResponse, GridCell, Key,
-    KeyEvent, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding,
-    Pane, Point, PointerButton, PointerPhase, PopupItem, Rect, Result, RichText, ScrollMetrics,
-    SelectionMode, SidebarItem, SidebarSection, Sizing, TableColumn, TableRow, TextColor, TextRun,
-    TextStyle, Theme, ToolbarIcon, ToolbarItem, WindowPlacement, WindowState,
-    DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
+    Align, Bitmap, ButtonRole, Color, DialogButtons, DialogResponse, EventResponse, Gradient,
+    GridCell, Key, KeyEvent, Length, ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem,
+    Orientation, Padding, Pane, Point, PointerButton, PointerPhase, PopupItem, Rect, Result,
+    RichText, ScrollMetrics, SelectionMode, SidebarItem, SidebarSection, Sizing, TableColumn,
+    TableRow, TextColor, TextRun, TextStyle, Theme, ToolbarIcon, ToolbarItem, WindowPlacement,
+    WindowState, DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, WebWidgetExt, Widget};
 use wasm_bindgen::{JsCast, JsValue};
@@ -647,6 +647,158 @@ fn canvas_paints_recorded_commands() {
         );
         Ok(())
     });
+}
+
+/// 4 x 4 RGBA pixels: the top two rows red, the bottom two blue.
+fn two_bands() -> Vec<u8> {
+    (0..16)
+        .flat_map(|i| {
+            if i < 8 {
+                [255, 0, 0, 255]
+            } else {
+                [0, 0, 255, 255]
+            }
+        })
+        .collect()
+}
+
+/// Clipping, rotation, gradients, images and text measurement, replayed with the 2D
+/// context's `clip`, `transform`, gradients and `drawImage`.
+///
+/// Pixels are drawn at once, while a file is decoded by the browser in the
+/// background: it is missing from the first draw, and the surface is drawn again
+/// once it has loaded.
+#[wasm_bindgen_test]
+async fn canvas_draws_the_broader_vocabulary() {
+    let red = Color::rgb(0xff, 0x00, 0x00);
+    let blue = Color::rgb(0x00, 0x00, 0xff);
+    let rgba = two_bands();
+    let pixels = Bitmap::from_pixels(4, 4, &rgba).expect("画素の画像");
+    let png = Bitmap::from_bytes(&naui_core::media::encode_png(4, 4, &rgba).expect("PNG"))
+        .expect("PNG の画像");
+    let widths = Rc::new(Cell::new((0.0, 0.0)));
+    let draws = Rc::new(Cell::new(0));
+    let mut kept = None;
+    with_ui(|ui| {
+        let canvas = ui.canvas()?;
+        canvas.set_sizing(
+            Sizing::new()
+                .width(Length::Fixed(120.0))
+                .height(Length::Fixed(80.0)),
+        );
+        canvas.on_draw({
+            let widths = widths.clone();
+            let draws = draws.clone();
+            move |painter| {
+                draws.set(draws.get() + 1);
+                widths.set((
+                    painter.text_width("WWWW", 12.0),
+                    painter.text_width("iiii", 12.0),
+                ));
+                painter.fill_rect(painter.bounds(), Color::WHITE);
+                // 左上: 左半分だけを残して切り抜く。
+                painter.save();
+                painter.clip_rect(Rect::new(0.0, 0.0, 20.0, 40.0));
+                painter.fill_rect(Rect::new(0.0, 0.0, 40.0, 40.0), red);
+                painter.restore();
+                // 上の中: 右へ伸びる棒を 90° 回すと下へ伸びる。
+                painter.save();
+                painter.translate(60.0, 10.0);
+                painter.rotate(std::f64::consts::FRAC_PI_2);
+                painter.fill_rect(Rect::new(0.0, -3.0, 25.0, 6.0), blue);
+                painter.restore();
+                // 右上: 左から右へ赤から青。
+                painter.fill_rect(
+                    Rect::new(80.0, 0.0, 40.0, 40.0),
+                    Gradient::linear(Point::new(80.0, 0.0), Point::new(120.0, 0.0))
+                        .stop(0.0, red)
+                        .stop(1.0, blue),
+                );
+                // 左下: 上の 2 行だけを引き伸ばす。中下: PNG の全体を引き伸ばす。
+                painter.draw_image_region(
+                    &pixels,
+                    Rect::new(0.0, 0.0, 4.0, 2.0),
+                    Rect::new(0.0, 40.0, 40.0, 40.0),
+                );
+                painter.draw_image(&png, Rect::new(40.0, 40.0, 40.0, 40.0));
+                // 右下: 中心の赤から半径 15 の青へ。外側は青のまま続く。
+                painter.fill_rect(
+                    Rect::new(80.0, 40.0, 40.0, 40.0),
+                    Gradient::radial(Point::new(100.0, 60.0), 15.0)
+                        .stop(0.0, red)
+                        .stop(1.0, blue),
+                );
+                // 閉じ忘れた save と、その中の切り抜きは次の描画へ残らない。
+                painter.save();
+                painter.clip_rect(Rect::new(0.0, 0.0, 1.0, 1.0));
+            }
+        });
+        let mounted = Mounted::new(&canvas);
+        kept = Some((canvas, mounted));
+        Ok(())
+    });
+    let (canvas, _mounted) = kept.expect("描画面");
+    canvas.draw_for_test();
+
+    let native = canvas.native_canvas();
+    let ratio = web_sys::window().expect("window").device_pixel_ratio();
+    let context: CanvasRenderingContext2d = native
+        .get_context("2d")
+        .expect("2D コンテキスト")
+        .expect("2D コンテキスト")
+        .unchecked_into();
+    let read = |x: f64, y: f64| -> Color {
+        let data = context
+            .get_image_data((x * ratio).floor(), (y * ratio).floor(), 1.0, 1.0)
+            .expect("画素の読み出し")
+            .data();
+        Color::rgb(data[0], data[1], data[2])
+    };
+    let is_red = |c: Color| c.r > 200 && c.g < 60 && c.b < 60;
+    let is_blue = |c: Color| c.b > 200 && c.r < 60 && c.g < 60;
+    let is_white = |c: Color| c.r > 240 && c.g > 240 && c.b > 240;
+    assert!(
+        is_white(read(60.0, 50.0)),
+        "ファイルは読み込みが済むまで描かない: {}",
+        read(60.0, 50.0)
+    );
+
+    // 読み込みが済むと描き直される。
+    let first = draws.get();
+    for _ in 0..100 {
+        if is_red(read(60.0, 50.0)) {
+            break;
+        }
+        next_frames().await;
+    }
+    assert!(draws.get() > first, "読み込みが済んだら描き直すこと");
+
+    let check = |name: &str, x: f64, y: f64, ok: &dyn Fn(Color) -> bool| {
+        let c = read(x, y);
+        assert!(ok(c), "{name} ({x}, {y}): {c}");
+    };
+    check("切り抜きの中", 10.0, 20.0, &is_red);
+    check("切り抜きの外", 30.0, 20.0, &is_white);
+    check("回した棒", 60.0, 30.0, &is_blue);
+    check("回す前の向きには無い", 75.0, 10.0, &is_white);
+    check("グラデーションの始め", 81.0, 20.0, &is_red);
+    check("グラデーションの終わり", 119.0, 20.0, &is_blue);
+    let middle = read(100.0, 20.0);
+    assert!(
+        middle.r > 60 && middle.b > 60,
+        "グラデーションの中ほどは混ざる: {middle}"
+    );
+    check("画像の一部 (上の 2 行)", 20.0, 70.0, &is_red);
+    check("PNG の上半分", 60.0, 50.0, &is_red);
+    check("PNG の下半分", 60.0, 70.0, &is_blue);
+    check("放射の中心", 100.0, 60.0, &is_red);
+    check("放射の外", 118.0, 78.0, &is_blue);
+
+    let (wide, narrow) = widths.get();
+    assert!(
+        wide > narrow * 1.5 && narrow > 0.0,
+        "文字幅は字形で測る (WWWW {wide}, iiii {narrow})"
+    );
 }
 
 /// Pointer presses, moves and releases arrive with positions relative to the

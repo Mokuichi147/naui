@@ -172,10 +172,17 @@ that shape are covered in
 - Only one `Toast` is shown at a time too, and a newly shown one replaces the
   previous one (`AdwToastOverlay`'s queueing is aligned to this behavior). There is
   one action button, and the position is fixed at the bottom center.
-- `Canvas`'s vocabulary is only fills, strokes and single lines of text; there is no
-  image drawing, clipping, transforms (rotation or scaling), gradients, or text
-  width measurement. Its size is not decided by its content, so specify it with
-  `set_sizing`.
+- `Canvas` draws single lines of text only (no wrapping or rich text), gradients
+  fill shapes but do not stroke lines, and gradients are linear or radial. A radial
+  gradient spreads from its center, with no separate focal point, and there are no
+  conic (sweep) gradients. Images are PNG, JPEG
+  and GIF (the first frame) only; SVG cannot be drawn. Whether a JPEG's EXIF
+  orientation is applied differs by platform. Stretched parts of an image can take
+  in the pixels just outside them at their edges. Its size is not decided by its
+  content, so specify it with `set_sizing`.
+- Gradient stops that differ in both color and opacity blend slightly differently
+  between platforms (some interpolate premultiplied colors, some not). Stops of one
+  color fading out look the same everywhere.
 - `Canvas` pointer notifications distinguish buttons but not modifier keys (⇧,
   Ctrl, and so on). Trackpad pinches do not arrive as zooming (on the Web,
   Chromium-based browsers and Firefox deliver them to `on_wheel` as wheel events
@@ -489,6 +496,9 @@ that shape are covered in
 
 ### Widgets
 
+- A `Canvas` image made with `Bitmap::from_bytes` is decoded by the browser in the
+  background, so it is missing from draws until it has loaded; the surface is
+  drawn again then. Images made from pixels are drawn at once.
 - `ButtonRole` **does not change the look**. Browsers have no look for primary or
   destructive buttons, so naui only writes the role as the `data-naui-role`
   attribute (`"primary"` / `"destructive"`). An app that wants a look can select

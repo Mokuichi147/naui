@@ -548,10 +548,10 @@ impl Canvas {
         height: f64,
         scale: f64,
     ) -> Option<(u32, u32, Vec<u8>)> {
-        let mut painter = Painter::new(width, height);
+        let mut painter = measured_painter(width, height);
         self.0.draw.emit(&mut painter);
-        render::with_renderer(|renderer| renderer.pixels(width, height, scale, painter.commands()))?
-            .ok()
+        let commands = painter.into_commands();
+        render::with_renderer(|renderer| renderer.pixels(width, height, scale, &commands))?.ok()
     }
 
     /// Signals the device-removal event as Direct3D does after a GPU reset, so the
@@ -591,6 +591,14 @@ impl Canvas {
     pub fn native_grid(&self) -> XamlGrid {
         self.0.native.clone()
     }
+}
+
+/// A painter whose text widths DirectWrite measures, as it draws them.
+fn measured_painter(width: f64, height: f64) -> Painter {
+    Painter::with_text_measure(width, height, |text, size| {
+        // 描画の装置が作れないときは、何も無い `Painter` と同じ見積もりにする。
+        render::measure_text(text, size).unwrap_or_else(|| text.chars().count() as f64 * size * 0.5)
+    })
 }
 
 /// Queues a draw on the `DispatcherQueue`. Requests made before it runs collapse
@@ -775,13 +783,14 @@ impl CanvasInner {
         }
         self.watch_root();
         let scale = self.rasterization_scale();
-        let mut painter = Painter::new(width, height);
+        let mut painter = measured_painter(width, height);
         if !self.draw.emit(&mut painter) {
             return;
         }
         self.scale.set(scale);
+        let commands = painter.into_commands();
         let drawn = render::with_renderer(|renderer| {
-            self.present(renderer, width, height, scale, painter.commands())
+            self.present(renderer, width, height, scale, &commands)
         });
         if let Some(Err(error)) = drawn {
             if let Some(generation) = render::current_generation() {

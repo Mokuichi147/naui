@@ -297,8 +297,13 @@ collected in [Known limitations](known-limitations.md).
   `RasterizationScale`), so one surface pixel is one screen pixel; a change of
   scale alone is caught with `XamlRoot.Changed`. Dashes are converted to **units
   where the stroke width is 1**, as Direct2D requires. Centered and right-aligned
-  text is moved by the width DirectWrite measures. When the GPU is reset, the
-  devices are made again and every surface is redrawn.
+  text is moved by the width DirectWrite measures. Direct2D has neither a stack of
+  states nor relative transforms, so naui keeps the transform and the clips of
+  each `save` itself: a rectangle along the axes becomes `PushAxisAlignedClip`,
+  any other shape (or a turned rectangle) a `PushLayer` with the shape as its
+  mask, and every push is popped before `EndDraw`. Images are decoded by WIC into
+  premultiplied pixels and made into a Direct2D bitmap per device. When the GPU is
+  reset, the devices are made again and every surface is redrawn.
 - **`Window` position and state**: `position` is `AppWindow.Position` in physical
   pixels divided by this window's `RasterizationScale`. While maximized or
   minimized, `rcNormalPosition` (the frame when restored) of
