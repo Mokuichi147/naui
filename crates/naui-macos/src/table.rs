@@ -11,7 +11,7 @@
 //! one data source + delegate class for them.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use naui_core::{Align, Result, SelectionMode, SortOrder, TableColumn, TableRow};
@@ -31,6 +31,7 @@ use objc2_foundation::{
 };
 
 use crate::list::{selected_indices, ActivationHandler, SelectionHandler};
+use crate::row_cell::{CellOwner, WidgetCell};
 use crate::trampoline::{ActionTarget, SharedSlot};
 use crate::widgets::Widget;
 
@@ -206,6 +207,16 @@ impl TableCells {
     fn content(&self, index: usize) -> Option<&CellContent> {
         self.cells.get(index)
     }
+
+    /// Takes the row's widgets out of their current parents, as the table now holds
+    /// them (see [`crate::row_cell`]).
+    fn claim(&self) {
+        for cell in &self.cells {
+            if let CellContent::Widget(content) = cell {
+                crate::row_cell::claim(&content.native_view());
+            }
+        }
+    }
 }
 
 /// The closure that builds rows.
@@ -267,6 +278,14 @@ struct RowsState {
     selectable: RowSelectableCell,
     count: Cell<usize>,
     built: RefCell<HashMap<usize, TableCells>>,
+    /// The mark on the cells this table makes, telling them from a parent a cell's
+    /// widget was moved to.
+    owner: CellOwner,
+    /// The built rows whose widgets were taken since the app last handed rows over
+    /// ([`Table::set_row_builder`], [`Table::refresh`]). Building such a row again,
+    /// because AppKit showed it again, does not take its widgets back from a parent the
+    /// app moved them to.
+    claimed: RefCell<HashSet<usize>>,
 }
 
 impl RowsState {
@@ -277,6 +296,7 @@ impl RowsState {
     fn set_rows(&self, rows: &[TableRow]) {
         self.builder.clear();
         self.built.borrow_mut().clear();
+        self.claimed.borrow_mut().clear();
         *self.rows.borrow_mut() = rows.to_vec();
         self.count.set(rows.len());
     }
@@ -284,6 +304,7 @@ impl RowsState {
     fn set_builder(&self, count: usize, f: impl FnMut(usize) -> Result<TableCells> + 'static) {
         self.rows.borrow_mut().clear();
         self.built.borrow_mut().clear();
+        self.claimed.borrow_mut().clear();
         self.builder.set(f);
         self.count.set(count);
     }
@@ -306,6 +327,11 @@ impl RowsState {
         }
         // 組み立てに失敗した行は、列だけそろえた空の行にする。
         let cells = self.builder.build(index)?.unwrap_or_default();
+        // アプリが行を渡し直してから初めて組み立てた行は、中身をいまの親から
+        // 引き取る。AppKit が出し直すための組み立てでは引き取らない。
+        if self.claimed.borrow_mut().insert(index) {
+            cells.claim();
+        }
         self.built.borrow_mut().insert(index, cells.clone());
         Some(cells)
     }
@@ -574,7 +600,9 @@ fn view_for_cell(
         .unwrap_or(Align::Start);
     let cells = state.rows.cells(usize::try_from(row).ok()?)?;
     Some(match cells.content(index) {
-        Some(CellContent::Widget(content)) => widget_cell_view(mtm, &**content, align),
+        Some(CellContent::Widget(content)) => {
+            widget_cell_view(mtm, &**content, align, state.rows.owner)
+        }
         // 列が足りない行は空のセルになる (`TableRow::cell` と同じ扱い)。
         Some(CellContent::Text(text)) => cell_view(mtm, text, align, !cells.dimmed),
         None => cell_view(mtm, "", align, !cells.dimmed),
@@ -664,9 +692,21 @@ fn cell_view(mtm: MainThreadMarker, text: &str, align: Align, enabled: bool) -> 
 /// constraints clashed when the content is wider than the column, AppKit would break
 /// the layout. Where in the column it is placed is decided by
 /// [`TableColumn::align`]; only [`Align::Fill`] stretches it to fill the column.
-fn widget_cell_view(mtm: MainThreadMarker, content: &dyn Widget, align: Align) -> Retained<NSView> {
-    let cell = NSTableCellView::new(mtm);
+///
+/// If the app moved the widget to another parent after handing it to the table, the
+/// cell stays empty rather than taking it back (see [`crate::row_cell`]).
+fn widget_cell_view(
+    mtm: MainThreadMarker,
+    content: &dyn Widget,
+    align: Align,
+    owner: CellOwner,
+) -> Retained<NSView> {
+    let cell = WidgetCell::with_owner(mtm, owner);
     let view = content.native_view();
+    if !owner.may_take(&view) {
+        let view: &NSView = cell.as_ref();
+        return view.retain();
+    }
     view.setTranslatesAutoresizingMaskIntoConstraints(false);
     cell.addSubview(&view);
 
@@ -913,6 +953,11 @@ impl Table {
     /// The widgets in a row may be recreated every time it is built. Keep per-row state
     /// in the app's data and build from it inside `build`.
     ///
+    /// A widget `build` returns is taken out of its current parent the first time its
+    /// row is built after this call or [`Table::refresh`]. If the app then moves it
+    /// elsewhere, the cell is left empty when AppKit shows it again, rather than taking
+    /// the widget back.
+    ///
     /// ```no_run
     /// # use naui_macos::{Table, TableCells};
     /// # fn fill(table: &Table, cities: Vec<String>) {
@@ -955,10 +1000,12 @@ impl Table {
     /// Rebuilds the visible rows. The row count and selection stay.
     ///
     /// Use it when what the function passed to [`Table::set_row_builder`] returns has
-    /// changed.
+    /// changed. Widgets it returns are taken from wherever they are now, as when the
+    /// function was first passed.
     pub fn refresh(&self) {
         let picked = self.selection();
         self.0.rows.forget_built();
+        self.0.rows.claimed.borrow_mut().clear();
         self.without_notifying(|this| {
             this.0.table.reloadData();
             this.apply_selection(&picked);
