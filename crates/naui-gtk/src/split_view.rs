@@ -109,11 +109,17 @@ impl SplitView {
     }
 
     /// The left (or top) pane. Each call replaces it.
+    ///
+    /// A widget still in another container is refused, as GTK refuses it, and the
+    /// previous pane stays.
     pub fn set_start(&self, child: &dyn Widget) {
         self.0.set_pane(true, child);
     }
 
     /// The right (or bottom) pane. Each call replaces it.
+    ///
+    /// A widget still in another container is refused, as GTK refuses it, and the
+    /// previous pane stays.
     pub fn set_end(&self, child: &dyn Widget) {
         self.0.set_pane(false, child);
     }
@@ -166,11 +172,20 @@ impl SplitViewInner {
         } else {
             &self.end_pane
         };
+        let bin = child.size_bin();
+        let mine = bin.parent().as_ref() == Some(container.upcast_ref());
+        let name = if is_start {
+            "SplitView::set_start"
+        } else {
+            "SplitView::set_end"
+        };
+        if crate::handover::refuses(&bin, mine, name) {
+            return;
+        }
         while let Some(previous) = container.first_child() {
             crate::interaction::clear_focus(&previous);
             previous.unparent();
         }
-        let bin = child.size_bin();
         // 区画の中身は、配られた場所いっぱいに置く (`Scroll` と同じ扱い)。
         bin.fill_parent();
         bin.set_parent(container);
