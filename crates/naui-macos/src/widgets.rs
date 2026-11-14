@@ -2024,7 +2024,11 @@ impl Stack {
             !stale
         });
         drop(children);
-        let removed = self.0.fill_constraints.borrow_mut().remove(&view_key(view));
+        let removed = self
+            .0
+            .cross_constraints
+            .borrow_mut()
+            .remove(&view_key(view));
         for constraint in removed.iter().flatten() {
             constraint.setActive(false);
         }
