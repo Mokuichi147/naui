@@ -13706,6 +13706,21 @@ fn later_placers_leave_a_moved_child_alone(ui: &Ui) -> Result<()> {
             UI_FOR_LABELS.with(|slot| *slot.borrow_mut() = None);
         }
 
+        // Sheet は前に開いたときの箱 (`AdwBin`) から中身を引き取る。同じ
+        // `AdwBin` でも、Group の枠の中の子は取らない。
+        let group = ui.group("枠").expect("枠");
+        let child = ui.text_input("子").expect("子");
+        group.set_child(&child);
+        let before = placed(&child);
+        let sheet = ui.sheet("シート").expect("シート");
+        sheet.set_child(&child);
+        sheet.open();
+        pump();
+        violations.unchanged(&child, &before, "Group の中の子を Sheet へ: 開いたとき");
+        sheet.close();
+        pump();
+        violations.unchanged(&child, &before, "Group の中の子を Sheet へ: 閉じたとき");
+
         // 空いている子を、置くのが後になるもの同士で渡す。
         let child = ui.text_input("子").expect("子");
         let first = ui.dialog("先").expect("ダイアログ");
