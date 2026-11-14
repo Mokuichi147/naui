@@ -1128,6 +1128,11 @@ impl Window {
             .borrow()
             .as_ref()
             .map(|child| child.native_element());
+        // 別のコンテナにいる子は断る。サイドバーの区画へ入れたり、前の子を層から
+        // 外したりする前に決める。
+        if crate::layout::refuses(&child_element, previous.as_ref()) {
+            return;
+        }
         let Some(element) = self.host_content(&child_element) else {
             return;
         };

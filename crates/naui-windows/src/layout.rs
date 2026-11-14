@@ -561,6 +561,90 @@ pub(crate) fn clear_layout_state(element: &UIElement) {
     PARENT_LAYOUT_LISTENERS.with(|listeners| {
         listeners.borrow_mut().remove(&key);
     });
+    ROW_OWNERS.with(|owners| {
+        owners.borrow_mut().remove(&key);
+    });
+    CONTENT_HOLDERS.with(|holders| {
+        holders.borrow_mut().remove(&key);
+    });
+}
+
+/// Whether the element is in some container now.
+///
+/// An element can be in only one container. naui's containers ask this before
+/// writing anything to a child, so that a child still in another container is
+/// refused as a whole instead of half-placed (see "Changing and moving widgets after
+/// adding" in naui's guide).
+///
+/// `Parent` and `VisualTreeHelper::GetParent` cannot tell: before an element is in a
+/// shown window, both are empty even for a panel's child. So this asks the panel
+/// itself, by trying to add the element to a throwaway `Grid` (and taking it out
+/// again). The content of a `ContentControl` or a `Flyout` has no parent until its
+/// template places it (never, while an `Expander` is collapsed or a `Popover` is
+/// closed), so those are remembered with [`hold_content`].
+pub(crate) fn has_parent(element: &UIElement) -> bool {
+    held_as_content(element) || !accepts_parent(element)
+}
+
+/// Whether a panel can take the element now.
+fn accepts_parent(element: &UIElement) -> bool {
+    let Ok(children) = XamlGrid::new().and_then(|scratch| scratch.Children()) else {
+        return true;
+    };
+    if children.Append(element).is_err() {
+        return false;
+    }
+    let _ = children.Clear();
+    true
+}
+
+/// Whether a container whose one child is `current` refuses `element`: it is in
+/// another container. Putting the current child again is allowed.
+pub(crate) fn refuses(element: &UIElement, current: Option<&UIElement>) -> bool {
+    let again = current.is_some_and(|current| element_key(current) == element_key(element));
+    !again && has_parent(element)
+}
+
+/// Records that the element is the content of `holder` (a `ScrollViewer`, an
+/// `Expander`, a `Flyout` or a sidebar's `NavigationView`, keyed by the naui
+/// container), which gives it no parent of its own (see [`has_parent`]).
+pub(crate) fn hold_content(element: &UIElement, holder: usize) {
+    CONTENT_HOLDERS.with(|holders| {
+        holders.borrow_mut().insert(element_key(element), holder);
+    });
+}
+
+/// Forgets [`hold_content`], if `holder` is still the one holding the element.
+pub(crate) fn release_content(element: &UIElement, holder: usize) {
+    let key = element_key(element);
+    let _ = CONTENT_HOLDERS.try_with(|holders| {
+        let mut holders = holders.borrow_mut();
+        if holders.get(&key) == Some(&holder) {
+            holders.remove(&key);
+        }
+    });
+}
+
+fn held_as_content(element: &UIElement) -> bool {
+    let key = element_key(element);
+    CONTENT_HOLDERS.with(|holders| holders.borrow().contains_key(&key))
+}
+
+/// Records that the row container `owner` (a `List` or a `Table`) took the element
+/// last. See [`last_row_owner`].
+pub(crate) fn set_last_row_owner(element: &UIElement, owner: usize) {
+    ROW_OWNERS.with(|owners| {
+        owners.borrow_mut().insert(element_key(element), owner);
+    });
+}
+
+/// The row container that took the element last, if any.
+///
+/// A list keeps the rows it was given and places them only when it builds them, so a
+/// child can be given to two lists while neither has placed it. The later one is
+/// the one that places it.
+pub(crate) fn last_row_owner(element: &UIElement) -> Option<usize> {
+    ROW_OWNERS.with(|owners| owners.borrow().get(&element_key(element)).copied())
 }
 
 /// Has `f` called when the parent starts, changes, or stops controlling layout.
@@ -774,9 +858,16 @@ impl Grid {
 
     /// Places a child at the given position. Missing rows and columns are added
     /// automatically.
+    ///
+    /// A child still in another container (this one included) is refused: nothing
+    /// changes, neither here nor on the child.
     pub fn attach(&self, child: &dyn Widget, cell: GridCell) {
-        self.ensure_size(cell.columns_needed(), cell.rows_needed());
         let element = child.native_element();
+        // 行と列を足す前に断る。足してから断ると、置かなかった子のぶん広がる。
+        if has_parent(&element) {
+            return;
+        }
+        self.ensure_size(cell.columns_needed(), cell.rows_needed());
         let Ok(child_framework) = element.cast::<FrameworkElement>() else {
             return;
         };
@@ -830,9 +921,27 @@ impl Grid {
     ///
     /// Used to safely replace controls, such as `MediaPlayerElement`, for which WinUI
     /// internally runs template application when the TabView switches content.
+    ///
+    /// A child still in another container, or in another cell of this one, is
+    /// refused, and what is in the cell stays.
     pub fn replace(&self, child: &dyn Widget, cell: GridCell) {
+        let element = child.native_element();
+        // 外してから断ると、前の子だけが消える。同じマスにいる子は置き直せる。
+        if has_parent(&element) && !self.holds_at(&element, cell) {
+            return;
+        }
         self.remove(cell);
         self.attach(child, cell);
+    }
+
+    /// Whether the element is placed in `cell` (its column and row) here.
+    fn holds_at(&self, element: &UIElement, cell: GridCell) -> bool {
+        let key = element_key(element);
+        self.0.children.borrow().iter().any(|placed| {
+            placed.cell.column == cell.column
+                && placed.cell.row == cell.row
+                && element_key(&placed.widget.native_element()) == key
+        })
     }
 
     /// Removes whatever is in the given cell. Does nothing if it is empty.
@@ -1148,7 +1257,9 @@ impl Drop for ScrollInner {
     fn drop(&mut self) {
         if let Ok(child) = self.child.try_borrow() {
             if let Some(child) = child.as_ref() {
-                clear_parent_layout(&child.native_element());
+                let element = child.native_element();
+                clear_parent_layout(&element);
+                release_content(&element, self as *const Self as usize);
             }
         }
     }
@@ -1167,6 +1278,12 @@ thread_local! {
     /// What to call after the parent layout changes, by element key.
     static PARENT_LAYOUT_LISTENERS: RefCell<HashMap<usize, Rc<dyn Fn()>>> =
         RefCell::new(HashMap::new());
+    /// The row container that last took each element, by element key (see
+    /// [`last_row_owner`]).
+    static ROW_OWNERS: RefCell<HashMap<usize, usize>> = RefCell::new(HashMap::new());
+    /// The container holding each element as its content, by element key (see
+    /// [`hold_content`]).
+    static CONTENT_HOLDERS: RefCell<HashMap<usize, usize>> = RefCell::new(HashMap::new());
     /// The `Grid`s of the Stacks still alive on the Rust side, by element key.
     static STACKS: RefCell<HashMap<usize, XamlGrid>> = RefCell::new(HashMap::new());
     static SCROLLS: RefCell<Vec<Weak<ScrollInner>>> = const { RefCell::new(Vec::new()) };
@@ -1731,6 +1848,8 @@ impl Scroll {
     }
 
     /// The content to scroll. Each call replaces it.
+    ///
+    /// A child still in another container is refused, and the current content stays.
     pub fn set_child(&self, child: &dyn Widget) {
         let element = child.native_element();
         let previous = self
@@ -1739,17 +1858,24 @@ impl Scroll {
             .borrow()
             .as_ref()
             .map(|child| child.native_element());
+        if refuses(&element, previous.as_ref()) {
+            return;
+        }
         if self.0.native.SetContent(&element).is_ok() {
             set_scroll_parent(
                 &element,
                 self.0.horizontal_scroll_enabled.get(),
                 self.0.vertical_scroll_enabled.get(),
             );
+            let holder = Rc::as_ptr(&self.0) as usize;
             if let Some(previous) = previous {
                 if element_key(&previous) != element_key(&element) {
                     clear_parent_layout(&previous);
+                    release_content(&previous, holder);
                 }
             }
+            // テンプレートが当たるまで、中身はネイティブの親を持たない。
+            hold_content(&element, holder);
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         }
     }

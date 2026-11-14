@@ -191,14 +191,27 @@ impl Dialog {
     }
 
     /// The widget placed between the body text and the buttons. Each call replaces it.
+    ///
+    /// It is placed right away, open or not. A child still in another container is
+    /// refused, and the current one stays.
     pub fn set_child(&self, child: &dyn Widget) {
+        let element = child.native_element();
+        let current = self
+            .0
+            .child
+            .borrow()
+            .as_ref()
+            .map(|child| child.native_element());
+        // 前の中身を外す前に断る。
+        if crate::layout::refuses(&element, current.as_ref()) {
+            return;
+        }
         let Ok(children) = self.0.content.Children() else {
             return;
         };
         // 本文だけを残して、前の中身を外す。
         let _ = children.Clear();
         let _ = children.Append(&self.0.message);
-        let element = child.native_element();
         if children.Append(&element).is_ok() {
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         }

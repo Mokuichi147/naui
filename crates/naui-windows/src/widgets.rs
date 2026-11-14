@@ -1552,8 +1552,16 @@ impl Stack {
     }
 
     /// Appends a child at the end.
+    ///
+    /// A child still in another container (this one included) is refused: nothing
+    /// changes, neither here nor on the child.
     pub fn append(&self, child: &dyn Widget) {
         let element = child.native_element();
+        // `Panel` は親のある子を断るが、`ContentControl` などの中身は親を持たない
+        // ことがあるので、先に確かめる。
+        if crate::layout::has_parent(&element) {
+            return;
+        }
         let appended = self.0.native.Children().and_then(|c| c.Append(&element));
         if appended.is_ok() {
             self.adopt(&element);
@@ -1564,10 +1572,16 @@ impl Stack {
 
     /// Inserts a child at the given position. If `index` is at least the current
     /// count, it is appended at the end.
+    ///
+    /// A child still in another container is refused, as with
+    /// [`append`](Self::append).
     pub fn insert(&self, index: usize, child: &dyn Widget) {
+        let element = child.native_element();
+        if crate::layout::has_parent(&element) {
+            return;
+        }
         let mut children = self.0.children.borrow_mut();
         let index = index.min(children.len());
-        let element = child.native_element();
         let inserted = self
             .0
             .native

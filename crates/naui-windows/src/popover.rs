@@ -114,6 +114,19 @@ impl PopoverInner {
     }
 }
 
+impl Drop for PopoverInner {
+    fn drop(&mut self) {
+        if let Ok(child) = self.child.try_borrow() {
+            if let Some(child) = child.as_ref() {
+                crate::layout::release_content(
+                    &child.native_element(),
+                    self as *const Self as usize,
+                );
+            }
+        }
+    }
+}
+
 /// A panel shown beside a widget (`Flyout`).
 ///
 /// It is not a widget laid out on screen, so it is not a [`Widget`]. [`crate::Ui`]
@@ -178,13 +191,35 @@ impl Popover {
     }
 
     /// The content. Each call replaces it.
+    ///
+    /// A child still in another container is refused, and the current content stays.
     pub fn set_child(&self, child: &dyn Widget) {
+        let element = child.native_element();
+        let current = self
+            .0
+            .child
+            .borrow()
+            .as_ref()
+            .map(|child| child.native_element());
+        // 前の中身を外す前に断る。
+        if crate::layout::refuses(&element, current.as_ref()) {
+            return;
+        }
         if self.0.flyout.SetContent(None).is_err() {
             return;
         }
-        let element = child.native_element();
+        let holder = Rc::as_ptr(&self.0) as usize;
         if self.0.flyout.SetContent(&element).is_ok() {
+            if let Some(current) = current {
+                crate::layout::release_content(&current, holder);
+            }
+            // `Flyout` の中身は開いている間しかネイティブの親を持たない。ほかの
+            // コンテナが取らないよう、持っていることを覚える。
+            crate::layout::hold_content(&element, holder);
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
+        } else if let Some(current) = current {
+            // 入れられなかったときは前の中身へ戻す。
+            let _ = self.0.flyout.SetContent(&current);
         }
     }
 

@@ -215,7 +215,8 @@ impl Group {
 
     /// The content inside the card. Each call replaces it.
     ///
-    /// The content fills the inside of the card.
+    /// The content fills the inside of the card. A child still in another container
+    /// is refused, and the current content stays.
     pub fn set_child(&self, child: &dyn Widget) {
         let element = child.native_element();
         let previous = self
@@ -224,6 +225,9 @@ impl Group {
             .borrow()
             .as_ref()
             .map(|child| child.native_element());
+        if crate::layout::refuses(&element, previous.as_ref()) {
+            return;
+        }
         if self.0.card.SetChild(&element).is_ok() {
             if let Some(previous) = previous {
                 if crate::layout::element_key(&previous) != crate::layout::element_key(&element) {

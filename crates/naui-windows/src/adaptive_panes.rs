@@ -414,11 +414,19 @@ fn focused_within(object: &DependencyObject) -> bool {
 }
 
 /// Puts `child` into a pane, replacing what was there.
+///
+/// A child still in another container (the other pane included) is refused, and
+/// the pane keeps what it had.
 fn put(pane: &XamlGrid, slot: &RefCell<Option<Box<dyn Widget>>>, child: &dyn Widget) {
+    let element = child.native_element();
+    let current = slot.borrow().as_ref().map(|child| child.native_element());
+    // 前の中身を外す前に断る。
+    if crate::layout::refuses(&element, current.as_ref()) {
+        return;
+    }
     if let Ok(children) = pane.Children() {
         let _ = children.Clear();
     }
-    let element = child.native_element();
     let appended = pane
         .Children()
         .and_then(|children| children.Append(&element));

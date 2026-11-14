@@ -638,10 +638,6 @@ const CASES: &[Case] = &[
         sheet_configuration_reaches_the_content_dialog,
     ),
     (
-        "[診断] 子の親の有無を各コンテナで観測する (失敗しない)",
-        crate::moved_child::parent_probe,
-    ),
-    (
         "外さずに別の親へ入れた子を、その場で置くコンテナは断り、前の子を保つ",
         crate::moved_child::placers_refuse_a_child_with_a_parent,
     ),

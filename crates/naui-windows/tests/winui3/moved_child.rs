@@ -66,32 +66,6 @@ fn placement(widget: &dyn Widget) -> String {
     )
 }
 
-/// What each way of finding the parent says about the child.
-fn detectors(widget: &dyn Widget) -> String {
-    let element = widget.native_element();
-    let logical = element
-        .cast::<FrameworkElement>()
-        .ok()
-        .and_then(|framework| framework.Parent().ok())
-        .is_some();
-    let visual = element
-        .cast::<DependencyObject>()
-        .ok()
-        .and_then(|object| VisualTreeHelper::GetParent(&object).ok())
-        .is_some();
-    let free = XamlGrid::new().ok().is_some_and(|scratch| {
-        let Ok(children) = scratch.Children() else {
-            return false;
-        };
-        let appended = children.Append(&element).is_ok();
-        if appended {
-            let _ = children.Clear();
-        }
-        appended
-    });
-    format!("Parent={logical} GetParent={visual} 仮の Grid へ入る={free}")
-}
-
 /// Whether anything under `root` satisfies `found`. Walks the panels' children, a
 /// border's child, a content control's content, a `TwoPaneView`'s panes, an items
 /// control's items and the visual children.
@@ -629,144 +603,6 @@ fn target(ui: &Ui, kind: Target) -> Result<Holder> {
     }
 }
 
-// ------------------------------------------------------------ 診断
-
-/// Prints what each way of finding a parent says, per way of holding a child, off
-/// screen and in a shown window. Never fails: it is there to read in the CI log.
-pub(crate) fn parent_probe(ui: &Ui) -> Result<()> {
-    println!("     [診断] 画面に出していないコンテナ: 先に入れた子 p、あとから入れた子 c");
-    for (name, make) in PLACERS {
-        let holder = make(ui)?;
-        let p = ui.label("p")?;
-        let c = ui.label("c")?;
-        (holder.put)(&p);
-        (holder.put)(&c);
-        println!(
-            "     [診断] {name}: c [{}] / p [{}]",
-            detectors(&c),
-            detectors(&p)
-        );
-        (holder.close)();
-    }
-
-    let c = ui.label("c")?;
-    println!("     [診断] どこにも入れていない: [{}]", detectors(&c));
-
-    let list = ui.list()?;
-    let row = ui.label("行")?;
-    list.set_rows(&[ListRow::new(&row)]);
-    println!("     [診断] List の組み立てた行: [{}]", detectors(&row));
-    let unbuilt = ui.label("組み立てていない行")?;
-    let mut rows: Vec<ListRow> = (0..naui_core::ROW_WINDOW_THRESHOLD)
-        .map(|index| {
-            ui.label(&index.to_string())
-                .map(|label| ListRow::new(&label))
-        })
-        .collect::<Result<_>>()?;
-    rows.push(ListRow::new(&unbuilt));
-    let long = ui.list()?;
-    long.set_rows(&rows);
-    println!(
-        "     [診断] List のまだ組み立てていない行: [{}]",
-        detectors(&unbuilt)
-    );
-
-    let table = ui.table()?;
-    table.set_columns(&[TableColumn::new("a"), TableColumn::new("b")]);
-    let cell = ui.label("セル")?;
-    let held = cell.clone();
-    table.set_row_builder(1, move |_| Ok(TableCells::new().text("a").cell(&held)));
-    println!("     [診断] Table のセル: [{}]", detectors(&cell));
-
-    // 表示したウィンドウの中。
-    let window = ui.window("親の有無の観測", 640.0, 480.0)?;
-    let stack = ui.stack(Orientation::Vertical)?;
-    let anchor = ui.button("基準")?;
-    stack.append(&anchor);
-    let mut shown: Vec<(&str, naui_windows::Label)> = Vec::new();
-    let scroll = ui.scroll()?;
-    let in_scroll = ui.label("Scroll")?;
-    scroll.set_child(&in_scroll);
-    stack.append(&scroll);
-    shown.push(("Scroll の中身", in_scroll));
-    let collapsed = ui.expander("閉じた")?;
-    let in_collapsed = ui.label("閉じた Expander")?;
-    collapsed.set_child(&in_collapsed);
-    stack.append(&collapsed);
-    shown.push(("閉じた Expander の中身", in_collapsed));
-    let expanded = ui.expander("開いた")?;
-    let in_expanded = ui.label("開いた Expander")?;
-    expanded.set_child(&in_expanded);
-    expanded.set_expanded(true);
-    stack.append(&expanded);
-    shown.push(("開いた Expander の中身", in_expanded));
-    let group = ui.group("Group")?;
-    let in_group = ui.label("Group")?;
-    group.set_child(&in_group);
-    stack.append(&group);
-    shown.push(("Group の中身", in_group));
-    let tabs = ui.tabs()?;
-    let selected = ui.label("選んだタブ")?;
-    let unselected = ui.label("選んでいないタブ")?;
-    tabs.add_tab("1", &selected);
-    tabs.add_tab("2", &unselected);
-    stack.append(&tabs);
-    shown.push(("選んだタブ", selected));
-    shown.push(("選んでいないタブ", unselected));
-    let panes = ui.adaptive_panes()?;
-    let in_list = ui.label("一覧")?;
-    let in_detail = ui.label("詳細")?;
-    panes.set_list(&in_list);
-    panes.set_detail(&in_detail);
-    stack.append(&panes);
-    shown.push(("AdaptivePanes の一覧", in_list));
-    shown.push(("AdaptivePanes の詳細", in_detail));
-    let popover = ui.popover()?;
-    let in_popover = ui.label("Popover")?;
-    popover.set_child(&in_popover);
-    window.set_child(&stack);
-    let outcome = catch_unwind(AssertUnwindSafe(|| {
-        window.show();
-        let loaded = || {
-            stack
-                .native_element()
-                .cast::<FrameworkElement>()
-                .and_then(|element| element.IsLoaded())
-                .unwrap_or(false)
-        };
-        pump_until(Duration::from_secs(5), loaded);
-        pump_until(Duration::from_millis(300), || false);
-        println!("     [診断] 表示したウィンドウ (読み込み済み={})", loaded());
-        for (name, label) in &shown {
-            println!("     [診断] {name}: [{}]", detectors(label));
-        }
-        println!(
-            "     [診断] 閉じた Popover の中身: [{}]",
-            detectors(&in_popover)
-        );
-        popover.open(&anchor);
-        let flyout = popover.native_flyout();
-        pump_until(Duration::from_secs(2), || flyout.IsOpen().unwrap_or(false));
-        pump_until(Duration::from_millis(300), || false);
-        println!(
-            "     [診断] 開いた Popover の中身 (開いた={}): [{}]",
-            flyout.IsOpen().unwrap_or(false),
-            detectors(&in_popover)
-        );
-        popover.close();
-        pump_until(Duration::from_millis(300), || false);
-        println!(
-            "     [診断] 閉じ直した Popover の中身: [{}]",
-            detectors(&in_popover)
-        );
-    }));
-    window.close();
-    if outcome.is_err() {
-        println!("     [診断] 表示したウィンドウの観測が途中で panic した");
-    }
-    Ok(())
-}
-
 // ------------------------------------------------------------ その場で置く入口
 
 /// (a) A child in a container is added to a `Stack` / `Grid` without being taken
@@ -808,6 +644,9 @@ pub(crate) fn placers_refuse_a_child_with_a_parent(ui: &Ui) -> Result<()> {
                         "{what}: 移す先の記録が変わった ({state} → {})",
                         (target.state)()
                     ));
+                }
+                if target.holds(&c) {
+                    problems.push(format!("{what}: 移す先に子が入った"));
                 }
                 (target.exercise)();
                 if placement(&c) != before {
