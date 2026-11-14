@@ -2252,7 +2252,11 @@ fn row_host(row: &ListRow) -> Result<XamlGrid> {
     children
         .Append(&content)
         .map_err(|e| to_error("add to the row", e))?;
-    crate::layout::note_place(&content, crate::layout::Place::panel(&host));
+    // アプリのウィジェットだけを覚える。文字だけの行の中身はここで作った使い捨てで、
+    // 覚えると消す者がいない。
+    if matches!(row.content, ListRowContent::Custom(_)) {
+        crate::layout::note_place(&content, crate::layout::Place::panel(&host));
+    }
 
     let activation = row.activation.clone();
     let handler = PointerEventHandler::new(move |_sender, args| {

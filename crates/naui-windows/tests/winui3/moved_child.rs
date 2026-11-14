@@ -721,6 +721,69 @@ pub(crate) fn placers_refuse_a_child_with_a_parent(ui: &Ui) -> Result<()> {
         }
     }
 
+    // 断るのは、いま入っている子だけ。差し替えや取り外しで出た子は、ほかへ入れられる。
+    for (name, make) in PLACERS {
+        let what = format!("{name} から出た子");
+        guarded(&mut problems, &what, |problems| {
+            let (Ok(holder), Ok(stack), Ok(p), Ok(q)) = (
+                make(ui),
+                ui.stack(Orientation::Vertical),
+                ui.label("p"),
+                ui.label("q"),
+            ) else {
+                return;
+            };
+            if !holder.again {
+                return;
+            }
+            (holder.put)(&p);
+            (holder.put)(&q);
+            stack.append(&p);
+            if stack.len() != 1 {
+                problems.push(format!("{what}: q へ差し替えたあとの p を Stack が断った"));
+            }
+            (holder.close)();
+        });
+    }
+    guarded(&mut problems, "Tabs から外した子", |problems| {
+        let (Ok(tabs), Ok(stack), Ok(p), Ok(q)) = (
+            ui.tabs(),
+            ui.stack(Orientation::Vertical),
+            ui.label("p"),
+            ui.label("q"),
+        ) else {
+            return;
+        };
+        tabs.add_tab("p", &p);
+        tabs.add_tab("q", &q);
+        tabs.remove_tab(0);
+        stack.append(&p);
+        if stack.len() != 1 {
+            problems
+                .push("Tabs から外した子: remove_tab したタブの子を Stack が断った".to_string());
+        }
+        tabs.clear();
+        stack.append(&q);
+        if stack.len() != 2 {
+            problems.push("Tabs から外した子: clear したタブの子を Stack が断った".to_string());
+        }
+    });
+    guarded(&mut problems, "落とした Scroll の中身", |problems| {
+        let (Ok(stack), Ok(c)) = (ui.stack(Orientation::Vertical), ui.label("c")) else {
+            return;
+        };
+        {
+            let Ok(scroll) = ui.scroll() else {
+                return;
+            };
+            scroll.set_child(&c);
+        }
+        stack.append(&c);
+        if stack.len() != 1 {
+            problems.push("落とした Scroll の中身を Stack が断った".to_string());
+        }
+    });
+
     // 同じ Grid の別のマスにいる子で `replace` する。
     guarded(
         &mut problems,
