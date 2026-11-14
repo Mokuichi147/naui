@@ -536,6 +536,11 @@ impl Sidebar {
         self.0.split.native_element().unchecked_into()
     }
 
+    /// Whether `element` is on the content side, where [`Self::set_content`] put it.
+    pub(crate) fn holds_content(&self, element: &Element) -> bool {
+        crate::handover::is_placed_in(element, &self.0.slot)
+    }
+
     /// Places the window's child on the content side. `None` empties it.
     pub(crate) fn set_content(&self, element: Option<&Element>) {
         self.0.slot.set_inner_html("");

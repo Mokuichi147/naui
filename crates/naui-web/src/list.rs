@@ -307,6 +307,13 @@ struct ListInner {
     id: u32,
     body: RefCell<Body>,
     /// Where the rows come from.
+    /// Marks the rows' cells and widgets as this list's (see [`crate::handover`]).
+    owner: crate::handover::Owner,
+    /// The rows built since the app last handed rows over ([`List::set_row_builder`],
+    /// [`List::refresh`]) whose widgets were claimed. Building such a row again, when it
+    /// scrolls back into view, does not take its widget back from a container the app
+    /// has put it in since.
+    claimed: RefCell<std::collections::HashSet<usize>>,
     rows: RowSource<ListRow>,
     /// The range of rows currently built. With many rows, only those around the screen.
     window: Cell<RowWindow>,
@@ -389,6 +396,8 @@ impl List {
                 _listeners: Vec::new(),
             }),
             rows: RowSource::default(),
+            owner: crate::handover::Owner::new(),
+            claimed: RefCell::new(std::collections::HashSet::new()),
             window: Cell::new(RowWindow::default()),
             rebuilding: Cell::new(false),
             realized: RefCell::new(Vec::new()),
@@ -434,7 +443,15 @@ impl List {
     ///
     /// Controls inside a row can have their own callbacks as usual. Indices change
     /// meaning, so the selection is cleared.
+    ///
+    /// A row's widget is taken out of wherever it is now. It is put in its row each time
+    /// the row is built, so if the app puts it in another container later without
+    /// removing it from the list, the row is left empty from then on.
     pub fn set_rows(&self, rows: &[ListRow]) {
+        self.0.claimed.borrow_mut().clear();
+        for row in rows {
+            self.claim(row);
+        }
         self.0.rows.set_rows(rows.to_vec());
         self.reset_rows();
     }
@@ -448,6 +465,11 @@ impl List {
     ///
     /// The widgets in a row may be recreated every time it is built. Keep per-row state
     /// in the app's data and build from it inside `build`.
+    ///
+    /// The first time each row is built after this call or [`List::refresh`], its
+    /// widget is handed over the same way as with [`List::set_rows`]. Building it again
+    /// when it scrolls back into view does not take it back from a container the app
+    /// has put it in since.
     ///
     /// ```no_run
     /// # use naui_web::{List, ListRow, Ui};
@@ -463,6 +485,7 @@ impl List {
         count: usize,
         build: impl FnMut(usize) -> Result<ListRow> + 'static,
     ) {
+        self.0.claimed.borrow_mut().clear();
         self.0.rows.set_builder(count, build);
         self.reset_rows();
     }
@@ -486,8 +509,21 @@ impl List {
     /// Rebuilds the visible rows. The row count and selection stay.
     ///
     /// Use it when what the function passed to [`List::set_row_builder`] returns has
-    /// changed.
+    /// changed. The rows' widgets are handed over again.
     pub fn refresh(&self) {
+        self.0.claimed.borrow_mut().clear();
+        self.rebuild();
+    }
+
+    /// Takes a row's widget as this list's (see [`crate::handover`]).
+    fn claim(&self, row: &ListRow) {
+        if let ListRowContent::Custom(content) = &row.content {
+            self.0.owner.claim(&content.native_element());
+        }
+    }
+
+    /// Rebuilds the visible rows, without handing their widgets over again.
+    fn rebuild(&self) {
         // `<select>` の行はアプリが渡したものなので、組み立て直すものが無い。
         if !matches!(&*self.0.body.borrow(), Body::Listbox { .. }) {
             return;
@@ -527,7 +563,7 @@ impl List {
             self.write_selection(&picked);
             self.update_window();
         } else {
-            self.refresh();
+            self.rebuild();
         }
     }
 
@@ -857,7 +893,12 @@ impl List {
             }
             ListRowContent::Custom(content) => {
                 style(&option, "padding", "6px 10px");
-                let _ = option.append_child(&content.native_element());
+                // 外さずにほかへ移った中身は、移った先に残して空の行にする。
+                self.0.owner.mark_cell(&option);
+                let content = content.native_element();
+                if self.0.owner.may_take(&content) {
+                    let _ = option.append_child(&content);
+                }
             }
         }
 
@@ -1076,6 +1117,11 @@ impl List {
             }
             // 組み立てに失敗した行は、空の行にする。
             let row = row.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
+            // アプリが行を渡し直してから初めて組み立てた行は、中身を引き取る。
+            // 見えるところへ戻ってきたための組み立てでは引き取らない。
+            if self.0.rows.is_built() && self.0.claimed.borrow_mut().insert(index) {
+                self.claim(&row);
+            }
             self.0.rows.note_selectable(index, row.is_selectable());
             // 失敗しても、ここまでの行は文書に載っているので、管理から外さない。
             // 行数が窓と合わないので、次の組み立てで全部作り直す。

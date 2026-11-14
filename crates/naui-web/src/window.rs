@@ -527,7 +527,7 @@ impl Window {
     /// attached, it is placed on the content side to the sidebar's right.
     pub fn set_child(&self, child: &dyn Widget) {
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
-        self.mount_body();
+        self.mount_body(true);
     }
 
     /// The sidebar attached to the left of the window. Each call replaces it.
@@ -536,33 +536,59 @@ impl Window {
     /// rearranged into "sidebar (`<aside>`) and content" side by side, and the child
     /// from [`set_child`](Self::set_child) moves to the content side.
     pub fn set_sidebar(&self, sidebar: &Sidebar) {
+        let in_place = self.child_in_place();
         *self.0.sidebar.borrow_mut() = Some(sidebar.clone());
-        self.mount_body();
+        self.mount_body(in_place);
     }
 
     /// Removes the attached sidebar. Does nothing if none is attached.
     ///
     /// The child on the content side goes back to being the window's content.
     pub fn clear_sidebar(&self) {
+        let in_place = self.child_in_place();
         let old = self.0.sidebar.borrow_mut().take();
         if let Some(old) = old {
             old.set_content(None);
             old.mount().remove();
-            self.mount_body();
+            self.mount_body(in_place);
         }
+    }
+
+    /// Whether the child is still where the window put it: directly in the window, or
+    /// on the sidebar's content side. A child added to another container without being
+    /// removed from the window has moved there, and rearranging the window leaves it
+    /// there (see [`crate::handover`]).
+    fn child_in_place(&self) -> bool {
+        let Some(element) = self
+            .0
+            .child
+            .borrow()
+            .as_ref()
+            .map(|child| child.native_element())
+        else {
+            return false;
+        };
+        crate::handover::is_placed_in(&element, &self.0.element)
+            || self
+                .0
+                .sidebar
+                .borrow()
+                .as_ref()
+                .is_some_and(|sidebar| sidebar.holds_content(&element))
     }
 
     /// Rebuilds the contents of the window element.
     ///
     /// Places the child (and the sidebar), and inserts the toolbar and menu bar at the
-    /// start.
-    fn mount_body(&self) {
+    /// start. The child is placed only with `place_child` (see [`Self::child_in_place`]).
+    fn mount_body(&self, place_child: bool) {
         self.0.element.set_inner_html("");
         let child = self
             .0
             .child
             .borrow()
             .as_ref()
+            .filter(|_| place_child)
             .map(|child| child.native_element());
         let sidebar = self.0.sidebar.borrow().clone();
         let body = match &sidebar {

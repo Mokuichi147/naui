@@ -274,22 +274,29 @@ impl AdaptivePanesInner {
     /// button while that is shown, and otherwise to the list, so a keyboard user
     /// keeps a place to continue from.
     fn move_focus(&self, to: Pane, back_shown: bool) {
-        if to == Pane::Detail && focus_child(&self.detail) {
+        if to == Pane::Detail && focus_child(&self.detail, &self.detail_pane) {
             return;
         }
         if to == Pane::Detail && back_shown && crate::interaction::request_focus(&self.back) {
             return;
         }
-        focus_child(&self.list);
+        focus_child(&self.list, &self.list_pane);
     }
 }
 
 /// Moves the focus into a pane's widget. `true` if it moved.
 ///
+/// A widget added to another container without being removed from the pane has moved
+/// there, and is left alone.
+///
 /// The borrow ends before `focus()`: the browser reports the focus change on the
 /// spot, and the app's `on_focus_change` may replace the pane from in there.
-fn focus_child(slot: &RefCell<Option<Box<dyn Widget>>>) -> bool {
-    let element = slot.borrow().as_ref().map(|child| child.native_element());
+fn focus_child(slot: &RefCell<Option<Box<dyn Widget>>>, pane: &HtmlElement) -> bool {
+    let element = slot
+        .borrow()
+        .as_ref()
+        .map(|child| child.native_element())
+        .filter(|element| crate::handover::is_placed_in(element, pane));
     element.is_some_and(|element| crate::interaction::request_focus(&element))
 }
 
