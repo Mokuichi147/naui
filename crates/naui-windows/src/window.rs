@@ -1128,6 +1128,11 @@ impl Window {
             .borrow()
             .as_ref()
             .map(|child| child.native_element());
+        // 別のコンテナにいる子は断る。サイドバーの区画へ入れたり、前の子を層から
+        // 外したりする前に決める。
+        if crate::layout::refuses(&child_element, previous.as_ref()) {
+            return;
+        }
         let Some(element) = self.host_content(&child_element) else {
             return;
         };
@@ -1176,6 +1181,7 @@ impl Window {
             *self.0.menu_bar_host.borrow_mut() = menu_bar_host;
             *self.0.content_layer.borrow_mut() = layer;
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
+            self.note_child_place();
             // ルートを作り直したので、取り付けてあったものを載せ直す。
             // ショートカットの購読も、新しい根へ付け直す。
             self.mount_toolbar();
@@ -1283,6 +1289,26 @@ impl Window {
         self.take_content_head();
         if let Some(element) = self.host_content(&child) {
             let _ = children.InsertAt(0, &element);
+        }
+        self.note_child_place();
+    }
+
+    /// Remembers where the child is now, so that other containers refuse it (see
+    /// [`crate::layout::has_parent`]): the content layer, or the sidebar's right pane,
+    /// which the sidebar notes itself.
+    fn note_child_place(&self) {
+        if self.0.sidebar.borrow().is_some() {
+            return;
+        }
+        let child = self
+            .0
+            .child
+            .borrow()
+            .as_ref()
+            .map(|child| child.native_element());
+        let layer = self.0.content_layer.borrow().clone();
+        if let (Some(child), Some(layer)) = (child, layer) {
+            crate::layout::note_place(&child, crate::layout::Place::panel(&layer));
         }
     }
 

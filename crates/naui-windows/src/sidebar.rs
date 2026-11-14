@@ -618,7 +618,17 @@ impl Sidebar {
             None => self.0.native.SetContent(None::<&IInspectable>),
         };
         match result {
-            Ok(()) => true,
+            Ok(()) => {
+                // `NavigationView` の中身は、テンプレートが当たるまでネイティブの親を
+                // 持たない。ほかのコンテナが取らないよう、置いた場所を覚える。
+                if let Some(element) = element {
+                    crate::layout::note_place(
+                        element,
+                        crate::layout::Place::content(&self.0.native),
+                    );
+                }
+                true
+            }
             Err(error) => {
                 eprintln!("naui-windows: could not place the sidebar content: {error}");
                 false

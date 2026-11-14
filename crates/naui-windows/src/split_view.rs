@@ -433,16 +433,27 @@ impl SplitViewInner {
         } else {
             &self.end_pane
         };
+        let slot = if is_start { &self.start } else { &self.end };
+        let element = child.native_element();
+        let current = slot.borrow().as_ref().map(|child| child.native_element());
+        // 前の中身を外す前に断る。もう一方の区画にいる子も断る。
+        if crate::layout::refuses(&element, current.as_ref()) {
+            return;
+        }
         if let Ok(children) = pane.Children() {
             let _ = children.Clear();
         }
-        let element = child.native_element();
         let appended = pane
             .Children()
             .and_then(|children| children.Append(&element));
         if appended.is_ok() {
-            let slot = if is_start { &self.start } else { &self.end };
+            crate::layout::note_place(&element, crate::layout::Place::panel(pane));
             *slot.borrow_mut() = Some(child.boxed_clone());
+        } else if let Some(current) = current {
+            // 入れられなかったときは前の中身へ戻す。
+            let _ = pane
+                .Children()
+                .and_then(|children| children.Append(&current));
         }
     }
 }
