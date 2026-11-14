@@ -857,7 +857,7 @@ fn append_nodes(
 /// Builds a row's content. The text is built the same way as in `List` (two lines
 /// if there is secondary text).
 fn row_content(item: &TreeItem, selectable: bool) -> Result<UIElement> {
-    let content = item_content(&item.label, item.detail.as_deref())?.native_element();
+    let content = item_content(&item.label, item.detail.as_deref(), true)?.native_element();
     if selectable {
         return Ok(content);
     }

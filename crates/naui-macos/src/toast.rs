@@ -28,7 +28,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSArray, NSEdgeInsets, NSPoint, NSRect, NSSize, NSString, NSTimer};
 
-use crate::trampoline::ActionTarget;
+use crate::trampoline::{ActionTarget, SharedSlot};
 
 /// The distance from the bottom edge.
 const BOTTOM_MARGIN: f64 = 24.0;
@@ -69,7 +69,7 @@ thread_local! {
 /// from inside the notification does not double-borrow the `RefCell` (the same
 /// design as `Dialog`).
 #[derive(Clone, Default)]
-struct Callback(Rc<RefCell<Option<Box<dyn FnMut()>>>>);
+struct Callback(SharedSlot<dyn FnMut()>);
 
 impl Callback {
     fn set(&self, f: impl FnMut() + 'static) {

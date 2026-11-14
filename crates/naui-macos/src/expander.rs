@@ -148,8 +148,11 @@ impl Expander {
     pub fn set_child(&self, child: &dyn Widget) {
         if let Some(previous) = self.0.child.borrow_mut().take() {
             let view = previous.native_view();
-            self.0.native.removeArrangedSubview(&view);
-            view.removeFromSuperview();
+            // 外さずに別の親へ移った前の中身は、新しい親から抜かない。
+            if crate::layout::is_placed_in(&view, &self.0.native) {
+                self.0.native.removeArrangedSubview(&view);
+                view.removeFromSuperview();
+            }
             // 外した中身は、たたんでいたことによる非表示を解く。
             crate::interaction::set_hidden_by_container(&view, false);
         }
@@ -217,7 +220,11 @@ impl ExpanderInner {
         let image = NSImage::imageWithSystemSymbolName_accessibilityDescription(&symbol, None);
         self.header.setImage(image.as_deref());
         if let Some(child) = self.child.borrow().as_ref() {
-            crate::interaction::set_hidden_by_container(&child.native_view(), !expanded);
+            // 外さずに別の親へ移った中身は、新しい親の中で隠さない。
+            let view = child.native_view();
+            if crate::layout::is_placed_in(&view, &self.native) {
+                crate::interaction::set_hidden_by_container(&view, !expanded);
+            }
         }
         // 開閉で高さが変わる。親の連なりへ伝えないと、Grid の Auto 行が
         // たたんだときの高さのままになり、開いた中身が潰れる。

@@ -9,7 +9,9 @@
 //!
 //! - `<target-dir>/[<triple>/]<profile>/` and `examples/` below it (where cargo run
 //!   and sample exes go)
-//! - `<build-dir>/[<triple>/]<profile>/deps/` (where test exes go)
+//! - `<build-dir>/[<triple>/]<profile>/deps/` (where test exes go, up to Cargo
+//!   1.99. From 1.100 each test exe has its own directory, and the tests copy the
+//!   bundle next to themselves; see [`BuildLayout`])
 //! - `<profile>/naui-winappsdk/`, collecting what goes next to the exe for
 //!   distribution
 //!
@@ -98,16 +100,14 @@ mod bundle {
             other => return Err(format!("unsupported architecture: {other:?}")),
         };
 
-        // OUT_DIR は <build-dir>/[<triple>/]<profile>/build/naui-winui3-<hash>/out。
         let out_dir = PathBuf::from(env::var("OUT_DIR").map_err(|e| e.to_string())?);
-        let (Some(build_dir), Some(build_profile)) =
-            (out_dir.ancestors().nth(2), out_dir.ancestors().nth(3))
-        else {
+        let Some(layout) = BuildLayout::from_out_dir(&out_dir) else {
             return Err(format!(
                 "cannot work out the output directory from OUT_DIR: {}",
                 out_dir.display()
             ));
         };
+        let (build_dir, build_profile) = (layout.build_dir, layout.profile);
         let artifact_profile = artifact_profile(build_profile)?;
 
         // 正本と印は OUT_DIR に置く。依存クレートのビルド結果として扱われ、
@@ -129,14 +129,19 @@ mod bundle {
         // build-dir 側の naui-winappsdk/ は、アプリの build.rs が自分の OUT_DIR
         // からマニフェストを探して exe に埋め込めるようにするため
         // (docs/windows-self-contained.md の「マニフェストを exe に埋め込む」)。
+        // Cargo 1.100 からのテストの exe も、ここから自分の隣へ写す。
         let mut destinations: Vec<PathBuf> = Vec::new();
-        for destination in [
+        let mut candidates = vec![
             artifact_profile.clone(),
             artifact_profile.join("examples"),
             artifact_profile.join(BUNDLE_DIR),
-            build_profile.join("deps"),
             build_profile.join(BUNDLE_DIR),
-        ] {
+        ];
+        // テストの exe が deps/ にまとまるのは Cargo 1.99 までの配置だけ。
+        if layout.has_deps {
+            candidates.push(build_profile.join("deps"));
+        }
+        for destination in candidates {
             // 既定では target-dir と build-dir が同じなので、重なる。
             if !destinations.contains(&destination) {
                 destinations.push(destination);
@@ -155,6 +160,39 @@ mod bundle {
             println!("cargo:rerun-if-changed={}", watched.display());
         }
         Ok(())
+    }
+
+    /// Where the build-dir's directories are, as read from `OUT_DIR`.
+    ///
+    /// Up to Cargo 1.99, `OUT_DIR` is `<build-dir>/[<triple>/]<profile>/build/<pkg>-<hash>/out`
+    /// and test exes go to `<profile>/deps/`. From Cargo 1.100 it is one level deeper
+    /// (`.../build/<pkg>/<hash>/out`), there is no `deps/`, and each test exe goes to
+    /// its own `.../build/<pkg>/<hash>/out/`, which a build script cannot know. Such
+    /// tests copy the bundle next to themselves from `<profile>/naui-winappsdk/`.
+    struct BuildLayout<'a> {
+        /// `<build-dir>/[<triple>/]<profile>/build`.
+        build_dir: &'a Path,
+        /// `<build-dir>/[<triple>/]<profile>`.
+        profile: &'a Path,
+        /// Whether test exes go to `<profile>/deps/` (Cargo 1.99 and earlier).
+        has_deps: bool,
+    }
+
+    impl<'a> BuildLayout<'a> {
+        fn from_out_dir(out_dir: &'a Path) -> Option<Self> {
+            let unit = out_dir.parent()?;
+            // 1.99 までは unit の親が、1.100 からは祖父が build。
+            let build_dir = unit
+                .ancestors()
+                .skip(1)
+                .take(2)
+                .find(|path| path.file_name() == Some("build".as_ref()))?;
+            Some(Self {
+                build_dir,
+                profile: build_dir.parent()?,
+                has_deps: unit.parent() == Some(build_dir),
+            })
+        }
     }
 
     /// The profile directory where exes go (`<target-dir>/[<triple>/]<profile>`).

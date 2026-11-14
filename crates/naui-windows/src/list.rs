@@ -207,6 +207,9 @@ const ROW_PADDING: Thickness = Thickness {
 /// the default item transitions (which animate rows as they are added and removed) are
 /// cleared. Otherwise the whole list animates each time it is rebuilt. `Table` does the
 /// same.
+// 仮想化は RowWindow が担当する。`ListView` の既定の ItemsStackPanel (仮想化) を重ねると、
+// 行の位置と `ListView` の高さがずれ、窓の外へはみ出した行が下の詰め物に押下を取られる
+// (`Table` と同じ理由で、`ItemsPanel` は StackPanel にする)。
 const SURFACE_XAML: &str = r##"<Border
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Background="{ThemeResource ControlFillColorDefaultBrush}"
@@ -219,6 +222,9 @@ const SURFACE_XAML: &str = r##"<Border
         <ListView.ItemContainerTransitions>
             <TransitionCollection/>
         </ListView.ItemContainerTransitions>
+        <ListView.ItemsPanel>
+            <ItemsPanelTemplate><StackPanel/></ItemsPanelTemplate>
+        </ListView.ItemsPanel>
     </ListView>
 </Border>"##;
 
@@ -421,6 +427,9 @@ const PLAIN_LIST_VIEW_XAML: &str = r##"<ListView
     <ListView.ItemContainerTransitions>
         <TransitionCollection/>
     </ListView.ItemContainerTransitions>
+    <ListView.ItemsPanel>
+        <ItemsPanelTemplate><StackPanel/></ItemsPanelTemplate>
+    </ListView.ItemsPanel>
 </ListView>"##;
 
 fn plain_surface() -> Result<(Border, ListView)> {
@@ -2221,7 +2230,7 @@ fn row_content(row: &ListRow) -> Result<UIElement> {
     match &row.content {
         ListRowContent::Custom(content) => Ok(content.native_element()),
         ListRowContent::Item(item) => {
-            Ok(item_content(&item.label, item.detail.as_deref())?.native_element())
+            Ok(item_content(&item.label, item.detail.as_deref(), item.enabled)?.native_element())
         }
     }
 }
@@ -2253,19 +2262,30 @@ pub(crate) fn text_block(text: &str, secondary: bool) -> Result<TextBlock> {
 ///
 /// The smallness and dimness of the secondary text come from
 /// [`TextStyle::Caption`] and [`TextColor::Secondary`], so neither point size nor
-/// brush is written here. The main text's color is not set (it inherits from the
-/// row's `ListViewItem`).
-pub(crate) fn item_content(label: &str, detail: Option<&str>) -> Result<Stack> {
+/// brush is written here. On a selectable row the main text's color is not set (it
+/// inherits from the row's `ListViewItem`); on a row that cannot be selected, both
+/// texts get the disabled color.
+pub(crate) fn item_content(label: &str, detail: Option<&str>, enabled: bool) -> Result<Stack> {
     let content = Stack::new(Orientation::Vertical)?;
     // `StackPanel` そのものを行の幅いっぱいに広げる。`Align::Start` にすると
     // `HorizontalAlignment=Left` で中身の幅まで縮み、中の文字が行からはみ出す。
     content.set_align(Align::Fill);
     content.set_spacing(DETAIL_SPACING);
-    content.append(&row_label(label)?);
+    let title = row_label(label)?;
+    // 選べない行は本文も補助も無効な色にする (macOS と同じ)。無効のあいだは役割の色を使わず、
+    // 当てる順番にもよらない。
+    // 選べる行には何も当てない (本文は `Style` を持たないまま、行の色を受け継ぐ)。
+    if !enabled {
+        title.set_disabled(true);
+    }
+    content.append(&title);
     if let Some(detail) = detail {
         let sub = row_label(detail)?;
         sub.set_style(TextStyle::Caption);
         sub.set_color(TextColor::Secondary);
+        if !enabled {
+            sub.set_disabled(true);
+        }
         content.append(&sub);
     }
     Ok(content)
