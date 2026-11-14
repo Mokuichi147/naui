@@ -637,6 +637,22 @@ const CASES: &[Case] = &[
         "シートの設定が ContentDialog へ届く",
         sheet_configuration_reaches_the_content_dialog,
     ),
+    (
+        "[診断] 子の親の有無を各コンテナで観測する (失敗しない)",
+        crate::moved_child::parent_probe,
+    ),
+    (
+        "外さずに別の親へ入れた子を、その場で置くコンテナは断り、前の子を保つ",
+        crate::moved_child::placers_refuse_a_child_with_a_parent,
+    ),
+    (
+        "リストの行と表のセルは親の無い子だけを置き、作り直しても奪わない",
+        crate::moved_child::rows_take_only_free_children,
+    ),
+    (
+        "表示したリストでも渡しただけの子を取り返さず、後の持ち主が置く",
+        crate::moved_child::rows_take_only_free_children_on_screen,
+    ),
 ];
 
 fn sheet_configuration_reaches_the_content_dialog(ui: &Ui) -> Result<()> {
@@ -5379,7 +5395,7 @@ fn show_and_measure(window: &naui_windows::Window, scroll: &naui_windows::Scroll
 /// It is long because a window opened right after keys moved through the rows of a
 /// `ListView` is laid out late, by seconds (see `docs/known-limitations.md`). A case that
 /// gives up waiting passes without checking anything.
-const SCROLL_LAYOUT_TIMEOUT: Duration = Duration::from_secs(20);
+pub(crate) const SCROLL_LAYOUT_TIMEOUT: Duration = Duration::from_secs(20);
 
 fn scroll_measures_and_moves(ui: &Ui) -> Result<()> {
     let (window, scroll, _pane) = tall_scroll(ui, 40)?;
@@ -5913,7 +5929,7 @@ fn preferred_languages_follow_settingchange(ui: &Ui) -> Result<()> {
 /// Image load completion arrives by being queued onto the UI thread's queue from
 /// another thread. Cases run inside `OnLaunched`, so without pumping here it would
 /// never arrive.
-fn pump_until(timeout: Duration, mut done: impl FnMut() -> bool) {
+pub(crate) fn pump_until(timeout: Duration, mut done: impl FnMut() -> bool) {
     use windows::Win32::UI::WindowsAndMessaging::{
         DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE,
     };
