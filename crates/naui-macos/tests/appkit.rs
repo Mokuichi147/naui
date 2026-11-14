@@ -4075,6 +4075,66 @@ fn widget_rows_come_back_after_rebuilding(ui: &Ui) -> Result<()> {
         "Table: refresh で渡し直すとセルへ戻ること"
     );
 
+    // 渡しただけでまだ置かれていない子を、前の持ち主が出し直しても取り返さない。
+    let pending = ui.label("渡しただけ")?;
+    let pending_view = pending.native_view();
+    let from = ui.list()?;
+    from.set_rows(&[ListRow::new(&pending)]);
+    let from_native = from.native_table();
+    assert!(is_in_cell(&from_native, &pending_view, 0, 0));
+    // List → List
+    let to = ui.list()?;
+    to.set_rows(&[ListRow::new(&pending)]);
+    from_native.reloadData();
+    let _ = from_native.viewAtColumn_row_makeIfNecessary(0, 0, true);
+    assert!(
+        is_in_cell(&to.native_table(), &pending_view, 0, 0),
+        "List → List: 前の List が先に出し直しても、渡した先の行に入ること"
+    );
+    // List → Dialog
+    let pending_dialog = ui.dialog("渡した先")?;
+    pending_dialog.set_child(&pending);
+    to.native_table().reloadData();
+    let _ = to
+        .native_table()
+        .viewAtColumn_row_makeIfNecessary(0, 0, true);
+    let alert = pending_dialog.native_alert();
+    assert!(
+        alert
+            .accessoryView()
+            .is_some_and(|accessory| std::ptr::eq::<NSView>(&*accessory, &*pending_view)),
+        "List → Dialog: 前の List が先に出し直しても、Dialog に載ること"
+    );
+    alert.layout();
+    // Dialog → Table
+    let pending_table = ui.table()?;
+    pending_table.set_columns(&TableColumn::list(["中身"]));
+    let for_table = pending.clone();
+    pending_table.set_row_builder(1, move |_| Ok(TableCells::new().cell(&for_table)));
+    // 組み立ては表示のときなので、先に行を作らせて引き取らせる。
+    let _ = pending_table
+        .native_table()
+        .viewAtColumn_row_makeIfNecessary(0, 0, true);
+    assert!(is_in_cell(
+        &pending_table.native_table(),
+        &pending_view,
+        0,
+        0
+    ));
+    // Table → Dialog → List: Dialog が組み立て直す前に List へ渡す。
+    pending_dialog.set_child(&pending);
+    let last = ui.list()?;
+    last.set_rows(&[ListRow::new(&pending)]);
+    pending_dialog.native_alert().layout();
+    pending_table.native_table().reloadData();
+    let _ = pending_table
+        .native_table()
+        .viewAtColumn_row_makeIfNecessary(0, 0, true);
+    assert!(
+        is_in_cell(&last.native_table(), &pending_view, 0, 0),
+        "Dialog・Table → List: 前の持ち主が先に組み立て直しても、List の行に入ること"
+    );
+
     // Dialog: 続けて組み立てても、中身は新しい alert へ移る。
     let field = ui.text_input("メモ")?;
     let field_view = field.native_view();

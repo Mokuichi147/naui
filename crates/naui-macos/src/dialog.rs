@@ -27,6 +27,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSSize, NSString};
 
+use crate::row_cell::CellOwner;
 use crate::trampoline::SharedSlot;
 use crate::widgets::Widget;
 
@@ -78,6 +79,9 @@ struct DialogInner {
     /// The window of the last `NSAlert` that took the content. The content is taken
     /// again only from there (see [`Dialog::build`]).
     last_window: RefCell<Option<Retained<NSWindow>>>,
+    /// The mark telling whether this dialog took the content last
+    /// ([`crate::row_cell::claim`]).
+    owner: CellOwner,
     buttons: RefCell<DialogButtons>,
     on_response: ResponseHandler,
     open: Cell<bool>,
@@ -98,6 +102,7 @@ impl Dialog {
             message: RefCell::new(String::new()),
             child: RefCell::new(None),
             last_window: RefCell::new(None),
+            owner: CellOwner::new(),
             buttons: RefCell::new(DialogButtons::new()),
             on_response: ResponseHandler::default(),
             open: Cell::new(false),
@@ -127,7 +132,7 @@ impl Dialog {
     /// The widget leaves its current parent now, though it is put in place only when
     /// the dialog is built.
     pub fn set_child(&self, child: &dyn Widget) {
-        crate::row_cell::claim(&child.native_view());
+        crate::row_cell::claim(&child.native_view(), self.0.owner);
         *self.0.child.borrow_mut() = Some(child.boxed_clone());
     }
 
@@ -195,12 +200,13 @@ impl Dialog {
         self.build().0
     }
 
-    /// Whether a new `NSAlert` may take the content `view`: it is in no parent, or still
-    /// in the window of the last alert that took it. A widget the app moved elsewhere
-    /// after [`set_child`](Self::set_child) stays there.
+    /// Whether a new `NSAlert` may take the content `view`: it is still in the window of
+    /// the last alert that took it, or in no parent with this dialog as its last taker.
+    /// A widget the app moved or handed elsewhere after [`set_child`](Self::set_child)
+    /// stays there.
     fn may_take(&self, view: &NSView) -> bool {
         if unsafe { view.superview() }.is_none() {
-            return true;
+            return self.0.owner.is_last_taker_of(view);
         }
         let last = self.0.last_window.borrow();
         match (view.window(), last.as_deref()) {

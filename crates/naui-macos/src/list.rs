@@ -184,9 +184,9 @@ impl ListRow {
 
     /// Takes the row's widget out of its current parent, as the list now holds it
     /// (see [`crate::row_cell`]).
-    fn claim(&self) {
+    fn claim(&self, owner: CellOwner) {
         if let ListRowContent::Custom(content) = &self.content {
-            crate::row_cell::claim(&content.native_view());
+            crate::row_cell::claim(&content.native_view(), owner);
         }
     }
 
@@ -231,7 +231,7 @@ impl ListRows {
         self.built.borrow_mut().clear();
         self.claimed.borrow_mut().clear();
         for row in &rows {
-            row.claim();
+            row.claim(self.owner);
         }
         self.source.set_rows(rows);
     }
@@ -270,7 +270,7 @@ impl ListRows {
         // アプリが行を渡し直してから初めて組み立てた行は、中身をいまの親から
         // 引き取る。AppKit が出し直すための組み立てでは引き取らない。
         if self.claimed.borrow_mut().insert(index) {
-            row.claim();
+            row.claim(self.owner);
         }
         self.source.note_selectable(index, row.is_selectable());
         self.built.borrow_mut().insert(index, row.clone());

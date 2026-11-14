@@ -210,10 +210,10 @@ impl TableCells {
 
     /// Takes the row's widgets out of their current parents, as the table now holds
     /// them (see [`crate::row_cell`]).
-    fn claim(&self) {
+    fn claim(&self, owner: CellOwner) {
         for cell in &self.cells {
             if let CellContent::Widget(content) = cell {
-                crate::row_cell::claim(&content.native_view());
+                crate::row_cell::claim(&content.native_view(), owner);
             }
         }
     }
@@ -330,7 +330,7 @@ impl RowsState {
         // アプリが行を渡し直してから初めて組み立てた行は、中身をいまの親から
         // 引き取る。AppKit が出し直すための組み立てでは引き取らない。
         if self.claimed.borrow_mut().insert(index) {
-            cells.claim();
+            cells.claim(self.owner);
         }
         self.built.borrow_mut().insert(index, cells.clone());
         Some(cells)
