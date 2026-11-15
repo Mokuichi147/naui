@@ -33,6 +33,9 @@ mod automation;
 #[cfg(target_os = "windows")]
 #[path = "winui3/cases.rs"]
 mod cases;
+#[cfg(target_os = "windows")]
+#[path = "winui3/moved_child.rs"]
+mod moved_child;
 
 fn main() {
     #[cfg(all(target_os = "windows", feature = "self-contained"))]
