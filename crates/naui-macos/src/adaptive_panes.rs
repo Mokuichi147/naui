@@ -78,7 +78,11 @@ impl PaneSlot {
             NSLayoutConstraint::deactivateConstraints(&NSArray::from_retained_slice(&constraints));
         }
         if let Some(previous) = previous {
-            previous.native_view().removeFromSuperview();
+            // 外さずに別の親へ移った前の中身は、新しい親から抜かない。
+            let previous = previous.native_view();
+            if crate::layout::is_placed_in(&previous, &self.view) {
+                previous.removeFromSuperview();
+            }
         }
 
         let view = child.native_view();

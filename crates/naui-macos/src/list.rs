@@ -23,7 +23,7 @@
 //! the menu itself with [`crate::PopupMenu`].
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use dispatch2::{DispatchQueue, MainThreadBound};
@@ -44,6 +44,7 @@ use objc2_foundation::{
     NSArray, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSSize, NSString,
 };
 
+use crate::row_cell::{CellOwner, WidgetCell};
 use crate::trampoline::{SelectHandler, SharedSlot, ValueHandler};
 use crate::widgets::{Label, Stack, Widget};
 
@@ -169,10 +170,23 @@ impl ListRow {
     }
 
     /// The view for one row. With `min_height`, the row is at least that tall.
-    fn cell_view(&self, mtm: MainThreadMarker, min_height: Option<f64>) -> Retained<NSView> {
+    fn cell_view(
+        &self,
+        mtm: MainThreadMarker,
+        min_height: Option<f64>,
+        owner: CellOwner,
+    ) -> Retained<NSView> {
         match &self.content {
             ListRowContent::Item(item) => list_item_cell_view(mtm, item, min_height),
-            ListRowContent::Custom(content) => custom_cell_view(mtm, &**content, min_height),
+            ListRowContent::Custom(content) => custom_cell_view(mtm, &**content, min_height, owner),
+        }
+    }
+
+    /// Takes the row's widget out of its current parent, as the list now holds it
+    /// (see [`crate::row_cell`]).
+    fn claim(&self, owner: CellOwner) {
+        if let ListRowContent::Custom(content) = &self.content {
+            crate::row_cell::claim(&content.native_view(), owner);
         }
     }
 
@@ -198,6 +212,14 @@ struct ListRows {
     built: RefCell<HashMap<usize, ListRow>>,
     /// Whether the app's function is building a row right now.
     building: Cell<bool>,
+    /// The mark on the cells this list makes, telling them from a parent a row's
+    /// widget was moved to.
+    owner: CellOwner,
+    /// The built rows whose widgets were taken since the app last handed rows over
+    /// ([`List::set_row_builder`], [`List::refresh`]). Building such a row again,
+    /// because AppKit showed it again, does not take its widget back from a parent the
+    /// app moved it to.
+    claimed: RefCell<HashSet<usize>>,
 }
 
 impl ListRows {
@@ -207,11 +229,16 @@ impl ListRows {
 
     fn set_rows(&self, rows: Vec<ListRow>) {
         self.built.borrow_mut().clear();
+        self.claimed.borrow_mut().clear();
+        for row in &rows {
+            row.claim(self.owner);
+        }
         self.source.set_rows(rows);
     }
 
     fn set_builder(&self, count: usize, build: impl FnMut(usize) -> Result<ListRow> + 'static) {
         self.built.borrow_mut().clear();
+        self.claimed.borrow_mut().clear();
         self.source.set_builder(count, build);
     }
 
@@ -240,6 +267,11 @@ impl ListRows {
         }
         // 組み立てに失敗した行は、空の行にする。
         let row = row?.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
+        // アプリが行を渡し直してから初めて組み立てた行は、中身をいまの親から
+        // 引き取る。AppKit が出し直すための組み立てでは引き取らない。
+        if self.claimed.borrow_mut().insert(index) {
+            row.claim(self.owner);
+        }
         self.source.note_selectable(index, row.is_selectable());
         self.built.borrow_mut().insert(index, row.clone());
         Some(row)
@@ -267,6 +299,12 @@ impl ListRows {
 
     fn forget_built(&self) {
         self.built.borrow_mut().clear();
+    }
+
+    /// Lets the next build of each row take its widgets again, as the app handed the
+    /// rows over again ([`List::refresh`]).
+    fn hand_over_again(&self) {
+        self.claimed.borrow_mut().clear();
     }
 
     /// Forgets a row that left the screen, so built rows do not pile up without limit.
@@ -502,7 +540,10 @@ define_class!(
             usize::try_from(row)
                 .ok()
                 .and_then(|row| self.ivars().rows.row(row))
-                .map(|row| row.cell_view(mtm, self.ivars().fixed_row_height.get()))
+                .map(|row| {
+                    let state = self.ivars();
+                    row.cell_view(mtm, state.fixed_row_height.get(), state.rows.owner)
+                })
         }
 
         #[unsafe(method(tableView:shouldSelectRow:))]
@@ -571,7 +612,7 @@ fn item_cell_view(
     min_height: Option<f64>,
 ) -> Retained<NSView> {
     let (content, title) = item_content(mtm, label, detail, enabled);
-    let cell = cell_with_content(mtm, &content, min_height);
+    let cell = cell_with_content(NSTableCellView::new(mtm), &content, min_height);
     // `textField` に入れておくと、行の背景色に合わせた文字色や
     // アクセシビリティの扱いを NSTableCellView が面倒を見る。
     unsafe { cell.setTextField(Some(&title)) };
@@ -664,11 +705,10 @@ fn native_field(label: &Label) -> Retained<NSTextField> {
 /// With `min_height`, the row is at least that tall and the content is centered in it. A
 /// row whose content needs more grows, so nothing is cut off.
 fn cell_with_content(
-    mtm: MainThreadMarker,
+    cell: Retained<NSTableCellView>,
     content: &dyn Widget,
     min_height: Option<f64>,
 ) -> Retained<NSTableCellView> {
-    let cell = NSTableCellView::new(mtm);
     let view = content.native_view();
     view.setTranslatesAutoresizingMaskIntoConstraints(false);
     cell.addSubview(&view);
@@ -701,12 +741,25 @@ fn cell_with_content(
 }
 
 /// Connects any widget to Auto Layout, including the row height.
+///
+/// If the app moved the widget to another parent after handing it to the list, the
+/// row stays empty rather than taking it back (see [`crate::row_cell`]).
 fn custom_cell_view(
     mtm: MainThreadMarker,
     content: &dyn Widget,
     min_height: Option<f64>,
+    owner: CellOwner,
 ) -> Retained<NSView> {
-    let cell = cell_with_content(mtm, content, min_height);
+    let cell = WidgetCell::with_owner(mtm, owner);
+    let cell = if owner.may_take(&content.native_view()) {
+        cell_with_content(cell, content, min_height)
+    } else {
+        // 空の行にも高さを決める制約を置く。自動の行の高さは制約から測るため。
+        cell.heightAnchor()
+            .constraintEqualToConstant(min_height.unwrap_or(0.0).max(ROW_PADDING * 2.0))
+            .setActive(true);
+        cell
+    };
     let view: &NSView = cell.as_ref();
     view.retain()
 }
@@ -939,6 +992,9 @@ impl List {
     ///
     /// Controls inside a row can have their own callbacks as usual. Indices change
     /// meaning, so the selection is cleared.
+    ///
+    /// The widgets leave their current parents now. If the app later moves one
+    /// elsewhere, its row is left empty rather than taking it back.
     pub fn set_rows(&self, rows: &[ListRow]) {
         self.0.rows.set_rows(rows.to_vec());
         self.reload_rows();
@@ -953,6 +1009,11 @@ impl List {
     ///
     /// The widgets in a row may be recreated every time it is built. Keep per-row state
     /// in the app's data and build from it inside `build`.
+    ///
+    /// A widget `build` returns is taken out of its current parent the first time its
+    /// row is built after this call or [`List::refresh`]. If the app then moves it
+    /// elsewhere, the row is left empty when AppKit shows it again, rather than taking
+    /// the widget back.
     ///
     /// ```no_run
     /// # use naui_macos::{List, ListRow, Ui};
@@ -991,8 +1052,16 @@ impl List {
     /// Rebuilds the visible rows. The row count and selection stay.
     ///
     /// Use it when what the function passed to [`List::set_row_builder`] returns has
-    /// changed.
+    /// changed. Widgets it returns are taken from wherever they are now, as when the
+    /// function was first passed.
     pub fn refresh(&self) {
+        self.0.rows.hand_over_again();
+        self.rebuild();
+    }
+
+    /// Rebuilds the visible rows without handing them over again: a widget the app moved
+    /// out of a row stays where it is.
+    fn rebuild(&self) {
         let picked = self.selection();
         self.0.rows.forget_built();
         self.0.rows.source.forget_selectable();
@@ -1024,7 +1093,7 @@ impl List {
         self.0
             .fixed_row_height
             .set((height > 0.0).then_some(height));
-        self.refresh();
+        self.rebuild();
     }
 
     /// The row height (logical pixels). 0 if there are no rows.

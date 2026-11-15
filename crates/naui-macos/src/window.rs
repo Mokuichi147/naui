@@ -926,12 +926,19 @@ impl Window {
         // `contentViewController` を差し替えると、ウィンドウがその大きさへ
         // 合わせて縮むことがある。置く前の枠へ戻す。
         let frame = native.frame();
+        // 外さずに別の親へ移った子は、新しい親から抜いて右の区画へ持ってこない。
+        let content = native.contentView();
         let child = self
             .0
             .child
             .borrow()
             .as_ref()
-            .map(|child| child.native_view());
+            .map(|child| child.native_view())
+            .filter(|view| {
+                content
+                    .as_deref()
+                    .is_some_and(|content| std::ptr::eq::<NSView>(&**view, content))
+            });
         if let Some(view) = &child {
             view.removeFromSuperview();
         }
