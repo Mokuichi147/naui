@@ -18,7 +18,7 @@ use naui_core::{Align, Length, Sizing, Track};
 // glib のサブクラス化マクロが `unsafe impl` を作るため、この中だけ許可する。
 #[allow(unsafe_code)]
 mod imp {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
 
     use gtk::glib;
     use gtk::prelude::*;
@@ -46,6 +46,9 @@ mod imp {
         /// The owner that took it last among those that place it later (`List`,
         /// `Table`, `Dialog`, `Sheet`). 0 if none has (see [`crate::handover`]).
         pub(crate) last_taker: Cell<u64>,
+        /// The `GtkSizeGroup` a `Table` column put it in, to align the column's width.
+        /// Left whenever it is placed anywhere.
+        pub(crate) size_group: RefCell<Option<gtk::SizeGroup>>,
     }
 
     #[glib::object_subclass]
@@ -301,7 +304,20 @@ pub(crate) enum Placement {
         column: Option<Track>,
         row: Option<Track>,
     },
+    /// The content of a `List` row, filling the row inside the row's margins.
+    ListRow,
+    /// In a `Table` cell, filling it. `width` is the column's width (logical pixels),
+    /// `None` for columns that share the leftover. `limit_natural` keeps the content's
+    /// natural width from deciding the column width (see
+    /// [`SizeBin::limit_natural_width`]).
+    TableCell {
+        width: Option<f64>,
+        limit_natural: bool,
+    },
 }
+
+/// The margins of a `List` row's content: top and bottom, start and end.
+pub(crate) const LIST_ROW_MARGINS: (i32, i32) = (6, 10);
 
 glib::wrapper! {
     /// A container that wraps one naui widget and adds a size maximum.
@@ -405,9 +421,23 @@ impl SizeBin {
     }
 
     /// Records where it is placed and applies what that placement asks for.
+    ///
+    /// It leaves the `GtkSizeGroup` of a `Table` column it was in, so a widget taken
+    /// out of a table no longer shares its width with that column.
     pub(crate) fn set_placement(&self, placement: Placement) {
+        if let Some(group) = self.imp().size_group.take() {
+            group.remove_widget(self);
+        }
         self.imp().placement.set(placement);
         self.relayout();
+    }
+
+    /// Puts it in a `Table` column's `GtkSizeGroup`, after placing it in the cell.
+    pub(crate) fn join_size_group(&self, group: &gtk::SizeGroup) {
+        if let Some(previous) = self.imp().size_group.replace(Some(group.clone())) {
+            previous.remove_widget(self);
+        }
+        group.add_widget(self);
     }
 
     /// Sets everything up again from the size specification and the placement.
@@ -439,9 +469,28 @@ impl SizeBin {
         self.apply_expand(false, height.expand);
         self.set_halign(width.align);
         self.set_valign(height.align);
+        // 余白を書くのは `List` の行だけ。ほかの置き場所へ移ったら消す。
+        let (vertical, horizontal) = match imp.placement.get() {
+            Placement::ListRow => LIST_ROW_MARGINS,
+            _ => (0, 0),
+        };
+        self.set_margin_top(vertical);
+        self.set_margin_bottom(vertical);
+        self.set_margin_start(horizontal);
+        self.set_margin_end(horizontal);
         match imp.placement.get() {
             Placement::Loose => {}
-            Placement::FillParent => self.fill_parent_axes(),
+            Placement::FillParent | Placement::ListRow => self.fill_parent_axes(),
+            Placement::TableCell {
+                width,
+                limit_natural,
+            } => {
+                self.fill_parent_axes();
+                self.apply_column_width(width);
+                if limit_natural {
+                    self.limit_natural_width();
+                }
+            }
             Placement::Stack { align, vertical } => self.cross_align(align, vertical),
             Placement::Grid { column, row } => {
                 self.place_in_grid();
@@ -469,7 +518,24 @@ impl SizeBin {
         };
         match expand {
             Some(expand) => self.set_property(value, expand),
-            None => self.set_property(is_set, false),
+            // `hexpand-set` を外せば GTK は `hexpand` を見ないが、値そのものは残る。
+            // 前の置き場所が書いた `true` を消して、新しく作ったときと同じ値へ戻す。
+            None => {
+                self.set_property(value, false);
+                self.set_property(is_set, false);
+            }
+        }
+    }
+
+    /// Applies a `Table` column's width: a fixed width with no share of the leftover,
+    /// or a share of the leftover for columns without one.
+    fn apply_column_width(&self, width: Option<f64>) {
+        match width {
+            Some(width) => {
+                self.set_size_request(width as i32, self.height_request());
+                self.set_hexpand(false);
+            }
+            None => self.set_hexpand(true),
         }
     }
 
@@ -500,7 +566,7 @@ impl SizeBin {
     ///
     /// The same treatment as setting `max-width-chars` to 1 on text cells. **Content
     /// with its own size specified is left alone** (the app's setting wins).
-    pub(crate) fn limit_natural_width(&self) {
+    fn limit_natural_width(&self) {
         let sizing = self.sizing();
         if !matches!(sizing.width, Length::Auto) || sizing.max_width.is_some() {
             return;

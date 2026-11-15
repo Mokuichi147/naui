@@ -29,7 +29,7 @@ use naui_core::{
     ROW_WINDOW_OVERSCAN,
 };
 
-use crate::bin::SizeBin;
+use crate::bin::{Placement, SizeBin};
 use crate::callback::{Notifier, SelectionNotifier, Slot};
 use crate::handover::Owner;
 use crate::widgets::{impl_widget, without_signal, Label, Stack, Widget};
@@ -732,8 +732,13 @@ impl List {
                 }
                 // 中身を先に放す。アプリが持ち続ける行の中身は、次に組み立てるときに
                 // 別の行へ入る。古い行に親として残っていると入れられない。
+                // 行が書いた余白と広げ方も消す (`Placement::Loose` は作ったときと同じ)。
                 if let Some(row) = row.downcast_ref::<gtk::ListBoxRow>() {
+                    let content = row.child().and_downcast::<SizeBin>();
                     row.set_child(gtk::Widget::NONE);
+                    if let Some(content) = content {
+                        content.set_placement(Placement::Loose);
+                    }
                 }
                 self.0.native.remove(row);
             }
@@ -1235,15 +1240,14 @@ fn build_row(item: &ListRow, list: Weak<ListInner>, owner: Owner) -> gtk::ListBo
 }
 
 /// Puts a row's content in the row, filling its width.
+///
+/// The fill and the row's margins are recorded as the content's placement, so they go
+/// away when the content is taken out of the row or placed somewhere else.
 fn place_row_content(row: &gtk::ListBoxRow, content: &SizeBin) {
     // 行の幅いっぱいに置く。`SizeBin` の既定は `Center` (中身の大きさに合わせる)
     // なので、そのままでは文字が行の真ん中へ寄る。大きさを自分で指定している
     // 中身はそちらが優先される。
-    content.fill_parent();
-    content.set_margin_top(6);
-    content.set_margin_bottom(6);
-    content.set_margin_start(10);
-    content.set_margin_end(10);
+    content.set_placement(Placement::ListRow);
     row.set_child(Some(content));
 }
 

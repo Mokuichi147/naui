@@ -1017,6 +1017,10 @@ fn main() {
             "外さずに別の親へ入れた子を、List の行・Table のセル・Dialog・Sheet は取り返さない",
             later_placers_leave_a_moved_child_alone,
         ),
+        (
+            "List の行・Table のセルから出た子は、移った先で新しく作った子と同じになる",
+            child_out_of_a_row_keeps_nothing_from_it,
+        ),
         ("テーマを実行中に切り替えられる", theme_switch),
         (
             "優先言語は gettext と同じ環境変数から BCP 47 で読める",
@@ -13816,6 +13820,149 @@ fn later_placers_leave_a_moved_child_alone(ui: &Ui) -> Result<()> {
     });
     violations.no_gtk_criticals(&log, "全体");
     host.close();
+    violations.assert_none();
+    Ok(())
+}
+
+// ------------------------------------------------- 行やセルから出た子
+
+/// How a widget has left the `List` row or `Table` cell it was in.
+#[derive(Debug, Clone, Copy)]
+enum LeftBy {
+    /// The rows were replaced with others.
+    Replaced,
+    /// Its row was scrolled out of the built window.
+    Scrolled,
+}
+
+/// A widget that has left a `List` row or a `Table` cell, then put in a `Stack` or
+/// a `Grid`, looks the same as a widget made for that container: nothing the row
+/// wrote on it (the row's margins, the column's width, filling the row) carries over,
+/// and it no longer shares its width with the widgets of its former column.
+fn child_out_of_a_row_keeps_nothing_from_it(ui: &Ui) -> Result<()> {
+    /// Where it is and how it measures, without the parent.
+    fn looks(widget: &dyn Widget) -> (Placed, (i32, i32)) {
+        let mut placed = placed(widget);
+        placed.parent = None;
+        (placed, measure_width(&bin_of(widget)))
+    }
+    fn put(ui: &Ui, kind: NewParent, child: &dyn Widget) -> Result<gtk::Widget> {
+        Ok(match kind {
+            NewParent::Stack => {
+                let stack = ui.stack(Orientation::Vertical)?;
+                stack.append(&ui.label("先客")?);
+                stack.append(child);
+                stack.native_widget()
+            }
+            NewParent::Grid => {
+                let grid = ui.grid()?;
+                grid.attach(&ui.label("先客")?, GridCell::new(0, 0));
+                grid.attach(child, GridCell::new(1, 0));
+                grid.native_widget()
+            }
+        })
+    }
+
+    let mut violations = Violations::default();
+    for kind in [NewParent::Stack, NewParent::Grid] {
+        for left_by in [LeftBy::Replaced, LeftBy::Scrolled] {
+            for table in [false, true] {
+                let what = format!(
+                    "{} の{}から {kind:?} へ",
+                    if table {
+                        "Table のセル"
+                    } else {
+                        "List の行"
+                    },
+                    match left_by {
+                        LeftBy::Replaced => "差し替えた行",
+                        LeftBy::Scrolled => "画面外の行",
+                    }
+                );
+                let child = ui.button("子")?;
+                let (window, native) = if table {
+                    let (window, table, native) = table_with_first_row(ui, &child)?;
+                    // 表の中で大きさを指定し直しても、列が決めたことは残る。
+                    let in_cell = looks(&child);
+                    child.set_sizing(Sizing::default());
+                    let resized = looks(&child);
+                    violations.check(resized == in_cell, || {
+                        format!("{what}: セルの中で set_sizing すると列の扱いが消える\n  前 {in_cell:?}\n  後 {resized:?}")
+                    });
+                    if let LeftBy::Replaced = left_by {
+                        table.set_rows(&[TableRow::new(["別", "1"])]);
+                    }
+                    (window, native)
+                } else {
+                    let (window, list, native) = list_with_first_row(ui, &child, false)?;
+                    if let LeftBy::Replaced = left_by {
+                        list.set_rows(&[ListRow::new(&ui.label("別")?)]);
+                    }
+                    (window, native)
+                };
+                if let LeftBy::Scrolled = left_by {
+                    scroll_list_to(&native, 1e7);
+                }
+                tick(&native);
+                violations.check(bin_of(&child).parent().is_none(), || {
+                    format!("{what}: 行が子を放さない")
+                });
+
+                let fresh = ui.button("子")?;
+                let moved_into = put(ui, kind, &child)?;
+                put(ui, kind, &fresh)?;
+                violations.check(bin_of(&child).parent() == Some(moved_into), || {
+                    format!("{what}: 新しい親に入らない")
+                });
+                let (moved, made) = (looks(&child), looks(&fresh));
+                violations.check(moved == made, || {
+                    format!(
+                        "{what}: 新しく作った子と違う\n  移した子 {moved:?}\n  新しい子 {made:?}"
+                    )
+                });
+                window.close();
+                pump();
+            }
+        }
+    }
+
+    // 同じ列のセルだった 2 つの子は、表から出たあと幅をそろえ合わない。
+    for left_by in [LeftBy::Replaced, LeftBy::Scrolled] {
+        let what = format!("Table の同じ列から出た子 ({left_by:?})");
+        let short = ui.button("短")?;
+        let wide = ui.button("とても長い名前のボタンでセルの幅を広げる")?;
+        let (window, table, native) = table_with_first_row(ui, &short)?;
+        let cells = Rc::new([short.boxed_clone(), wide.boxed_clone()]);
+        table.set_row_builder(naui_core::ROW_WINDOW_THRESHOLD + 300, move |index| {
+            Ok(match index {
+                0 | 1 => TableCells::new().cell(cells[index].as_ref()).text("0"),
+                _ => TableCells::new().text("-").text(index.to_string()),
+            })
+        });
+        tick(&native);
+        match left_by {
+            LeftBy::Replaced => table.set_rows(&[TableRow::new(["別", "1"])]),
+            LeftBy::Scrolled => scroll_list_to(&native, 1e7),
+        }
+        tick(&native);
+        violations.check(
+            bin_of(&short).parent().is_none() && bin_of(&wide).parent().is_none(),
+            || format!("{what}: 行が子を放さない"),
+        );
+        let fresh = ui.button("短")?;
+        put(ui, NewParent::Stack, &short)?;
+        put(ui, NewParent::Stack, &wide)?;
+        put(ui, NewParent::Stack, &fresh)?;
+        let (moved, made) = (
+            measure_width(&bin_of(&short)),
+            measure_width(&bin_of(&fresh)),
+        );
+        violations.check(moved == made, || {
+            format!("{what}: 幅が新しく作った子と違う (移した子 {moved:?}、新しい子 {made:?})")
+        });
+        window.close();
+        pump();
+    }
     violations.assert_none();
     Ok(())
 }
