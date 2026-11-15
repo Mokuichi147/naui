@@ -183,8 +183,9 @@ impl Popover {
     /// The content. Each call replaces it.
     pub fn set_child(&self, child: &dyn Widget) {
         // 中身だけを外す。入れ子で開いたポップオーバーもこの要素の中にいる。
+        // 外さずにほかへ移った前の中身は、移った先に残す。
         if let Some(previous) = self.0.child.borrow_mut().take() {
-            previous.native_element().remove();
+            let _ = self.0.element.remove_child(&previous.native_element());
         }
         let element = child.native_element();
         if self.0.element.append_child(&element).is_ok() {
