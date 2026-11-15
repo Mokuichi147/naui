@@ -178,13 +178,31 @@ impl Popover {
     }
 
     /// The content. Each call replaces it.
+    ///
+    /// A child still in another container is refused, and the current content stays.
     pub fn set_child(&self, child: &dyn Widget) {
+        let element = child.native_element();
+        let current = self
+            .0
+            .child
+            .borrow()
+            .as_ref()
+            .map(|child| child.native_element());
+        // 前の中身を外す前に断る。
+        if crate::layout::refuses(&element, current.as_ref()) {
+            return;
+        }
         if self.0.flyout.SetContent(None).is_err() {
             return;
         }
-        let element = child.native_element();
         if self.0.flyout.SetContent(&element).is_ok() {
+            // `Flyout` の中身は開いている間しかネイティブの親を持たない。ほかの
+            // コンテナが取らないよう、置いた場所を覚える。
+            crate::layout::note_place(&element, crate::layout::Place::flyout(&self.0.flyout));
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
+        } else if let Some(current) = current {
+            // 入れられなかったときは前の中身へ戻す。
+            let _ = self.0.flyout.SetContent(&current);
         }
     }
 

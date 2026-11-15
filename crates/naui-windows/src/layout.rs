@@ -13,8 +13,8 @@ use naui_core::{
     ScrollTarget, Sizing, Track,
 };
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    ColumnDefinition, Grid as XamlGrid, RowDefinition, ScrollBarVisibility, ScrollMode,
-    ScrollViewer, ScrollViewerViewChangedEventArgs,
+    Border, ColumnDefinition, ContentControl, Flyout, Grid as XamlGrid, Panel, RowDefinition,
+    ScrollBarVisibility, ScrollMode, ScrollViewer, ScrollViewerViewChangedEventArgs,
 };
 use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
 use naui_winui3::Microsoft::UI::Xaml::{
@@ -561,6 +561,172 @@ pub(crate) fn clear_layout_state(element: &UIElement) {
     PARENT_LAYOUT_LISTENERS.with(|listeners| {
         listeners.borrow_mut().remove(&key);
     });
+    ROW_OWNERS.with(|owners| {
+        owners.borrow_mut().remove(&key);
+    });
+    PLACES.with(|places| {
+        places.borrow_mut().remove(&key);
+    });
+}
+
+/// Whether the element is in some container now.
+///
+/// An element can be in only one container. naui's containers ask this before
+/// writing anything to a child, so that a child still in another container is
+/// refused as a whole instead of half-placed (see "Changing and moving widgets after
+/// adding" in naui's guide).
+///
+/// `Parent` and `VisualTreeHelper::GetParent` tell only in a shown window: before
+/// that, both are empty even for a panel's child. And the content of a
+/// `ContentControl` or a `Flyout` has no parent at all until its template places it
+/// (never, while an `Expander` is collapsed or a `Popover` is closed). So naui
+/// remembers where it put each element ([`note_place`]) and checks it against the
+/// container's own children here. A place the element has since left, through
+/// naui or the native escape hatch, or whose container is gone, no longer counts.
+pub(crate) fn has_parent(element: &UIElement) -> bool {
+    if native_parent(element).is_some() {
+        return true;
+    }
+    let key = element_key(element);
+    // ネイティブを呼ぶ間は表を借りない。
+    let Some(place) = PLACES.with(|places| places.borrow_mut().remove(&key)) else {
+        return false;
+    };
+    let placed = place.holds(element);
+    if placed {
+        PLACES.with(|places| {
+            places.borrow_mut().insert(key, place);
+        });
+    }
+    placed
+}
+
+/// The parent WinUI reports, in a shown window.
+fn native_parent(element: &UIElement) -> Option<DependencyObject> {
+    let logical = element
+        .cast::<FrameworkElement>()
+        .ok()
+        .and_then(|framework| framework.Parent().ok());
+    logical.or_else(|| {
+        element
+            .cast::<DependencyObject>()
+            .ok()
+            .and_then(|object| VisualTreeHelper::GetParent(&object).ok())
+    })
+}
+
+/// Whether a container whose one child is `current` refuses `element`: it is in
+/// another container. Putting the current child again is allowed.
+pub(crate) fn refuses(element: &UIElement, current: Option<&UIElement>) -> bool {
+    let again = current.is_some_and(|current| element_key(current) == element_key(element));
+    !again && has_parent(element)
+}
+
+/// The native container naui put an element in. Held weakly, so it does not keep the
+/// container alive.
+pub(crate) enum Place {
+    /// One of a panel's `Children`.
+    Panel(windows_core::Weak<Panel>),
+    /// A `Border`'s `Child`.
+    Border(windows_core::Weak<Border>),
+    /// The `Content` of a `ContentControl` (`ScrollViewer`, `Expander`,
+    /// `NavigationView`).
+    Content(windows_core::Weak<ContentControl>),
+    /// A `Flyout`'s `Content`.
+    Flyout(windows_core::Weak<Flyout>),
+}
+
+impl Place {
+    pub(crate) fn panel(panel: &impl Interface) -> Option<Self> {
+        panel
+            .cast::<Panel>()
+            .ok()?
+            .downgrade()
+            .ok()
+            .map(Self::Panel)
+    }
+
+    pub(crate) fn border(border: &Border) -> Option<Self> {
+        border.downgrade().ok().map(Self::Border)
+    }
+
+    pub(crate) fn content(control: &impl Interface) -> Option<Self> {
+        control
+            .cast::<ContentControl>()
+            .ok()?
+            .downgrade()
+            .ok()
+            .map(Self::Content)
+    }
+
+    pub(crate) fn flyout(flyout: &Flyout) -> Option<Self> {
+        flyout.downgrade().ok().map(Self::Flyout)
+    }
+
+    /// Whether the container is alive and still holds the element.
+    fn holds(&self, element: &UIElement) -> bool {
+        let key = element_key(element);
+        let is_element = |object: Option<windows_core::IUnknown>| {
+            object.is_some_and(|object| Interface::as_raw(&object) as usize == key)
+        };
+        match self {
+            Self::Panel(panel) => panel
+                .upgrade()
+                .and_then(|panel| panel.Children().ok())
+                .is_some_and(|children| {
+                    let mut index = 0;
+                    children.IndexOf(element, &mut index).unwrap_or(false)
+                }),
+            Self::Border(border) => is_element(
+                border
+                    .upgrade()
+                    .and_then(|border| border.Child().ok())
+                    .and_then(|child| child.cast().ok()),
+            ),
+            Self::Content(control) => is_element(
+                control
+                    .upgrade()
+                    .and_then(|control| control.Content().ok())
+                    .and_then(|content| content.cast().ok()),
+            ),
+            Self::Flyout(flyout) => is_element(
+                flyout
+                    .upgrade()
+                    .and_then(|flyout| flyout.Content().ok())
+                    .and_then(|content| content.cast().ok()),
+            ),
+        }
+    }
+}
+
+/// Remembers where naui put the element (see [`has_parent`]). Call it once the
+/// element is in place.
+pub(crate) fn note_place(element: &UIElement, place: Option<Place>) {
+    let key = element_key(element);
+    PLACES.with(|places| {
+        let mut places = places.borrow_mut();
+        match place {
+            Some(place) => places.insert(key, place),
+            None => places.remove(&key),
+        };
+    });
+}
+
+/// Records that the row container `owner` (a `List` or a `Table`) took the element
+/// last. See [`last_row_owner`].
+pub(crate) fn set_last_row_owner(element: &UIElement, owner: usize) {
+    ROW_OWNERS.with(|owners| {
+        owners.borrow_mut().insert(element_key(element), owner);
+    });
+}
+
+/// The row container that took the element last, if any.
+///
+/// A list keeps the rows it was given and places them only when it builds them, so a
+/// child can be given to two lists while neither has placed it. The later one is
+/// the one that places it.
+pub(crate) fn last_row_owner(element: &UIElement) -> Option<usize> {
+    ROW_OWNERS.with(|owners| owners.borrow().get(&element_key(element)).copied())
 }
 
 /// Has `f` called when the parent starts, changes, or stops controlling layout.
@@ -774,9 +940,15 @@ impl Grid {
 
     /// Places a child at the given position. Missing rows and columns are added
     /// automatically.
+    ///
+    /// A child still in another container (this one included) is refused: nothing
+    /// changes, neither here nor on the child.
     pub fn attach(&self, child: &dyn Widget, cell: GridCell) {
-        self.ensure_size(cell.columns_needed(), cell.rows_needed());
         let element = child.native_element();
+        // 行と列を足す前に断る。足してから断ると、置かなかった子のぶん広がる。
+        if has_parent(&element) {
+            return;
+        }
         let Ok(child_framework) = element.cast::<FrameworkElement>() else {
             return;
         };
@@ -805,6 +977,14 @@ impl Grid {
             .Children()
             .and_then(|children| children.Append(&placed));
         if appended.is_ok() {
+            self.ensure_size(cell.columns_needed(), cell.rows_needed());
+            note_place(
+                &element,
+                match &wrapper {
+                    Some(wrapper) => Place::panel(wrapper),
+                    None => Place::panel(&self.0.native),
+                },
+            );
             // 置き場所は添付プロパティなので、FrameworkElement として設定する。
             // Append に成功してから設定することで、すでに別の親に属している
             // 要素の追加に失敗しても、既存の配置を変更しない。
@@ -830,9 +1010,27 @@ impl Grid {
     ///
     /// Used to safely replace controls, such as `MediaPlayerElement`, for which WinUI
     /// internally runs template application when the TabView switches content.
+    ///
+    /// A child still in another container, or in another cell of this one, is
+    /// refused, and what is in the cell stays.
     pub fn replace(&self, child: &dyn Widget, cell: GridCell) {
+        let element = child.native_element();
+        // 外してから断ると、前の子だけが消える。同じマスにいる子は置き直せる。
+        if has_parent(&element) && !self.holds_at(&element, cell) {
+            return;
+        }
         self.remove(cell);
         self.attach(child, cell);
+    }
+
+    /// Whether the element is placed in `cell` (its column and row) here.
+    fn holds_at(&self, element: &UIElement, cell: GridCell) -> bool {
+        let key = element_key(element);
+        self.0.children.borrow().iter().any(|placed| {
+            placed.cell.column == cell.column
+                && placed.cell.row == cell.row
+                && element_key(&placed.widget.native_element()) == key
+        })
     }
 
     /// Removes whatever is in the given cell. Does nothing if it is empty.
@@ -961,6 +1159,14 @@ impl Grid {
             }
             (None, None) => {}
         }
+        // 包みに出し入れしたので、置いた場所を覚え直す。
+        note_place(
+            element,
+            match &placed.wrapper {
+                Some(wrapper) => Place::panel(wrapper),
+                None => Place::panel(&self.0.native),
+            },
+        );
         let framework = match &placed.wrapper {
             Some(wrapper) => wrapper.cast::<FrameworkElement>().ok(),
             None => Some(child_framework.clone()),
@@ -1167,6 +1373,11 @@ thread_local! {
     /// What to call after the parent layout changes, by element key.
     static PARENT_LAYOUT_LISTENERS: RefCell<HashMap<usize, Rc<dyn Fn()>>> =
         RefCell::new(HashMap::new());
+    /// The row container that last took each element, by element key (see
+    /// [`last_row_owner`]).
+    static ROW_OWNERS: RefCell<HashMap<usize, usize>> = RefCell::new(HashMap::new());
+    /// Where naui put each element, by element key (see [`has_parent`]).
+    static PLACES: RefCell<HashMap<usize, Place>> = RefCell::new(HashMap::new());
     /// The `Grid`s of the Stacks still alive on the Rust side, by element key.
     static STACKS: RefCell<HashMap<usize, XamlGrid>> = RefCell::new(HashMap::new());
     static SCROLLS: RefCell<Vec<Weak<ScrollInner>>> = const { RefCell::new(Vec::new()) };
@@ -1731,6 +1942,8 @@ impl Scroll {
     }
 
     /// The content to scroll. Each call replaces it.
+    ///
+    /// A child still in another container is refused, and the current content stays.
     pub fn set_child(&self, child: &dyn Widget) {
         let element = child.native_element();
         let previous = self
@@ -1739,6 +1952,9 @@ impl Scroll {
             .borrow()
             .as_ref()
             .map(|child| child.native_element());
+        if refuses(&element, previous.as_ref()) {
+            return;
+        }
         if self.0.native.SetContent(&element).is_ok() {
             set_scroll_parent(
                 &element,
@@ -1750,6 +1966,8 @@ impl Scroll {
                     clear_parent_layout(&previous);
                 }
             }
+            // テンプレートが当たるまで、中身はネイティブの親を持たない。
+            note_place(&element, Place::content(&self.0.native));
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
         }
     }
