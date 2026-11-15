@@ -7499,6 +7499,219 @@ async fn clipboard_write_reports_a_refusal() {
     assert!(error.to_string().contains("断りました"), "{error}");
 }
 
+/// Replaces `navigator.clipboard[name]` with `fake` while `body` runs, so as not to
+/// touch the user's clipboard (and not to wait for a permission prompt).
+async fn with_fake_clipboard<F: std::future::Future<Output = ()>>(
+    name: &str,
+    fake: &JsValue,
+    body: impl FnOnce(naui_web::Clipboard) -> F,
+) {
+    let mut kept = None;
+    with_ui(|ui| {
+        kept = Some(ui.clipboard());
+        Ok(())
+    });
+    let native: JsValue = web_sys::window()
+        .expect("window")
+        .navigator()
+        .clipboard()
+        .into();
+    js_sys::Reflect::set(&native, &name.into(), fake).expect("差し替え");
+    body(kept.expect("clipboard")).await;
+    js_sys::Reflect::delete_property(native.unchecked_ref::<js_sys::Object>(), &name.into())
+        .expect("元に戻す");
+}
+
+/// Waits up to a second for the slot to be filled, then takes what is in it.
+async fn take_when_filled<T>(slot: &Rc<RefCell<Option<T>>>) -> T {
+    for _ in 0..50 {
+        if slot.borrow().is_some() {
+            break;
+        }
+        wait_millis(20).await;
+    }
+    let value = slot.borrow_mut().take();
+    value.expect("コールバックが呼ばれる")
+}
+
+/// The bytes of the `image/png` in the item handed to the fake `write`.
+async fn written_png(items: &JsValue) -> Vec<u8> {
+    let item = js_sys::Array::from(items).get(0);
+    let types: js_sys::Array = js_sys::Reflect::get(&item, &"types".into())
+        .expect("types")
+        .into();
+    assert_eq!(
+        types.to_vec(),
+        [JsValue::from("image/png")],
+        "PNG だけを置く"
+    );
+    let get_type: js_sys::Function = js_sys::Reflect::get(&item, &"getType".into())
+        .expect("getType")
+        .into();
+    let promise: js_sys::Promise = get_type
+        .call1(&item, &"image/png".into())
+        .expect("getType を呼べる")
+        .into();
+    let blob = wasm_bindgen_futures::JsFuture::from(promise)
+        .await
+        .expect("PNG の Blob");
+    assert_eq!(
+        js_sys::Reflect::get(&blob, &"type".into()).expect("type"),
+        JsValue::from("image/png")
+    );
+    let array_buffer: js_sys::Function = js_sys::Reflect::get(&blob, &"arrayBuffer".into())
+        .expect("arrayBuffer")
+        .into();
+    let buffer = wasm_bindgen_futures::JsFuture::from(js_sys::Promise::from(
+        array_buffer.call0(&blob).expect("arrayBuffer を呼べる"),
+    ))
+    .await
+    .expect("中身");
+    js_sys::Uint8Array::new(&buffer).to_vec()
+}
+
+/// A fake `write` that keeps what it was given and resolves.
+fn keeping_write(kept: &Rc<RefCell<Option<JsValue>>>) -> JsValue {
+    let kept = kept.clone();
+    wasm_bindgen::closure::Closure::<dyn FnMut(JsValue) -> js_sys::Promise>::new(
+        move |items: JsValue| {
+            *kept.borrow_mut() = Some(items);
+            js_sys::Promise::resolve(&JsValue::UNDEFINED)
+        },
+    )
+    .into_js_value()
+}
+
+#[wasm_bindgen_test]
+async fn clipboard_writes_pixels_as_png() {
+    let kept = Rc::new(RefCell::new(None));
+    with_fake_clipboard("write", &keeping_write(&kept), |clipboard| async move {
+        let rgba = [255, 0, 0, 255, 0, 0, 255, 128];
+        let image = Bitmap::from_pixels(2, 1, &rgba).expect("画素");
+        let written = Rc::new(RefCell::new(None));
+        clipboard.set_image(&image, {
+            let written = written.clone();
+            move |result| *written.borrow_mut() = Some(result)
+        });
+        assert!(written.borrow().is_none(), "その場では呼ばない");
+        take_when_filled(&written).await.expect("書き込めた");
+        let items = kept.borrow_mut().take().expect("write が呼ばれた");
+        let png = written_png(&items).await;
+        assert_eq!(png, naui_core::media::encode_png(2, 1, &rgba).expect("PNG"));
+    })
+    .await;
+}
+
+/// A 1 x 1 GIF of one red pixel.
+const RED_GIF: &[u8] = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\x00\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;";
+
+#[wasm_bindgen_test]
+async fn clipboard_writes_a_gif_as_png() {
+    let kept = Rc::new(RefCell::new(None));
+    with_fake_clipboard("write", &keeping_write(&kept), |clipboard| async move {
+        let image = Bitmap::from_bytes(RED_GIF).expect("GIF");
+        let written = Rc::new(RefCell::new(None));
+        clipboard.set_image(&image, {
+            let written = written.clone();
+            move |result| *written.borrow_mut() = Some(result)
+        });
+        take_when_filled(&written).await.expect("書き込めた");
+        let items = kept.borrow_mut().take().expect("write が呼ばれた");
+        let png = written_png(&items).await;
+        let info = naui_core::media::raster_info(&png).expect("読める");
+        assert_eq!(
+            (info.mime, info.width, info.height),
+            ("image/png", 1, 1),
+            "ブラウザが PNG に直す"
+        );
+    })
+    .await;
+}
+
+#[wasm_bindgen_test]
+async fn clipboard_image_write_reports_a_refusal() {
+    let refuse = js_sys::Function::new_no_args(
+        "return Promise.reject(new DOMException('断りました', 'NotAllowedError'))",
+    );
+    with_fake_clipboard("write", &refuse, |clipboard| async move {
+        let image = Bitmap::from_pixels(1, 1, &[0, 0, 0, 255]).expect("画素");
+        let written = Rc::new(RefCell::new(None));
+        clipboard.set_image(&image, {
+            let written = written.clone();
+            move |result| *written.borrow_mut() = Some(result)
+        });
+        let error = take_when_filled(&written)
+            .await
+            .expect_err("断られたら Err");
+        assert!(error.to_string().contains("断りました"), "{error}");
+    })
+    .await;
+}
+
+/// A fake `read` resolving to one item with `types`, whose `getType` gives a `Blob`
+/// of `bytes`.
+fn fake_read(types: &[&str], bytes: &[u8]) -> JsValue {
+    let parts = js_sys::Array::of1(&js_sys::Uint8Array::from(bytes));
+    let options = web_sys::BlobPropertyBag::new();
+    options.set_type("image/png");
+    let blob =
+        web_sys::Blob::new_with_u8_array_sequence_and_options(&parts, &options).expect("Blob");
+    let item = js_sys::Object::new();
+    let kinds: js_sys::Array = types.iter().map(|kind| JsValue::from(*kind)).collect();
+    js_sys::Reflect::set(&item, &"types".into(), &kinds).expect("types");
+    let get_type = wasm_bindgen::closure::Closure::<dyn FnMut(JsValue) -> js_sys::Promise>::new(
+        move |_kind: JsValue| js_sys::Promise::resolve(blob.unchecked_ref::<JsValue>()),
+    )
+    .into_js_value();
+    js_sys::Reflect::set(&item, &"getType".into(), &get_type).expect("getType");
+    let items = js_sys::Array::of1(&item);
+    wasm_bindgen::closure::Closure::<dyn FnMut() -> js_sys::Promise>::new(move || {
+        js_sys::Promise::resolve(items.unchecked_ref::<JsValue>())
+    })
+    .into_js_value()
+}
+
+async fn read_image_with(fake: &JsValue) -> Option<Bitmap> {
+    let mut image = None;
+    with_fake_clipboard("read", fake, |clipboard| {
+        let read = Rc::new(RefCell::new(None));
+        clipboard.read_image({
+            let read = read.clone();
+            move |image| *read.borrow_mut() = Some(image)
+        });
+        assert!(read.borrow().is_none(), "その場では呼ばない");
+        let image = &mut image;
+        async move {
+            *image = take_when_filled(&read).await;
+        }
+    })
+    .await;
+    image
+}
+
+#[wasm_bindgen_test]
+async fn clipboard_reads_a_png_image() {
+    let png = naui_core::media::encode_png(3, 2, &[7; 3 * 2 * 4]).expect("PNG");
+    let fake = fake_read(&["text/plain", "image/png"], &png);
+    let image = read_image_with(&fake).await.expect("PNG を読める");
+    assert_eq!(image.size(), (3, 2));
+    assert!(matches!(image.data(), naui_core::BitmapData::Encoded(bytes) if bytes == png));
+}
+
+#[wasm_bindgen_test]
+async fn clipboard_without_a_png_reads_none() {
+    let fake = fake_read(&["text/plain"], b"text");
+    assert!(read_image_with(&fake).await.is_none());
+}
+
+#[wasm_bindgen_test]
+async fn clipboard_image_read_reports_a_refusal_as_none() {
+    let refuse = js_sys::Function::new_no_args(
+        "return Promise.reject(new DOMException('断りました', 'NotAllowedError'))",
+    );
+    assert!(read_image_with(&refuse).await.is_none());
+}
+
 #[wasm_bindgen_test]
 async fn window_reports_its_size() {
     let mut kept = None;

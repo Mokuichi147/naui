@@ -27,6 +27,7 @@ that shape are covered in
 | `AdaptivePanes` switching to one pane | `TwoPaneView` decides, below the breakpoint, with no slack | naui decides, with 8 px of slack | naui decides, with 8 px of slack (slides between the panes) | naui decides, with 8 px of slack |
 | `Label` holding links | Selectable as asked | Always selectable | Selectable as asked | Selectable as asked |
 | Where `Group`'s heading goes | Above the card | On the frame's top edge | On the frame's top edge | On the frame's top edge (`<legend>`) |
+| Images written to the clipboard (`set_image`) | PNG, kept after the app quits | PNG and TIFF, kept after the app quits | Offered by the app while it runs (unless a clipboard manager keeps it) | `image/png` only, inside a user action (Firefox 127 and later) |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
 
 ## Common
@@ -542,6 +543,12 @@ that shape are covered in
   event.
 - In browsers without `showSaveFilePicker` (Firefox / Safari), `FileSaver` becomes an
   `<a download>` download, and no destination confirmation may appear.
+- Images on the clipboard are **`image/png` only**, the one image type the
+  Clipboard API requires. `Clipboard::set_image` turns JPEG and GIF files into PNG
+  through a `<canvas>` (dropping their metadata), and gets an `Err` in browsers
+  without `ClipboardItem` (Firefox before 127). `Clipboard::read_image` may ask the
+  user for permission (Firefox shows a "Paste" button to press) and reads `None`
+  when it is refused.
   `FileEntry::path` is `None` either way.
 - The input UIs of `DatePicker`, `TimePicker` and `ColorPicker` (calendars,
   spinners, palettes and so on) are shown by the browser, so their look and

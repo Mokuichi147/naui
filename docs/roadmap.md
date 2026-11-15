@@ -231,11 +231,13 @@ v0.17.0.
       transforms, `clip`, gradient fills, `draw_image` with `Bitmap` (from the
       same file bytes and pixels as `Image::set_bytes` and `set_pixels`), and
       `text_width` measured by each platform's text engine.
-- [ ] **Images on the clipboard.** Copying and pasting images: `NSPasteboard` on
-      macOS, `GdkTexture` on GTK, `DataPackage.SetBitmap` on WinUI, and the
-      Clipboard API's `image/png` on the Web, which depends on the browser's
-      support for image types. The images to copy come from `Image::set_bytes`
-      and `set_pixels`, which were released in v0.15.0.
+- [x] **Images on the clipboard** (`Clipboard::set_image` and `read_image`, with
+      `Image::set_bitmap` to show what was read). The image is a `Bitmap`, from the
+      same file bytes and pixels as `Image::set_bytes` and `set_pixels`. PNG and
+      TIFF on `NSPasteboard`, a `GdkTexture` on GTK, PNG through
+      `DataPackage.SetBitmap` on WinUI (reading BMP from older apps through WIC),
+      and `image/png` in a `ClipboardItem` on the Web, where the browser turns
+      JPEG and GIF into PNG.
 - [ ] **Publish the testing facilities across platforms.** Gather the existing
       testing APIs (`click`, `activate`, and so on) for app developers. Also
       provide a way to resize windows in tests, so apps can check their adaptive

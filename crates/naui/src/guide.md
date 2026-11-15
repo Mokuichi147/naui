@@ -3119,8 +3119,8 @@ The next call of `every` is counted from the end of the previous call.
 
 ## Clipboard and URLs
 
-[`Ui::clipboard`] reads and writes text, and [`Ui::open_url`] opens a URL in the
-default app (a browser or mail client).
+[`Ui::clipboard`] reads and writes text and images, and [`Ui::open_url`] opens a
+URL in the default app (a browser or mail client).
 
 ```no_run
 # use naui::{Result, Ui};
@@ -3148,13 +3148,53 @@ so **on all four platforms the results of reading and writing are returned throu
 callback** (not called on the spot). If there is no text to read, it is `None`. If
 writing is refused, it is `Err`.
 
+Images are [`Bitmap`]s, made from the same sources as [`Image::set_bytes`] and
+[`Image::set_pixels`] (the contents of a PNG, JPEG or GIF file, or RGBA pixels).
+[`Clipboard::set_image`] writes one, and [`Clipboard::read_image`] reads what the
+user copied in another app, ready to draw on a [`Canvas`] or show with
+[`Image::set_bitmap`]:
+
+```no_run
+# use naui::{Bitmap, Result, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let preview = ui.image("")?;
+let paste = ui.button("Paste image")?;
+paste.on_click({
+    let clipboard = ui.clipboard();
+    let preview = preview.clone();
+    move || {
+        let preview = preview.clone();
+        clipboard.read_image(move |image| match image {
+            Some(image) => preview.set_bitmap(&image),
+            None => println!("the clipboard holds no image"),
+        });
+    }
+});
+
+// A 2 x 1 image: a red pixel and a blue one.
+let image = Bitmap::from_pixels(2, 1, &[255, 0, 0, 255, 0, 0, 255, 255])?;
+ui.clipboard().set_image(&image, |result| println!("copied: {}", result.is_ok()));
+# Ok(())
+# }
+```
+
+Images are handed to other apps as PNG, the one image type every platform shares.
+What a read image was made from depends on the platform (PNG file contents, or
+pixels on Windows when another app copied a BMP), so go through [`Bitmap::data`]
+only when you need the bytes themselves.
+
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
 | Clipboard | `Windows.ApplicationModel.DataTransfer.Clipboard` | `NSPasteboard` | `GdkClipboard` | `navigator.clipboard` |
+| Images written as | PNG through `DataPackage.SetBitmap` | PNG and TIFF | A `GdkTexture` (GDK offers PNG and other types) | `image/png` in a `ClipboardItem` |
+| Images read from | `GetBitmapAsync`, decoded by WIC when not PNG | PNG, or anything `NSImage` reads (TIFF, PDF and so on) turned into PNG | `read_texture_async`, turned into PNG | `image/png` from `clipboard.read()` |
 | `open_url` | `ShellExecuteW` | `NSWorkspace` | `GtkUriLauncher` | `window.open` (new tab) |
 
 The Web's Clipboard API is available only over https (or localhost), and reading
 may ask the user for permission. Browsers may allow writing and `open_url` only
 inside a user action (such as a click), so call them from a button's `on_click` and
 the like. When refused, writing gets an `Err` in its callback, and `open_url` (when
-the new tab was blocked) gets an `Err` as its return value.
+the new tab was blocked) gets an `Err` as its return value. Writing images needs
+`ClipboardItem` (Firefox 127 and later); without it, `set_image` gets an `Err`.
+On Linux, what the app wrote (text or an image) is offered by the app itself, so it
+is gone when the app quits unless a clipboard manager keeps it.

@@ -427,7 +427,7 @@ impl Ui {
         self.0.tasks()
     }
 
-    /// The clipboard. Text can be read and written.
+    /// The clipboard. Text and images can be read and written.
     #[inline]
     pub fn clipboard(&self) -> Clipboard {
         Clipboard(self.0.clipboard())

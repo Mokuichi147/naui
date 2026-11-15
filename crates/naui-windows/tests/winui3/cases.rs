@@ -682,6 +682,14 @@ const CASES: &[Case] = &[
         "表示したリストでも渡しただけの子を取り返さず、後の持ち主が置く",
         crate::moved_child::rows_take_only_free_children_on_screen,
     ),
+    (
+        "クリップボードへ書いた画素を SetBitmap で置き、読み戻せる",
+        clipboard_round_trips_image_pixels,
+    ),
+    (
+        "他のアプリが BMP で置いた画像も画素として読める",
+        clipboard_reads_a_bmp_image,
+    ),
 ];
 
 fn sheet_configuration_reaches_the_content_dialog(ui: &Ui) -> Result<()> {
@@ -11715,5 +11723,123 @@ fn list_keeps_the_rows_a_failed_build_left(ui: &Ui) -> Result<()> {
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
+    Ok(())
+}
+
+/// Runs `f` with the clipboard, putting back the text that was on it afterwards
+/// (the cases overwrite it). Anything other than text is lost.
+fn with_saved_clipboard(ui: &Ui, f: impl FnOnce()) {
+    let clipboard = ui.clipboard();
+    let saved = Rc::new(RefCell::new(None));
+    clipboard.read_text({
+        let saved = saved.clone();
+        move |text| *saved.borrow_mut() = Some(text)
+    });
+    pump_until(Duration::from_secs(5), || saved.borrow().is_some());
+    let outcome = catch_unwind(AssertUnwindSafe(f));
+    if let Some(Some(text)) = saved.borrow_mut().take() {
+        let done = Rc::new(Cell::new(false));
+        clipboard.set_text(&text, {
+            let done = done.clone();
+            move |_| done.set(true)
+        });
+        pump_until(Duration::from_secs(5), || done.get());
+    }
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+/// Reads with `read_image` and waits for the result.
+fn read_clipboard_image(ui: &Ui) -> Option<naui_core::Bitmap> {
+    let read = Rc::new(RefCell::new(None));
+    ui.clipboard().read_image({
+        let read = read.clone();
+        move |image| *read.borrow_mut() = Some(image)
+    });
+    assert!(read.borrow().is_none(), "その場では呼ばない");
+    pump_until(Duration::from_secs(5), || read.borrow().is_some());
+    let result = read.borrow_mut().take();
+    result.expect("読んだ結果が届く")
+}
+
+fn clipboard_round_trips_image_pixels(ui: &Ui) -> Result<()> {
+    with_saved_clipboard(ui, || {
+        // 2 x 1: 赤と青。Flush の後に OS が DIB へ直して返すこともあるので、透明度の
+        // 残らない形でも同じになるよう不透明にする。
+        let rgba = [255, 0, 0, 255, 0, 0, 255, 255];
+        let image = naui_core::Bitmap::from_pixels(2, 1, &rgba).expect("画素");
+        let written = Rc::new(RefCell::new(None));
+        ui.clipboard().set_image(&image, {
+            let written = written.clone();
+            move |result| *written.borrow_mut() = Some(result)
+        });
+        assert!(
+            written.borrow().is_none(),
+            "書き込みの結果もその場では呼ばない"
+        );
+        pump_until(Duration::from_secs(5), || written.borrow().is_some());
+        let result = written.borrow_mut().take();
+        result.expect("書き込みの結果が届く").expect("書き込めた");
+
+        // ほかのアプリと同じく WinRT から見ても画像が置いてある。
+        let content =
+            windows::ApplicationModel::DataTransfer::Clipboard::GetContent().expect("中身を読める");
+        let bitmap =
+            windows::ApplicationModel::DataTransfer::StandardDataFormats::Bitmap().expect("形式名");
+        assert!(
+            content.Contains(&bitmap).expect("形式を調べられる"),
+            "Bitmap がある"
+        );
+
+        let read = read_clipboard_image(ui).expect("画像を読める");
+        assert_eq!(read.size(), (2, 1));
+        match read.data() {
+            naui_core::BitmapData::Encoded(bytes) => {
+                assert_eq!(read.mime(), Some("image/png"), "ファイルなら PNG");
+                let expected = naui_core::media::encode_png(2, 1, &rgba).expect("PNG");
+                assert_eq!(bytes, expected.as_slice(), "書いた PNG がそのまま戻る");
+            }
+            naui_core::BitmapData::Pixels(pixels) => assert_eq!(pixels, rgba),
+        }
+    });
+    Ok(())
+}
+
+fn clipboard_reads_a_bmp_image(ui: &Ui) -> Result<()> {
+    use windows::ApplicationModel::DataTransfer::{Clipboard as WinClipboard, DataPackage};
+    use windows::Storage::Streams::{
+        DataWriter, InMemoryRandomAccessStream, RandomAccessStreamReference,
+    };
+    with_saved_clipboard(ui, || {
+        // 古いアプリのように、PNG ではなく BMP で置く。
+        let stream = InMemoryRandomAccessStream::new().expect("ストリーム");
+        let writer = DataWriter::CreateDataWriter(&stream).expect("書き手");
+        writer.WriteBytes(&bmp_2x1()).expect("書ける");
+        let stored = Rc::new(Cell::new(false));
+        let operation = writer.StoreAsync().expect("書き出し");
+        let flag = stored.clone();
+        ui.tasks().spawn(async move {
+            let _ = operation.await;
+            flag.set(true);
+        });
+        pump_until(Duration::from_secs(5), || stored.get());
+        assert!(stored.get(), "書き出せた");
+        writer.DetachStream().expect("切り離せる");
+        stream.Seek(0).expect("先頭へ戻せる");
+        let package = DataPackage::new().expect("包み");
+        package
+            .SetBitmap(&RandomAccessStreamReference::CreateFromStream(&stream).expect("参照"))
+            .expect("置ける");
+        WinClipboard::SetContent(&package).expect("書き込める");
+
+        let read = read_clipboard_image(ui).expect("BMP でも読める");
+        assert_eq!(read.size(), (2, 1));
+        assert_eq!(
+            read.data(),
+            naui_core::BitmapData::Pixels(&[255, 0, 0, 255, 0, 0, 255, 255]),
+            "WIC で読み、不透明な画素で返す"
+        );
+    });
     Ok(())
 }

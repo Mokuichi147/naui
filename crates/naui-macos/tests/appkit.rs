@@ -629,6 +629,22 @@ fn main() {
             "クリップボードへ書いた文字を読み戻せる",
             clipboard_round_trips_text,
         ),
+        (
+            "クリップボードへ書いた画素を PNG と TIFF で置き、読み戻せる",
+            clipboard_round_trips_image_pixels,
+        ),
+        (
+            "GIF のファイルから作った画像は PNG に直して置く",
+            clipboard_writes_a_gif_as_png,
+        ),
+        (
+            "他のアプリが TIFF だけで置いた画像も読める",
+            clipboard_reads_a_tiff_only_image,
+        ),
+        (
+            "画像の無いクリップボードからは None を読む",
+            clipboard_without_an_image_reads_none,
+        ),
         ("URL として読めないものは開かない", open_url_rejects_garbage),
         (
             "ウィンドウの大きさを読み、変わったら通知する",
@@ -6927,6 +6943,179 @@ fn clipboard_round_trips_text(ui: &Ui) -> Result<()> {
         });
     }
     assert_eq!(got, Some(Some("naui のテスト ✂".to_string())));
+    Ok(())
+}
+
+/// Runs `f` with the user's clipboard, putting back the text that was on it
+/// afterwards (the tests overwrite it). Anything other than text is lost.
+fn with_saved_pasteboard<T>(f: impl FnOnce(&objc2_app_kit::NSPasteboard) -> T) -> T {
+    use objc2_app_kit::{NSPasteboard, NSPasteboardTypeString};
+    let pasteboard = NSPasteboard::generalPasteboard();
+    let saved = pasteboard
+        .stringForType(unsafe { NSPasteboardTypeString })
+        .map(|text| text.to_string());
+    let result = catch_unwind(AssertUnwindSafe(|| f(&pasteboard)));
+    pasteboard.clearContents();
+    if let Some(saved) = saved {
+        pasteboard.setString_forType(&NSString::from_str(&saved), unsafe {
+            NSPasteboardTypeString
+        });
+    }
+    result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+}
+
+/// Writes `image` with `set_image` and waits for the result.
+fn write_image(ui: &Ui, image: &naui_core::Bitmap) -> naui_core::Result<()> {
+    let written = Rc::new(RefCell::new(None));
+    ui.clipboard().set_image(image, {
+        let written = written.clone();
+        move |result| *written.borrow_mut() = Some(result)
+    });
+    assert!(
+        written.borrow().is_none(),
+        "書き込みの結果もその場では呼ばない"
+    );
+    pump_until(2.0, || written.borrow().is_some());
+    let result = written.borrow_mut().take();
+    result.expect("書き込みの結果が届く")
+}
+
+/// Reads with `read_image` and waits for the result.
+fn read_image(ui: &Ui) -> Option<naui_core::Bitmap> {
+    let read = Rc::new(RefCell::new(None));
+    ui.clipboard().read_image({
+        let read = read.clone();
+        move |image| *read.borrow_mut() = Some(image)
+    });
+    assert!(read.borrow().is_none(), "その場では呼ばない");
+    pump_until(2.0, || read.borrow().is_some());
+    let result = read.borrow_mut().take();
+    result.expect("読んだ結果が届く")
+}
+
+/// The size and RGBA pixels of an image file, decoded by AppKit. Only 8-bit RGBA
+/// or RGB in one plane is read (what AppKit makes of the PNGs here).
+fn decoded_pixels(bytes: &[u8]) -> (usize, usize, Vec<[u8; 4]>) {
+    use objc2_app_kit::NSBitmapImageRep;
+    let rep = NSBitmapImageRep::imageRepWithData(&objc2_foundation::NSData::with_bytes(bytes))
+        .expect("AppKit が読める");
+    let (width, height) = (rep.pixelsWide() as usize, rep.pixelsHigh() as usize);
+    let samples = rep.samplesPerPixel() as usize;
+    // RGB は 1 画素 4 バイト (使わない 1 バイト付き) で持つこともある。
+    let step = rep.bitsPerPixel() as usize / 8;
+    assert!(!rep.isPlanar(), "1 面");
+    assert!(
+        (samples == 3 || samples == 4) && step >= samples && step <= 4,
+        "8 bit の RGB か RGBA ({samples} 要素, {step} バイト)"
+    );
+    let stride = rep.bytesPerRow() as usize;
+    // SAFETY: 1 面の画素を、行の長さと高さの範囲だけ読む。
+    let data = unsafe { std::slice::from_raw_parts(rep.bitmapData(), stride * height) };
+    let mut pixels = Vec::new();
+    for y in 0..height {
+        for x in 0..width {
+            let at = y * stride + x * step;
+            let alpha = if samples == 4 { data[at + 3] } else { 255 };
+            pixels.push([data[at], data[at + 1], data[at + 2], alpha]);
+        }
+    }
+    (width, height, pixels)
+}
+
+fn encoded_bytes(image: &naui_core::Bitmap) -> Vec<u8> {
+    match image.data() {
+        naui_core::BitmapData::Encoded(bytes) => bytes.to_vec(),
+        naui_core::BitmapData::Pixels(_) => panic!("macOS は PNG のファイルで返す"),
+    }
+}
+
+fn clipboard_round_trips_image_pixels(ui: &Ui) -> Result<()> {
+    use objc2_app_kit::{NSPasteboardTypePNG, NSPasteboardTypeTIFF};
+    with_saved_pasteboard(|pasteboard| {
+        // 3 x 2: 上の行は赤・緑・青、下の行は白・黒・灰色。すべて不透明。
+        #[rustfmt::skip]
+        let rgba = [
+            255, 0, 0, 255,   0, 255, 0, 255,   0, 0, 255, 255,
+            255, 255, 255, 255,   0, 0, 0, 255,   128, 128, 128, 255,
+        ];
+        let image = naui_core::Bitmap::from_pixels(3, 2, &rgba).expect("画素");
+        write_image(ui, &image).expect("書き込めた");
+        // 他のアプリが読む 2 つの種類で置いてある。
+        let png = pasteboard
+            .dataForType(unsafe { NSPasteboardTypePNG })
+            .expect("PNG がある");
+        let tiff = pasteboard
+            .dataForType(unsafe { NSPasteboardTypeTIFF })
+            .expect("TIFF がある");
+        for (kind, bytes) in [("PNG", png.to_vec()), ("TIFF", tiff.to_vec())] {
+            let (width, height, pixels) = decoded_pixels(&bytes);
+            assert_eq!((width, height), (3, 2), "{kind} の大きさ");
+            let expected: Vec<[u8; 4]> = rgba.chunks(4).map(|p| p.try_into().unwrap()).collect();
+            assert_eq!(pixels, expected, "{kind} の画素");
+        }
+
+        let read = read_image(ui).expect("画像を読める");
+        assert_eq!(read.size(), (3, 2));
+        assert_eq!(read.mime(), Some("image/png"));
+        let (_, _, pixels) = decoded_pixels(&encoded_bytes(&read));
+        assert_eq!(pixels[0], [255, 0, 0, 255], "読み戻した左上は赤");
+        assert_eq!(pixels[5], [128, 128, 128, 255], "読み戻した右下は灰色");
+    });
+    Ok(())
+}
+
+/// A 1 x 1 GIF of one red pixel.
+const RED_GIF: &[u8] = b"GIF89a\x01\x00\x01\x00\x80\x00\x00\xff\x00\x00\x00\x00\x00,\x00\x00\x00\x00\x01\x00\x01\x00\x00\x02\x02D\x01\x00;";
+
+fn clipboard_writes_a_gif_as_png(ui: &Ui) -> Result<()> {
+    use objc2_app_kit::NSPasteboardTypePNG;
+    with_saved_pasteboard(|pasteboard| {
+        let image = naui_core::Bitmap::from_bytes(RED_GIF).expect("GIF");
+        write_image(ui, &image).expect("書き込めた");
+        let png = pasteboard
+            .dataForType(unsafe { NSPasteboardTypePNG })
+            .expect("PNG がある")
+            .to_vec();
+        assert!(png.starts_with(b"\x89PNG"), "GIF のままではなく PNG で置く");
+        let read = read_image(ui).expect("画像を読める");
+        assert_eq!(read.size(), (1, 1));
+        let (_, _, pixels) = decoded_pixels(&encoded_bytes(&read));
+        assert_eq!(pixels, [[255, 0, 0, 255]]);
+    });
+    Ok(())
+}
+
+fn clipboard_reads_a_tiff_only_image(ui: &Ui) -> Result<()> {
+    use objc2_app_kit::{NSBitmapImageRep, NSPasteboardTypeTIFF};
+    with_saved_pasteboard(|pasteboard| {
+        // 2 x 1 の PNG を AppKit で TIFF に直し、TIFF だけを置く。
+        let png =
+            naui_core::media::encode_png(2, 1, &[0, 0, 255, 255, 0, 255, 0, 255]).expect("PNG");
+        let tiff = NSBitmapImageRep::imageRepWithData(&objc2_foundation::NSData::with_bytes(&png))
+            .expect("読める")
+            .TIFFRepresentation()
+            .expect("TIFF");
+        pasteboard.clearContents();
+        assert!(pasteboard.setData_forType(Some(&tiff), unsafe { NSPasteboardTypeTIFF }));
+
+        let read = read_image(ui).expect("TIFF だけでも読める");
+        assert_eq!(read.size(), (2, 1));
+        assert_eq!(read.mime(), Some("image/png"), "PNG に直して返す");
+        let (_, _, pixels) = decoded_pixels(&encoded_bytes(&read));
+        assert_eq!(pixels, [[0, 0, 255, 255], [0, 255, 0, 255]]);
+    });
+    Ok(())
+}
+
+fn clipboard_without_an_image_reads_none(ui: &Ui) -> Result<()> {
+    use objc2_app_kit::NSPasteboardTypeString;
+    with_saved_pasteboard(|pasteboard| {
+        pasteboard.clearContents();
+        pasteboard.setString_forType(&NSString::from_str("画像ではない"), unsafe {
+            NSPasteboardTypeString
+        });
+        assert!(read_image(ui).is_none());
+    });
     Ok(())
 }
 

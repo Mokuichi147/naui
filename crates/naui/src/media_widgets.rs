@@ -168,6 +168,22 @@ impl Image {
         self.0.set_pixels(width, height, rgba)
     }
 
+    /// Shows a [`Bitmap`](crate::Bitmap), such as one read with
+    /// [`Clipboard::read_image`](crate::Clipboard::read_image).
+    /// [`source`](Self::source) becomes empty.
+    ///
+    /// The same as calling [`set_bytes`](Self::set_bytes) or
+    /// [`set_pixels`](Self::set_pixels) with what the `Bitmap` was made from.
+    pub fn set_bitmap(&self, bitmap: &naui_core::Bitmap) {
+        match bitmap.data() {
+            naui_core::BitmapData::Encoded(bytes) => self.0.set_bytes(bytes),
+            naui_core::BitmapData::Pixels(rgba) => {
+                // `Bitmap` が作るときに大きさと合うことを確かめてあるので、断られない。
+                let _ = self.0.set_pixels(bitmap.width(), bitmap.height(), rgba);
+            }
+        }
+    }
+
     /// Whether it has loaded. `false` if loading failed.
     #[inline]
     pub fn is_loaded(&self) -> bool {

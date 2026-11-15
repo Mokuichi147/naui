@@ -428,6 +428,14 @@ fn main() {
             "クリップボードへ書いた文字を読み戻せる",
             clipboard_round_trips_text,
         ),
+        (
+            "クリップボードへ書いた画素を読み戻せる",
+            clipboard_round_trips_image_pixels,
+        ),
+        (
+            "画像の無いクリップボードからは None を読む",
+            clipboard_without_an_image_reads_none,
+        ),
         ("URL として読めないものは開かない", open_url_rejects_garbage),
         (
             "ウィンドウの大きさを読み、変わったら通知する",
@@ -12087,6 +12095,66 @@ fn clipboard_round_trips_text(ui: &Ui) -> Result<()> {
         read.borrow().is_some()
     });
     assert_eq!(*read.borrow(), Some(Some("naui のテスト ✂".to_string())));
+    Ok(())
+}
+
+/// Reads with `read_image` and waits for the result.
+fn read_clipboard_image(ui: &Ui) -> Option<naui_core::Bitmap> {
+    let read = Rc::new(RefCell::new(None));
+    ui.clipboard().read_image({
+        let read = read.clone();
+        move |image| *read.borrow_mut() = Some(image)
+    });
+    assert!(read.borrow().is_none(), "その場では呼ばない");
+    spin_until(std::time::Duration::from_secs(2), || {
+        read.borrow().is_some()
+    });
+    let result = read.borrow_mut().take();
+    result.expect("読んだ結果が届く")
+}
+
+fn clipboard_round_trips_image_pixels(ui: &Ui) -> Result<()> {
+    // 2 x 1: 赤と半透明の青。
+    let rgba = [255, 0, 0, 255, 0, 0, 255, 128];
+    let image = naui_core::Bitmap::from_pixels(2, 1, &rgba).expect("画素");
+    let written = Rc::new(RefCell::new(None));
+    ui.clipboard().set_image(&image, {
+        let written = written.clone();
+        move |result| *written.borrow_mut() = Some(result.is_ok())
+    });
+    assert!(
+        written.borrow().is_none(),
+        "書き込みの結果もその場では呼ばない"
+    );
+    spin_until(std::time::Duration::from_secs(2), || {
+        written.borrow().is_some()
+    });
+    assert_eq!(*written.borrow(), Some(true), "書き込めた");
+
+    let read = read_clipboard_image(ui).expect("画像を読める");
+    assert_eq!(read.size(), (2, 1));
+    assert_eq!(read.mime(), Some("image/png"), "PNG のファイルで返す");
+    let naui_core::BitmapData::Encoded(bytes) = read.data() else {
+        panic!("ファイルで返す");
+    };
+    // GDK に読み直させて画素を比べる (半透明の画素も straight のまま)。
+    let texture = gtk::gdk::Texture::from_bytes(&gtk::glib::Bytes::from(bytes)).expect("読める");
+    let mut downloader = gtk::gdk::TextureDownloader::new(&texture);
+    downloader.set_format(gtk::gdk::MemoryFormat::R8g8b8a8);
+    let (pixels, stride) = downloader.download_bytes();
+    assert_eq!(stride, 8);
+    assert_eq!(&pixels[..], &rgba[..]);
+    Ok(())
+}
+
+fn clipboard_without_an_image_reads_none(ui: &Ui) -> Result<()> {
+    let written = Rc::new(Cell::new(false));
+    ui.clipboard().set_text("画像ではない", {
+        let written = written.clone();
+        move |_| written.set(true)
+    });
+    spin_until(std::time::Duration::from_secs(2), || written.get());
+    assert!(read_clipboard_image(ui).is_none());
     Ok(())
 }
 
