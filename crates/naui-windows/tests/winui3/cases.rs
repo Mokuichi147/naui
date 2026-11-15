@@ -199,6 +199,14 @@ const CASES: &[Case] = &[
         table_keeps_the_rows_a_failed_build_left,
     ),
     (
+        "表のセルから出た子は、移った先で新しく作った子と同じ配置になる",
+        table_cell_child_carries_nothing_over,
+    ),
+    (
+        "画面外へスクロールして表のセルから出た子も、新しく作った子と同じ配置になる",
+        table_cell_child_scrolled_out_carries_nothing_over,
+    ),
+    (
         "Page Up / Down は表を 1 ページずつ動かす",
         table_page_keys_move_by_a_page,
     ),
@@ -10728,6 +10736,292 @@ fn table_keeps_the_rows_a_failed_build_left(ui: &Ui) -> Result<()> {
         std::panic::resume_unwind(panic);
     }
     Ok(())
+}
+
+/// What a widget's own properties say about where it sits: the alignment on both axes
+/// and its `Grid` cell (column, row, column span, row span).
+type Placement = (HorizontalAlignment, VerticalAlignment, [i32; 4]);
+
+fn placement_of(widget: &dyn Widget) -> Placement {
+    let element = native::<FrameworkElement>(widget);
+    (
+        element.HorizontalAlignment().expect("横の寄せ方"),
+        element.VerticalAlignment().expect("縦の寄せ方"),
+        [
+            Grid::GetColumn(&element).expect("列"),
+            Grid::GetRow(&element).expect("行"),
+            Grid::GetColumnSpan(&element).expect("列の結合"),
+            Grid::GetRowSpan(&element).expect("行の結合"),
+        ],
+    )
+}
+
+/// Takes a widget that is in no container through a `Grid`, a vertical `Stack`, a
+/// horizontal `Stack` and a `Grid` again, and notes its placement on the way: before
+/// the first, in each one, and after leaving each one.
+///
+/// Passing on through several containers also checks that none of them keeps a value
+/// a previous one left as the one to restore.
+fn placements_through_containers(
+    ui: &Ui,
+    widget: &dyn Widget,
+) -> Result<Vec<(&'static str, Placement)>> {
+    let mut seen = vec![("どこにも入っていない", placement_of(widget))];
+    let grid = ui.grid()?;
+    grid.attach(widget, GridCell::new(1, 1));
+    seen.push(("Grid のマス", placement_of(widget)));
+    grid.remove(GridCell::new(1, 1));
+    seen.push(("Grid から外したあと", placement_of(widget)));
+    let column = ui.stack(Orientation::Vertical)?;
+    column.append(widget);
+    seen.push(("縦の Stack", placement_of(widget)));
+    column.remove(0);
+    seen.push(("縦の Stack から外したあと", placement_of(widget)));
+    let row = ui.stack(Orientation::Horizontal)?;
+    row.append(widget);
+    seen.push(("横の Stack", placement_of(widget)));
+    row.remove(0);
+    seen.push(("横の Stack から外したあと", placement_of(widget)));
+    let grid = ui.grid()?;
+    grid.attach(widget, GridCell::new(0, 0));
+    seen.push(("もう一度 Grid のマス", placement_of(widget)));
+    grid.remove(GridCell::new(0, 0));
+    Ok(seen)
+}
+
+/// Checks that `moved`, out of a table cell, is placed everywhere as `fresh` is: a
+/// widget of the same kind, made for the comparison and never in a table.
+fn assert_placed_like_new(
+    ui: &Ui,
+    moved: &dyn Widget,
+    fresh: &dyn Widget,
+    what: &str,
+) -> Result<()> {
+    let moved = placements_through_containers(ui, moved)?;
+    let fresh = placements_through_containers(ui, fresh)?;
+    for ((stop, moved), (_, fresh)) in moved.iter().zip(&fresh) {
+        assert_eq!(
+            moved, fresh,
+            "{what}: {stop}で新しく作った子と同じ配置になること"
+        );
+    }
+    Ok(())
+}
+
+/// A label for the cell checks, given `sizing` if any (`None` leaves it as made).
+fn cell_label(ui: &Ui, text: &str, sizing: Option<Sizing>) -> Result<naui_windows::Label> {
+    let label = ui.label(text)?;
+    if let Some(sizing) = sizing {
+        label.set_sizing(sizing);
+    }
+    Ok(label)
+}
+
+/// A widget taken out of a table cell when its row is replaced carries nothing of the
+/// cell over: not the column's alignment, not the centering in the row, not the
+/// column number (`guide.md`, "Changing and moving widgets after adding").
+///
+/// The cell writes these on the widget itself, and a `Grid` cell does not write the
+/// horizontal alignment again, so the widget of an `End` column used to sit at the
+/// right of its next `Grid` cell, and a `Fill` width child of a `Start` column did not
+/// stretch. Also checked: a `set_sizing` inside the cell keeps the column's alignment,
+/// a row that fails to build gives back the widgets it already placed, and a widget the
+/// row could not take (still in a `Stack`) is left as the `Stack` placed it.
+fn table_cell_child_carries_nothing_over(ui: &Ui) -> Result<()> {
+    use naui_windows::TableCells;
+
+    let aligns = [Align::End, Align::Start, Align::Fill, Align::Center];
+    let kinds = [
+        ("set_sizing なし", None),
+        ("Auto", Some(Sizing::new())),
+        ("幅 Fill", Some(Sizing::fill_width())),
+    ];
+    let table = ui.table()?;
+    table.set_columns(
+        &aligns
+            .iter()
+            .map(|&align| naui_core::TableColumn::new(format!("{align:?}")).align(align))
+            .collect::<Vec<_>>(),
+    );
+    // 行ごとに 1 種類の子を、どの列にも置く。
+    let mut cells = Vec::new();
+    for (kind, sizing) in kinds {
+        let mut row = Vec::new();
+        for align in aligns {
+            row.push(cell_label(ui, &format!("{kind} {align:?}"), sizing)?);
+        }
+        cells.push(row);
+    }
+    {
+        let cells = cells.clone();
+        table.set_row_builder(cells.len(), move |index| {
+            Ok(cells[index]
+                .iter()
+                .fold(TableCells::new(), |row, label| row.cell(label)))
+        });
+    }
+    // 行の少ない表は、画面に出さなくても全部の行を組み立てる。
+    for (row, (kind, _)) in cells.iter().zip(kinds) {
+        for (column, (label, align)) in row.iter().zip(aligns).enumerate() {
+            let (horizontal, vertical, [placed_column, ..]) = placement_of(label);
+            let expected = match align {
+                Align::Start => HorizontalAlignment::Left,
+                Align::Center => HorizontalAlignment::Center,
+                Align::End => HorizontalAlignment::Right,
+                Align::Fill => HorizontalAlignment::Stretch,
+            };
+            assert_eq!(
+                horizontal, expected,
+                "{kind} の子が {align:?} の列の揃えになること"
+            );
+            assert_eq!(
+                vertical,
+                VerticalAlignment::Center,
+                "{kind} の子が行の中央にあること"
+            );
+            assert_eq!(
+                placed_column, column as i32,
+                "{kind} の子が {column} 列目にあること"
+            );
+        }
+    }
+    // セルの中で大きさを指定し直しても、列の揃えは残る。
+    let resized = &cells[1][0];
+    resized.set_sizing(Sizing::new());
+    assert_eq!(
+        placement_of(resized).0,
+        HorizontalAlignment::Right,
+        "セルの中の set_sizing のあとも End の列の揃えが残ること"
+    );
+    assert_eq!(
+        placement_of(resized).1,
+        VerticalAlignment::Center,
+        "セルの中の set_sizing のあとも行の中央にあること"
+    );
+
+    // 行を差し替えると、前の行の子はセルから出る。
+    table.set_row_builder(cells.len(), |index| {
+        Ok(TableCells::new().text(format!("行 {index}")))
+    });
+    for (row, (kind, sizing)) in cells.iter().zip(kinds) {
+        for (label, align) in row.iter().zip(aligns) {
+            let fresh = cell_label(ui, "新しい子", sizing)?;
+            assert_placed_like_new(ui, label, &fresh, &format!("{kind} の子 ({align:?} の列)"))?;
+        }
+    }
+
+    // ほかの Stack にいる子は行に入れられない。その行は組み立てに失敗するか、
+    // そのセルを空にする。どちらでも、先に置いた子は元へ戻り、断られた子には
+    // 何も書かれない。
+    let holder = ui.stack(Orientation::Vertical)?;
+    holder.set_align(Align::End);
+    let outsider = ui.label("外")?;
+    holder.append(&outsider);
+    let before = placement_of(&outsider);
+    let placed_first = ui.label("先に置く")?;
+    table.set_columns(&[
+        naui_core::TableColumn::new("先").align(Align::End),
+        naui_core::TableColumn::new("外").align(Align::Start),
+    ]);
+    {
+        let placed_first = placed_first.clone();
+        let outsider = outsider.clone();
+        table.set_row_builder(1, move |_| {
+            Ok(TableCells::new().cell(&placed_first).cell(&outsider))
+        });
+    }
+    assert_eq!(
+        placement_of(&outsider),
+        before,
+        "行に入れられなかった子の配置が変わらないこと"
+    );
+    table.set_row_builder(1, |_| Ok(TableCells::new().text("空")));
+    let fresh = ui.label("新しい子")?;
+    assert_placed_like_new(ui, &placed_first, &fresh, "失敗した行に先に置いた子")?;
+    assert_eq!(
+        placement_of(&outsider),
+        before,
+        "行に入れられなかった子の配置が、行を差し替えたあとも変わらないこと"
+    );
+    assert_eq!(holder.len(), 1, "行に入れられなかった子が Stack に残ること");
+    Ok(())
+}
+
+/// [`table_cell_child_carries_nothing_over`] for widgets whose row is scrolled out of
+/// the rows the table builds, while other rows stay built.
+fn table_cell_child_scrolled_out_carries_nothing_over(ui: &Ui) -> Result<()> {
+    use naui_windows::TableCells;
+    use std::collections::hash_map::Entry;
+    use std::collections::HashMap;
+
+    const ROWS: usize = 1_000;
+    let window = ui.window("画面外へ出たセル", 240.0, 160.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[
+        naui_core::TableColumn::new("名前").align(Align::End),
+        naui_core::TableColumn::new("値").align(Align::Start),
+    ]);
+    let labels: Rc<RefCell<HashMap<usize, [naui_windows::Label; 2]>>> = Rc::default();
+    {
+        let ui = ui.clone();
+        let labels = labels.clone();
+        table.set_row_builder(ROWS, move |index| {
+            let mut labels = labels.borrow_mut();
+            let [name, value] = match labels.entry(index) {
+                Entry::Occupied(built) => built.into_mut(),
+                Entry::Vacant(slot) => slot.insert([
+                    ui.label(&format!("{index}"))?,
+                    cell_label(&ui, "値", Some(Sizing::fill_width()))?,
+                ]),
+            };
+            Ok(TableCells::new().cell(name).cell(value))
+        });
+    }
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+        window.show();
+        let scroll = table_scroller(&table);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && table.row_height() > 0.0
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return Ok(());
+        }
+        pump_until(Duration::from_millis(500), || false);
+        assert!(
+            built_list_row(&table, 0).is_some(),
+            "先頭の行が組み立ててあること"
+        );
+        let built_end = table
+            .native_list_view()
+            .Items()
+            .expect("行")
+            .Size()
+            .expect("行の数") as usize;
+
+        // 窓に残る行があるところまで動かし、先頭の行だけを窓の外へ出す。
+        table.scroll_to_row(built_end + 1);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            built_list_row(&table, 0).is_none()
+        });
+        assert!(
+            built_list_row(&table, 0).is_none(),
+            "先頭の行が窓の外へ出ること"
+        );
+        let [name, value] = labels.borrow()[&0].clone();
+        let fresh_name = ui.label("新しい子")?;
+        assert_placed_like_new(ui, &name, &fresh_name, "End の列から出た子")?;
+        let fresh_value = cell_label(ui, "新しい子", Some(Sizing::fill_width()))?;
+        assert_placed_like_new(ui, &value, &fresh_value, "Start の列から出た幅 Fill の子")?;
+        Ok(())
+    }));
+    window.close();
+    match outcome {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
 }
 
 /// A failed build leaves the rows in the `ListView` looked after: their selection still
