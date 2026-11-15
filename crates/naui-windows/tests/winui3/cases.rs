@@ -929,24 +929,32 @@ pub(crate) fn run() {
         std::process::exit(1);
     });
 
+    let shard = Shard::from_env();
     let failed = Arc::new(AtomicUsize::new(0));
     let counter = failed.clone();
     let outcome = run_for_test(move |ui| {
-        for (name, case) in CASES {
+        let mut ran = 0;
+        for (index, (name, case)) in CASES.iter().enumerate() {
             if let Ok(only) = std::env::var("NAUI_ONLY") {
                 if !name.contains(only.as_str()) {
                     continue;
                 }
             }
+            if !shard.takes(index) {
+                continue;
+            }
+            ran += 1;
             report(name, catch_unwind(AssertUnwindSafe(|| case(ui))), &counter);
         }
 
-        // 2 段構えのケースは、まず仕込みだけ済ませる。
+        // 2 段構えのケースは、まず仕込みだけ済ませる。どれも 1 秒かからないので、
+        // 分けずに最初のシャードがまとめて受け持つ。
         let mut deferred = Vec::new();
         for (name, setup) in ASYNC_CASES {
-            if std::env::var("NAUI_ONLY").is_ok() {
+            if std::env::var("NAUI_ONLY").is_ok() || !shard.is_first() {
                 continue;
             }
+            ran += 1;
             match catch_unwind(AssertUnwindSafe(|| setup(ui))) {
                 Ok(Ok(check)) => deferred.push((*name, check)),
                 other => report(name, other.map(|result| result.map(|_| ())), &counter),
@@ -967,10 +975,10 @@ pub(crate) fn run() {
             }
             // 結果はここで出し切る。この先はアプリの後片づけなので、そこで
             // 転んでも何が通って何が落ちたかは読める。
-            let total = CASES.len() + ASYNC_CASES.len();
             println!(
-                "\n{total} 件中 {} 件成功",
-                total - later.load(Ordering::Relaxed)
+                "\n{ran} 件中 {} 件成功{}",
+                ran - later.load(Ordering::Relaxed),
+                shard.describe(CASES.len() + ASYNC_CASES.len()),
             );
         });
         checks.send(())?;
@@ -983,6 +991,63 @@ pub(crate) fn run() {
     }
     if failed.load(Ordering::Relaxed) > 0 {
         std::process::exit(1);
+    }
+}
+
+/// Which part of [`CASES`] this process runs, from `NAUI_SHARD=k/n` (`k` counts from 1).
+///
+/// The cases cannot run in parallel in one process (the app is started only once) nor in
+/// one session (real input fights over the pointer and the foreground window), so CI
+/// splits them across runners instead. Cases are dealt out by index modulo `n` rather
+/// than cut into ranges: the slow ones that send real input to `List` and `Table` sit
+/// next to each other, and a range would put them all in one shard. The order inside a
+/// shard stays the order of [`CASES`].
+///
+/// Without the variable, every case runs.
+#[derive(Clone, Copy)]
+struct Shard {
+    /// Counts from 0.
+    index: usize,
+    count: usize,
+}
+
+impl Shard {
+    fn from_env() -> Self {
+        let Ok(value) = std::env::var("NAUI_SHARD") else {
+            return Self { index: 0, count: 1 };
+        };
+        let parsed = value.split_once('/').and_then(|(k, n)| {
+            let (k, n) = (
+                k.trim().parse::<usize>().ok()?,
+                n.trim().parse::<usize>().ok()?,
+            );
+            (1..=n).contains(&k).then_some(Self {
+                index: k - 1,
+                count: n,
+            })
+        });
+        parsed.unwrap_or_else(|| panic!("NAUI_SHARD は k/n (1 <= k <= n) で指定する: {value:?}"))
+    }
+
+    fn takes(self, index: usize) -> bool {
+        index % self.count == self.index
+    }
+
+    fn is_first(self) -> bool {
+        self.index == 0
+    }
+
+    /// A note for the summary line, saying which shard ran out of how many cases in all.
+    fn describe(self, total: usize) -> String {
+        if self.count == 1 {
+            String::new()
+        } else {
+            format!(
+                " (シャード {}/{}、全 {total} 件のうち)",
+                self.index + 1,
+                self.count
+            )
+        }
     }
 }
 
