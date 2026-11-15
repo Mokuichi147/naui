@@ -542,6 +542,7 @@ fn append_widget_cell(
     grid.Children()
         .and_then(|children| children.Append(&element))
         .map_err(|e| to_error("add the cell", e))?;
+    crate::layout::note_place(&element, crate::layout::Place::panel(grid));
     // 外すときに戻せるよう、列の揃えはレイアウトの記録を通して書く。
     crate::layout::set_table_cell_parent(&element, align);
     XamlGrid::SetColumn(&framework, index as i32)
@@ -574,11 +575,28 @@ fn release_row_content(native: &ListViewItem) {
 }
 
 /// Places a row's cells in its `Grid`, in the order of the columns.
-fn fill_row(grid: &XamlGrid, cells: &TableCells, columns: &[TableColumn]) -> Result<()> {
+///
+/// A widget still in another container is not taken: its cell stays empty, and
+/// nothing is written to it. `owner` is the table, recorded as the last to take the
+/// widgets it places (see [`crate::layout::last_row_owner`]).
+fn fill_row(
+    grid: &XamlGrid,
+    cells: &TableCells,
+    columns: &[TableColumn],
+    owner: usize,
+) -> Result<()> {
     apply_columns(grid, columns)?;
     for (index, column) in columns.iter().enumerate() {
         match cells.content(index) {
             Some(CellContent::Widget(widget)) => {
+                let element = widget.native_element();
+                // 組み立て直す行の前のセルは先に空けてあるので、ここで親があるのは
+                // ほかのコンテナ (ほかの行を含む) にいる子。
+                if crate::layout::has_parent(&element) {
+                    append_cell(grid, index, "", column.align, false)?;
+                    continue;
+                }
+                crate::layout::set_last_row_owner(&element, owner);
                 append_widget_cell(grid, index, &**widget, column.align)?;
             }
             Some(CellContent::Text(text)) => {
@@ -1584,7 +1602,8 @@ impl Table {
         let _ = content.PointerPressed(&pressed);
         // 途中で失敗しても、載せ終わったウィジェットには親を残さない。残すと、次の
         // 組み立てで同じウィジェットを載せられなくなる。
-        let filled = fill_row(&content, cells, columns).and_then(|()| {
+        let owner = Rc::as_ptr(&self.0) as usize;
+        let filled = fill_row(&content, cells, columns, owner).and_then(|()| {
             item.SetContent(&content)
                 .map_err(|e| to_error("set the row content", e))
         });

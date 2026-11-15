@@ -413,6 +413,10 @@ struct TabsInner {
     content: XamlGrid,
     /// Holds the children's handles and shows the selected content.
     children: RefCell<Vec<Box<dyn Widget>>>,
+    /// One `Grid` per tab that its child stays in, also while the tab is not
+    /// selected. Selecting a tab swaps these in `content`, so a child of a tab not
+    /// shown still has a parent, and another container refuses it.
+    hosts: RefCell<Vec<XamlGrid>>,
     buttons: RefCell<Vec<ToggleButton>>,
     handler: SelectHandler,
     selected: Cell<Option<usize>>,
@@ -487,6 +491,7 @@ impl Tabs {
             headers,
             content,
             children: RefCell::new(Vec::new()),
+            hosts: RefCell::new(Vec::new()),
             buttons: RefCell::new(Vec::new()),
             handler: SelectHandler::new(),
             selected: Cell::new(None),
@@ -494,14 +499,39 @@ impl Tabs {
     }
 
     /// Adds one tab. `child` becomes that tab's content.
+    ///
+    /// A child still in another container (another tab included) is refused, and no
+    /// tab is added.
     pub fn add_tab(&self, label: &str, child: &dyn Widget) {
+        let element = child.native_element();
+        if crate::layout::has_parent(&element) {
+            return;
+        }
+        // 選ばれていないタブの子も、ここで受け皿に入れて親を持たせる。
+        let Ok(host) = XamlGrid::new() else {
+            return;
+        };
+        if host
+            .Children()
+            .and_then(|children| children.Append(&element))
+            .is_err()
+        {
+            return;
+        }
+        crate::layout::note_place(&element, crate::layout::Place::panel(&host));
+        let release = || {
+            let _ = host.Children().and_then(|children| children.Clear());
+        };
         let Ok(button) = ToggleButton::new() else {
+            release();
             return;
         };
         let Ok(header) = text_block(label) else {
+            release();
             return;
         };
         if button.SetContent(&header).is_err() {
+            release();
             return;
         }
         let _ = button.SetIsChecked(bool_ref(false).ok().as_ref());
@@ -537,18 +567,23 @@ impl Tabs {
             Ok(())
         });
         if button.Click(&handler).is_err() {
+            release();
             return;
         }
 
-        let Ok(element) = button.cast::<UIElement>() else {
+        let Ok(header) = button.cast::<UIElement>() else {
+            release();
             return;
         };
-        if append(&self.0.headers, &element).is_ok() {
+        if append(&self.0.headers, &header).is_ok() {
             self.0.buttons.borrow_mut().push(button);
             self.0.children.borrow_mut().push(child.boxed_clone());
+            self.0.hosts.borrow_mut().push(host);
             if self.0.selected.get().is_none() {
                 self.mark_selected(Some(0));
             }
+        } else {
+            release();
         }
     }
 
@@ -572,6 +607,10 @@ impl Tabs {
         }
         self.0.buttons.borrow_mut().remove(index);
         self.0.children.borrow_mut().remove(index);
+        let host = self.0.hosts.borrow_mut().remove(index);
+        // 外したタブの子は、ほかのコンテナへ入れられるよう受け皿から出す。
+        // 選ばれていたなら、受け皿は下の `mark_selected` が中身の場所から外す。
+        let _ = host.Children().and_then(|children| children.Clear());
 
         let left = self.len();
         let selected = match self.0.selected.get() {
@@ -590,6 +629,9 @@ impl Tabs {
         }
         self.0.buttons.borrow_mut().clear();
         self.0.children.borrow_mut().clear();
+        for host in self.0.hosts.borrow_mut().drain(..) {
+            let _ = host.Children().and_then(|children| children.Clear());
+        }
         self.mark_selected(None);
     }
 
@@ -636,14 +678,10 @@ impl Tabs {
 
         if let Ok(children) = self.0.content.Children() {
             let _ = children.Clear();
+            // 子そのものではなく受け皿を出し入れするので、子には何も書かない。
             if let Some(selected) = index {
-                if let Some(child) = self.0.children.borrow().get(selected) {
-                    let element = child.native_element();
-                    if let Ok(framework) = element.cast::<FrameworkElement>() {
-                        let _ = XamlGrid::SetRow(&framework, 0);
-                        let _ = XamlGrid::SetColumn(&framework, 0);
-                    }
-                    let _ = children.Append(&element);
+                if let Some(host) = self.0.hosts.borrow().get(selected) {
+                    let _ = children.Append(host);
                 }
             }
         }
