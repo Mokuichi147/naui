@@ -120,14 +120,16 @@ jobs:
   # (`Application::Start` は 1 度きり)、1 つのセッションでも並べられない (ポインター
   # と前面のウィンドウを取り合う) ので、ランナーを分けて並べる。
   #
-  # ランタイムの入れ方 2 通り × シャード 3 つ。統合テストのケースは添字を 3 で割った
-  # 余りで配られる (`NAUI_SHARD`)。単体テストとドキュメンテーションテストは
-  # 1 つ目のシャードだけが走らせる。各ランタイムで、3 つのシャードの `ok   ...` を
-  # 足すと統合テストの全件になる。
+  # ランタイムの入れ方 2 通り × シャード 3 つ。統合テストのケースは、並びを件数で
+  # 3 等分した連続した範囲ずつ配られる (`NAUI_SHARD`)。ケースは 1 つのプロセスを
+  # 共有していて、前のケースの残した状態に左右されるものがあるので、並びは崩さない。
+  # 重いケース (List と Table の実入力) は前の 2 つに寄っていて、3 つ目は 30 秒ほど
+  # で終わるので、単体テストとドキュメンテーションテストは 3 つ目が受け持つ。
+  # 各ランタイムで、3 つのシャードの `ok   ...` を足すと統合テストの全件になる。
   windows-test:
     name: Windows (WinUI 3) テスト (${{ matrix.label }} ${{ matrix.shard }}/3)
     runs-on: windows-latest
-    # 統合テストのシャード 1 つで 3 分ほど、準備とコンパイルを足して 6 分ほど。
+    # 統合テストのシャード 1 つで長くて 3.5 分ほど、準備とコンパイルを足して 6 分ほど。
     timeout-minutes: 20
     strategy:
       # どのシャードが落ちたかを全部見たいので、1 つ落ちても残りを止めない。
@@ -162,11 +164,12 @@ jobs:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       # テストのビルドはランタイムの入れ方でフィーチャーが違う。同じキャッシュを
-      # 取り合わないよう分け、同じ入れ方のシャード同士では共有する。
+      # 取り合わないよう分け、同じ入れ方のシャード同士では共有する。保存するのは
+      # 全部のパッケージをビルドする 3 つ目だけ。
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: windows-test-${{ matrix.runtime }}
-          save-if: ${{ matrix.shard == 1 }}
+          save-if: ${{ matrix.shard == 3 }}
       # WinUI 3 のコントロールは Windows SDK ではなく Windows App SDK に
       # 入っていて、ランナーの標準イメージには無い。`crates/naui-windows/
       # tests/winui3.rs` が実コントロールを作るので、ここで取り付ける。
@@ -191,11 +194,11 @@ jobs:
       # テストが走る。こちらはランタイムを取り付け、`Application::Start` に
       # 入って本物のコントロールを作り、UI オートメーション経由で操作する。
       - name: テスト
-        if: ${{ matrix.shard == 1 }}
+        if: ${{ matrix.shard == 3 }}
         timeout-minutes: 10
         run: cargo test ${{ matrix.packages }} ${{ matrix.features }}
       - name: テスト (統合テストだけ)
-        if: ${{ matrix.shard != 1 }}
+        if: ${{ matrix.shard != 3 }}
         timeout-minutes: 10
         run: cargo test -p naui-windows --test winui3 ${{ matrix.features }}
 

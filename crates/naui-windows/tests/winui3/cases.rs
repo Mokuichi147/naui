@@ -940,7 +940,7 @@ pub(crate) fn run() {
                     continue;
                 }
             }
-            if !shard.takes(index) {
+            if !shard.takes(index, CASES.len()) {
                 continue;
             }
             ran += 1;
@@ -948,10 +948,10 @@ pub(crate) fn run() {
         }
 
         // 2 段構えのケースは、まず仕込みだけ済ませる。どれも 1 秒かからないので、
-        // 分けずに最初のシャードがまとめて受け持つ。
+        // 分けずに、ふだんと同じくほかのケースの後に走るよう、最後のシャードがまとめて受け持つ。
         let mut deferred = Vec::new();
         for (name, setup) in ASYNC_CASES {
-            if std::env::var("NAUI_ONLY").is_ok() || !shard.is_first() {
+            if std::env::var("NAUI_ONLY").is_ok() || !shard.is_last() {
                 continue;
             }
             ran += 1;
@@ -998,10 +998,12 @@ pub(crate) fn run() {
 ///
 /// The cases cannot run in parallel in one process (the app is started only once) nor in
 /// one session (real input fights over the pointer and the foreground window), so CI
-/// splits them across runners instead. Cases are dealt out by index modulo `n` rather
-/// than cut into ranges: the slow ones that send real input to `List` and `Table` sit
-/// next to each other, and a range would put them all in one shard. The order inside a
-/// shard stays the order of [`CASES`].
+/// splits them across runners instead. Each shard takes a run of [`CASES`] in a row, cut
+/// into `n` equal counts, rather than every `n`-th case: the cases share one process,
+/// and some of them leave state behind that the next case trips over (a case scrolling
+/// a list right after the real-input key cases on another list sees its rows not move).
+/// Cutting into runs keeps every case after the same case as in a full run, except the
+/// first case of each shard.
 ///
 /// Without the variable, every case runs.
 #[derive(Clone, Copy)]
@@ -1029,12 +1031,13 @@ impl Shard {
         parsed.unwrap_or_else(|| panic!("NAUI_SHARD は k/n (1 <= k <= n) で指定する: {value:?}"))
     }
 
-    fn takes(self, index: usize) -> bool {
-        index % self.count == self.index
+    /// Whether case `index` of `total` falls into this shard.
+    fn takes(self, index: usize, total: usize) -> bool {
+        (total * self.index / self.count..total * (self.index + 1) / self.count).contains(&index)
     }
 
-    fn is_first(self) -> bool {
-        self.index == 0
+    fn is_last(self) -> bool {
+        self.index + 1 == self.count
     }
 
     /// A note for the summary line, saying which shard ran out of how many cases in all.
