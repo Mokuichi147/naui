@@ -203,6 +203,14 @@ const CASES: &[Case] = &[
         table_cell_child_carries_nothing_over,
     ),
     (
+        "表のセルの中で set_sizing しても列の揃えが残り、出たあとは新しい Sizing の形になる",
+        table_cell_keeps_its_alignment_through_set_sizing,
+    ),
+    (
+        "入れられない子のある表の行は、先に置いた子を戻し、断った子に何も書かない",
+        table_row_refusing_a_widget_leaves_both_as_they_were,
+    ),
+    (
         "画面外へスクロールして表のセルから出た子も、新しく作った子と同じ配置になる",
         table_cell_child_scrolled_out_carries_nothing_over,
     ),
@@ -10817,6 +10825,30 @@ fn cell_label(ui: &Ui, text: &str, sizing: Option<Sizing>) -> Result<naui_window
     Ok(label)
 }
 
+/// A table whose columns have the alignments of [`CELL_ALIGNS`].
+fn table_with_aligned_columns(ui: &Ui) -> Result<naui_windows::Table> {
+    let table = ui.table()?;
+    table.set_columns(
+        &CELL_ALIGNS
+            .iter()
+            .map(|&align| naui_core::TableColumn::new(format!("{align:?}")).align(align))
+            .collect::<Vec<_>>(),
+    );
+    Ok(table)
+}
+
+const CELL_ALIGNS: [Align; 4] = [Align::End, Align::Start, Align::Fill, Align::Center];
+
+/// What a table cell writes across for a column with `align`.
+fn cell_horizontal(align: Align) -> HorizontalAlignment {
+    match align {
+        Align::Start => HorizontalAlignment::Left,
+        Align::Center => HorizontalAlignment::Center,
+        Align::End => HorizontalAlignment::Right,
+        Align::Fill => HorizontalAlignment::Stretch,
+    }
+}
+
 /// A widget taken out of a table cell when its row is replaced carries nothing of the
 /// cell over: not the column's alignment, not the centering in the row, not the
 /// column number (`guide.md`, "Changing and moving widgets after adding").
@@ -10824,30 +10856,21 @@ fn cell_label(ui: &Ui, text: &str, sizing: Option<Sizing>) -> Result<naui_window
 /// The cell writes these on the widget itself, and a `Grid` cell does not write the
 /// horizontal alignment again, so the widget of an `End` column used to sit at the
 /// right of its next `Grid` cell, and a `Fill` width child of a `Start` column did not
-/// stretch. Also checked: a `set_sizing` inside the cell keeps the column's alignment,
-/// a row that fails to build gives back the widgets it already placed, and a widget the
-/// row could not take (still in a `Stack`) is left as the `Stack` placed it.
+/// stretch.
 fn table_cell_child_carries_nothing_over(ui: &Ui) -> Result<()> {
     use naui_windows::TableCells;
 
-    let aligns = [Align::End, Align::Start, Align::Fill, Align::Center];
     let kinds = [
         ("set_sizing なし", None),
         ("Auto", Some(Sizing::new())),
         ("幅 Fill", Some(Sizing::fill_width())),
     ];
-    let table = ui.table()?;
-    table.set_columns(
-        &aligns
-            .iter()
-            .map(|&align| naui_core::TableColumn::new(format!("{align:?}")).align(align))
-            .collect::<Vec<_>>(),
-    );
+    let table = table_with_aligned_columns(ui)?;
     // 行ごとに 1 種類の子を、どの列にも置く。
     let mut cells = Vec::new();
     for (kind, sizing) in kinds {
         let mut row = Vec::new();
-        for align in aligns {
+        for align in CELL_ALIGNS {
             row.push(cell_label(ui, &format!("{kind} {align:?}"), sizing)?);
         }
         cells.push(row);
@@ -10862,16 +10885,11 @@ fn table_cell_child_carries_nothing_over(ui: &Ui) -> Result<()> {
     }
     // 行の少ない表は、画面に出さなくても全部の行を組み立てる。
     for (row, (kind, _)) in cells.iter().zip(kinds) {
-        for (column, (label, align)) in row.iter().zip(aligns).enumerate() {
+        for (column, (label, align)) in row.iter().zip(CELL_ALIGNS).enumerate() {
             let (horizontal, vertical, [placed_column, ..]) = placement_of(label);
-            let expected = match align {
-                Align::Start => HorizontalAlignment::Left,
-                Align::Center => HorizontalAlignment::Center,
-                Align::End => HorizontalAlignment::Right,
-                Align::Fill => HorizontalAlignment::Stretch,
-            };
             assert_eq!(
-                horizontal, expected,
+                horizontal,
+                cell_horizontal(align),
                 "{kind} の子が {align:?} の列の揃えになること"
             );
             assert_eq!(
@@ -10885,40 +10903,83 @@ fn table_cell_child_carries_nothing_over(ui: &Ui) -> Result<()> {
             );
         }
     }
-    // セルの中で大きさを指定し直しても、列の揃えは残る。
-    let resized = &cells[1][0];
-    resized.set_sizing(Sizing::new());
-    assert_eq!(
-        placement_of(resized).0,
-        HorizontalAlignment::Right,
-        "セルの中の set_sizing のあとも End の列の揃えが残ること"
-    );
-    assert_eq!(
-        placement_of(resized).1,
-        VerticalAlignment::Center,
-        "セルの中の set_sizing のあとも行の中央にあること"
-    );
 
     // 行を差し替えると、前の行の子はセルから出る。
     table.set_row_builder(cells.len(), |index| {
         Ok(TableCells::new().text(format!("行 {index}")))
     });
     for (row, (kind, sizing)) in cells.iter().zip(kinds) {
-        for (label, align) in row.iter().zip(aligns) {
+        for (label, align) in row.iter().zip(CELL_ALIGNS) {
             let fresh = cell_label(ui, "新しい子", sizing)?;
             assert_placed_like_new(ui, label, &fresh, &format!("{kind} の子 ({align:?} の列)"))?;
         }
     }
+    Ok(())
+}
 
-    // ほかの Stack にいる子は行に入れられない。その行は組み立てに失敗するか、
-    // そのセルを空にする。どちらでも、先に置いた子は元へ戻り、断られた子には
-    // 何も書かれない。
+/// A `set_sizing` on a widget in a table cell keeps the column's alignment and the
+/// centering in the row. Once the widget leaves the cell, it is placed as a new widget
+/// given that `Sizing`.
+fn table_cell_keeps_its_alignment_through_set_sizing(ui: &Ui) -> Result<()> {
+    use naui_windows::TableCells;
+
+    let table = table_with_aligned_columns(ui)?;
+    let labels = CELL_ALIGNS
+        .iter()
+        .map(|align| ui.label(&format!("{align:?}")))
+        .collect::<Result<Vec<_>>>()?;
+    {
+        let labels = labels.clone();
+        table.set_row_builder(1, move |_| {
+            Ok(labels
+                .iter()
+                .fold(TableCells::new(), |row, label| row.cell(label)))
+        });
+    }
+    for (label, align) in labels.iter().zip(CELL_ALIGNS) {
+        for sizing in [Sizing::new(), Sizing::fill_width(), Sizing::fill()] {
+            label.set_sizing(sizing);
+            let (horizontal, vertical, _) = placement_of(label);
+            assert_eq!(
+                horizontal,
+                cell_horizontal(align),
+                "{sizing:?} のあとも {align:?} の列の揃えが残ること"
+            );
+            assert_eq!(
+                vertical,
+                VerticalAlignment::Center,
+                "{sizing:?} のあとも行の中央にあること ({align:?} の列)"
+            );
+        }
+    }
+    table.set_row_builder(1, |_| Ok(TableCells::new().text("空")));
+    for (label, align) in labels.iter().zip(CELL_ALIGNS) {
+        let fresh = cell_label(ui, "新しい子", Some(Sizing::fill()))?;
+        assert_placed_like_new(
+            ui,
+            label,
+            &fresh,
+            &format!("セルの中で set_sizing した子 ({align:?} の列)"),
+        )?;
+    }
+    Ok(())
+}
+
+/// A row that cannot take one of its widgets (it is still in a `Stack`) gives back the
+/// widgets it already placed, and writes nothing on the one it could not take.
+///
+/// The row either fails to build or leaves that cell empty; either way, the widgets
+/// end up as checked here once the row is replaced.
+fn table_row_refusing_a_widget_leaves_both_as_they_were(ui: &Ui) -> Result<()> {
+    use naui_windows::TableCells;
+
     let holder = ui.stack(Orientation::Vertical)?;
     holder.set_align(Align::End);
     let outsider = ui.label("外")?;
     holder.append(&outsider);
     let before = placement_of(&outsider);
     let placed_first = ui.label("先に置く")?;
+    let table = ui.table()?;
     table.set_columns(&[
         naui_core::TableColumn::new("先").align(Align::End),
         naui_core::TableColumn::new("外").align(Align::Start),
@@ -10937,7 +10998,12 @@ fn table_cell_child_carries_nothing_over(ui: &Ui) -> Result<()> {
     );
     table.set_row_builder(1, |_| Ok(TableCells::new().text("空")));
     let fresh = ui.label("新しい子")?;
-    assert_placed_like_new(ui, &placed_first, &fresh, "失敗した行に先に置いた子")?;
+    assert_placed_like_new(
+        ui,
+        &placed_first,
+        &fresh,
+        "入れられない子のある行に先に置いた子",
+    )?;
     assert_eq!(
         placement_of(&outsider),
         before,
