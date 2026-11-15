@@ -234,8 +234,9 @@ v0.17.0.
 - [x] **Images on the clipboard** (`Clipboard::set_image` and `read_image`, with
       `Image::set_bitmap` to show what was read). The image is a `Bitmap`, from the
       same file bytes and pixels as `Image::set_bytes` and `set_pixels`. PNG and
-      TIFF on `NSPasteboard`, a `GdkTexture` on GTK, PNG through
-      `DataPackage.SetBitmap` on WinUI (reading BMP from older apps through WIC),
+      TIFF on `NSPasteboard`, a `GdkTexture` on GTK, PNG in the "PNG" format and
+      through `DataPackage.SetBitmap` on WinUI (reading BMP from older apps
+      through WIC),
       and `image/png` in a `ClipboardItem` on the Web, where the browser turns
       JPEG and GIF into PNG.
 - [ ] **Publish the testing facilities across platforms.** Gather the existing

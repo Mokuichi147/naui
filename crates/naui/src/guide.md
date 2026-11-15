@@ -3186,8 +3186,8 @@ only when you need the bytes themselves.
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
 | Clipboard | `Windows.ApplicationModel.DataTransfer.Clipboard` | `NSPasteboard` | `GdkClipboard` | `navigator.clipboard` |
-| Images written as | PNG through `DataPackage.SetBitmap` | PNG and TIFF | A `GdkTexture` (GDK offers PNG and other types) | `image/png` in a `ClipboardItem` |
-| Images read from | `GetBitmapAsync`, decoded by WIC when not PNG | PNG, or anything `NSImage` reads (TIFF, PDF and so on) turned into PNG | `read_texture_async`, turned into PNG | `image/png` from `clipboard.read()` |
+| Images written as | PNG in the "PNG" format, and through `DataPackage.SetBitmap` (as `CF_DIB` and so on, without transparency) | PNG and TIFF | A `GdkTexture` (GDK offers PNG and other types) | `image/png` in a `ClipboardItem` |
+| Images read from | The "PNG" format, or else `GetBitmapAsync`, decoded by WIC when not PNG | PNG, or anything `NSImage` reads (TIFF, PDF and so on) turned into PNG | `read_texture_async`, turned into PNG | `image/png` from `clipboard.read()` |
 | `open_url` | `ShellExecuteW` | `NSWorkspace` | `GtkUriLauncher` | `window.open` (new tab) |
 
 The Web's Clipboard API is available only over https (or localhost), and reading

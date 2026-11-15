@@ -8,13 +8,14 @@
 
 use naui_core::{Bitmap, BitmapData, Result, Tasks};
 use windows::ApplicationModel::DataTransfer::{
-    Clipboard as WinClipboard, DataPackage, StandardDataFormats,
+    Clipboard as WinClipboard, DataPackage, DataPackageView, StandardDataFormats,
 };
 use windows::Storage::Streams::{
-    DataReader, DataWriter, InMemoryRandomAccessStream, RandomAccessStreamReference,
+    DataReader, DataWriter, IRandomAccessStream, InMemoryRandomAccessStream,
+    RandomAccessStreamReference,
 };
 use windows::Win32::Graphics::Imaging::GUID_WICPixelFormat32bppRGBA;
-use windows_core::HSTRING;
+use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::to_error;
 
@@ -50,9 +51,10 @@ impl Clipboard {
     /// Writes an image, replacing the previous contents. Whether it was written is
     /// passed to `f`.
     ///
-    /// It is handed to `DataPackage.SetBitmap` as PNG (JPEG and GIF files are
-    /// turned into PNG first), and `Flush`ed like text so that it remains after the
-    /// app closes.
+    /// It is written as PNG (JPEG and GIF files are turned into PNG first) in the
+    /// "PNG" format, which keeps transparency, and through `DataPackage.SetBitmap`
+    /// for apps that read only bitmaps. It is `Flush`ed like text so that it
+    /// remains after the app closes.
     pub fn set_image(&self, image: &Bitmap, f: impl FnOnce(Result<()>) + 'static) {
         let png = png_of(image);
         self.tasks.spawn(async move {
@@ -66,8 +68,9 @@ impl Clipboard {
 
     /// Reads an image. Passes `None` if the clipboard holds no image.
     ///
-    /// A PNG is read as it is; anything else WIC can decode (the BMP of images
-    /// copied by older apps, for example) arrives as RGBA pixels.
+    /// The "PNG" format is read first, as it is. Without one, the bitmap is read: a
+    /// PNG as it is, and anything else WIC can decode (the BMP of images copied by
+    /// older apps, for example) as RGBA pixels.
     pub fn read_image(&self, f: impl FnOnce(Option<Bitmap>) + 'static) {
         self.tasks.spawn(async move {
             f(read_image().await);
@@ -112,39 +115,88 @@ fn png_of(image: &Bitmap) -> Result<Vec<u8>> {
     }
 }
 
+/// The name of the clipboard format that holds the contents of a PNG file. It is
+/// not a standard format, but browsers, Office, Paint and most image editors
+/// write and read it, and it is the only one that keeps transparency.
+const PNG_FORMAT: &str = "PNG";
+
+/// A stream holding `bytes`, at its start.
+async fn stream_of(bytes: &[u8]) -> windows_core::Result<InMemoryRandomAccessStream> {
+    let stream = InMemoryRandomAccessStream::new()?;
+    let writer = DataWriter::CreateDataWriter(&stream)?;
+    writer.WriteBytes(bytes)?;
+    writer.StoreAsync()?.await?;
+    // 書き手を捨てるとストリームも閉じられるので、切り離してから先頭へ戻す。
+    writer.DetachStream()?;
+    stream.Seek(0)?;
+    Ok(stream)
+}
+
+/// Writes the PNG twice: as it is in the "PNG" format, and through `SetBitmap`,
+/// which Windows turns into `CF_DIB` / `CF_DIBV5` / `CF_BITMAP` for apps that
+/// read only those.
+///
+/// `SetBitmap` alone is not enough: the `CF_DIBV5` Windows makes from it has no
+/// alpha mask (so the transparency is lost), and puts the colour masks after the
+/// header as well, which Paint reads as the first three pixels.
 async fn write_image(png: &[u8]) -> Result<()> {
     let failed = |e| to_error("write to the clipboard", e);
-    let stream = InMemoryRandomAccessStream::new().map_err(failed)?;
-    let writer = DataWriter::CreateDataWriter(&stream).map_err(failed)?;
-    writer.WriteBytes(png).map_err(failed)?;
-    writer.StoreAsync().map_err(failed)?.await.map_err(failed)?;
-    // 書き手を捨てるとストリームも閉じられるので、切り離してから先頭へ戻す。
-    writer.DetachStream().map_err(failed)?;
-    stream.Seek(0).map_err(failed)?;
+    let bitmap = stream_of(png).await.map_err(failed)?;
+    let file = stream_of(png).await.map_err(failed)?;
 
     let package = DataPackage::new().map_err(|e| to_error("create the clipboard contents", e))?;
+    let set = |e| to_error("set the clipboard contents", e);
     package
-        .SetBitmap(&RandomAccessStreamReference::CreateFromStream(&stream).map_err(failed)?)
-        .map_err(|e| to_error("set the clipboard contents", e))?;
+        .SetData(
+            &HSTRING::from(PNG_FORMAT),
+            &file.cast::<IInspectable>().map_err(set)?,
+        )
+        .map_err(set)?;
+    package
+        .SetBitmap(&RandomAccessStreamReference::CreateFromStream(&bitmap).map_err(failed)?)
+        .map_err(set)?;
     WinClipboard::SetContent(&package).map_err(failed)?;
     let _ = WinClipboard::Flush();
     Ok(())
 }
 
+/// Reads the "PNG" format when there is one, and the bitmap Windows offers
+/// otherwise.
 async fn read_image() -> Option<Bitmap> {
     let content = WinClipboard::GetContent().ok()?;
+    if let Some(image) = read_png(&content).await {
+        return Some(image);
+    }
     let format = StandardDataFormats::Bitmap().ok()?;
     if !content.Contains(&format).unwrap_or(false) {
         return None;
     }
     let reference = content.GetBitmapAsync().ok()?.await.ok()?;
     let stream = reference.OpenReadAsync().ok()?.await.ok()?;
+    image_of(&bytes_of(&stream.cast().ok()?).await?)
+}
+
+async fn read_png(content: &DataPackageView) -> Option<Bitmap> {
+    let format = HSTRING::from(PNG_FORMAT);
+    if !content.Contains(&format).unwrap_or(false) {
+        return None;
+    }
+    let data = content.GetDataAsync(&format).ok()?.await.ok()?;
+    let bytes = bytes_of(&data.cast().ok()?).await?;
+    let image = image_of(&bytes);
+    if image.is_none() {
+        eprintln!("naui-windows: the PNG on the clipboard could not be read; reading the bitmap");
+    }
+    image
+}
+
+async fn bytes_of(stream: &IRandomAccessStream) -> Option<Vec<u8>> {
     let size = u32::try_from(stream.Size().ok()?).ok()?;
-    let reader = DataReader::CreateDataReader(&stream).ok()?;
+    let reader = DataReader::CreateDataReader(stream).ok()?;
     let loaded = reader.LoadAsync(size).ok()?.await.ok()?;
     let mut bytes = vec![0; loaded as usize];
     reader.ReadBytes(&mut bytes).ok()?;
-    image_of(&bytes)
+    Some(bytes)
 }
 
 /// The image in the bytes the clipboard gave. PNG is kept as a file; the rest is
