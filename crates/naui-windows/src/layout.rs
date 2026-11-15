@@ -18,9 +18,9 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
 };
 use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
 use naui_winui3::Microsoft::UI::Xaml::{
-    DependencyObject, FrameworkElement, GridLength, GridUnitType, HorizontalAlignment,
-    SizeChangedEventHandler, Thickness, UIElement, VerticalAlignment, Visibility,
-    Window as XamlWindow,
+    DependencyObject, DependencyProperty, FrameworkElement, GridLength, GridUnitType,
+    HorizontalAlignment, SizeChangedEventHandler, Thickness, UIElement, VerticalAlignment,
+    Visibility, Window as XamlWindow,
 };
 use windows::Foundation::{EventHandler, IReference, PropertyValue};
 use windows_core::Interface;
@@ -89,13 +89,26 @@ impl ParentLayout {
     }
 }
 
+/// What to put back on one alignment axis when the parent stops owning it.
+///
+/// A control's default often comes from its style (a `Button` is `Left` /
+/// `Center`), and a style only applies once the element is in the live tree. Writing
+/// back the value read before that would leave the property's own default
+/// (`Stretch`) as a local value, and a local value beats the style. So when the app
+/// had not set the property, the local value is cleared instead.
+#[derive(Clone, Copy)]
+enum Restore<T> {
+    Value(T),
+    Clear,
+}
+
 #[derive(Clone, Copy, Default)]
 struct LayoutState {
     fill_width: bool,
     fill_height: bool,
     parent: Option<ParentLayout>,
-    restore_horizontal: Option<HorizontalAlignment>,
-    restore_vertical: Option<VerticalAlignment>,
+    restore_horizontal: Option<Restore<HorizontalAlignment>>,
+    restore_vertical: Option<Restore<VerticalAlignment>>,
 }
 
 pub(crate) fn element_key(element: &UIElement) -> usize {
@@ -145,10 +158,10 @@ fn set_sizing_state(element: &UIElement, sizing: Sizing) {
         state.fill_height = sizing.height.is_fill();
         if let Some(parent) = state.parent {
             if parent.owns_horizontal() {
-                state.restore_horizontal = Some(horizontal_alignment);
+                state.restore_horizontal = Some(Restore::Value(horizontal_alignment));
             }
             if parent.owns_vertical() {
-                state.restore_vertical = Some(vertical_alignment);
+                state.restore_vertical = Some(Restore::Value(vertical_alignment));
             }
         }
     });
@@ -220,8 +233,8 @@ fn set_parent_state(element: &UIElement, framework: &FrameworkElement, parent: P
     let previous = parent_state(framework);
     let owns_horizontal = parent.owns_horizontal();
     let owns_vertical = parent.owns_vertical();
-    let captured_horizontal = owns_horizontal.then(|| framework.HorizontalAlignment().ok());
-    let captured_vertical = owns_vertical.then(|| framework.VerticalAlignment().ok());
+    let captured_horizontal = owns_horizontal.then(|| capture_horizontal(framework));
+    let captured_vertical = owns_vertical.then(|| capture_vertical(framework));
     let mut restore_horizontal = None;
     let mut restore_vertical = None;
 
@@ -250,11 +263,11 @@ fn set_parent_state(element: &UIElement, framework: &FrameworkElement, parent: P
         state.parent = Some(parent);
     });
 
-    if let Some(value) = restore_horizontal {
-        let _ = framework.SetHorizontalAlignment(value);
+    if let Some(restore) = restore_horizontal {
+        restore_horizontal_alignment(framework, restore);
     }
-    if let Some(value) = restore_vertical {
-        let _ = framework.SetVerticalAlignment(value);
+    if let Some(restore) = restore_vertical {
+        restore_vertical_alignment(framework, restore);
     }
     notify_parent_layout_change(element);
 }
@@ -262,6 +275,51 @@ fn set_parent_state(element: &UIElement, framework: &FrameworkElement, parent: P
 fn parent_state(element: &FrameworkElement) -> Option<ParentLayout> {
     let key = state_key(element)?;
     LAYOUT_STATES.with(|states| states.borrow().get(&key).and_then(|state| state.parent))
+}
+
+/// Whether `property` has a local value on the element, or `None` if that cannot be
+/// read.
+fn has_local_value(
+    element: &FrameworkElement,
+    property: windows_core::Result<DependencyProperty>,
+) -> Option<bool> {
+    let property = property.ok()?;
+    let local = element.ReadLocalValue(&property).ok()?;
+    let unset = DependencyProperty::UnsetValue().ok()?;
+    // COM の同一性は IUnknown のポインターで比べる。
+    let local = local.cast::<windows_core::IUnknown>().ok()?;
+    let unset = unset.cast::<windows_core::IUnknown>().ok()?;
+    Some(Interface::as_raw(&local) != Interface::as_raw(&unset))
+}
+
+fn capture_horizontal(element: &FrameworkElement) -> Option<Restore<HorizontalAlignment>> {
+    if !has_local_value(element, FrameworkElement::HorizontalAlignmentProperty())? {
+        return Some(Restore::Clear);
+    }
+    element.HorizontalAlignment().ok().map(Restore::Value)
+}
+
+fn capture_vertical(element: &FrameworkElement) -> Option<Restore<VerticalAlignment>> {
+    if !has_local_value(element, FrameworkElement::VerticalAlignmentProperty())? {
+        return Some(Restore::Clear);
+    }
+    element.VerticalAlignment().ok().map(Restore::Value)
+}
+
+fn restore_horizontal_alignment(element: &FrameworkElement, restore: Restore<HorizontalAlignment>) {
+    let _ = match restore {
+        Restore::Value(value) => element.SetHorizontalAlignment(value),
+        Restore::Clear => FrameworkElement::HorizontalAlignmentProperty()
+            .and_then(|property| element.ClearValue(&property)),
+    };
+}
+
+fn restore_vertical_alignment(element: &FrameworkElement, restore: Restore<VerticalAlignment>) {
+    let _ = match restore {
+        Restore::Value(value) => element.SetVerticalAlignment(value),
+        Restore::Clear => FrameworkElement::VerticalAlignmentProperty()
+            .and_then(|property| element.ClearValue(&property)),
+    };
 }
 
 /// Records the Stack parent's information on the child and applies the current
@@ -580,11 +638,11 @@ pub(crate) fn clear_parent_layout(element: &UIElement) {
 
     if state.parent.is_some() {
         if let Ok(framework) = element.cast::<FrameworkElement>() {
-            if let Some(value) = state.restore_horizontal {
-                let _ = framework.SetHorizontalAlignment(value);
+            if let Some(restore) = state.restore_horizontal {
+                restore_horizontal_alignment(&framework, restore);
             }
-            if let Some(value) = state.restore_vertical {
-                let _ = framework.SetVerticalAlignment(value);
+            if let Some(restore) = state.restore_vertical {
+                restore_vertical_alignment(&framework, restore);
             }
         }
     }

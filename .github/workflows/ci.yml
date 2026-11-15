@@ -85,15 +85,9 @@ jobs:
   windows:
     name: Windows (WinUI 3)
     runs-on: windows-latest
-    # 最長 10 分。
-    timeout-minutes: 30
-    env:
-      # 統合テストで取り付ける Windows App SDK ランタイムの版。
-      #
-      # `latest` にすると将来べつのパッチ版へ動いて、同じコミットでも
-      # 違うランタイムで走ってしまう。完全な版で固定する。一覧は
-      # https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads
-      WINDOWS_APP_SDK: "2.3.1"
+    # テストは windows-test へ分けた。こちらはビルド・lint・ドキュメントだけで、
+    # 分ける前の内訳では 4.5 分ほど。
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
@@ -119,9 +113,67 @@ jobs:
         run: cargo doc --no-deps -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app
         env:
           RUSTDOCFLAGS: -D warnings
+
+  # Windows のテスト。`crates/naui-windows/tests/winui3.rs` の統合テストは
+  # 本物のコントロールを作り、実際のマウスとキーの入力まで送るので、1 回で 7 分ほど
+  # かかる (List と Table の実入力のケースが大半)。1 つのプロセスの中では並べられず
+  # (`Application::Start` は 1 度きり)、1 つのセッションでも並べられない (ポインター
+  # と前面のウィンドウを取り合う) ので、ランナーを分けて並べる。
+  #
+  # ランタイムの入れ方 2 通り × シャード 3 つ。統合テストのケースは、並びを件数で
+  # 3 等分した連続した範囲ずつ配られる (`NAUI_SHARD`)。ケースは 1 つのプロセスを
+  # 共有していて、前のケースの残した状態に左右されるものがあるので、並びは崩さない。
+  # 重いケース (List と Table の実入力) は前の 2 つに寄っていて、3 つ目は 30 秒ほど
+  # で終わるので、単体テストとドキュメンテーションテストは 3 つ目が受け持つ。
+  # 各ランタイムで、3 つのシャードの `ok   ...` を足すと統合テストの全件になる。
+  windows-test:
+    name: Windows (WinUI 3) テスト (${{ matrix.label }} ${{ matrix.shard }}/3)
+    runs-on: windows-latest
+    # 統合テストのシャード 1 つで長くて 3.5 分ほど、準備とコンパイルを足して 6 分ほど。
+    timeout-minutes: 20
+    strategy:
+      # どのシャードが落ちたかを全部見たいので、1 つ落ちても残りを止めない。
+      fail-fast: false
+      matrix:
+        runtime: [framework, self-contained]
+        shard: [1, 2, 3]
+        include:
+          - runtime: framework
+            label: フレームワーク依存
+            packages: -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app
+            features: ""
+          # 同じテストを、exe の隣へ同梱したランタイムで走らせる。build.rs が
+          # nuget.org から部品を取ってきて `target/debug/naui-winappsdk/` へまとめ、
+          # テストが自分の exe の隣へ写す (Cargo 1.99 までは build.rs が
+          # `target/debug/deps/` へ直に並べていた)。naui はフレームワークパッケージ
+          # ではなくそちらを使う。同梱する版 (crates/naui-winui3/build/packages.rs)
+          # は下で導入する版と違うので、統合テストを全件走らせる意味がある。
+          - runtime: self-contained
+            label: ランタイム同梱
+            packages: -p naui-winui3 -p naui-windows
+            features: --features naui-windows/self-contained
+    env:
+      # 統合テストで取り付ける Windows App SDK ランタイムの版。
+      #
+      # `latest` にすると将来べつのパッチ版へ動いて、同じコミットでも
+      # 違うランタイムで走ってしまう。完全な版で固定する。一覧は
+      # https://learn.microsoft.com/windows/apps/windows-app-sdk/downloads
+      WINDOWS_APP_SDK: "2.3.1"
+      NAUI_SHARD: ${{ matrix.shard }}/3
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+      # テストのビルドはランタイムの入れ方でフィーチャーが違う。同じキャッシュを
+      # 取り合わないよう分け、同じ入れ方のシャード同士では共有する。保存するのは
+      # 全部のパッケージをビルドする 3 つ目だけ。
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: windows-test-${{ matrix.runtime }}
+          save-if: ${{ matrix.shard == 3 }}
       # WinUI 3 のコントロールは Windows SDK ではなく Windows App SDK に
       # 入っていて、ランナーの標準イメージには無い。`crates/naui-windows/
       # tests/winui3.rs` が実コントロールを作るので、ここで取り付ける。
+      # 同梱のほうも、naui-winui3 の単体テストが取り付けたパッケージを見るので入れる。
       #
       # 版は投影を作った 2.3 系にそろえる。naui が対応する下限は 1.3 だが
       # (`crates/naui-windows/src/sdk.rs`)、そちらは実機での確認に任せる。
@@ -142,16 +194,13 @@ jobs:
       # テストが走る。こちらはランタイムを取り付け、`Application::Start` に
       # 入って本物のコントロールを作り、UI オートメーション経由で操作する。
       - name: テスト
+        if: ${{ matrix.shard == 3 }}
         timeout-minutes: 10
-        run: cargo test -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app
-      # 同じテストを、exe の隣へ同梱したランタイムで走らせる。build.rs が
-      # nuget.org から部品を取ってきて `target/debug/naui-winappsdk/` へまとめ、
-      # テストが自分の exe の隣へ写す (Cargo 1.99 までは build.rs が
-      # `target/debug/deps/` へ直に並べていた)。naui はフレームワークパッケージ
-      # ではなくそちらを使う。
-      - name: テスト (ランタイム同梱)
+        run: cargo test ${{ matrix.packages }} ${{ matrix.features }}
+      - name: テスト (統合テストだけ)
+        if: ${{ matrix.shard != 3 }}
         timeout-minutes: 10
-        run: cargo test -p naui-winui3 -p naui-windows --features naui-windows/self-contained
+        run: cargo test -p naui-windows --test winui3 ${{ matrix.features }}
 
   # Cargo.toml の rust-version (最低対応 Rust) で、ロックファイルのままビルド
   # できるかを見る。依存の版が上がって最低対応版で読めなくなっても、stable で
@@ -351,7 +400,7 @@ jobs:
   ci-ok:
     name: CI 完了
     if: always()
-    needs: [fmt, macos, windows, windows-msrv, windows-legacy, linux, web]
+    needs: [fmt, macos, windows, windows-test, windows-msrv, windows-legacy, linux, web]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
