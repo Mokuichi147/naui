@@ -42,6 +42,7 @@ mod color_picker;
 mod combo_box;
 mod date_picker;
 mod dialog;
+mod direction;
 mod editable_combo_box;
 mod expander;
 mod file_drop;
@@ -80,7 +81,9 @@ mod window;
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Tasks, Theme};
+use naui_core::{
+    DatePickerMode, Error, LayoutDirection, Orientation, Result, Settings, Tasks, Theme,
+};
 
 pub use adaptive_panes::AdaptivePanes;
 pub use canvas::Canvas;
@@ -536,6 +539,12 @@ impl Ui {
         self.0.theme.get()
     }
 
+    /// Which way the app's layout runs: the `FlowDirection` naui gave each window's
+    /// content, or left to right (WinUI's default) when the app named none.
+    pub fn layout_direction(&self) -> LayoutDirection {
+        direction::layout_direction()
+    }
+
     /// The user's preferred languages as BCP 47 tags, most preferred first (`"ja"`,
     /// `"en-US"` and so on), in the order of the list in Settings. The basis for
     /// choosing which translation to show.
@@ -649,6 +658,7 @@ where
 
     enable_per_monitor_dpi_awareness();
     naui_core::set_app_language(settings.language.as_deref());
+    naui_core::set_app_layout_direction(settings.resolved_layout_direction());
     let _runtime = sdk::initialize()?;
     init_apartment(ApartmentType::SingleThreaded)
         .map_err(|e| to_error("initialize the COM apartment", e))?;

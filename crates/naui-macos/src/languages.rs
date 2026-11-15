@@ -16,7 +16,7 @@ use objc2::runtime::{NSObject, NSObjectProtocol};
 use objc2::{define_class, msg_send, sel, AnyThread};
 use objc2_foundation::{
     NSArgumentDomain, NSArray, NSCurrentLocaleDidChangeNotification, NSLocale, NSMutableDictionary,
-    NSNotification, NSNotificationCenter, NSString, NSUserDefaults,
+    NSNotification, NSNotificationCenter, NSNumber, NSString, NSUserDefaults,
 };
 
 use crate::UiInner;
@@ -171,6 +171,44 @@ pub fn apply_app_language(tag: Option<&str>) {
         },
     }
     // 同じ名前の揮発ドメインがあると差し替えられないので、一度外してから置く。
+    defaults.removeVolatileDomainForName(domain_name);
+    unsafe { defaults.setVolatileDomain_forName(&domain, domain_name) };
+}
+
+/// The defaults keys that decide `NSApp.userInterfaceLayoutDirection`.
+///
+/// `AppleTextDirection` lets the direction follow the app's localization, and
+/// `NSForceRightToLeftWritingDirection` makes it right to left whatever the
+/// localization (Xcode's "Right-to-Left Pseudolanguage" passes both). Both `NO`
+/// keep it left to right. Without them, an app is mirrored only when it is
+/// localized into a right-to-left language and the system asks for it: an
+/// unbundled binary stayed left to right with `AppleLanguages` set to `ar`.
+const TEXT_DIRECTION: &str = "AppleTextDirection";
+const FORCE_RIGHT_TO_LEFT: &str = "NSForceRightToLeftWritingDirection";
+
+/// Fixes the app's layout direction, the way launching it with
+/// `-AppleTextDirection YES -NSForceRightToLeftWritingDirection YES` would.
+/// `None` leaves AppKit's own choice.
+///
+/// AppKit reads these once, when `NSApplication` is created, and Auto Layout's
+/// leading and trailing then follow the app's direction, not a single view's. So
+/// this has to run before `NSApplication::sharedApplication`, and cannot be undone
+/// in a running app. Public for tests.
+#[doc(hidden)]
+pub fn apply_layout_direction(direction: Option<naui_core::LayoutDirection>) {
+    let Some(direction) = direction else {
+        return;
+    };
+    let rtl = direction.is_rtl();
+    let defaults = NSUserDefaults::standardUserDefaults();
+    let domain_name = unsafe { NSArgumentDomain };
+    let current = defaults.volatileDomainForName(domain_name);
+    let domain: Retained<NSMutableDictionary<NSString, AnyObject>> =
+        NSMutableDictionary::dictionaryWithDictionary(&current);
+    let value = NSNumber::new_bool(rtl);
+    let value: &AnyObject = value.as_ref();
+    domain.insert(&*NSString::from_str(TEXT_DIRECTION), value);
+    domain.insert(&*NSString::from_str(FORCE_RIGHT_TO_LEFT), value);
     defaults.removeVolatileDomainForName(domain_name);
     unsafe { defaults.setVolatileDomain_forName(&domain, domain_name) };
 }

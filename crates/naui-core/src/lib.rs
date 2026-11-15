@@ -23,6 +23,7 @@ mod channel;
 mod color;
 mod datetime;
 mod dialog;
+mod direction;
 mod file;
 mod focus;
 mod grid;
@@ -65,6 +66,7 @@ pub use datetime::{days_in_month, is_leap_year, DatePickerMode, DateTime, Time};
 pub use dialog::{
     default_response, DialogButtons, DialogResponse, EnabledButtons, SHEET_MIN_WIDTH,
 };
+pub use direction::{app_layout_direction, set_app_layout_direction, LayoutDirection};
 pub use file::{
     accept_attribute, default_extension, with_default_extension, FileEntry, FileFilter,
     FilePickerMode,
@@ -193,13 +195,26 @@ pub enum Align {
     Fill,
 }
 
-/// Padding on the top, bottom, left and right (logical pixels).
+/// Padding on the top and bottom, and on the start and end of rows (logical pixels).
+///
+/// `start` is the side where a row starts and `end` the side where it ends: the
+/// left and the right, swapped in a right-to-left layout ([`LayoutDirection::Rtl`])
+/// so that the padding is mirrored with the rest of the layout, as SwiftUI's
+/// leading and trailing and GTK's start and end margins are.
+///
+/// ```
+/// # use naui_core::Padding;
+/// let padding = Padding { start: 16.0, ..Padding::symmetric(8.0, 4.0) };
+/// assert_eq!((padding.top, padding.end), (8.0, 4.0));
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Padding {
     pub top: f64,
-    pub right: f64,
     pub bottom: f64,
-    pub left: f64,
+    /// The side where rows start: the left, or the right in a right-to-left layout.
+    pub start: f64,
+    /// The side where rows end: the right, or the left in a right-to-left layout.
+    pub end: f64,
 }
 
 impl Padding {
@@ -208,18 +223,19 @@ impl Padding {
     pub const fn all(v: f64) -> Self {
         Self {
             top: v,
-            right: v,
             bottom: v,
-            left: v,
+            start: v,
+            end: v,
         }
     }
 
+    /// `vertical` on the top and bottom, `horizontal` on the start and end.
     pub const fn symmetric(vertical: f64, horizontal: f64) -> Self {
         Self {
             top: vertical,
-            right: horizontal,
             bottom: vertical,
-            left: horizontal,
+            start: horizontal,
+            end: horizontal,
         }
     }
 }
@@ -297,6 +313,9 @@ pub struct Settings {
     /// The language the app shows its content in, as a BCP 47 tag (`"ja-JP"`).
     /// `None` (the default) follows the OS. See [`Settings::language`].
     pub language: Option<String>,
+    /// Which way the layout runs (default [`LayoutDirection::Auto`]). See
+    /// [`Settings::layout_direction`].
+    pub layout_direction: LayoutDirection,
 }
 
 impl Settings {
@@ -313,6 +332,7 @@ impl Settings {
             app_id,
             theme: Theme::System,
             language: None,
+            layout_direction: LayoutDirection::Auto,
         }
     }
 
@@ -354,6 +374,48 @@ impl Settings {
         self.language = (!tag.trim().is_empty()).then(|| tag.trim().to_owned());
         self
     }
+
+    /// Sets which way the layout runs: [`LayoutDirection::Rtl`] mirrors it for
+    /// right-to-left languages such as Arabic and Hebrew.
+    ///
+    /// The native toolkit mirrors its controls once it is told the direction:
+    /// children of a horizontal `Stack` start at the right, `Grid` columns are
+    /// numbered from the right, a `Sidebar` sits on the right, sliders and progress
+    /// bars fill from the right, and text starts at the right. [`Padding`]'s `start`
+    /// and `end` follow, so `start` is then on the right. Pictures and drawings are not mirrored, nor are `Canvas`, the
+    /// number in a `NumberInput` (which stays `-5`, not `5-`), the fields of
+    /// `DatePicker` and `TimePicker` on the Web, or the controls of `Video` and
+    /// `Audio`, which follow the direction of time on the tape.
+    ///
+    /// [`LayoutDirection::Auto`] (the default) takes the direction of
+    /// [`Settings::language`]. Without a language, each toolkit keeps its own
+    /// default: Linux follows the locale (GTK mirrors an untranslated app too when
+    /// `LANG` is Arabic), macOS stayed left to right in every case tried (an app
+    /// localized into Arabic and launched with Arabic as its language included),
+    /// and Windows and the Web stay left to right. An app that translates its strings should pass the
+    /// language it chose to [`Settings::language`], so that the layout follows it
+    /// on every platform.
+    ///
+    /// | Windows | macOS | Linux | Web |
+    /// | --- | --- | --- | --- |
+    /// | `FlowDirection` on each window's content | `AppleTextDirection` and `NSForceRightToLeftWritingDirection` in the arguments domain (`NSApp.userInterfaceLayoutDirection`) | `gtk_widget_set_default_direction` | `dir` on `<html>` |
+    ///
+    /// It applies to the whole app and is read once at startup: AppKit decides its
+    /// layout direction once for the app, so neither a single widget nor a running
+    /// app can be switched. [`Ui::layout_direction`] tells which way the layout
+    /// ended up running.
+    ///
+    /// [`Ui::layout_direction`]: https://docs.rs/naui/latest/naui/struct.Ui.html#method.layout_direction
+    pub fn layout_direction(mut self, direction: LayoutDirection) -> Self {
+        self.layout_direction = direction;
+        self
+    }
+
+    /// The direction the backends apply at startup: `Some(Ltr)` or `Some(Rtl)`, or
+    /// `None` to leave the native default alone. See [`LayoutDirection::resolve`].
+    pub fn resolved_layout_direction(&self) -> Option<LayoutDirection> {
+        self.layout_direction.resolve(self.language.as_deref())
+    }
 }
 
 #[cfg(test)]
@@ -367,6 +429,23 @@ mod tests {
         assert_eq!(
             Settings::new("x").app_id("com.example.x").app_id,
             "com.example.x"
+        );
+    }
+
+    #[test]
+    fn layout_direction_follows_the_language_by_default() {
+        let settings = Settings::new("app");
+        assert_eq!(settings.layout_direction, LayoutDirection::Auto);
+        assert_eq!(settings.resolved_layout_direction(), None);
+        let arabic = Settings::new("app").language("ar-EG");
+        assert_eq!(
+            arabic.resolved_layout_direction(),
+            Some(LayoutDirection::Rtl)
+        );
+        let forced = arabic.layout_direction(LayoutDirection::Ltr);
+        assert_eq!(
+            forced.resolved_layout_direction(),
+            Some(LayoutDirection::Ltr)
         );
     }
 

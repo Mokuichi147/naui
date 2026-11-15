@@ -89,6 +89,9 @@ impl_widget!(Canvas, canvas);
 impl Canvas {
     pub(crate) fn new(document: &Document) -> Result<Self> {
         let canvas: HtmlCanvasElement = create(document, "canvas")?.unchecked_into();
+        // 描画面は反転しない。文字の向きの既定 (2D 文脈の `direction` は要素から
+        // 継ぐ) も左から右に固定し、ほかの環境の描画面とそろえる。
+        let _ = canvas.set_attribute("dir", "ltr");
         // インライン要素の行送りのすき間を作らない。
         let style = canvas.style();
         let _ = style.set_property("display", "block");

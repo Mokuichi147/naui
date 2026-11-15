@@ -368,6 +368,12 @@ pass the saved tag to `Settings::language` when the app starts (it is read only
 then): `Settings::new("app").language(tag)`. naui's own strings then follow it;
 the native controls' strings do not, even on macOS.
 
+The language also decides the writing direction: with the default
+`LayoutDirection::Auto`, a right-to-left language such as Arabic or Hebrew
+mirrors the whole layout. Because the direction, too, is read only at startup, an
+app that lets the user switch between a left-to-right and a right-to-left language
+applies the switch on the next launch, as with the language itself.
+
 ## Trying other languages
 
 The OS language can be changed for a single run:

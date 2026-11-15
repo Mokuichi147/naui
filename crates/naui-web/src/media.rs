@@ -298,6 +298,8 @@ impl MediaInner {
         let element: HtmlMediaElement = create(doc, tag)?.unchecked_into();
         // ブラウザ標準の再生バーを出す。
         element.set_controls(true);
+        // 再生バーはテープの進む向きを表すので、右から左の配置でも反転させない。
+        let _ = element.set_attribute("dir", "ltr");
         let frame = if tag == "video" {
             frame(doc, &element)?
         } else {

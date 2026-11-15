@@ -45,6 +45,9 @@ impl DatePicker {
     pub(crate) fn new(document: &Document, mode: DatePickerMode) -> Result<Self> {
         let input: HtmlInputElement = create(document, "input")?.unchecked_into();
         input.set_type(input_type(mode));
+        // 右から左の配置では、WebKit が日付や時刻の欄の並びまで裏返す
+        // (07:30 が 30:07 と並ぶ)。数値入力と同じく、欄の中は左から右のままにする。
+        let _ = input.set_attribute("dir", "ltr");
 
         let this = Self(Rc::new(DatePickerInner {
             input,

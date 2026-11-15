@@ -370,6 +370,10 @@ pub(crate) struct PlaybackInner {
 impl PlaybackInner {
     fn new(picture: Option<gtk::Picture>) -> Rc<Self> {
         let controls = gtk::MediaControls::new(None::<&gtk::MediaStream>);
+        // 再生バーはテープの進む向きを表すので、右から左の配置でも反転させない
+        // (再生ボタンが左、位置のバーは左から右へ伸びる)。macOS の AVPlayerView も
+        // 右から左のアプリでそう描く。
+        crate::bin::pin_left_to_right(&controls);
         Rc::new(Self {
             stream: RefCell::new(None),
             controls,

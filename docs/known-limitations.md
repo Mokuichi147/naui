@@ -64,6 +64,39 @@ that shape are covered in
   thread reads it is undefined behavior. An app that starts threads (an async
   runtime, say) before `run` keeps the OS's glyph choice; naui's own strings still
   follow the language, and setting `PANGO_LANGUAGE` before launch works.
+- `Settings::layout_direction` is read once at startup and applies to the whole
+  app. AppKit decides the direction when `NSApplication` is created, and Auto
+  Layout's leading and trailing follow the app's direction, not a view's (a view
+  given `userInterfaceLayoutDirection` alone was not mirrored), so no platform
+  switches it per widget or while the app runs. Without `Settings::language`,
+  `LayoutDirection::Auto` leaves each toolkit's default, which differs: GTK follows
+  the locale (an untranslated app is mirrored when `LANG` is Arabic), while AppKit,
+  WinUI and the Web stayed left to right. On macOS no case was found where AppKit
+  mirrors an app by itself: an unbundled binary with `AppleLanguages` set to `ar`,
+  and an app bundle localized into Arabic launched with `-AppleLanguages (ar)`
+  (directly and through `open`), all stayed left to right, and only
+  `AppleTextDirection` turned the direction over. So `LayoutDirection::Ltr` has
+  not been tried against an app AppKit would mirror on its own; naui then writes
+  `AppleTextDirection` and `NSForceRightToLeftWritingDirection` as `NO`. On Windows naui sets
+  `FlowDirection` on each window's content and on `Dialog` and `Sheet`; a
+  `Popover` (a `Flyout`), the menu bar's menus and context menus take it from the
+  element they open at. `PopoverPosition::Left` and `Right` stay on the physical
+  sides on every platform: GTK's popover does not swap them, nor do AppKit and the
+  Web, while WinUI's `Flyout` would, so naui swaps them back on Windows. The
+  playback bar of `Video` is AVKit's on macOS, which keeps it left to right in a
+  right-to-left app by itself; naui pins it left to right on the other platforms.
+  On Windows the whole window's content is mirrored, naui's own title bar and menu
+  rows included, but the system keeps the minimize, maximize and close buttons at
+  the right end, so the title and toolbar sit just left of them (the title at the
+  right, the toolbar on its left) rather than moving to the left edge as in a
+  mirrored Win32 window. On Windows the text of a `TextInput` and `TextArea`
+  (typed Latin text and the placeholder) stays at the left in a right-to-left
+  layout, while `PasswordInput` and `SearchInput` put theirs at the right; text in
+  a right-to-left script has not been tried there.
+  Horizontal scroll positions in a right-to-left layout (`Scroll::scroll_to`'s
+  `x` and the metrics `Scroll` reports) are left to each toolkit and have not been
+  aligned: the Web's `scrollLeft` runs from 0 toward negative values there, while
+  AppKit's offsets stay physical.
 - `Ui::on_preferred_languages_change` is never called on Linux, which decides the
   languages from environment variables at startup. Elsewhere it is called only
   when the list itself changes: a change of region or format alone does not call

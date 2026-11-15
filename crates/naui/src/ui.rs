@@ -7,7 +7,7 @@ use crate::{
     Slider, Spacer, Spinner, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast,
     Toggle, Toolbar, Tree, Video, Window,
 };
-use naui_core::{DatePickerMode, Orientation, Result, Settings, Tasks, Theme};
+use naui_core::{DatePickerMode, LayoutDirection, Orientation, Result, Settings, Tasks, Theme};
 
 /// The entry point for creating widgets.
 ///
@@ -371,6 +371,21 @@ impl Ui {
     #[inline]
     pub fn theme(&self) -> Theme {
         self.0.theme()
+    }
+
+    /// Which way the app's layout runs: [`LayoutDirection::Ltr`] or
+    /// [`LayoutDirection::Rtl`], never `Auto`.
+    ///
+    /// It is what the native toolkit ended up with after
+    /// [`Settings::layout_direction`](crate::Settings::layout_direction):
+    /// `NSApp.userInterfaceLayoutDirection` on macOS, the default direction of GTK
+    /// on Linux (which follows the locale when the app named no direction), the
+    /// direction naui gave each window's content on Windows, and the computed
+    /// `direction` of `<html>` on the Web. Drawing on a `Canvas`, which is never
+    /// mirrored, can use it to place things on the side where rows start.
+    #[inline]
+    pub fn layout_direction(&self) -> LayoutDirection {
+        self.0.layout_direction()
     }
 
     /// The OS's preferred languages as BCP 47 tags, most preferred first (`"ja-JP"`,

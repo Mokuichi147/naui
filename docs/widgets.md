@@ -454,8 +454,7 @@ collected in [Known limitations](known-limitations.md).
   cell (margins, `halign` / `valign`).
 - **`Group`**: A `GtkFrame`, whose child is an `AdwBin` holding the padding as its
   margins, so that moving the content elsewhere does not carry the padding with
-  it. The padding's `left` and `right` stay physical: in right-to-left text the
-  start and end margins are swapped.
+  it. The padding's `start` and `end` are the start and end margins.
 - **`SplitView`**: A `GtkPaned`. The panes' minimum sizes are held by a container
   wrapped around each pane, so they do not conflict with the `size_request` the app
   specifies with `Sizing`.

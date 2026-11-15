@@ -120,7 +120,8 @@ impl SplitView {
             style(&divider, "cursor", "row-resize");
         } else {
             style(&divider, "width", &format!("{DIVIDER_THICKNESS}px"));
-            style(&divider, "border-left", &line);
+            // 線は始まり側の区画との境目に引く。右から左の配置では右側になる。
+            style(&divider, "border-inline-start", &line);
             style(&divider, "cursor", "col-resize");
         }
         // ドラッグ中に中身の文字が選択されてしまわないようにする。
@@ -228,6 +229,9 @@ impl SplitView {
             };
             let (back, forward) = if inner.orientation.is_vertical() {
                 ("ArrowUp", "ArrowDown")
+            } else if crate::is_rtl() {
+                // 右から左では始まりの区画が右にあり、左へ動かすと広がる。
+                ("ArrowRight", "ArrowLeft")
             } else {
                 ("ArrowLeft", "ArrowRight")
             };
@@ -381,6 +385,9 @@ impl SplitViewInner {
         let rect = self.element.get_bounding_client_rect();
         if self.orientation.is_vertical() {
             f64::from(event.client_y()) - rect.top()
+        } else if crate::is_rtl() {
+            // 右から左では始まりの端は右。
+            rect.right() - f64::from(event.client_x())
         } else {
             f64::from(event.client_x()) - rect.left()
         }
