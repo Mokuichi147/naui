@@ -221,14 +221,65 @@ mod tests {
         }
     }
 
-    /// build.rs also places the bundle next to the test exe (`target/<profile>/deps/`),
-    /// so once activated, WinUI classes can be looked up. No framework package is
-    /// attached, so if they can be looked up they come from the bundle.
+    /// Places the bundle next to this test exe if it is not there yet.
+    ///
+    /// From Cargo 1.100 each test exe has its own directory
+    /// (`<profile>/build/<pkg>/<hash>/out/`), which build.rs cannot know, so the bundle
+    /// build.rs placed in `<profile>/naui-winappsdk/` is copied from there. Up to 1.99
+    /// build.rs places it in `<profile>/deps/` itself and this does nothing. The same
+    /// code is in naui-windows's `tests/winui3.rs`.
+    fn place_bundle_next_to_test_exe() {
+        use std::fs;
+
+        fn link_or_copy(source: &Path, target: &Path) {
+            if target.exists() {
+                fs::remove_file(target).expect("古い同梱物を消せない");
+            }
+            if fs::hard_link(source, target).is_err() {
+                fs::copy(source, target).expect("同梱物を写せない");
+            }
+        }
+
+        fn place(from: &Path, to: &Path, manifest: &str) {
+            for entry in fs::read_dir(from).expect("同梱物を読めない") {
+                let entry = entry.expect("同梱物を読めない");
+                let (source, target) = (entry.path(), to.join(entry.file_name()));
+                if source.is_dir() {
+                    fs::create_dir_all(&target).expect("同梱物の置き場を作れない");
+                    place(&source, &target, "");
+                } else if entry.file_name() != manifest {
+                    link_or_copy(&source, &target);
+                }
+            }
+        }
+
+        let manifest = packages::MANIFEST_FILE;
+        let exe = std::env::current_exe().expect("テストの exe の場所が分からない");
+        let directory = exe.parent().expect("テストの exe の親が無い");
+        let bundle = directory
+            .ancestors()
+            .skip(1)
+            .map(|ancestor| ancestor.join("naui-winappsdk"))
+            .find(|bundle| bundle.join(manifest).is_file())
+            .expect("build.rs が並べた naui-winappsdk/ が上の階層に無い");
+        let placed = fs::read(directory.join(manifest)).ok();
+        if placed.is_some() && placed == fs::read(bundle.join(manifest)).ok() {
+            return;
+        }
+        place(&bundle, directory, manifest);
+        // activate はマニフェストの有無で同梱物があるかを決めるので、最後に置く。
+        link_or_copy(&bundle.join(manifest), &directory.join(manifest));
+    }
+
+    /// The bundle is placed next to the test exe, so once activated, WinUI classes can
+    /// be looked up. No framework package is attached, so if they can be looked up
+    /// they come from the bundle.
     ///
     /// It also checks that threads created with `std::thread::spawn` inherit the
     /// creator's activation context. naui's other-thread API relies on this.
     #[test]
     fn bundled_classes_resolve_here_and_on_spawned_threads() {
+        place_bundle_next_to_test_exe();
         assert!(
             !factory_resolves(),
             "有効にする前から {CLASS} が引ける。同梱物を確かめたことにならない"

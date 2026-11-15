@@ -47,9 +47,8 @@ use naui_winui3::Microsoft::UI::Xaml::Input::{
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::ResourceDictionary;
 use naui_winui3::Microsoft::UI::Xaml::{
-    FocusState, FrameworkElement, GridLength, GridUnitType, HorizontalAlignment,
-    RoutedEventHandler, Style, TextAlignment, TextWrapping, Thickness, UIElement,
-    VerticalAlignment,
+    FocusState, FrameworkElement, GridLength, GridUnitType, RoutedEventHandler, Style,
+    TextAlignment, TextWrapping, Thickness, UIElement, VerticalAlignment,
 };
 use windows::Foundation::{Point as XamlPoint, PropertyValue};
 use windows::System::VirtualKey;
@@ -57,8 +56,8 @@ use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
 use crate::list::{
-    hold_unselectable_press, item_padding, new_row_item, release_row_content, report_row_position,
-    text_block, transparent_grid, ActivationHandler, RowMotion, SelectionHandler,
+    hold_unselectable_press, item_padding, new_row_item, report_row_position, text_block,
+    transparent_grid, ActivationHandler, RowMotion, SelectionHandler,
 };
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
@@ -538,28 +537,66 @@ fn append_widget_cell(
     let framework = element
         .cast::<FrameworkElement>()
         .map_err(|e| to_error("convert the cell to FrameworkElement", e))?;
-    // 列の中のどこへ置くかは列の指定に従う。`Fill` は列いっぱいに広げる。
-    let _ = framework.SetHorizontalAlignment(match align {
-        Align::Center => HorizontalAlignment::Center,
-        Align::End => HorizontalAlignment::Right,
-        Align::Fill => HorizontalAlignment::Stretch,
-        Align::Start => HorizontalAlignment::Left,
-    });
-    let _ = framework.SetVerticalAlignment(VerticalAlignment::Center);
-    XamlGrid::SetColumn(&framework, index as i32)
-        .map_err(|e| to_error("set the cell column", e))?;
+    // 置き場所はセルに載せてから書く。ほかの親に載っていて断られたウィジェットの
+    // 配置と、その親の記録には触れない (`Grid::attach` と同じ順)。
     grid.Children()
         .and_then(|children| children.Append(&element))
         .map_err(|e| to_error("add the cell", e))?;
+    crate::layout::note_place(&element, crate::layout::Place::panel(grid));
+    // 外すときに戻せるよう、列の揃えはレイアウトの記録を通して書く。
+    crate::layout::set_table_cell_parent(&element, align);
+    XamlGrid::SetColumn(&framework, index as i32)
+        .map_err(|e| to_error("set the cell column", e))?;
     Ok(())
 }
 
+/// Takes the cells out of a row's `Grid`, giving widget cells back the placement they
+/// had before the cell wrote its own (see [`crate::layout::release_table_cell`]).
+fn release_cells(grid: &XamlGrid) {
+    let Ok(children) = grid.Children() else {
+        return;
+    };
+    for index in 0..children.Size().unwrap_or(0) {
+        if let Ok(child) = children.GetAt(index) {
+            crate::layout::release_table_cell(&child);
+        }
+    }
+    let _ = children.Clear();
+}
+
+/// Takes the content out of a row about to be thrown away (see [`release_cells`]).
+fn release_row_content(native: &ListViewItem) {
+    if let Ok(grid) = native
+        .Content()
+        .and_then(|content| content.cast::<XamlGrid>())
+    {
+        release_cells(&grid);
+    }
+}
+
 /// Places a row's cells in its `Grid`, in the order of the columns.
-fn fill_row(grid: &XamlGrid, cells: &TableCells, columns: &[TableColumn]) -> Result<()> {
+///
+/// A widget still in another container is not taken: its cell stays empty, and
+/// nothing is written to it. `owner` is the table, recorded as the last to take the
+/// widgets it places (see [`crate::layout::last_row_owner`]).
+fn fill_row(
+    grid: &XamlGrid,
+    cells: &TableCells,
+    columns: &[TableColumn],
+    owner: usize,
+) -> Result<()> {
     apply_columns(grid, columns)?;
     for (index, column) in columns.iter().enumerate() {
         match cells.content(index) {
             Some(CellContent::Widget(widget)) => {
+                let element = widget.native_element();
+                // 組み立て直す行の前のセルは先に空けてあるので、ここで親があるのは
+                // ほかのコンテナ (ほかの行を含む) にいる子。
+                if crate::layout::has_parent(&element) {
+                    append_cell(grid, index, "", column.align, false)?;
+                    continue;
+                }
+                crate::layout::set_last_row_owner(&element, owner);
                 append_widget_cell(grid, index, &**widget, column.align)?;
             }
             Some(CellContent::Text(text)) => {
@@ -1565,14 +1602,13 @@ impl Table {
         let _ = content.PointerPressed(&pressed);
         // 途中で失敗しても、載せ終わったウィジェットには親を残さない。残すと、次の
         // 組み立てで同じウィジェットを載せられなくなる。
-        let filled = fill_row(&content, cells, columns).and_then(|()| {
+        let owner = Rc::as_ptr(&self.0) as usize;
+        let filled = fill_row(&content, cells, columns, owner).and_then(|()| {
             item.SetContent(&content)
                 .map_err(|e| to_error("set the row content", e))
         });
         if let Err(error) = filled {
-            if let Ok(children) = content.Children() {
-                let _ = children.Clear();
-            }
+            release_cells(&content);
             return Err(error);
         }
         // 文字だけの行で `enabled` が `false` のときは、行ごと操作できない。

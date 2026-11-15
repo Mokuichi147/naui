@@ -346,6 +346,8 @@ impl Image {
         let native = Grid::new().map_err(|e| to_error("create the Image host", e))?;
         let frame = Frame::new(&native)?;
         let image = XamlImage::new().map_err(|e| to_error("create the Image", e))?;
+        // XAML は右から左で Image も裏返して描くので、絵は反転させない。
+        crate::direction::pin_left_to_right(&native);
         image
             .SetStretch(stretch(Fit::default()))
             .map_err(|e| to_error("set the Image alignment", e))?;
@@ -890,6 +892,8 @@ impl MediaInner {
     fn new() -> Result<Rc<Self>> {
         let native =
             MediaPlayerElement::new().map_err(|e| to_error("create the MediaPlayerElement", e))?;
+        // 映像も再生バーも反転させない (再生バーはテープの進む向きを表す)。
+        crate::direction::pin_left_to_right(&native);
         let player = MediaPlayer::new().map_err(|e| to_error("create the MediaPlayer", e))?;
         // Windows App SDK 2.2.4 の標準 MediaTransportControls は、
         // MediaPlayerElement を visual tree へ追加したときに XAML 内部
@@ -1350,6 +1354,7 @@ impl Video {
     pub(crate) fn new(source: &str) -> Result<Self> {
         let media = MediaInner::new()?;
         let host = Grid::new().map_err(|e| to_error("create the Video host", e))?;
+        crate::direction::pin_left_to_right(&host);
         let frame = Frame::new(&host)?;
         frame
             .stage

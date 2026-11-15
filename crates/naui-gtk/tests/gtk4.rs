@@ -24,12 +24,12 @@ use gtk::glib;
 use gtk::pango;
 use naui_core::{
     Align, Bitmap, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
-    EventResponse, FileFilter, FilePickerMode, Fit, Gradient, GridCell, Length, ListItem, MenuItem,
-    MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
-    PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode, SidebarItem,
-    SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle, Theme, Time,
-    ToolbarIcon, ToolbarItem, Track, TreeItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
-    ROW_WINDOW_OVERSCAN,
+    EventResponse, FileFilter, FilePickerMode, Fit, Gradient, GridCell, LayoutDirection, Length,
+    ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState,
+    Point, PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode,
+    SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle,
+    Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem, WindowPlacement, WindowState,
+    DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_OVERSCAN,
 };
 use naui_gtk::{run_for_test, ListRow, TableCells, Ui, Widget};
 
@@ -262,8 +262,8 @@ fn main() {
             group_padding_spaces_the_child,
         ),
         (
-            "右から左の文字でも、グループの余白の左右は物理的な左右のまま",
-            group_padding_stays_physical_right_to_left,
+            "右から左の配置は行・列・余白を反転し、数値入力と再生バーは反転しない",
+            right_to_left_layout_is_mirrored,
         ),
         (
             "スタックの余白が中身を狭める",
@@ -1013,6 +1013,18 @@ fn main() {
             "新しいトーストが前のものを黙って置き換える",
             toast_replaces_the_previous_one,
         ),
+        (
+            "外さずに別の親へ入れた子は断られ、どちらのコンテナの操作でも動かない",
+            moved_child_is_refused_and_left_alone,
+        ),
+        (
+            "外さずに別の親へ入れた子を、List の行・Table のセル・Dialog・Sheet は取り返さない",
+            later_placers_leave_a_moved_child_alone,
+        ),
+        (
+            "List の行・Table のセルから出た子は、移った先で新しく作った子と同じになる",
+            child_out_of_a_row_keeps_nothing_from_it,
+        ),
         ("テーマを実行中に切り替えられる", theme_switch),
         (
             "優先言語は gettext と同じ環境変数から BCP 47 で読める",
@@ -1092,6 +1104,57 @@ fn recorder<T: Clone + 'static>() -> (Rc<RefCell<Vec<T>>>, impl FnMut(T) + 'stat
     let log = Rc::new(RefCell::new(Vec::new()));
     let sink = log.clone();
     (log, move |value| sink.borrow_mut().push(value))
+}
+
+/// One message GLib logged.
+#[derive(Debug, Clone)]
+struct LogEntry {
+    level: glib::LogLevel,
+    domain: String,
+    message: String,
+}
+
+/// Runs `f`, collecting what GLib logs meanwhile. The messages still go out as usual.
+///
+/// Warnings and critical messages come through structured logging. Its writer can be
+/// set only once per process, so one writer is installed the first time and collects
+/// only while `f` runs. Calls can be nested: the outer one sees what the inner one saw.
+fn watch_log<R>(f: impl FnOnce() -> R) -> (R, Vec<LogEntry>) {
+    use std::sync::{Mutex, Once};
+    static INSTALL: Once = Once::new();
+    static WATCHED: Mutex<Option<Vec<LogEntry>>> = Mutex::new(None);
+    INSTALL.call_once(|| {
+        glib::log_set_writer_func(|level, fields| {
+            if let Some(log) = WATCHED.lock().unwrap().as_mut() {
+                let field = |key: &str| {
+                    fields
+                        .iter()
+                        .find(|field| field.key() == key)
+                        .and_then(|field| field.value_str())
+                        .unwrap_or_default()
+                        .to_string()
+                };
+                log.push(LogEntry {
+                    level,
+                    domain: field("GLIB_DOMAIN"),
+                    message: field("MESSAGE"),
+                });
+            }
+            glib::log_writer_default(level, fields)
+        });
+    });
+    let outer = WATCHED.lock().unwrap().replace(Vec::new());
+    let result = f();
+    let log = {
+        let mut watched = WATCHED.lock().unwrap();
+        let log = watched.take().unwrap_or_default();
+        *watched = outer.map(|mut outer| {
+            outer.extend(log.iter().cloned());
+            outer
+        });
+        log
+    };
+    (result, log)
 }
 
 /// The (minimum, natural) width.
@@ -2978,7 +3041,7 @@ fn group_padding_spaces_the_child(ui: &Ui) -> Result<()> {
     group.set_padding(Padding::ZERO);
     let (_, bare) = measure_width(&bin);
     let expected =
-        (naui_core::DEFAULT_GROUP_PADDING.left + naui_core::DEFAULT_GROUP_PADDING.right) as i32;
+        (naui_core::DEFAULT_GROUP_PADDING.start + naui_core::DEFAULT_GROUP_PADDING.end) as i32;
     assert_eq!(padded - bare, expected, "既定の左右の余白ぶんだけ広いこと");
 
     group.set_padding(Padding::symmetric(4.0, 20.0));
@@ -2987,36 +3050,116 @@ fn group_padding_spaces_the_child(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// The padding's `left` and `right` are the physical sides, also in right-to-left
-/// text, where GTK puts the start margin on the right.
-fn group_padding_stays_physical_right_to_left(ui: &Ui) -> Result<()> {
+/// Puts GTK's default direction back when dropped, so that a failed check does not
+/// leave the tests after it mirrored.
+struct DefaultDirection(gtk::TextDirection);
+
+impl Drop for DefaultDirection {
+    fn drop(&mut self) {
+        gtk::Widget::set_default_direction(self.0);
+    }
+}
+
+/// Where `widget` sits inside `ancestor`, along x.
+fn x_in(widget: &impl IsA<gtk::Widget>, ancestor: &impl IsA<gtk::Widget>) -> f32 {
+    widget.compute_bounds(ancestor).expect("祖先の中の位置").x()
+}
+
+/// Whether `widget` and everything inside it run left to right.
+fn all_left_to_right(widget: &gtk::Widget) -> bool {
+    widget.direction() == gtk::TextDirection::Ltr && children(widget).iter().all(all_left_to_right)
+}
+
+/// A right-to-left layout mirrors rows, columns and padding, and keeps the number
+/// in a `NumberInput` and the playback bar of `Video` and `Audio` left to right.
+fn right_to_left_layout_is_mirrored(ui: &Ui) -> Result<()> {
+    let _restore = DefaultDirection(gtk::Widget::default_direction());
+    naui_gtk::apply_layout_direction(Some(LayoutDirection::Rtl));
+    assert_eq!(ui.layout_direction(), LayoutDirection::Rtl);
+
+    // 横の Stack は最初の子を右に置く。
+    let stack = ui.stack(Orientation::Horizontal)?;
+    let first = ui.button("一")?;
+    let second = ui.button("二")?;
+    stack.append(&first);
+    stack.append(&second);
+    let native = stack.native_widget();
+    native.measure(gtk::Orientation::Horizontal, -1);
+    native.measure(gtk::Orientation::Vertical, 300);
+    native.size_allocate(&gtk::Allocation::new(0, 0, 300, 40), -1);
+    let (first_x, second_x) = (
+        x_in(&bin_of(&first), &native),
+        x_in(&bin_of(&second), &native),
+    );
+    assert!(first_x > second_x, "最初の子が右: {first_x} / {second_x}");
+
+    // Grid の 0 列目は右端。
+    let grid = ui.grid()?;
+    let a = ui.label("一")?;
+    let b = ui.label("二")?;
+    grid.attach(&a, GridCell::new(0, 0));
+    grid.attach(&b, GridCell::new(1, 0));
+    let placed = lay_out_grid(&grid, 300, 40, &[&a, &b]);
+    assert!(placed[0].0 > placed[1].0, "0 列目が右: {placed:?}");
+
+    // Group の余白の start は先頭側 (右) に付く。
     let group = ui.group("")?;
     let label = ui.label("あ")?;
     group.set_child(&label);
     group.set_padding(Padding {
         top: 2.0,
-        right: 20.0,
         bottom: 2.0,
-        left: 4.0,
+        start: 4.0,
+        end: 20.0,
     });
     let frame = bin_of(&group)
         .first_child()
         .and_downcast::<gtk::Frame>()
         .expect("GtkFrame");
-    let holder = frame.child().expect("余白を持つ AdwBin");
-    assert_eq!((holder.margin_start(), holder.margin_end()), (4, 20));
+    frame.measure(gtk::Orientation::Horizontal, -1);
+    frame.measure(gtk::Orientation::Vertical, 300);
+    frame.size_allocate(&gtk::Allocation::new(0, 0, 300, 60), -1);
+    let bounds = bin_of(&label).compute_bounds(&frame).expect("中身の位置");
+    let left_gap = bounds.x();
+    let right_gap = frame.width() as f32 - bounds.x() - bounds.width();
+    assert!(
+        left_gap - right_gap > 10.0,
+        "end の 20 が左、start の 4 が右: 左 {left_gap} / 右 {right_gap}"
+    );
 
-    // 向きが変わったら start と end を入れ替える。GTK4 の向きは親から継がれず、
-    // 余白は AdwBin 自身の向きで start と end が決まるので、AdwBin の向きを変える。
-    holder.set_direction(gtk::TextDirection::Rtl);
-    assert_eq!((holder.margin_start(), holder.margin_end()), (20, 4));
-    group.set_padding(Padding {
-        left: 1.0,
-        ..Padding::symmetric(0.0, 8.0)
-    });
-    assert_eq!((holder.margin_start(), holder.margin_end()), (8, 1));
-    holder.set_direction(gtk::TextDirection::Ltr);
-    assert_eq!((holder.margin_start(), holder.margin_end()), (1, 8));
+    // 数値入力は欄とボタンの並びも書き方も左から右のまま。
+    let number = ui.number_input(-5.0)?;
+    let spin = number.native_widget();
+    assert!(all_left_to_right(&spin), "数値入力の中はすべて左から右");
+    spin.measure(gtk::Orientation::Horizontal, -1);
+    spin.measure(gtk::Orientation::Vertical, 200);
+    spin.size_allocate(&gtk::Allocation::new(0, 0, 200, 40), -1);
+    let parts = children(&spin);
+    let text = parts
+        .iter()
+        .find(|part| part.css_name() == "text")
+        .expect("入力欄");
+    let button = parts
+        .iter()
+        .find(|part| part.css_name() == "button")
+        .expect("上下のボタン");
+    assert!(
+        x_in(text, &spin) < x_in(button, &spin),
+        "欄が左、ボタンが右"
+    );
+
+    // 再生バーは反転させない。
+    let video = ui.video("")?;
+    let controls = children(&bin_of(&video))
+        .into_iter()
+        .flat_map(|child| children(&child))
+        .find(|child| child.is::<gtk::MediaControls>())
+        .expect("動画の再生バー");
+    assert!(all_left_to_right(&controls), "動画の再生バーは左から右");
+    let audio = ui.audio("")?;
+    let native = audio.native_widget();
+    assert!(native.is::<gtk::MediaControls>());
+    assert!(all_left_to_right(&native), "音声の再生バーは左から右");
     Ok(())
 }
 
@@ -3088,10 +3231,6 @@ fn grid_replaces_child(ui: &Ui) -> Result<()> {
 /// ("Trying to measure … but it needs at least …"). Baselines that fall outside the
 /// lowered minimum are dropped for the same reason.
 fn fill_does_not_measure_content_below_its_minimum(ui: &Ui) -> Result<()> {
-    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-    static WATCHING: AtomicBool = AtomicBool::new(false);
-    static WARNINGS: AtomicUsize = AtomicUsize::new(0);
-
     let grid = ui.grid()?;
     grid.set_sizing(Sizing::fill());
     let row = ui.stack(Orientation::Horizontal)?;
@@ -3105,19 +3244,12 @@ fn fill_does_not_measure_content_below_its_minimum(ui: &Ui) -> Result<()> {
     assert!(content_minimum > 0);
     assert_eq!(measure_width(&bin).0, 0, "Fill の最小は 0");
 
-    // 警告は構造化ログで出るので、書き出し先を差し替えて数える。書き出し先は
-    // 1 つのプロセスで 1 度しか設定できないので、ほかの記録はそのまま流す。
-    glib::log_set_writer_func(|level, fields| {
-        if WATCHING.load(Ordering::SeqCst) && level == glib::LogLevel::Warning {
-            WARNINGS.fetch_add(1, Ordering::SeqCst);
-        }
-        glib::log_writer_default(level, fields)
-    });
-    WATCHING.store(true, Ordering::SeqCst);
-    let narrow = measure_height_for(&bin, content_minimum / 2);
-    WATCHING.store(false, Ordering::SeqCst);
-
-    assert_eq!(WARNINGS.load(Ordering::SeqCst), 0, "GTK4 が警告しない");
+    let (narrow, log) = watch_log(|| measure_height_for(&bin, content_minimum / 2));
+    let warnings = log
+        .iter()
+        .filter(|entry| entry.level == glib::LogLevel::Warning)
+        .count();
+    assert_eq!(warnings, 0, "GTK4 が警告しない: {log:?}");
     assert_eq!(
         narrow.1,
         measure_height_for(&native, content_minimum).1,
@@ -12855,5 +12987,1198 @@ fn file_drop_reaches_the_drop_targets(ui: &Ui) -> Result<()> {
     assert_eq!(to_window.get(), 1);
     assert_eq!(seen.borrow().len(), 2, "ほかの受け口へは届かない");
     window.close();
+    Ok(())
+}
+
+// ------------------------------------------------- 外さずに別の親へ入れた子
+
+/// What naui writes on a widget's `SizeBin` when it places it, and where it is.
+#[derive(Debug, Clone, PartialEq)]
+struct Placed {
+    parent: Option<gtk::Widget>,
+    halign: gtk::Align,
+    valign: gtk::Align,
+    hexpand: bool,
+    vexpand: bool,
+    margins: [i32; 4],
+    size_request: (i32, i32),
+    visible: bool,
+    child_visible: bool,
+}
+
+fn placed(widget: &dyn Widget) -> Placed {
+    let bin = bin_of(widget);
+    Placed {
+        parent: bin.parent(),
+        halign: bin.halign(),
+        valign: bin.valign(),
+        hexpand: bin.hexpands(),
+        vexpand: bin.vexpands(),
+        margins: [
+            bin.margin_top(),
+            bin.margin_end(),
+            bin.margin_bottom(),
+            bin.margin_start(),
+        ],
+        size_request: bin.size_request(),
+        // 祖先まで見る `is_visible` ではなく、この子の印だけを見る。
+        visible: bin.get_visible(),
+        child_visible: bin.is_child_visible(),
+    }
+}
+
+/// Collects what went wrong, so that one run lists every broken case instead of
+/// stopping at the first.
+#[derive(Default)]
+struct Violations(Vec<String>);
+
+impl Violations {
+    fn check(&mut self, ok: bool, what: impl FnOnce() -> String) {
+        if !ok {
+            self.0.push(what());
+        }
+    }
+
+    /// The child is still where it was, with nothing rewritten on it.
+    fn unchanged(&mut self, child: &dyn Widget, before: &Placed, what: &str) {
+        let now = placed(child);
+        self.check(now == *before, || {
+            format!("{what}: 子が動いたか書き換わった\n  前 {before:?}\n  後 {now:?}")
+        });
+    }
+
+    /// GTK and libadwaita logged no critical message about a widget's parent: a
+    /// widget given a second parent, or taken out of a container it is not in. naui's
+    /// own refusals are left out, and so are unrelated ones (the GTK of CI's Ubuntu
+    /// logs a few `gtk_widget_is_ancestor` criticals along the way).
+    fn no_gtk_criticals(&mut self, log: &[LogEntry], what: &str) {
+        let criticals: Vec<_> = log
+            .iter()
+            .filter(|entry| entry.level == glib::LogLevel::Critical && entry.domain != "naui")
+            .filter(|entry| entry.message.contains("parent"))
+            .map(|entry| format!("{}: {}", entry.domain, entry.message))
+            .collect();
+        self.check(criticals.is_empty(), || {
+            format!("{what}: GTK が critical を出した {criticals:?}")
+        });
+    }
+
+    fn assert_none(self) {
+        assert!(
+            self.0.is_empty(),
+            "{} 件:\n{}",
+            self.0.len(),
+            self.0.join("\n")
+        );
+    }
+}
+
+/// Hands a child to a container.
+type Put = Box<dyn Fn(&dyn Widget)>;
+
+/// A container that holds a child, seen through one of its entry points.
+struct Holder {
+    name: &'static str,
+    /// Hands `child` over through the entry point being checked (and opens what
+    /// shows it only when open).
+    put: Put,
+    /// The native widget the child is inside of while this holds it.
+    native: Box<dyn Fn() -> Option<gtk::Widget>>,
+    /// Every operation of the container that does not take a child out on purpose:
+    /// settings that go through the children, rebuilding, opening and closing.
+    exercise: Box<dyn Fn()>,
+    /// Whether it keeps the previous child when it refuses a new one (one-child
+    /// containers). Containers of several children keep them anyway.
+    keeps_previous: bool,
+    finish: Box<dyn Fn()>,
+}
+
+impl Holder {
+    fn holds(&self, child: &dyn Widget) -> bool {
+        (self.native)().is_some_and(|native| bin_of(child).is_ancestor(&native))
+    }
+}
+
+/// One holder per entry point that takes a `&dyn Widget` child. `host` is a shown
+/// window for what opens over one.
+fn holders(ui: &Ui, host: &naui_gtk::Window, anchor: &dyn Widget) -> Result<Vec<Holder>> {
+    let mut all = Vec::new();
+    let nothing = || Box::new(|| {}) as Box<dyn Fn()>;
+
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&ui.label("前")?);
+    all.push(Holder {
+        name: "Stack::append",
+        put: Box::new({
+            let stack = stack.clone();
+            move |child| stack.append(child)
+        }),
+        native: Box::new({
+            let stack = stack.clone();
+            move || Some(stack.native_widget())
+        }),
+        exercise: Box::new({
+            let stack = stack.clone();
+            move || {
+                stack.set_spacing(12.0);
+                stack.set_padding(Padding::all(4.0));
+                stack.set_align(Align::End);
+                stack.set_orientation(Orientation::Horizontal);
+                stack.set_orientation(Orientation::Vertical);
+                stack.insert(0, &ui_label("挿入"));
+                stack.remove(0);
+            }
+        }),
+        keeps_previous: true,
+        finish: nothing(),
+    });
+    let stack = ui.stack(Orientation::Horizontal)?;
+    stack.append(&ui.label("前")?);
+    all.push(Holder {
+        name: "Stack::insert",
+        put: Box::new({
+            let stack = stack.clone();
+            move |child| stack.insert(0, child)
+        }),
+        native: Box::new({
+            let stack = stack.clone();
+            move || Some(stack.native_widget())
+        }),
+        exercise: Box::new({
+            let stack = stack.clone();
+            move || {
+                stack.set_align(Align::Start);
+                stack.set_orientation(Orientation::Vertical);
+                stack.append(&ui_label("後ろ"));
+                stack.remove(stack.len() - 1);
+            }
+        }),
+        keeps_previous: true,
+        finish: nothing(),
+    });
+    for (name, replace) in [("Grid::attach", false), ("Grid::replace", true)] {
+        let grid = ui.grid()?;
+        grid.attach(&ui.label("前")?, GridCell::new(0, 0));
+        all.push(Holder {
+            name,
+            put: Box::new({
+                let grid = grid.clone();
+                move |child| match replace {
+                    true => grid.replace(child, GridCell::new(1, 1)),
+                    false => grid.attach(child, GridCell::new(1, 1)),
+                }
+            }),
+            native: Box::new({
+                let grid = grid.clone();
+                move || Some(grid.native_widget())
+            }),
+            exercise: Box::new({
+                let grid = grid.clone();
+                move || {
+                    grid.set_spacing(6.0, 6.0);
+                    grid.set_padding(Padding::all(4.0));
+                    grid.set_column_track(1, Track::FILL);
+                    grid.set_row_track(1, Track::Fixed(30.0));
+                    grid.attach(&ui_label("隣"), GridCell::new(2, 0));
+                    grid.remove(GridCell::new(2, 0));
+                }
+            }),
+            keeps_previous: true,
+            finish: nothing(),
+        });
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_child(&ui.label("前")?);
+    all.push(Holder {
+        name: "Scroll::set_child",
+        put: Box::new({
+            let scroll = scroll.clone();
+            move |child| scroll.set_child(child)
+        }),
+        native: Box::new({
+            let scroll = scroll.clone();
+            move || Some(scroll.native_widget())
+        }),
+        exercise: Box::new({
+            let scroll = scroll.clone();
+            move || {
+                scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+                scroll.set_policy(ScrollPolicy::Auto, ScrollPolicy::Never);
+            }
+        }),
+        keeps_previous: true,
+        finish: nothing(),
+    });
+    let group = ui.group("枠")?;
+    group.set_child(&ui.label("前")?);
+    all.push(Holder {
+        name: "Group::set_child",
+        put: Box::new({
+            let group = group.clone();
+            move |child| group.set_child(child)
+        }),
+        native: Box::new({
+            let group = group.clone();
+            move || Some(group.native_widget())
+        }),
+        exercise: Box::new({
+            let group = group.clone();
+            move || group.set_padding(Padding::all(20.0))
+        }),
+        keeps_previous: true,
+        finish: nothing(),
+    });
+    let expander = ui.expander("たたむ")?;
+    expander.set_child(&ui.label("前")?);
+    expander.set_expanded(true);
+    all.push(Holder {
+        name: "Expander::set_child",
+        put: Box::new({
+            let expander = expander.clone();
+            move |child| expander.set_child(child)
+        }),
+        native: Box::new({
+            let expander = expander.clone();
+            move || Some(expander.native_widget())
+        }),
+        exercise: Box::new({
+            let expander = expander.clone();
+            move || {
+                expander.set_expanded(false);
+                expander.set_expanded(true);
+            }
+        }),
+        keeps_previous: true,
+        finish: nothing(),
+    });
+    for detail in [false, true] {
+        let panes = ui.adaptive_panes()?;
+        panes.set_list(&ui.label("前の一覧")?);
+        panes.set_detail(&ui.label("前の詳細")?);
+        all.push(Holder {
+            name: if detail {
+                "AdaptivePanes::set_detail"
+            } else {
+                "AdaptivePanes::set_list"
+            },
+            put: Box::new({
+                let panes = panes.clone();
+                move |child| match detail {
+                    true => panes.set_detail(child),
+                    false => panes.set_list(child),
+                }
+            }),
+            native: Box::new({
+                let panes = panes.clone();
+                move || Some(panes.native_widget())
+            }),
+            exercise: Box::new({
+                let panes = panes.clone();
+                move || {
+                    panes.set_breakpoint(2000.0);
+                    panes.show(Pane::Detail);
+                    panes.go_back();
+                    panes.set_breakpoint(100.0);
+                }
+            }),
+            keeps_previous: true,
+            finish: nothing(),
+        });
+    }
+    for end in [false, true] {
+        let split = ui.split_view(Orientation::Horizontal)?;
+        split.set_start(&ui.label("前の始端")?);
+        split.set_end(&ui.label("前の終端")?);
+        all.push(Holder {
+            name: if end {
+                "SplitView::set_end"
+            } else {
+                "SplitView::set_start"
+            },
+            put: Box::new({
+                let split = split.clone();
+                move |child| match end {
+                    true => split.set_end(child),
+                    false => split.set_start(child),
+                }
+            }),
+            native: Box::new({
+                let split = split.clone();
+                move || Some(split.native_widget())
+            }),
+            exercise: Box::new({
+                let split = split.clone();
+                move || split.set_position(40.0)
+            }),
+            keeps_previous: true,
+            finish: nothing(),
+        });
+    }
+    let tabs = ui.tabs()?;
+    tabs.add_tab("前", &ui.label("前")?);
+    all.push(Holder {
+        name: "Tabs::add_tab",
+        put: Box::new({
+            let tabs = tabs.clone();
+            move |child| tabs.add_tab("子", child)
+        }),
+        native: Box::new({
+            let tabs = tabs.clone();
+            move || Some(tabs.native_widget())
+        }),
+        exercise: Box::new({
+            let tabs = tabs.clone();
+            move || {
+                tabs.add_tab("後ろ", &ui_label("後ろ"));
+                tabs.select(0);
+                tabs.set_selected(tabs.len() - 1);
+                tabs.remove_tab(tabs.len() - 1);
+            }
+        }),
+        keeps_previous: true,
+        finish: nothing(),
+    });
+    let popover = ui.popover()?;
+    popover.set_child(&ui.label("前")?);
+    let anchor = anchor.boxed_clone();
+    all.push(Holder {
+        name: "Popover::set_child",
+        put: Box::new({
+            let popover = popover.clone();
+            move |child| popover.set_child(child)
+        }),
+        native: Box::new({
+            let popover = popover.clone();
+            move || Some(popover.native_popover().upcast())
+        }),
+        exercise: Box::new({
+            let popover = popover.clone();
+            move || {
+                popover.open(anchor.as_ref());
+                pump();
+                popover.close();
+                pump();
+            }
+        }),
+        keeps_previous: true,
+        finish: Box::new({
+            let popover = popover.clone();
+            move || popover.close()
+        }),
+    });
+    let window = ui.window("中身", 200.0, 150.0)?;
+    window.set_child(&ui.label("前")?);
+    all.push(Holder {
+        name: "Window::set_child",
+        put: Box::new({
+            let window = window.clone();
+            move |child| window.set_child(child)
+        }),
+        native: Box::new({
+            let window = window.clone();
+            move || Some(window.native_window().upcast())
+        }),
+        exercise: Box::new({
+            let window = window.clone();
+            let ui = ui.clone();
+            move || {
+                let sidebar = ui.sidebar().expect("サイドバー");
+                window.set_sidebar(&sidebar);
+                window.clear_sidebar();
+                window.set_toolbar(&ui.toolbar().expect("ツールバー"));
+                window.clear_toolbar();
+            }
+        }),
+        keeps_previous: true,
+        finish: Box::new({
+            let window = window.clone();
+            move || window.close()
+        }),
+    });
+    let dialog = ui.dialog("ダイアログ")?;
+    dialog.set_child(&ui.label("前")?);
+    all.push(Holder {
+        name: "Dialog::set_child",
+        put: Box::new({
+            let dialog = dialog.clone();
+            move |child| {
+                dialog.set_child(child);
+                dialog.close();
+                dialog.open();
+            }
+        }),
+        native: Box::new({
+            let dialog = dialog.clone();
+            move || dialog.native_dialog().map(|native| native.upcast())
+        }),
+        exercise: Box::new({
+            let dialog = dialog.clone();
+            move || {
+                dialog.close();
+                dialog.open();
+                dialog.close();
+                dialog.open();
+            }
+        }),
+        keeps_previous: true,
+        finish: Box::new({
+            let dialog = dialog.clone();
+            move || dialog.close()
+        }),
+    });
+    let sheet = ui.sheet("シート")?;
+    sheet.set_child(&ui.label("前")?);
+    all.push(Holder {
+        name: "Sheet::set_child",
+        put: Box::new({
+            let sheet = sheet.clone();
+            move |child| {
+                sheet.set_child(child);
+                sheet.open();
+            }
+        }),
+        native: Box::new({
+            let sheet = sheet.clone();
+            move || sheet.native_dialog().map(|native| native.upcast())
+        }),
+        exercise: Box::new({
+            let sheet = sheet.clone();
+            move || {
+                sheet.close();
+                sheet.open();
+                sheet.close();
+                sheet.open();
+            }
+        }),
+        keeps_previous: true,
+        finish: Box::new({
+            let sheet = sheet.clone();
+            move || sheet.close()
+        }),
+    });
+    let list = ui.list()?;
+    list.set_rows(&[ListRow::new(&ui.label("前")?)]);
+    all.push(Holder {
+        name: "List::set_rows",
+        put: Box::new({
+            let list = list.clone();
+            move |child| list.set_rows(&[ListRow::new(child), ListRow::new(&ui_label("隣"))])
+        }),
+        native: Box::new({
+            let list = list.clone();
+            move || Some(list_box_of(&list).upcast())
+        }),
+        exercise: Box::new({
+            let list = list.clone();
+            move || {
+                list.refresh();
+                list.set_row_height(40.0);
+                list.set_row_height(0.0);
+                list.set_selection(&[1]);
+            }
+        }),
+        keeps_previous: false,
+        finish: nothing(),
+    });
+    let list = ui.list()?;
+    all.push(Holder {
+        name: "List::set_row_builder",
+        put: Box::new({
+            let list = list.clone();
+            move |child| {
+                let child = Rc::new(child.boxed_clone());
+                list.set_row_builder(2, move |index| match index {
+                    0 => Ok(ListRow::new(child.as_ref().as_ref())),
+                    _ => Ok(ListRow::new(&ui_label("隣"))),
+                });
+            }
+        }),
+        native: Box::new({
+            let list = list.clone();
+            move || Some(list_box_of(&list).upcast())
+        }),
+        exercise: Box::new({
+            let list = list.clone();
+            move || {
+                list.refresh();
+                list.set_row_height(40.0);
+                list.set_row_height(0.0);
+            }
+        }),
+        keeps_previous: false,
+        finish: nothing(),
+    });
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["中身", "名前"]));
+    all.push(Holder {
+        name: "Table::set_row_builder (TableCells::cell)",
+        put: Box::new({
+            let table = table.clone();
+            move |child| {
+                let child = Rc::new(child.boxed_clone());
+                table.set_row_builder(2, move |index| match index {
+                    0 => Ok(TableCells::new().cell(child.as_ref().as_ref()).text("0")),
+                    _ => Ok(TableCells::new().text("-").text("1")),
+                });
+            }
+        }),
+        native: Box::new({
+            let table = table.clone();
+            move || Some(table.native_list_box().upcast())
+        }),
+        exercise: Box::new({
+            let table = table.clone();
+            move || {
+                table.refresh();
+                table.set_row_height(40.0);
+                table.set_row_height(0.0);
+                table.set_columns(&TableColumn::list(["中身", "名前", "追加"]));
+                table.set_selection(&[1]);
+            }
+        }),
+        keeps_previous: false,
+        finish: nothing(),
+    });
+    let _ = host;
+    Ok(all)
+}
+
+/// A label made outside the holder's setup (for operations that add a child).
+fn ui_label(text: &str) -> naui_gtk::Label {
+    UI_FOR_LABELS.with(|ui| {
+        ui.borrow()
+            .as_ref()
+            .expect("moved_child の中でだけ使う")
+            .label(text)
+            .expect("ラベル")
+    })
+}
+
+thread_local! {
+    static UI_FOR_LABELS: RefCell<Option<Ui>> = const { RefCell::new(None) };
+}
+
+/// A new parent the child is handed to, without taking it out of where it is.
+#[derive(Clone, Copy, Debug)]
+enum NewParent {
+    Stack,
+    Grid,
+}
+
+/// A `Stack` or a `Grid` and the operations that go through its children.
+enum Other {
+    Stack(naui_gtk::Stack),
+    Grid(naui_gtk::Grid),
+}
+
+impl Other {
+    fn new(ui: &Ui, kind: NewParent) -> Result<Self> {
+        Ok(match kind {
+            NewParent::Stack => {
+                let stack = ui.stack(Orientation::Vertical)?;
+                stack.append(&ui.label("先客")?);
+                Other::Stack(stack)
+            }
+            NewParent::Grid => {
+                let grid = ui.grid()?;
+                grid.attach(&ui.label("先客")?, GridCell::new(0, 0));
+                Other::Grid(grid)
+            }
+        })
+    }
+
+    /// Adds `child` through every entry point.
+    fn add(&self, child: &dyn Widget) {
+        match self {
+            Other::Stack(stack) => {
+                stack.append(child);
+                stack.insert(0, child);
+            }
+            Other::Grid(grid) => {
+                grid.attach(child, GridCell::new(1, 0));
+                grid.replace(child, GridCell::new(0, 0));
+            }
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Other::Stack(stack) => stack.len(),
+            Other::Grid(grid) => grid.len(),
+        }
+    }
+
+    /// Every operation that goes through the children, then taking them all out.
+    fn exercise_and_clear(&self) {
+        match self {
+            Other::Stack(stack) => {
+                stack.set_align(Align::End);
+                stack.set_orientation(Orientation::Horizontal);
+                stack.set_spacing(8.0);
+                stack.set_padding(Padding::all(3.0));
+                stack.insert(1, &ui_label("挿入"));
+                stack.remove(1);
+                stack.remove(1);
+                stack.clear();
+            }
+            Other::Grid(grid) => {
+                grid.set_column_track(1, Track::FILL);
+                grid.set_row_track(0, Track::Fixed(25.0));
+                grid.set_spacing(4.0, 4.0);
+                grid.remove(GridCell::new(1, 0));
+                grid.clear();
+            }
+        }
+    }
+
+    fn native(&self) -> gtk::Widget {
+        match self {
+            Other::Stack(stack) => stack.native_widget(),
+            Other::Grid(grid) => grid.native_widget(),
+        }
+    }
+}
+
+/// GTK refuses to give a widget a second parent, and naui follows: a container handed
+/// a child that is still in another container refuses it without touching it. Neither
+/// the container that holds it nor the one that refused it then moves it, rewrites it
+/// or hides it, whatever is done to them.
+fn moved_child_is_refused_and_left_alone(ui: &Ui) -> Result<()> {
+    UI_FOR_LABELS.with(|slot| *slot.borrow_mut() = Some(ui.clone()));
+    let host = ui.window("外さずに移す", 400.0, 300.0)?;
+    let anchor = ui.button("基準")?;
+    host.set_child(&anchor);
+    host.show();
+    tick(&host.native_window());
+
+    let mut violations = Violations::default();
+    let ((), log) = watch_log(|| {
+        for kind in [NewParent::Stack, NewParent::Grid] {
+            // 1. 子を持つコンテナから、外さずに Stack / Grid へ入れる。
+            for holder in holders(ui, &host, &anchor).expect("入れ物") {
+                let what = format!("{} に入った子を {kind:?} へ", holder.name);
+                let child = ui.text_input("子").expect("子");
+                (holder.put)(&child);
+                pump();
+                violations.check(holder.holds(&child), || format!("{what}: 最初に入らない"));
+                let before = placed(&child);
+                let other = Other::new(ui, kind).expect("新しい親");
+                let (_, refusals) = watch_log(|| other.add(&child));
+                violations.check(
+                    refusals
+                        .iter()
+                        .any(|entry| entry.level == glib::LogLevel::Critical),
+                    || format!("{what}: 断ったことを知らせない"),
+                );
+                violations.unchanged(&child, &before, &format!("{what}: 入れようとしたとき"));
+                violations.check(other.len() == 1, || {
+                    format!("{what}: 断った {kind:?} が子を数える ({})", other.len())
+                });
+                other.exercise_and_clear();
+                violations.unchanged(&child, &before, &format!("{what}: {kind:?} を操作したあと"));
+                (holder.exercise)();
+                pump();
+                violations.check(holder.holds(&child), || {
+                    format!("{what}: 元のコンテナを操作したら子が無い")
+                });
+                violations.check(
+                    placed(&child).visible && placed(&child).child_visible,
+                    || format!("{what}: 元のコンテナの中で子が隠れた"),
+                );
+                (holder.finish)();
+                pump();
+            }
+
+            // 2. Stack / Grid の中の子を、外さずにほかのコンテナへ渡す。
+            for holder in holders(ui, &host, &anchor).expect("入れ物") {
+                let what = format!("{kind:?} の中の子を {} へ", holder.name);
+                let other = Other::new(ui, kind).expect("今の親");
+                let child = ui.text_input("子").expect("子");
+                other.add(&child);
+                let previous = ui.label("前の子").expect("前の子");
+                (holder.put)(&previous);
+                pump();
+                let before = placed(&child);
+                violations.check(before.parent.as_ref() == Some(&other.native()), || {
+                    format!("{what}: 最初に {kind:?} へ入らない")
+                });
+                let (_, refusals) = watch_log(|| (holder.put)(&child));
+                pump();
+                violations.check(
+                    refusals
+                        .iter()
+                        .any(|entry| entry.level == glib::LogLevel::Critical),
+                    || format!("{what}: 断ったことを知らせない"),
+                );
+                violations.unchanged(&child, &before, &format!("{what}: 渡したとき"));
+                if holder.keeps_previous {
+                    violations.check(holder.holds(&previous), || {
+                        format!("{what}: 断ったのに前の子が無くなった")
+                    });
+                }
+                (holder.exercise)();
+                pump();
+                violations.unchanged(&child, &before, &format!("{what}: 操作したあと"));
+                (holder.finish)();
+                pump();
+                violations.unchanged(&child, &before, &format!("{what}: 閉じたあと"));
+            }
+        }
+    });
+    violations.no_gtk_criticals(&log, "全体");
+    host.close();
+    UI_FOR_LABELS.with(|slot| *slot.borrow_mut() = None);
+    violations.assert_none();
+    Ok(())
+}
+
+/// Waits until `child` has left the dialog it was in (a closed dialog lets go of its
+/// content once it has finished animating out).
+fn wait_until_free(child: &dyn Widget) -> bool {
+    let bin = bin_of(child);
+    spin_until(std::time::Duration::from_secs(3), || bin.parent().is_none());
+    bin.parent().is_none()
+}
+
+/// A shown list in a small window whose first row holds `child` and the rest labels,
+/// built by a function (`builder`) or passed at once. Enough rows that only those on
+/// screen are built.
+fn list_with_first_row(
+    ui: &Ui,
+    child: &dyn Widget,
+    builder: bool,
+) -> Result<(naui_gtk::Window, naui_gtk::List, gtk::ListBox)> {
+    const ROWS: usize = naui_core::ROW_WINDOW_THRESHOLD + 300;
+    let child = Rc::new(child.boxed_clone());
+    let ui_rows = ui.clone();
+    shown_big_list(ui, "先頭の行", move |list| {
+        if builder {
+            list.set_row_builder(ROWS, move |index| match index {
+                0 => Ok(ListRow::new(child.as_ref().as_ref())),
+                _ => Ok(ListRow::new(&ui_rows.label(&format!("行 {index}"))?)),
+            });
+        } else {
+            let mut rows = vec![ListRow::new(child.as_ref().as_ref())];
+            for index in 1..ROWS {
+                rows.push(ListRow::new(
+                    &ui_rows.label(&format!("行 {index}")).unwrap(),
+                ));
+            }
+            list.set_rows(&rows);
+        }
+    })
+}
+
+/// The same for a table whose first row's first cell holds `child`.
+fn table_with_first_row(
+    ui: &Ui,
+    child: &dyn Widget,
+) -> Result<(naui_gtk::Window, naui_gtk::Table, gtk::ListBox)> {
+    const ROWS: usize = naui_core::ROW_WINDOW_THRESHOLD + 300;
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["中身", "番号"]));
+    table.set_sizing(Sizing::fill());
+    let window = ui.window("先頭の行", 300.0, 200.0)?;
+    window.set_child(&table);
+    window.show();
+    let child = Rc::new(child.boxed_clone());
+    table.set_row_builder(ROWS, move |index| match index {
+        0 => Ok(TableCells::new().cell(child.as_ref().as_ref()).text("0")),
+        _ => Ok(TableCells::new().text("-").text(index.to_string())),
+    });
+    let native = table.native_list_box();
+    tick(&native);
+    tick(&native);
+    Ok((window, table, native))
+}
+
+/// `List` rows, `Table` cells, `Dialog` and `Sheet` place their widget each time they
+/// build a row or open. A widget handed to one of them while no container held it,
+/// then put in a `Stack` or `Grid` by the app, is left there when the row is built
+/// again or the dialog opens. Handed on from one of them to another while free, it
+/// belongs to the last one.
+fn later_placers_leave_a_moved_child_alone(ui: &Ui) -> Result<()> {
+    let host = ui.window("後で置くもの", 400.0, 300.0)?;
+    host.set_child(&ui.label("土台")?);
+    host.show();
+    tick(&host.native_window());
+
+    let mut violations = Violations::default();
+    let ((), log) = watch_log(|| {
+        for kind in [NewParent::Stack, NewParent::Grid] {
+            UI_FOR_LABELS.with(|slot| *slot.borrow_mut() = Some(ui.clone()));
+            // 閉じている Dialog / Sheet に渡した子 (開く前と、開いて閉じたあと)。
+            for opened_before in [false, true] {
+                let what = format!("Dialog (開いたことが {opened_before}) から {kind:?} へ");
+                let dialog = ui.dialog("ダイアログ").expect("ダイアログ");
+                let child = ui.text_input("子").expect("子");
+                dialog.set_child(&child);
+                if opened_before {
+                    dialog.open();
+                    pump();
+                    violations.check(
+                        dialog
+                            .native_dialog()
+                            .is_some_and(|native| bin_of(&child).is_ancestor(&native)),
+                        || format!("{what}: 開いても中身が入らない"),
+                    );
+                    dialog.close();
+                    pump();
+                }
+                let other = Other::new(ui, kind).expect("新しい親");
+                other.add(&child);
+                let before = placed(&child);
+                violations.check(before.parent.as_ref() == Some(&other.native()), || {
+                    format!("{what}: 空いた子が {kind:?} へ入らない")
+                });
+                dialog.open();
+                pump();
+                violations.unchanged(&child, &before, &format!("{what}: 開いたとき"));
+                dialog.close();
+                dialog.open();
+                pump();
+                violations.unchanged(&child, &before, &format!("{what}: 開き直したとき"));
+                dialog.close();
+                pump();
+
+                let what = format!("Sheet (開いたことが {opened_before}) から {kind:?} へ");
+                let sheet = ui.sheet("シート").expect("シート");
+                let child = ui.text_input("子").expect("子");
+                sheet.set_child(&child);
+                if opened_before {
+                    sheet.open();
+                    pump();
+                    sheet.close();
+                    if !wait_until_free(&child) {
+                        violations.check(false, || format!("{what}: 閉じても中身を放さない"));
+                        continue;
+                    }
+                }
+                let other = Other::new(ui, kind).expect("新しい親");
+                other.add(&child);
+                let before = placed(&child);
+                sheet.open();
+                pump();
+                violations.unchanged(&child, &before, &format!("{what}: 開いたとき"));
+                sheet.close();
+                pump();
+                sheet.open();
+                pump();
+                violations.unchanged(&child, &before, &format!("{what}: 開き直したとき"));
+                sheet.close();
+                pump();
+            }
+
+            // 画面の外へ出た行の子。
+            for builder in [false, true] {
+                let what = format!(
+                    "List ({}) の画面外の行から {kind:?} へ",
+                    if builder { "組み立て" } else { "set_rows" }
+                );
+                let child = ui.text_input("子").expect("子");
+                let (window, list, native) =
+                    list_with_first_row(ui, &child, builder).expect("一覧");
+                let in_list = |child: &dyn Widget| bin_of(child).is_ancestor(&native);
+                violations.check(in_list(&child), || format!("{what}: 最初の行に入らない"));
+                scroll_list_to(&native, 1e7);
+                violations.check(bin_of(&child).parent().is_none(), || {
+                    format!("{what}: 画面外へ出ても行が放さない")
+                });
+                scroll_list_to(&native, 0.0);
+                violations.check(in_list(&child), || format!("{what}: 戻っても行に戻らない"));
+                scroll_list_to(&native, 1e7);
+                let other = Other::new(ui, kind).expect("新しい親");
+                other.add(&child);
+                let before = placed(&child);
+                scroll_list_to(&native, 0.0);
+                violations.unchanged(&child, &before, &format!("{what}: 行が戻ったとき"));
+                list.set_row_height(40.0);
+                tick(&native);
+                violations.unchanged(&child, &before, &format!("{what}: set_row_height"));
+                list.refresh();
+                tick(&native);
+                violations.unchanged(&child, &before, &format!("{what}: refresh"));
+                window.close();
+                pump();
+            }
+            let what = format!("Table の画面外の行から {kind:?} へ");
+            let child = ui.text_input("子").expect("子");
+            let (window, table, native) = table_with_first_row(ui, &child).expect("表");
+            violations.check(bin_of(&child).is_ancestor(&native), || {
+                format!("{what}: 最初の行に入らない")
+            });
+            scroll_list_to(&native, 1e7);
+            scroll_list_to(&native, 0.0);
+            violations.check(bin_of(&child).is_ancestor(&native), || {
+                format!("{what}: 戻っても行に戻らない")
+            });
+            scroll_list_to(&native, 1e7);
+            let other = Other::new(ui, kind).expect("新しい親");
+            other.add(&child);
+            let before = placed(&child);
+            scroll_list_to(&native, 0.0);
+            violations.unchanged(&child, &before, &format!("{what}: 行が戻ったとき"));
+            table.set_columns(&TableColumn::list(["中身", "番号", "追加"]));
+            tick(&native);
+            violations.unchanged(&child, &before, &format!("{what}: set_columns"));
+            table.refresh();
+            tick(&native);
+            violations.unchanged(&child, &before, &format!("{what}: refresh"));
+            window.close();
+            pump();
+            UI_FOR_LABELS.with(|slot| *slot.borrow_mut() = None);
+        }
+
+        // Sheet は前に開いたときの箱 (`AdwBin`) から中身を引き取る。同じ
+        // `AdwBin` でも、Group の枠の中の子は取らない。
+        let group = ui.group("枠").expect("枠");
+        let child = ui.text_input("子").expect("子");
+        group.set_child(&child);
+        let before = placed(&child);
+        let sheet = ui.sheet("シート").expect("シート");
+        sheet.set_child(&child);
+        sheet.open();
+        pump();
+        violations.unchanged(&child, &before, "Group の中の子を Sheet へ: 開いたとき");
+        sheet.close();
+        pump();
+        violations.unchanged(&child, &before, "Group の中の子を Sheet へ: 閉じたとき");
+
+        // 空いている子を、置くのが後になるもの同士で渡す。
+        let child = ui.text_input("子").expect("子");
+        let first = ui.dialog("先").expect("ダイアログ");
+        let second = ui.dialog("後").expect("ダイアログ");
+        first.set_child(&child);
+        second.set_child(&child);
+        first.open();
+        pump();
+        violations.check(bin_of(&child).parent().is_none(), || {
+            "Dialog → Dialog: 前のダイアログが開くと取り返す".to_string()
+        });
+        first.close();
+        second.open();
+        pump();
+        violations.check(
+            second
+                .native_dialog()
+                .is_some_and(|native| bin_of(&child).is_ancestor(&native)),
+            || "Dialog → Dialog: 後のダイアログに入らない".to_string(),
+        );
+        second.close();
+        pump();
+
+        let child = ui.text_input("子").expect("子");
+        let dialog = ui.dialog("先").expect("ダイアログ");
+        dialog.set_child(&child);
+        dialog.open();
+        pump();
+        dialog.close();
+        pump();
+        let list = ui.list().expect("一覧");
+        list.set_rows(&[ListRow::new(&child)]);
+        let list_box = list_box_of(&list);
+        violations.check(bin_of(&child).is_ancestor(&list_box), || {
+            "Dialog → List: 一覧に入らない".to_string()
+        });
+        dialog.open();
+        pump();
+        violations.check(bin_of(&child).is_ancestor(&list_box), || {
+            "Dialog → List: 前のダイアログが開くと取り返す".to_string()
+        });
+        dialog.close();
+        pump();
+
+        let child = ui.text_input("子").expect("子");
+        let (window, _list, native) = list_with_first_row(ui, &child, true).expect("一覧");
+        scroll_list_to(&native, 1e7);
+        let dialog = ui.dialog("後").expect("ダイアログ");
+        dialog.set_child(&child);
+        scroll_list_to(&native, 0.0);
+        violations.check(bin_of(&child).parent().is_none(), || {
+            "List → Dialog: 行が戻ると取り返す".to_string()
+        });
+        dialog.open();
+        pump();
+        violations.check(
+            dialog
+                .native_dialog()
+                .is_some_and(|native| bin_of(&child).is_ancestor(&native)),
+            || "List → Dialog: ダイアログに入らない".to_string(),
+        );
+        dialog.close();
+        window.close();
+        pump();
+
+        let child = ui.text_input("子").expect("子");
+        let sheet = ui.sheet("先").expect("シート");
+        sheet.set_child(&child);
+        sheet.open();
+        pump();
+        sheet.close();
+        if wait_until_free(&child) {
+            let (window, _table, native) = table_with_first_row(ui, &child).expect("表");
+            violations.check(bin_of(&child).is_ancestor(&native), || {
+                "Sheet → Table: 表に入らない".to_string()
+            });
+            sheet.open();
+            pump();
+            violations.check(bin_of(&child).is_ancestor(&native), || {
+                "Sheet → Table: 前のシートが開くと取り返す".to_string()
+            });
+            sheet.close();
+            window.close();
+            pump();
+        } else {
+            violations.check(false, || {
+                "Sheet → Table: 閉じても中身を放さない".to_string()
+            });
+        }
+    });
+    violations.no_gtk_criticals(&log, "全体");
+    host.close();
+    violations.assert_none();
+    Ok(())
+}
+
+// ------------------------------------------------- 行やセルから出た子
+
+/// How a widget has left the `List` row or `Table` cell it was in.
+#[derive(Debug, Clone, Copy)]
+enum LeftBy {
+    /// The rows were replaced with others.
+    Replaced,
+    /// Its row was scrolled out of the built window.
+    Scrolled,
+}
+
+/// A widget that has left a `List` row or a `Table` cell, then put in a `Stack` or
+/// a `Grid`, looks the same as a widget made for that container: nothing the row
+/// wrote on it (the row's margins, the column's width, filling the row) carries over,
+/// and it no longer shares its width with the widgets of its former column.
+fn child_out_of_a_row_keeps_nothing_from_it(ui: &Ui) -> Result<()> {
+    /// Where it is and how it measures, without the parent.
+    fn looks(widget: &dyn Widget) -> (Placed, (i32, i32)) {
+        let mut placed = placed(widget);
+        placed.parent = None;
+        (placed, measure_width(&bin_of(widget)))
+    }
+    fn put(ui: &Ui, kind: NewParent, child: &dyn Widget) -> Result<gtk::Widget> {
+        Ok(match kind {
+            NewParent::Stack => {
+                let stack = ui.stack(Orientation::Vertical)?;
+                stack.append(&ui.label("先客")?);
+                stack.append(child);
+                stack.native_widget()
+            }
+            NewParent::Grid => {
+                let grid = ui.grid()?;
+                grid.attach(&ui.label("先客")?, GridCell::new(0, 0));
+                grid.attach(child, GridCell::new(1, 0));
+                grid.native_widget()
+            }
+        })
+    }
+
+    let mut violations = Violations::default();
+    for kind in [NewParent::Stack, NewParent::Grid] {
+        for left_by in [LeftBy::Replaced, LeftBy::Scrolled] {
+            for table in [false, true] {
+                let what = format!(
+                    "{} の{}から {kind:?} へ",
+                    if table {
+                        "Table のセル"
+                    } else {
+                        "List の行"
+                    },
+                    match left_by {
+                        LeftBy::Replaced => "差し替えた行",
+                        LeftBy::Scrolled => "画面外の行",
+                    }
+                );
+                let child = ui.button("子")?;
+                let (window, native) = if table {
+                    let (window, table, native) = table_with_first_row(ui, &child)?;
+                    // 表の中で大きさを指定し直しても、列が決めたことは残る。
+                    let in_cell = looks(&child);
+                    child.set_sizing(Sizing::default());
+                    let resized = looks(&child);
+                    violations.check(resized == in_cell, || {
+                        format!("{what}: セルの中で set_sizing すると列の扱いが消える\n  前 {in_cell:?}\n  後 {resized:?}")
+                    });
+                    if let LeftBy::Replaced = left_by {
+                        table.set_rows(&[TableRow::new(["別", "1"])]);
+                    }
+                    (window, native)
+                } else {
+                    let (window, list, native) = list_with_first_row(ui, &child, false)?;
+                    if let LeftBy::Replaced = left_by {
+                        list.set_rows(&[ListRow::new(&ui.label("別")?)]);
+                    }
+                    (window, native)
+                };
+                if let LeftBy::Scrolled = left_by {
+                    scroll_list_to(&native, 1e7);
+                }
+                tick(&native);
+                violations.check(bin_of(&child).parent().is_none(), || {
+                    format!("{what}: 行が子を放さない")
+                });
+
+                let fresh = ui.button("子")?;
+                let moved_into = put(ui, kind, &child)?;
+                put(ui, kind, &fresh)?;
+                violations.check(bin_of(&child).parent() == Some(moved_into), || {
+                    format!("{what}: 新しい親に入らない")
+                });
+                let (moved, made) = (looks(&child), looks(&fresh));
+                violations.check(moved == made, || {
+                    format!(
+                        "{what}: 新しく作った子と違う\n  移した子 {moved:?}\n  新しい子 {made:?}"
+                    )
+                });
+                window.close();
+                pump();
+            }
+        }
+    }
+
+    // 同じ列のセルだった 2 つの子は、表から出たあと幅をそろえ合わない。
+    for left_by in [LeftBy::Replaced, LeftBy::Scrolled] {
+        let what = format!("Table の同じ列から出た子 ({left_by:?})");
+        let short = ui.button("短")?;
+        let wide = ui.button("とても長い名前のボタンでセルの幅を広げる")?;
+        let (window, table, native) = table_with_first_row(ui, &short)?;
+        let cells = Rc::new([short.boxed_clone(), wide.boxed_clone()]);
+        table.set_row_builder(naui_core::ROW_WINDOW_THRESHOLD + 300, move |index| {
+            Ok(match index {
+                0 | 1 => TableCells::new().cell(cells[index].as_ref()).text("0"),
+                _ => TableCells::new().text("-").text(index.to_string()),
+            })
+        });
+        tick(&native);
+        match left_by {
+            LeftBy::Replaced => table.set_rows(&[TableRow::new(["別", "1"])]),
+            LeftBy::Scrolled => scroll_list_to(&native, 1e7),
+        }
+        tick(&native);
+        violations.check(
+            bin_of(&short).parent().is_none() && bin_of(&wide).parent().is_none(),
+            || format!("{what}: 行が子を放さない"),
+        );
+        let fresh = ui.button("短")?;
+        put(ui, NewParent::Stack, &short)?;
+        put(ui, NewParent::Stack, &wide)?;
+        put(ui, NewParent::Stack, &fresh)?;
+        let (moved, made) = (
+            measure_width(&bin_of(&short)),
+            measure_width(&bin_of(&fresh)),
+        );
+        violations.check(moved == made, || {
+            format!("{what}: 幅が新しく作った子と違う (移した子 {moved:?}、新しい子 {made:?})")
+        });
+        window.close();
+        pump();
+    }
+    violations.assert_none();
     Ok(())
 }

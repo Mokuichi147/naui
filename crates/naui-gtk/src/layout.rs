@@ -57,8 +57,14 @@ impl Grid {
 
     /// Places a child in a cell. It can be stacked onto a cell that already holds
     /// something.
+    ///
+    /// A widget still in another container (or already in this grid) is refused, as
+    /// GTK refuses it: nothing changes.
     pub fn attach(&self, child: &dyn Widget, cell: GridCell) {
         let bin = child.size_bin();
+        if crate::handover::refuses(&bin, false, "Grid::attach") {
+            return;
+        }
         self.0.native.attach(&bin, cell);
         self.apply_tracks_to(&bin, cell);
         self.0
@@ -68,7 +74,13 @@ impl Grid {
     }
 
     /// Replaces what is in the cell. Whatever was in the same cell is removed.
+    ///
+    /// A widget still in another container is refused, and the cell keeps what it
+    /// has.
     pub fn replace(&self, child: &dyn Widget, cell: GridCell) {
+        if crate::handover::refuses(&child.size_bin(), false, "Grid::replace") {
+            return;
+        }
         self.remove(cell);
         self.attach(child, cell);
     }
@@ -371,9 +383,17 @@ impl Scroll {
         self.follow_natural_size();
     }
 
+    /// The content. Each call replaces it.
+    ///
+    /// A widget still in another container is refused, as GTK refuses it, and the
+    /// previous content stays.
     pub fn set_child(&self, child: &dyn Widget) {
         let bin = child.size_bin();
         let previous = self.0.child.borrow().as_ref().map(|child| child.size_bin());
+        let mine = previous.as_ref() == Some(&bin);
+        if crate::handover::refuses(&bin, mine, "Scroll::set_child") {
+            return;
+        }
         if let Some(previous) = previous {
             if previous != bin {
                 crate::interaction::clear_focus(&previous);

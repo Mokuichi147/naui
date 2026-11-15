@@ -18,7 +18,7 @@ use naui_core::{Align, Length, Sizing, Track};
 // glib のサブクラス化マクロが `unsafe impl` を作るため、この中だけ許可する。
 #[allow(unsafe_code)]
 mod imp {
-    use std::cell::Cell;
+    use std::cell::{Cell, RefCell};
 
     use gtk::glib;
     use gtk::prelude::*;
@@ -43,6 +43,12 @@ mod imp {
         pub spinner_maximum: Cell<i32>,
         /// Where it is placed. Read when the size specification changes.
         pub(crate) placement: Cell<super::Placement>,
+        /// The owner that took it last among those that place it later (`List`,
+        /// `Table`, `Dialog`, `Sheet`). 0 if none has (see [`crate::handover`]).
+        pub(crate) last_taker: Cell<u64>,
+        /// The `GtkSizeGroup` a `Table` column put it in, to align the column's width.
+        /// Left whenever it is placed anywhere.
+        pub(crate) size_group: RefCell<Option<gtk::SizeGroup>>,
     }
 
     #[glib::object_subclass]
@@ -298,7 +304,20 @@ pub(crate) enum Placement {
         column: Option<Track>,
         row: Option<Track>,
     },
+    /// The content of a `List` row, filling the row inside the row's margins.
+    ListRow,
+    /// In a `Table` cell, filling it. `width` is the column's width (logical pixels),
+    /// `None` for columns that share the leftover. `limit_natural` keeps the content's
+    /// natural width from deciding the column width (see
+    /// [`SizeBin::limit_natural_width`]).
+    TableCell {
+        width: Option<f64>,
+        limit_natural: bool,
+    },
 }
+
+/// The margins of a `List` row's content: top and bottom, start and end.
+pub(crate) const LIST_ROW_MARGINS: (i32, i32) = (6, 10);
 
 glib::wrapper! {
     /// A container that wraps one naui widget and adds a size maximum.
@@ -386,6 +405,15 @@ impl SizeBin {
         }
     }
 
+    /// The owner that took it last (see [`crate::handover`]). 0 if none has.
+    pub(crate) fn last_taker(&self) -> u64 {
+        self.imp().last_taker.get()
+    }
+
+    pub(crate) fn set_last_taker(&self, owner: u64) {
+        self.imp().last_taker.set(owner);
+    }
+
     /// Applies the size specification. Each call discards the previous one.
     pub(crate) fn apply_sizing(&self, sizing: Sizing) {
         self.imp().sizing.set(sizing);
@@ -393,9 +421,23 @@ impl SizeBin {
     }
 
     /// Records where it is placed and applies what that placement asks for.
+    ///
+    /// It leaves the `GtkSizeGroup` of a `Table` column it was in, so a widget taken
+    /// out of a table no longer shares its width with that column.
     pub(crate) fn set_placement(&self, placement: Placement) {
+        if let Some(group) = self.imp().size_group.take() {
+            group.remove_widget(self);
+        }
         self.imp().placement.set(placement);
         self.relayout();
+    }
+
+    /// Puts it in a `Table` column's `GtkSizeGroup`, after placing it in the cell.
+    pub(crate) fn join_size_group(&self, group: &gtk::SizeGroup) {
+        if let Some(previous) = self.imp().size_group.replace(Some(group.clone())) {
+            previous.remove_widget(self);
+        }
+        group.add_widget(self);
     }
 
     /// Sets everything up again from the size specification and the placement.
@@ -427,9 +469,28 @@ impl SizeBin {
         self.apply_expand(false, height.expand);
         self.set_halign(width.align);
         self.set_valign(height.align);
+        // 余白を書くのは `List` の行だけ。ほかの置き場所へ移ったら消す。
+        let (vertical, horizontal) = match imp.placement.get() {
+            Placement::ListRow => LIST_ROW_MARGINS,
+            _ => (0, 0),
+        };
+        self.set_margin_top(vertical);
+        self.set_margin_bottom(vertical);
+        self.set_margin_start(horizontal);
+        self.set_margin_end(horizontal);
         match imp.placement.get() {
             Placement::Loose => {}
-            Placement::FillParent => self.fill_parent_axes(),
+            Placement::FillParent | Placement::ListRow => self.fill_parent_axes(),
+            Placement::TableCell {
+                width,
+                limit_natural,
+            } => {
+                self.fill_parent_axes();
+                self.apply_column_width(width);
+                if limit_natural {
+                    self.limit_natural_width();
+                }
+            }
             Placement::Stack { align, vertical } => self.cross_align(align, vertical),
             Placement::Grid { column, row } => {
                 self.place_in_grid();
@@ -457,7 +518,24 @@ impl SizeBin {
         };
         match expand {
             Some(expand) => self.set_property(value, expand),
-            None => self.set_property(is_set, false),
+            // `hexpand-set` を外せば GTK は `hexpand` を見ないが、値そのものは残る。
+            // 前の置き場所が書いた `true` を消して、新しく作ったときと同じ値へ戻す。
+            None => {
+                self.set_property(value, false);
+                self.set_property(is_set, false);
+            }
+        }
+    }
+
+    /// Applies a `Table` column's width: a fixed width with no share of the leftover,
+    /// or a share of the leftover for columns without one.
+    fn apply_column_width(&self, width: Option<f64>) {
+        match width {
+            Some(width) => {
+                self.set_size_request(width as i32, self.height_request());
+                self.set_hexpand(false);
+            }
+            None => self.set_hexpand(true),
         }
     }
 
@@ -488,7 +566,7 @@ impl SizeBin {
     ///
     /// The same treatment as setting `max-width-chars` to 1 on text cells. **Content
     /// with its own size specified is left alone** (the app's setting wins).
-    pub(crate) fn limit_natural_width(&self) {
+    fn limit_natural_width(&self) {
         let sizing = self.sizing();
         if !matches!(sizing.width, Length::Auto) || sizing.max_width.is_some() {
             return;
@@ -675,28 +753,28 @@ pub(crate) fn to_gtk_align(align: Align) -> gtk::Align {
 /// GTK4 containers have no "inner padding", but every widget has margins on all
 /// four sides. Putting margins on the container itself shrinks the area its
 /// contents can occupy by that much, which means the same as naui's
-/// [`Padding`](naui_core::Padding).
+/// [`Padding`](naui_core::Padding). Its `start` and `end` are GTK's start and end
+/// margins, which follow the widget's direction.
 pub(crate) fn apply_padding(widget: &impl IsA<gtk::Widget>, padding: naui_core::Padding) {
     let widget = widget.as_ref();
     widget.set_margin_top(to_px(padding.top));
-    widget.set_margin_end(to_px(padding.right));
+    widget.set_margin_end(to_px(padding.end));
     widget.set_margin_bottom(to_px(padding.bottom));
-    widget.set_margin_start(to_px(padding.left));
+    widget.set_margin_start(to_px(padding.start));
 }
 
-/// Like [`apply_padding`], but `left` and `right` stay on those physical sides in
-/// right-to-left text, where GTK puts the start margin on the right.
+/// Keeps `widget` and everything inside it left to right, also in a right-to-left
+/// layout.
 ///
-/// The widget's direction is read now, so call it again on `direction-changed`.
-pub(crate) fn apply_physical_padding(widget: &impl IsA<gtk::Widget>, padding: naui_core::Padding) {
+/// GTK4 widgets do not inherit their parent's direction: a widget whose direction
+/// is unset follows the app's default direction. So each widget inside has to be
+/// given the direction itself. Call it once the widget's own children exist.
+pub(crate) fn pin_left_to_right(widget: &impl IsA<gtk::Widget>) {
     let widget = widget.as_ref();
-    let (start, end) = if widget.direction() == gtk::TextDirection::Rtl {
-        (padding.right, padding.left)
-    } else {
-        (padding.left, padding.right)
-    };
-    widget.set_margin_top(to_px(padding.top));
-    widget.set_margin_end(to_px(end));
-    widget.set_margin_bottom(to_px(padding.bottom));
-    widget.set_margin_start(to_px(start));
+    widget.set_direction(gtk::TextDirection::Ltr);
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        pin_left_to_right(&current);
+        child = current.next_sibling();
+    }
 }

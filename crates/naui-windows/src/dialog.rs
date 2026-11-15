@@ -60,6 +60,8 @@ pub struct Dialog(Rc<DialogInner>);
 impl Dialog {
     pub(crate) fn new(title: &str, theme: Theme) -> Result<Self> {
         let native = ContentDialog::new().map_err(|e| to_error("create the ContentDialog", e))?;
+        // ダイアログは窓の中身とは別の層に出るので、向きを継がない。
+        crate::direction::apply_app_direction(&native);
         let title_block = TextBlock::new().map_err(|e| to_error("create the dialog title", e))?;
 
         let content = StackPanel::new().map_err(|e| to_error("create the dialog content", e))?;
@@ -191,16 +193,33 @@ impl Dialog {
     }
 
     /// The widget placed between the body text and the buttons. Each call replaces it.
+    ///
+    /// It is placed right away, open or not. A child still in another container is
+    /// refused, and the current one stays.
     pub fn set_child(&self, child: &dyn Widget) {
+        let element = child.native_element();
+        let current = self
+            .0
+            .child
+            .borrow()
+            .as_ref()
+            .map(|child| child.native_element());
+        // 前の中身を外す前に断る。
+        if crate::layout::refuses(&element, current.as_ref()) {
+            return;
+        }
         let Ok(children) = self.0.content.Children() else {
             return;
         };
         // 本文だけを残して、前の中身を外す。
         let _ = children.Clear();
         let _ = children.Append(&self.0.message);
-        let element = child.native_element();
         if children.Append(&element).is_ok() {
+            crate::layout::note_place(&element, crate::layout::Place::panel(&self.0.content));
             *self.0.child.borrow_mut() = Some(child.boxed_clone());
+        } else if let Some(current) = current {
+            // 入れられなかったときは前の中身へ戻す。
+            let _ = children.Append(&current);
         }
     }
 

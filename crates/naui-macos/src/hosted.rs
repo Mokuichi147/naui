@@ -67,7 +67,11 @@ impl HostedChild {
             NSLayoutConstraint::deactivateConstraints(&NSArray::from_retained_slice(&constraints));
         }
         if let Some(previous) = previous {
-            previous.native_view().removeFromSuperview();
+            // 外さずに別の親へ移った前の中身は、新しい親から抜かない。
+            let previous = previous.native_view();
+            if crate::layout::is_placed_in(&previous, container) {
+                previous.removeFromSuperview();
+            }
         }
         if self.generation.get() != generation {
             return; // 外したときの通知の中で、もう差し替えられた。
@@ -102,7 +106,14 @@ impl HostedChild {
         if let Some(previous) = self.fallback_width.borrow_mut().take() {
             previous.setActive(false);
         }
-        let Some(child) = self.child.borrow().as_ref().map(|c| c.native_view()) else {
+        // 外さずに別の親へ移った中身の幅には触れない。
+        let Some(child) = self
+            .child
+            .borrow()
+            .as_ref()
+            .map(|c| c.native_view())
+            .filter(|view| crate::layout::is_placed_in(view, &self.container))
+        else {
             return;
         };
         if child.fittingSize().width > 0.0 {

@@ -32,6 +32,7 @@
 //! position, so the row's left edge is passed.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::ops::Range;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -207,6 +208,9 @@ const ROW_PADDING: Thickness = Thickness {
 /// the default item transitions (which animate rows as they are added and removed) are
 /// cleared. Otherwise the whole list animates each time it is rebuilt. `Table` does the
 /// same.
+// 仮想化は RowWindow が担当する。`ListView` の既定の ItemsStackPanel (仮想化) を重ねると、
+// 行の位置と `ListView` の高さがずれ、窓の外へはみ出した行が下の詰め物に押下を取られる
+// (`Table` と同じ理由で、`ItemsPanel` は StackPanel にする)。
 const SURFACE_XAML: &str = r##"<Border
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     Background="{ThemeResource ControlFillColorDefaultBrush}"
@@ -219,6 +223,9 @@ const SURFACE_XAML: &str = r##"<Border
         <ListView.ItemContainerTransitions>
             <TransitionCollection/>
         </ListView.ItemContainerTransitions>
+        <ListView.ItemsPanel>
+            <ItemsPanelTemplate><StackPanel/></ItemsPanelTemplate>
+        </ListView.ItemsPanel>
     </ListView>
 </Border>"##;
 
@@ -421,6 +428,9 @@ const PLAIN_LIST_VIEW_XAML: &str = r##"<ListView
     <ListView.ItemContainerTransitions>
         <TransitionCollection/>
     </ListView.ItemContainerTransitions>
+    <ListView.ItemsPanel>
+        <ItemsPanelTemplate><StackPanel/></ItemsPanelTemplate>
+    </ListView.ItemsPanel>
 </ListView>"##;
 
 fn plain_surface() -> Result<(Border, ListView)> {
@@ -551,6 +561,10 @@ struct ListInner {
     realized: RefCell<Vec<ListRow>>,
     /// Where the rows come from.
     rows: RowSource<ListRow>,
+    /// The widgets of the rows given with [`List::set_rows`] that this list took (by
+    /// element key): they had no parent then, or were in one of its rows. A widget not
+    /// taken is never placed, even after it leaves the container it was in.
+    taken: RefCell<HashSet<usize>>,
     /// The range of rows currently built. With many rows, only those around the screen.
     window: Cell<RowWindow>,
     /// The first row the `ListView` has now. `window` moves ahead of it just before the
@@ -661,6 +675,7 @@ impl List {
             native_rows: RefCell::new(Vec::new()),
             realized: RefCell::new(Vec::new()),
             rows: RowSource::default(),
+            taken: RefCell::new(HashSet::new()),
             window: Cell::new(RowWindow::default()),
             built_start: Cell::new(0),
             failed_window: Cell::new(None),
@@ -844,6 +859,7 @@ impl List {
 
     /// Rebuilds the rows. Indices change meaning, so the selection is cleared.
     pub fn set_items(&self, items: &[ListItem]) {
+        self.0.taken.borrow_mut().clear();
         self.0
             .rows
             .set_rows(items.iter().cloned().map(ListRow::from_item).collect());
@@ -855,9 +871,88 @@ impl List {
     ///
     /// Controls inside a row can have their own callbacks as usual. Indices change
     /// meaning, so the selection is cleared.
+    ///
+    /// A widget still in another container is not taken: its row stays empty, also
+    /// after that container lets go of it, until it is given again. A widget given to
+    /// another list after this one is placed only there. A widget already in one of
+    /// this list's rows can be given again.
     pub fn set_rows(&self, rows: &[ListRow]) {
+        self.take(rows);
         self.0.rows.set_rows(rows.to_vec());
         self.reset_rows();
+    }
+
+    /// The key of this list as the last to take a widget.
+    fn owner(&self) -> usize {
+        Rc::as_ptr(&self.0) as usize
+    }
+
+    /// Takes the widgets of the rows given with [`set_rows`](Self::set_rows) that have
+    /// no parent or are in one of this list's rows, and remembers them.
+    fn take(&self, rows: &[ListRow]) {
+        // 自分の行の受け皿にいるウィジェット。画面に出ていない要素は `Parent` が
+        // 空なので、受け皿の子から引く。
+        let in_rows: HashSet<usize> = self
+            .0
+            .native_rows
+            .borrow()
+            .iter()
+            .filter_map(|row| row.Content().ok()?.cast::<XamlGrid>().ok()?.Children().ok())
+            .flat_map(|children| {
+                (0..children.Size().unwrap_or(0))
+                    .filter_map(move |index| children.GetAt(index).ok())
+            })
+            .map(|element| crate::layout::element_key(&element))
+            .collect();
+        let mut taken = HashSet::new();
+        for row in rows {
+            let ListRowContent::Custom(content) = &row.content else {
+                continue;
+            };
+            let element = content.native_element();
+            let free = in_rows.contains(&crate::layout::element_key(&element))
+                || !crate::layout::has_parent(&element);
+            if free {
+                crate::layout::set_last_row_owner(&element, self.owner());
+                taken.insert(crate::layout::element_key(&element));
+            }
+        }
+        *self.0.taken.borrow_mut() = taken;
+    }
+
+    /// The row as it can be built now. A custom row whose widget is not this list's to
+    /// place becomes an empty row, and nothing is written to the widget.
+    ///
+    /// A row from the builder hands its widget over right now, so the widget is taken
+    /// if it has no parent. A row given with `set_rows` is placed only if this list
+    /// took the widget then and was the last to take it, and nothing holds it now.
+    fn placeable(&self, row: ListRow) -> ListRow {
+        let ListRowContent::Custom(content) = &row.content else {
+            return row;
+        };
+        let element = content.native_element();
+        let free = !crate::layout::has_parent(&element);
+        let ours = if self.0.rows.is_built() {
+            if free {
+                crate::layout::set_last_row_owner(&element, self.owner());
+            }
+            free
+        } else {
+            free && crate::layout::last_row_owner(&element) == Some(self.owner())
+                && self
+                    .0
+                    .taken
+                    .borrow()
+                    .contains(&crate::layout::element_key(&element))
+        };
+        if ours {
+            return row;
+        }
+        ListRow {
+            content: ListRowContent::Item(ListItem::new("")),
+            selectable: row.selectable,
+            activation: row.activation.clone(),
+        }
     }
 
     /// Passes rows in a form that **builds each row when it becomes visible**.
@@ -884,6 +979,7 @@ impl List {
         count: usize,
         build: impl FnMut(usize) -> Result<ListRow> + 'static,
     ) {
+        self.0.taken.borrow_mut().clear();
         self.0.rows.set_builder(count, build);
         self.reset_rows();
     }
@@ -1070,8 +1166,11 @@ impl List {
             if self.0.rows.generation() != generation {
                 break;
             }
-            // 組み立てに失敗した行は、空の行にする。
-            let mut row = row.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
+            // 組み立てに失敗した行は、空の行にする。ほかのコンテナにいるウィジェットの
+            // 行も空にする (`placeable`)。前の行はもう空けてあるので、自分の行に
+            // いた子は親を持たない。
+            let row = row.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
+            let mut row = self.placeable(row);
             // 行に載せられないウィジェットが返ったときも同じ。行が欠けると、行の位置と
             // 窓の位置がずれて、選択やフォーカスが別の行へ届く。
             let built = self
@@ -2149,9 +2248,15 @@ fn row_host(row: &ListRow) -> Result<XamlGrid> {
     let children = host
         .Children()
         .map_err(|e| to_error("get the row container", e))?;
+    let content = row_content(row)?;
     children
-        .Append(&row_content(row)?)
+        .Append(&content)
         .map_err(|e| to_error("add to the row", e))?;
+    // アプリのウィジェットだけを覚える。文字だけの行の中身はここで作った使い捨てで、
+    // 覚えると消す者がいない。
+    if matches!(row.content, ListRowContent::Custom(_)) {
+        crate::layout::note_place(&content, crate::layout::Place::panel(&host));
+    }
 
     let activation = row.activation.clone();
     let handler = PointerEventHandler::new(move |_sender, args| {
@@ -2221,7 +2326,7 @@ fn row_content(row: &ListRow) -> Result<UIElement> {
     match &row.content {
         ListRowContent::Custom(content) => Ok(content.native_element()),
         ListRowContent::Item(item) => {
-            Ok(item_content(&item.label, item.detail.as_deref())?.native_element())
+            Ok(item_content(&item.label, item.detail.as_deref(), item.enabled)?.native_element())
         }
     }
 }
@@ -2253,19 +2358,30 @@ pub(crate) fn text_block(text: &str, secondary: bool) -> Result<TextBlock> {
 ///
 /// The smallness and dimness of the secondary text come from
 /// [`TextStyle::Caption`] and [`TextColor::Secondary`], so neither point size nor
-/// brush is written here. The main text's color is not set (it inherits from the
-/// row's `ListViewItem`).
-pub(crate) fn item_content(label: &str, detail: Option<&str>) -> Result<Stack> {
+/// brush is written here. On a selectable row the main text's color is not set (it
+/// inherits from the row's `ListViewItem`); on a row that cannot be selected, both
+/// texts get the disabled color.
+pub(crate) fn item_content(label: &str, detail: Option<&str>, enabled: bool) -> Result<Stack> {
     let content = Stack::new(Orientation::Vertical)?;
     // `StackPanel` そのものを行の幅いっぱいに広げる。`Align::Start` にすると
     // `HorizontalAlignment=Left` で中身の幅まで縮み、中の文字が行からはみ出す。
     content.set_align(Align::Fill);
     content.set_spacing(DETAIL_SPACING);
-    content.append(&row_label(label)?);
+    let title = row_label(label)?;
+    // 選べない行は本文も補助も無効な色にする (macOS と同じ)。無効のあいだは役割の色を使わず、
+    // 当てる順番にもよらない。
+    // 選べる行には何も当てない (本文は `Style` を持たないまま、行の色を受け継ぐ)。
+    if !enabled {
+        title.set_disabled(true);
+    }
+    content.append(&title);
     if let Some(detail) = detail {
         let sub = row_label(detail)?;
         sub.set_style(TextStyle::Caption);
         sub.set_color(TextColor::Secondary);
+        if !enabled {
+            sub.set_disabled(true);
+        }
         content.append(&sub);
     }
     Ok(content)

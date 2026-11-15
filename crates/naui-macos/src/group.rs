@@ -13,9 +13,8 @@
 //! A group's content is placed in the box's `contentView` with constraints. The
 //! box's own margins are 0 and the padding is the constants of those constraints,
 //! because `contentViewMargins` can only be the same on both sides. The padding
-//! insets a layout guide by its physical sides (`left` / `right`), the same as on
-//! Windows and the Web, and the content is tied to the guide's leading and trailing
-//! edges, so that in right-to-left text it still starts on the leading side.
+//! insets a layout guide by its leading and trailing sides (`start` and `end`),
+//! and the content is tied to the guide's leading edge.
 //!
 //! A group's box has no natural size of its own; its size comes from the content
 //! through those constraints. On recent macOS, where `NSBox` is drawn by SwiftUI,
@@ -231,7 +230,8 @@ impl Group {
     /// The space between the frame and the content. The default is
     /// [`DEFAULT_GROUP_PADDING`](naui_core::DEFAULT_GROUP_PADDING).
     ///
-    /// `left` and `right` are the physical sides, also in right-to-left text.
+    /// `start` is the side where the content starts: the right in a right-to-left
+    /// layout.
     pub fn set_padding(&self, padding: Padding) {
         self.0.padding.set(padding);
         self.0.place_child();
@@ -245,7 +245,11 @@ impl Group {
             return;
         };
         if let Some(previous) = self.0.child.borrow_mut().take() {
-            previous.native_view().removeFromSuperview();
+            // 外さずに別の親へ移った前の中身は、新しい親から抜かない。
+            let previous = previous.native_view();
+            if crate::layout::is_placed_in(&previous, &content) {
+                previous.removeFromSuperview();
+            }
         }
         let view = child.native_view();
         crate::layout::prepare_child(&view);
@@ -258,8 +262,8 @@ impl Group {
 impl GroupInner {
     /// Ties the content to the inside of the box, `padding` away from its edges.
     ///
-    /// The padding is on the physical sides: `left` stays on the left in
-    /// right-to-left text too. The content's leading and top edges are fixed. The
+    /// `start` is on the leading side, which is the right in a right-to-left
+    /// layout. The content's leading and top edges are fixed. The
     /// trailing and bottom edges may not pass the inside and want to reach it just
     /// below required, so content with a maximum stops there instead of breaking the
     /// constraints.
@@ -276,23 +280,25 @@ impl GroupInner {
         let inset = &self.inset;
         constraints.extend([
             inset
-                .leftAnchor()
-                .constraintEqualToAnchor_constant(&content.leftAnchor(), padding.left),
+                .leadingAnchor()
+                .constraintEqualToAnchor_constant(&content.leadingAnchor(), padding.start),
             inset
                 .topAnchor()
                 .constraintEqualToAnchor_constant(&content.topAnchor(), padding.top),
             inset
-                .rightAnchor()
-                .constraintEqualToAnchor_constant(&content.rightAnchor(), -padding.right),
+                .trailingAnchor()
+                .constraintEqualToAnchor_constant(&content.trailingAnchor(), -padding.end),
             inset
                 .bottomAnchor()
                 .constraintEqualToAnchor_constant(&content.bottomAnchor(), -padding.bottom),
         ]);
+        // 外さずに別の親へ移った中身には張らない (共通の祖先が無く例外になる)。
         if let Some(child) = self
             .child
             .borrow()
             .as_ref()
             .map(|child| child.native_view())
+            .filter(|child| crate::layout::is_placed_in(child, &content))
         {
             let leading = child
                 .leadingAnchor()

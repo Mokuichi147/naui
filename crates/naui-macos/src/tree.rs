@@ -29,6 +29,7 @@ use objc2_app_kit::{
 use objc2_foundation::{NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSString};
 
 use crate::list::{cell_view, SelectionHandler};
+use crate::trampoline::SharedSlot;
 use crate::widgets::Widget;
 
 /// Only one column is used, so the identifier can be fixed.
@@ -73,10 +74,13 @@ impl RowHeights {
     }
 }
 
+/// The closure notified with the path and the new expansion state.
+type ExpandFn = dyn FnMut(&[usize], bool);
+
 /// The handler notified when expansion changes. Called with the path and the new
 /// state.
 #[derive(Clone, Default)]
-struct ExpandHandler(Rc<RefCell<Option<Box<dyn FnMut(&[usize], bool)>>>>);
+struct ExpandHandler(SharedSlot<ExpandFn>);
 
 impl ExpandHandler {
     fn set(&self, f: impl FnMut(&[usize], bool) + 'static) {

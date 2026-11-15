@@ -19,7 +19,7 @@ use objc2::{sel, MainThreadMarker, Message};
 use objc2_app_kit::{
     NSLayoutConstraint, NSLayoutConstraintOrientation, NSLayoutPriority, NSStackView,
     NSStackViewDistribution, NSStepper, NSTextAlignment, NSTextField,
-    NSUserInterfaceLayoutOrientation, NSView,
+    NSUserInterfaceLayoutDirection, NSUserInterfaceLayoutOrientation, NSView, NSWritingDirection,
 };
 use objc2_foundation::{NSArray, NSString};
 
@@ -72,10 +72,16 @@ impl NumberInput {
         native.setOrientation(NSUserInterfaceLayoutOrientation::Horizontal);
         native.setDistribution(NSStackViewDistribution::GravityAreas);
         native.setSpacing(2.0);
+        // 右から左の配置でも、数の欄は左から右のまま見せる (欄が左・ボタンが右)。
+        // NSStackView の並びは自分の userInterfaceLayoutDirection に従う。
+        native.setUserInterfaceLayoutDirection(NSUserInterfaceLayoutDirection::LeftToRight);
 
         let field = NSTextField::textFieldWithString(&NSString::from_str(""), mtm);
         // 数字は右そろえ。AppKit の数値欄と同じ見え方にする。
         field.setAlignment(NSTextAlignment::Right);
+        // 書く向きも左から右に固定する。右から左の段落では、強い向きの文字を
+        // 持たない "-5" が "5-" と並んでしまう。
+        field.setBaseWritingDirection(NSWritingDirection::LeftToRight);
 
         let stepper = NSStepper::new(mtm);
         stepper.setValueWraps(false);

@@ -404,13 +404,7 @@ impl Grid {
 
     /// The outer padding.
     pub fn set_padding(&self, padding: Padding) {
-        let _ = self.0.element.style().set_property(
-            "padding",
-            &format!(
-                "{}px {}px {}px {}px",
-                padding.top, padding.right, padding.bottom, padding.left
-            ),
-        );
+        crate::widgets::apply_padding(&self.0.element, padding);
     }
 
     /// Places a child at the given position. Missing rows and columns are added
@@ -433,10 +427,10 @@ impl Grid {
         apply_child_layout(&element, ParentLayout::Grid);
 
         self.grow_to(cell.columns_needed(), cell.rows_needed());
-        self.0
-            .children
-            .borrow_mut()
-            .push((cell, child.boxed_clone()));
+        let mut children = self.0.children.borrow_mut();
+        // 外さずにほかへ移って戻ってきた子 (か、この中で置き直した子) の前の記録は捨てる。
+        children.retain(|(_, placed)| placed.native_element() != element);
+        children.push((cell, child.boxed_clone()));
     }
 
     /// Replaces what is in the cell. Whatever was in the same cell is removed.

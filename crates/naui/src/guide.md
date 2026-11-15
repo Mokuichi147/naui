@@ -269,6 +269,44 @@ environment would race a thread reading it: call `run` before starting threads. 
 switched by it: on macOS AppKit chooses them itself, and elsewhere they stay in the
 OS language.
 
+### Writing direction
+
+Apps in right-to-left languages such as Arabic and Hebrew are laid out as a mirror
+image: rows start at the right, the sidebar sits on the right, and sliders fill
+from the right. Give the direction with [`Settings::layout_direction`], or let
+[`LayoutDirection::Auto`] (the default) take it from [`Settings::language`]:
+
+```no_run
+# use naui::{LayoutDirection, Settings};
+// Auto: Arabic is written right to left, so the layout is mirrored.
+let settings = Settings::new("notes").language("ar");
+// Or fixed, whatever the language.
+let settings = Settings::new("notes").layout_direction(LayoutDirection::Rtl);
+```
+
+| Windows | macOS | Linux | Web |
+| --- | --- | --- | --- |
+| `FlowDirection` on each window's content | `AppleTextDirection` and `NSForceRightToLeftWritingDirection` in the arguments domain | `gtk_widget_set_default_direction` | `dir` on `<html>` |
+
+Each native toolkit mirrors its own controls once it knows the direction, and
+naui leaves that to it. [`Padding`] names its sides `start` and `end` rather than
+left and right, so it is mirrored with the rest. A few things stay left to right:
+`Canvas` (draw on the side where rows start by reading [`Ui::layout_direction`]),
+pictures, the number in a `NumberInput` (a minus sign at the start of a
+right-to-left paragraph would move to the end), the fields of `DatePicker` and
+`TimePicker` on the Web (where WebKit would show `07:30` as `30:07`) and the
+playback bar of `Video` and `Audio`, which follows the direction of time on the
+tape. `PopoverPosition::Left`
+and `Right` keep meaning the physical sides.
+
+The direction is decided once, for the whole app, at startup: AppKit fixes it when
+the app starts and applies it to all of its Auto Layout, so neither a running app
+nor a single widget can be switched. Without [`Settings::language`], `Auto` keeps
+each toolkit's own default: Linux follows the locale, while macOS, Windows and the
+Web stayed left to right (on macOS also for an app localized into Arabic and
+launched with Arabic as its language). An app that translates itself should pass
+the language it chose, so that the layout follows it on every platform.
+
 ## Layout and size
 
 Layout uses these nine:

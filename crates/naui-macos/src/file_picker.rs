@@ -14,8 +14,11 @@ use objc2::{sel, MainThreadMarker, Message};
 use objc2_app_kit::{NSButton, NSModalResponseOK, NSOpenPanel, NSView};
 use objc2_foundation::{NSArray, NSString};
 
-use crate::trampoline::ActionTarget;
+use crate::trampoline::{ActionTarget, SharedSlot};
 use crate::widgets::{impl_widget, Widget};
+
+/// The closure notified with the chosen files.
+type SelectionFn = dyn FnMut(&[FileEntry]);
 
 /// The handler notified when something is picked. Shares a single replaceable
 /// closure.
@@ -24,7 +27,7 @@ use crate::widgets::{impl_widget, Widget};
 /// not double-borrow, the closure is taken out only for the duration of the call
 /// (the same design as [`crate::trampoline::SelectHandler`]).
 #[derive(Clone, Default)]
-struct SelectionHandler(Rc<RefCell<Option<Box<dyn FnMut(&[FileEntry])>>>>);
+struct SelectionHandler(SharedSlot<SelectionFn>);
 
 impl SelectionHandler {
     fn set(&self, f: impl FnMut(&[FileEntry]) + 'static) {

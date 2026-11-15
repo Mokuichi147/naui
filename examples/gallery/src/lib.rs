@@ -66,9 +66,9 @@ pub fn build(ui: &Ui) -> Result<()> {
     // すでにタイトルバーと中身を隔てているので、そこへさらに 20 足すと空きすぎる。
     root.set_padding(Padding {
         top: 8.0,
-        right: 20.0,
         bottom: 20.0,
-        left: 20.0,
+        start: 20.0,
+        end: 20.0,
     });
     root.set_column_track(0, Track::FILL);
     // 画面の中身は Grid の Fill 行へ直接置く。Windows の StackPanel は主軸方向の

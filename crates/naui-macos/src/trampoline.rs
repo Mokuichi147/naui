@@ -16,6 +16,14 @@ use objc2_app_kit::{
 };
 use objc2_foundation::NSNotification;
 
+/// A slot for a closure that may be empty. The handlers take the closure out only for
+/// the duration of the call, so that touching the same control from inside it does
+/// not double-borrow.
+pub(crate) type Slot<F> = RefCell<Option<Box<F>>>;
+
+/// A [`Slot`] shared by the clones of a handler.
+pub(crate) type SharedSlot<F> = Rc<Slot<F>>;
+
 type Callback = RefCell<Box<dyn FnMut()>>;
 
 define_class!(
@@ -239,7 +247,7 @@ impl ComboObserver {
 /// cannot receive borrowed values (it would need a lifetime parameter), so this is
 /// provided separately.
 #[derive(Clone, Default)]
-pub(crate) struct TextHandler(Rc<RefCell<Option<Box<dyn FnMut(&str)>>>>);
+pub(crate) struct TextHandler(SharedSlot<dyn FnMut(&str)>);
 
 impl TextHandler {
     pub(crate) fn set(&self, f: impl FnMut(&str) + 'static) {
@@ -266,7 +274,7 @@ impl TextHandler {
 /// bar's selection from inside a tab selection callback does not double-borrow, the
 /// closure is taken out only for the duration of the call.
 #[derive(Clone, Default)]
-pub(crate) struct SelectHandler(Rc<RefCell<Option<Box<dyn FnMut(usize)>>>>);
+pub(crate) struct SelectHandler(SharedSlot<dyn FnMut(usize)>);
 
 impl SelectHandler {
     pub(crate) fn set(&self, f: impl FnMut(usize) + 'static) {
@@ -298,7 +306,7 @@ impl SelectHandler {
 /// than indices (the date picker's `on_change`, for example). `SelectHandler` has a
 /// fixed type because it is placed in the ivars of `define_class!`, so this is
 /// provided separately.
-pub(crate) struct ValueHandler<T>(RefCell<Option<Box<dyn FnMut(T)>>>);
+pub(crate) struct ValueHandler<T>(Slot<dyn FnMut(T)>);
 
 impl<T> Default for ValueHandler<T> {
     fn default() -> Self {

@@ -62,9 +62,16 @@ fn main() {
         && std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc")
     {
         // The manifest naui's build places in target/<profile>/naui-winappsdk/.
+        // OUT_DIR is below target/<profile>/build/, at a depth that depends on the
+        // Cargo version, so look for the build directory by name.
         let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
-        let manifest = out_dir.ancestors().nth(3).unwrap()
-            .join("naui-winappsdk").join("naui-winappsdk.manifest");
+        let manifest = out_dir
+            .ancestors()
+            .find(|path| path.file_name() == Some("build".as_ref()))
+            .and_then(std::path::Path::parent)
+            .unwrap()
+            .join("naui-winappsdk")
+            .join("naui-winappsdk.manifest");
         println!("cargo:rustc-link-arg-bins=/MANIFEST:EMBED");
         println!("cargo:rustc-link-arg-bins=/MANIFESTINPUT:{}", manifest.display());
     }

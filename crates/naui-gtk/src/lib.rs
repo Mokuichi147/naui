@@ -155,6 +155,7 @@ mod file_saver;
 mod focus;
 mod grid;
 mod group;
+mod handover;
 mod indicator;
 mod interaction;
 mod keys;
@@ -187,7 +188,9 @@ use std::rc::Rc;
 use gtk::gio;
 use gtk::glib;
 use gtk::prelude::*;
-use naui_core::{DatePickerMode, Error, Orientation, Result, Settings, Tasks, Theme};
+use naui_core::{
+    DatePickerMode, Error, LayoutDirection, Orientation, Result, Settings, Tasks, Theme,
+};
 
 pub use adaptive_panes::AdaptivePanes;
 pub use bin::SizeBin;
@@ -678,6 +681,16 @@ impl Ui {
         self.0.theme.get()
     }
 
+    /// Which way the app's layout runs: GTK's default direction, which follows the
+    /// locale (the translation of GTK's own strings) unless the app named one.
+    pub fn layout_direction(&self) -> LayoutDirection {
+        if gtk::Widget::default_direction() == gtk::TextDirection::Rtl {
+            LayoutDirection::Rtl
+        } else {
+            LayoutDirection::Ltr
+        }
+    }
+
     /// The preferred languages as BCP 47 tags, most preferred first (`"ja-JP"`,
     /// `"en-US"` and so on). The basis for choosing which translation to show.
     ///
@@ -791,6 +804,23 @@ where
     build(&ui)
 }
 
+/// Gives the whole app a layout direction (`gtk_widget_set_default_direction`).
+/// `None` leaves GTK's own choice, which follows the locale.
+///
+/// Every widget whose direction is unset follows the default, and GTK tells them
+/// when it changes. Public for tests.
+#[doc(hidden)]
+pub fn apply_layout_direction(direction: Option<LayoutDirection>) {
+    let Some(direction) = direction else {
+        return;
+    };
+    gtk::Widget::set_default_direction(if direction.is_rtl() {
+        gtk::TextDirection::Rtl
+    } else {
+        gtk::TextDirection::Ltr
+    });
+}
+
 /// Starts the app and builds the UI inside `build`.
 ///
 /// `build` is called exactly once, inside the `GtkApplication`'s `activate`. This
@@ -834,6 +864,8 @@ where
         .build();
 
     let theme = settings.theme;
+    let direction = settings.resolved_layout_direction();
+    naui_core::set_app_layout_direction(direction);
     let build = RefCell::new(Some(build));
     let failure: Rc<RefCell<Option<Error>>> = Rc::new(RefCell::new(None));
     {
@@ -844,6 +876,7 @@ where
                 return;
             };
             apply_theme(theme);
+            apply_layout_direction(direction);
             let ui = Ui::new(app.clone(), theme);
             match build(&ui) {
                 Ok(()) => KEEP_ALIVE.with(|slot| slot.borrow_mut().push(ui)),

@@ -9,9 +9,10 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use naui_core::{
-    Align, Bitmap, ButtonRole, Color, Gradient, GridCell, MenuItem, MenuShortcut, MenuSpec,
-    Orientation, Point, Rect, Result, RichText, ScrollPolicy, SidebarItem, SidebarSection, Sizing,
-    TextColor, TextStyle, Theme, ToolbarIcon, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
+    Align, Bitmap, ButtonRole, Color, Gradient, GridCell, LayoutDirection, MenuItem, MenuShortcut,
+    MenuSpec, Orientation, Point, Rect, Result, RichText, ScrollPolicy, SidebarItem,
+    SidebarSection, Sizing, TextColor, TextStyle, Theme, ToolbarIcon, WindowPlacement, WindowState,
+    DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_windows::{run_for_test, MenuEntry, Ui, Widget};
 
@@ -26,8 +27,8 @@ use naui_winui3::Microsoft::UI::Xaml::Documents::{Hyperlink, Inline, Run};
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::{BitmapImage, SvgImageSource};
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
 use naui_winui3::Microsoft::UI::Xaml::{
-    Application, FrameworkElement, GridUnitType, HorizontalAlignment, RoutedEventHandler, Style,
-    UIElement, VerticalAlignment, Visibility,
+    Application, DependencyProperty, FrameworkElement, GridUnitType, HorizontalAlignment,
+    RoutedEventHandler, Style, UIElement, VerticalAlignment, Visibility,
 };
 use windows::Foundation::{IPropertyValue, PropertyValue};
 use windows::Win32::Foundation::E_NOINTERFACE;
@@ -62,6 +63,10 @@ const CASES: &[Case] = &[
     (
         "ラベルの段階と役割が type ramp とテーマリソースへ写る",
         label_style_and_color_map_to_the_type_ramp,
+    ),
+    (
+        "選べない行の本文は無効の色になり、選べる行は違う色のまま",
+        label_disabled_is_dimmed,
     ),
     ("スライダーが範囲でクランプされる", slider_clamp),
     ("進捗バーが 0..1 に収まる", progress_clamp),
@@ -116,6 +121,10 @@ const CASES: &[Case] = &[
     (
         "Stack から外すと配置を次の親へ戻せる",
         removing_stack_child_restores_alignment,
+    ),
+    (
+        "コンテナから外した子に揃えのローカル値を残さない",
+        removed_child_leaves_no_local_alignment,
     ),
     ("スタックが子を生かし続ける", stack_keeps_children),
     (
@@ -195,6 +204,22 @@ const CASES: &[Case] = &[
         table_keeps_the_rows_a_failed_build_left,
     ),
     (
+        "表のセルから出た子は、移った先で新しく作った子と同じ配置になる",
+        table_cell_child_carries_nothing_over,
+    ),
+    (
+        "表のセルの中で set_sizing しても列の揃えが残り、出たあとは新しい Sizing の形になる",
+        table_cell_keeps_its_alignment_through_set_sizing,
+    ),
+    (
+        "入れられない子のある表の行は、先に置いた子を戻し、断った子に何も書かない",
+        table_row_refusing_a_widget_leaves_both_as_they_were,
+    ),
+    (
+        "画面外へスクロールして表のセルから出た子も、新しく作った子と同じ配置になる",
+        table_cell_child_scrolled_out_carries_nothing_over,
+    ),
+    (
         "Page Up / Down は表を 1 ページずつ動かす",
         table_page_keys_move_by_a_page,
     ),
@@ -245,6 +270,14 @@ const CASES: &[Case] = &[
     (
         "スクロールのあと表の行の余白を Shift クリックできる",
         table_shift_click_in_the_margin_after_a_scroll,
+    ),
+    (
+        "スクロールのあと自前の内容の行をクリックで選べる",
+        list_custom_rows_click_after_a_scroll,
+    ),
+    (
+        "行き来しながら自前の内容の行をクリックで選べる",
+        list_custom_rows_click_while_scrolling,
     ),
     (
         "先に選べる行が無くても、リストの見えている行は組み立てたまま",
@@ -403,6 +436,10 @@ const CASES: &[Case] = &[
     (
         "アプリの言語がウィンドウの中身に付き、中の要素が継ぐ",
         app_language_is_set_on_the_window_content,
+    ),
+    (
+        "右から左の配置がウィンドウの中身に付き、描画面・絵・数値入力・動画は左から右のまま、タイトルバーはキャプションボタンを避ける",
+        right_to_left_layout_is_set_on_the_window_content,
     ),
     (
         "ウィンドウの大きさはタイトルバーとメニューバーを除いた中身の行",
@@ -628,6 +665,18 @@ const CASES: &[Case] = &[
     (
         "シートの設定が ContentDialog へ届く",
         sheet_configuration_reaches_the_content_dialog,
+    ),
+    (
+        "外さずに別の親へ入れた子を、その場で置くコンテナは断り、前の子を保つ",
+        crate::moved_child::placers_refuse_a_child_with_a_parent,
+    ),
+    (
+        "リストの行と表のセルは親の無い子だけを置き、作り直しても奪わない",
+        crate::moved_child::rows_take_only_free_children,
+    ),
+    (
+        "表示したリストでも渡しただけの子を取り返さず、後の持ち主が置く",
+        crate::moved_child::rows_take_only_free_children_on_screen,
     ),
 ];
 
@@ -921,24 +970,32 @@ pub(crate) fn run() {
         std::process::exit(1);
     });
 
+    let shard = Shard::from_env();
     let failed = Arc::new(AtomicUsize::new(0));
     let counter = failed.clone();
     let outcome = run_for_test(move |ui| {
-        for (name, case) in CASES {
+        let mut ran = 0;
+        for (index, (name, case)) in CASES.iter().enumerate() {
             if let Ok(only) = std::env::var("NAUI_ONLY") {
                 if !name.contains(only.as_str()) {
                     continue;
                 }
             }
+            if !shard.takes(index, CASES.len()) {
+                continue;
+            }
+            ran += 1;
             report(name, catch_unwind(AssertUnwindSafe(|| case(ui))), &counter);
         }
 
-        // 2 段構えのケースは、まず仕込みだけ済ませる。
+        // 2 段構えのケースは、まず仕込みだけ済ませる。どれも 1 秒かからないので、
+        // 分けずに、ふだんと同じくほかのケースの後に走るよう、最後のシャードがまとめて受け持つ。
         let mut deferred = Vec::new();
         for (name, setup) in ASYNC_CASES {
-            if std::env::var("NAUI_ONLY").is_ok() {
+            if std::env::var("NAUI_ONLY").is_ok() || !shard.is_last() {
                 continue;
             }
+            ran += 1;
             match catch_unwind(AssertUnwindSafe(|| setup(ui))) {
                 Ok(Ok(check)) => deferred.push((*name, check)),
                 other => report(name, other.map(|result| result.map(|_| ())), &counter),
@@ -959,10 +1016,10 @@ pub(crate) fn run() {
             }
             // 結果はここで出し切る。この先はアプリの後片づけなので、そこで
             // 転んでも何が通って何が落ちたかは読める。
-            let total = CASES.len() + ASYNC_CASES.len();
             println!(
-                "\n{total} 件中 {} 件成功",
-                total - later.load(Ordering::Relaxed)
+                "\n{ran} 件中 {} 件成功{}",
+                ran - later.load(Ordering::Relaxed),
+                shard.describe(CASES.len() + ASYNC_CASES.len()),
             );
         });
         checks.send(())?;
@@ -975,6 +1032,66 @@ pub(crate) fn run() {
     }
     if failed.load(Ordering::Relaxed) > 0 {
         std::process::exit(1);
+    }
+}
+
+/// Which part of [`CASES`] this process runs, from `NAUI_SHARD=k/n` (`k` counts from 1).
+///
+/// The cases cannot run in parallel in one process (the app is started only once) nor in
+/// one session (real input fights over the pointer and the foreground window), so CI
+/// splits them across runners instead. Each shard takes a run of [`CASES`] in a row, cut
+/// into `n` equal counts, rather than every `n`-th case: the cases share one process,
+/// and some of them leave state behind that the next case trips over (a case scrolling
+/// a list right after the real-input key cases on another list sees its rows not move).
+/// Cutting into runs keeps every case after the same case as in a full run, except the
+/// first case of each shard.
+///
+/// Without the variable, every case runs.
+#[derive(Clone, Copy)]
+struct Shard {
+    /// Counts from 0.
+    index: usize,
+    count: usize,
+}
+
+impl Shard {
+    fn from_env() -> Self {
+        let Ok(value) = std::env::var("NAUI_SHARD") else {
+            return Self { index: 0, count: 1 };
+        };
+        let parsed = value.split_once('/').and_then(|(k, n)| {
+            let (k, n) = (
+                k.trim().parse::<usize>().ok()?,
+                n.trim().parse::<usize>().ok()?,
+            );
+            (1..=n).contains(&k).then_some(Self {
+                index: k - 1,
+                count: n,
+            })
+        });
+        parsed.unwrap_or_else(|| panic!("NAUI_SHARD は k/n (1 <= k <= n) で指定する: {value:?}"))
+    }
+
+    /// Whether case `index` of `total` falls into this shard.
+    fn takes(self, index: usize, total: usize) -> bool {
+        (total * self.index / self.count..total * (self.index + 1) / self.count).contains(&index)
+    }
+
+    fn is_last(self) -> bool {
+        self.index + 1 == self.count
+    }
+
+    /// A note for the summary line, saying which shard ran out of how many cases in all.
+    fn describe(self, total: usize) -> String {
+        if self.count == 1 {
+            String::new()
+        } else {
+            format!(
+                " (シャード {}/{}、全 {total} 件のうち)",
+                self.index + 1,
+                self.count
+            )
+        }
     }
 }
 
@@ -1756,6 +1873,61 @@ fn label_style_and_color_map_to_the_type_ramp(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// The text of a row that cannot be selected is drawn in the disabled text color, and
+/// the text of a row that can is not.
+fn label_disabled_is_dimmed(ui: &Ui) -> Result<()> {
+    use naui_core::ListItem;
+    use naui_winui3::Microsoft::UI::Xaml::Controls::{ListViewItem, Panel};
+
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("選べる").detail("補助"),
+        ListItem::new("選べない").detail("補助").enabled(false),
+    ]);
+    let items = list.native_list_view().Items().expect("Items");
+    // 行 → 中身の入れ物 → 縦の並び → 本文 (最初の TextBlock) の文字色。
+    let title_color = |slot: u32| {
+        let row = items
+            .GetAt(slot)
+            .expect("行")
+            .cast::<ListViewItem>()
+            .expect("ListViewItem");
+        let holder = row
+            .Content()
+            .expect("中身")
+            .cast::<Panel>()
+            .expect("入れ物");
+        let column = holder
+            .Children()
+            .expect("入れ物の子")
+            .GetAt(0)
+            .expect("縦の並び")
+            .cast::<Panel>()
+            .expect("縦の並びの Panel");
+        let title = column
+            .Children()
+            .expect("縦の並びの子")
+            .GetAt(0)
+            .expect("本文")
+            .cast::<TextBlock>()
+            .expect("TextBlock");
+        title
+            .Foreground()
+            .expect("Foreground")
+            .cast::<SolidColorBrush>()
+            .expect("テーマリソースは SolidColorBrush であること")
+            .Color()
+            .expect("ブラシの色")
+    };
+    let selectable = title_color(0);
+    let unselectable = title_color(1);
+    assert!(
+        unselectable != selectable,
+        "選べない行の本文が選べる行と同じ色のまま: {selectable:?}"
+    );
+    Ok(())
+}
+
 fn slider_clamp(ui: &Ui) -> Result<()> {
     let slider = ui.slider(0.0, 10.0)?;
     slider.set_value(5.0);
@@ -2130,7 +2302,7 @@ fn group_puts_a_heading_above_a_card(ui: &Ui) -> Result<()> {
         "中身はカードの幅いっぱいに広がること"
     );
     let padding = card.Padding().expect("Padding");
-    assert_eq!(padding.Left, naui_core::DEFAULT_GROUP_PADDING.left);
+    assert_eq!(padding.Left, naui_core::DEFAULT_GROUP_PADDING.start);
 
     group.set_padding(naui_core::Padding::all(4.0));
     assert_eq!(card.Padding().expect("Padding").Top, 4.0);
@@ -2330,6 +2502,102 @@ fn removing_stack_child_restores_alignment(ui: &Ui) -> Result<()> {
             .expect("Grid へ移した子の横配置"),
         HorizontalAlignment::Stretch,
         "Stack の Right が次の親へ持ち越されないこと"
+    );
+    Ok(())
+}
+
+/// Whether the element has a local value for `HorizontalAlignment` and
+/// `VerticalAlignment`, in that order.
+fn local_alignment(element: &FrameworkElement) -> (bool, bool) {
+    let unset = DependencyProperty::UnsetValue()
+        .expect("UnsetValue")
+        .cast::<windows_core::IUnknown>()
+        .expect("IUnknown");
+    let has_local = |property: DependencyProperty| {
+        let local = element
+            .ReadLocalValue(&property)
+            .expect("ローカル値")
+            .cast::<windows_core::IUnknown>()
+            .expect("IUnknown");
+        local.as_raw() != unset.as_raw()
+    };
+    (
+        has_local(FrameworkElement::HorizontalAlignmentProperty().expect("横配置のプロパティ")),
+        has_local(FrameworkElement::VerticalAlignmentProperty().expect("縦配置のプロパティ")),
+    )
+}
+
+/// A child whose alignment the app never set gets no local alignment left behind
+/// when it leaves a container.
+///
+/// A `Button`'s style says `Left` / `Center`, but the style only applies in the
+/// live tree. Writing back the value read before that would leave the property's
+/// default `Stretch` as a local value, which beats the style, so the button would
+/// look different from a fresh one. Off screen (and in CI) the template never
+/// applies, so this compares local values instead of the effective ones.
+fn removed_child_leaves_no_local_alignment(ui: &Ui) -> Result<()> {
+    let fresh = ui.button("新しい")?;
+    assert_eq!(
+        local_alignment(&native::<FrameworkElement>(&fresh)),
+        (false, false),
+        "作ったばかりのボタンには揃えのローカル値が無いこと"
+    );
+
+    let vertical = ui.stack(Orientation::Vertical)?;
+    let button = ui.button("縦の Stack")?;
+    vertical.append(&button);
+    assert!(
+        local_alignment(&native::<FrameworkElement>(&button)).0,
+        "縦の Stack の中では横の揃えを Stack が書くこと"
+    );
+    vertical.remove(0);
+    assert_eq!(
+        local_alignment(&native::<FrameworkElement>(&button)),
+        (false, false),
+        "縦の Stack から外したボタンに揃えのローカル値を残さないこと"
+    );
+
+    let horizontal = ui.stack(Orientation::Horizontal)?;
+    let button = ui.button("横の Stack")?;
+    horizontal.append(&button);
+    horizontal.remove(0);
+    assert_eq!(
+        local_alignment(&native::<FrameworkElement>(&button)),
+        (false, false),
+        "横の Stack から外したボタンに揃えのローカル値を残さないこと"
+    );
+
+    let scroll = ui.scroll()?;
+    let button = ui.button("Scroll")?;
+    scroll.set_child(&button);
+    assert!(
+        local_alignment(&native::<FrameworkElement>(&button)).0,
+        "横へ送らない Scroll の中では横の揃えを Scroll が書くこと"
+    );
+    scroll.set_child(&ui.label("差し替え")?);
+    assert_eq!(
+        local_alignment(&native::<FrameworkElement>(&button)),
+        (false, false),
+        "Scroll から外したボタンに揃えのローカル値を残さないこと"
+    );
+
+    // 利用者が Sizing で決めた揃えは、外したあとも残す。
+    let sized = ui.button("Sizing 済み")?;
+    sized.set_sizing(Sizing::AUTO);
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_align(Align::End);
+    stack.append(&sized);
+    stack.remove(0);
+    let sized_native = native::<FrameworkElement>(&sized);
+    assert_eq!(
+        local_alignment(&sized_native),
+        (true, true),
+        "Sizing で書いた揃えはローカル値のまま残ること"
+    );
+    assert_eq!(
+        sized_native.HorizontalAlignment().expect("横配置"),
+        HorizontalAlignment::Left,
+        "Sizing の Left へ戻ること"
     );
     Ok(())
 }
@@ -2999,6 +3267,169 @@ fn app_language_is_set_on_the_window_content(ui: &Ui) -> Result<()> {
         "中の要素は根の言語を継ぐこと"
     );
     window.close();
+    Ok(())
+}
+
+/// A right-to-left layout is `FlowDirection` on the window's content, which every
+/// element inside inherits. XAML mirrors by a transform on the rendering, so the
+/// elements that draw for themselves (`Canvas`, `Image`, `Video`) and `NumberInput`
+/// are given `LeftToRight` back.
+fn right_to_left_layout_is_set_on_the_window_content(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::FlowDirection;
+
+    naui_core::set_app_layout_direction(Some(LayoutDirection::Rtl));
+    let built = (|| -> Result<_> {
+        let window = ui.window("書字方向", 520.0, 200.0)?;
+        let stack = ui.stack(Orientation::Vertical)?;
+        let row = ui.stack(Orientation::Horizontal)?;
+        let first = ui.button("一")?;
+        let second = ui.button("二")?;
+        row.append(&first);
+        row.append(&second);
+        stack.append(&row);
+        let group = ui.group("")?;
+        let content = ui.label("中身")?;
+        content.set_sizing(Sizing::fill_width());
+        group.set_child(&content);
+        group.set_padding(naui_core::Padding {
+            top: 2.0,
+            bottom: 2.0,
+            start: 4.0,
+            end: 20.0,
+        });
+        stack.append(&group);
+        let number = ui.number_input(-5.0)?;
+        let canvas = ui.canvas()?;
+        let image = ui.image("")?;
+        let video = ui.video("")?;
+        stack.append(&number);
+        stack.append(&canvas);
+        stack.append(&image);
+        stack.append(&video);
+        window.set_child(&stack);
+        let toolbar = ui.toolbar()?;
+        toolbar.set_items(&[naui_core::ToolbarItem::new(ToolbarIcon::Open, "開く")]);
+        window.set_toolbar(&toolbar);
+        Ok((
+            window, first, second, group, content, number, canvas, image, video, toolbar,
+        ))
+    })();
+    assert_eq!(ui.layout_direction(), LayoutDirection::Rtl);
+    naui_core::set_app_layout_direction(None);
+    let (window, first, second, group, content, number, canvas, image, video, toolbar) = built?;
+
+    let root = window
+        .native_window()
+        .Content()
+        .expect("ウィンドウの中身")
+        .cast::<FrameworkElement>()
+        .expect("根は FrameworkElement");
+    let direction = |element: &FrameworkElement| element.FlowDirection().expect("FlowDirection");
+    assert_eq!(direction(&root), FlowDirection::RightToLeft);
+    assert_eq!(
+        direction(&native::<FrameworkElement>(&first)),
+        FlowDirection::RightToLeft,
+        "中の要素は根の向きを継ぐこと"
+    );
+    for (name, element) in [
+        ("数値入力", native::<FrameworkElement>(&number)),
+        ("描画面", native::<FrameworkElement>(&canvas)),
+        ("画像", native::<FrameworkElement>(&image)),
+        ("動画", native::<FrameworkElement>(&video)),
+    ] {
+        assert_eq!(
+            direction(&element),
+            FlowDirection::LeftToRight,
+            "{name}は左から右のまま"
+        );
+    }
+
+    // 横に並べた最初の子が右に来る (反転は描画の変換なので、窓から見た位置で比べる)。
+    window.show();
+    let first_element = native::<FrameworkElement>(&first);
+    let laid_out = || first_element.ActualWidth().unwrap_or(0.0) > 0.0;
+    pump_until(SCROLL_LAYOUT_TIMEOUT, laid_out);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !laid_out() {
+            println!("     (実寸が付かない環境なので、位置は確かめずに通す)");
+            return;
+        }
+        let x = |element: &FrameworkElement| {
+            element
+                .TransformToVisual(None)
+                .and_then(|transform| {
+                    transform.TransformPoint(windows::Foundation::Point { X: 0.0, Y: 0.0 })
+                })
+                .expect("窓から見た位置")
+                .X
+        };
+        let first_x = x(&first_element);
+        let second_x = x(&native::<FrameworkElement>(&second));
+        assert!(
+            first_x > second_x,
+            "最初の子が右に来ること: 一 {first_x} / 二 {second_x}"
+        );
+
+        // Group の余白の start は先頭側 (右) に付く。反転した要素の原点は右上に
+        // なるので、両端を窓の座標へ移してから左右を決める。
+        let edges = |element: &FrameworkElement| {
+            let width = element.ActualWidth().unwrap_or(0.0) as f32;
+            let transform = element.TransformToVisual(None).expect("窓への変換");
+            let a = transform
+                .TransformPoint(windows::Foundation::Point { X: 0.0, Y: 0.0 })
+                .expect("端")
+                .X;
+            let b = transform
+                .TransformPoint(windows::Foundation::Point { X: width, Y: 0.0 })
+                .expect("端")
+                .X;
+            (a.min(b), a.max(b))
+        };
+        let (outer_left, outer_right) = edges(&native::<FrameworkElement>(&group));
+        let (inner_left, inner_right) = edges(&native::<FrameworkElement>(&content));
+        let (left_gap, right_gap) = (inner_left - outer_left, outer_right - inner_right);
+        assert!(
+            left_gap - right_gap > 10.0,
+            "end の 20 が左、start の 4 が右: 左 {left_gap} / 右 {right_gap}"
+        );
+
+        // タイトルバーの中身は鏡映しになるが、システムが描くキャプション
+        // ボタン (46 幅 × 3) は右端に残る。タイトル文字はその左に収まり、
+        // ツールバーはさらにその左 (先頭から見て後ろ) に来る。
+        let title_bar = root
+            .cast::<Grid>()
+            .expect("根は Grid")
+            .Children()
+            .and_then(|children| children.GetAt(0))
+            .expect("タイトルバー")
+            .cast::<Grid>()
+            .expect("タイトルバーは Grid");
+        let title = title_bar
+            .Children()
+            .and_then(|children| children.GetAt(0))
+            .expect("タイトル文字")
+            .cast::<FrameworkElement>()
+            .expect("タイトル文字は FrameworkElement");
+        let (_, root_right) = edges(&root);
+        let (title_left, title_right) = edges(&title);
+        assert!(
+            title_right <= root_right - 138.0,
+            "タイトル文字がキャプションボタンに重ならないこと: 文字の右端 {title_right} / 窓の右端 {root_right}"
+        );
+        let bar = toolbar
+            .native_command_bar()
+            .cast::<FrameworkElement>()
+            .expect("CommandBar");
+        let (_, bar_right) = edges(&bar);
+        assert!(
+            bar_right <= title_left,
+            "ツールバーはタイトル文字の左: ツールバーの右端 {bar_right} / 文字の左端 {title_left}"
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
     Ok(())
 }
 
@@ -5444,7 +5875,7 @@ fn show_and_measure(window: &naui_windows::Window, scroll: &naui_windows::Scroll
 /// It is long because a window opened right after keys moved through the rows of a
 /// `ListView` is laid out late, by seconds (see `docs/known-limitations.md`). A case that
 /// gives up waiting passes without checking anything.
-const SCROLL_LAYOUT_TIMEOUT: Duration = Duration::from_secs(20);
+pub(crate) const SCROLL_LAYOUT_TIMEOUT: Duration = Duration::from_secs(20);
 
 fn scroll_measures_and_moves(ui: &Ui) -> Result<()> {
     let (window, scroll, _pane) = tall_scroll(ui, 40)?;
@@ -5978,7 +6409,7 @@ fn preferred_languages_follow_settingchange(ui: &Ui) -> Result<()> {
 /// Image load completion arrives by being queued onto the UI thread's queue from
 /// another thread. Cases run inside `OnLaunched`, so without pumping here it would
 /// never arrive.
-fn pump_until(timeout: Duration, mut done: impl FnMut() -> bool) {
+pub(crate) fn pump_until(timeout: Duration, mut done: impl FnMut() -> bool) {
     use windows::Win32::UI::WindowsAndMessaging::{
         DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE,
     };
@@ -9383,6 +9814,208 @@ fn table_shift_click_in_the_margin_after_a_scroll(ui: &Ui) -> Result<()> {
     with_shown_table_for_input(ui, 1_000, shift_click_in_margin_scenario)
 }
 
+/// Clicks rows after a scroll on a `List` whose rows are custom content (a label placed
+/// with `ListRow::new`), in single and in multiple selection. A list of plain text rows
+/// is run the same way for comparison.
+fn list_custom_rows_click_after_a_scroll(ui: &Ui) -> Result<()> {
+    for mode in [
+        naui_core::SelectionMode::Single,
+        naui_core::SelectionMode::Multiple,
+    ] {
+        println!("     (自前の内容の行, {mode:?})");
+        with_shown_custom_list_for_input(ui, 1_000, mode, custom_rows_click_scenario)?;
+    }
+    println!("     (文字の行, Single: 比べる)");
+    with_shown_list_for_input(ui, 1_000, custom_rows_click_scenario)
+}
+
+/// [`list_custom_rows_click_after_a_scroll`] with scrolling back and forth between clicks.
+fn list_custom_rows_click_while_scrolling(ui: &Ui) -> Result<()> {
+    with_shown_custom_list_for_input(
+        ui,
+        1_000,
+        naui_core::SelectionMode::Single,
+        custom_rows_click_while_scrolling,
+    )
+}
+
+/// Shows a list of `rows` custom-content rows for real input, runs `scenario`, and puts the
+/// pointer back.
+fn with_shown_custom_list_for_input(
+    ui: &Ui,
+    rows: usize,
+    mode: naui_core::SelectionMode,
+    scenario: impl FnOnce(windows::Win32::Foundation::HWND, &naui_windows::List) -> Option<()>,
+) -> Result<()> {
+    let window = ui.window("自前の内容の行への実際の入力", 300.0, 240.0)?;
+    let list = ui.list()?;
+    list.set_selection_mode(mode);
+    let row_ui = ui.clone();
+    // 利用者の行と同じく、Label を横に複数並べた行にする。
+    list.set_row_builder(rows, move |index| {
+        let row = row_ui.stack(naui_core::Orientation::Horizontal)?;
+        row.append(&row_ui.label(&format!("行 {index}"))?);
+        row.append(&row_ui.label(&format!("値 {}", index * 37 % 1000))?);
+        row.append(&row_ui.label(&format!("補足の文字列 {index} の長さ"))?);
+        Ok(naui_windows::ListRow::new(&row))
+    });
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+    run_shown_for_input(&window, &list, scenario)
+}
+
+/// Scrolls with the wheel from row 2, then clicks each row that is on screen and built,
+/// and reports the rows whose click did not select them. Each row is clicked once, so a
+/// click that is lost shows up as a failure.
+fn custom_rows_click_scenario(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+) -> Option<()> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_WHEEL,
+    };
+
+    // ポインターを一覧の上に置いてから、同じ場所で回す。
+    aim_at_row_point(hwnd, list, 2, 40.0)?;
+    for _ in 0..40 {
+        if !foreground_is_ours() {
+            println!("     (テストのウィンドウが前面に無いので、ホイールを送らずに通す)");
+            return None;
+        }
+        send_input(mouse_input(MOUSEEVENTF_WHEEL, (-480_i32) as u32));
+        pump_until(Duration::from_millis(120), || false);
+    }
+    pump_until(Duration::from_secs(2), || false);
+
+    let targets = visible_built_rows(list);
+    println!(
+        "     (位置 {:.0}、表示中の組み立て済みの行 {:?})",
+        list.scroller().VerticalOffset().unwrap_or(0.0),
+        targets
+    );
+    assert!(!targets.is_empty(), "表示中の行が組み立てられていない");
+
+    let mut failed = Vec::new();
+    for &index in targets.iter().take(8) {
+        // 押す位置は行ごとに求め直す。直前のクリックで窓が動くことがあるため。
+        if aim_at_row_point(hwnd, list, index, 40.0).is_none() {
+            println!("     ({index} 行目の位置へ送れないので、確かめずに通す)");
+            return None;
+        }
+        send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
+        send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
+        pump_until(Duration::from_secs(1), || list.selection() == [index]);
+        let selected = list.selection();
+        println!("     ({index} 行目を押した → 選択 {selected:?})");
+        if selected != [index] {
+            failed.push(index);
+        }
+    }
+    assert!(
+        failed.is_empty(),
+        "スクロールのあとクリックで選べなかった行: {failed:?}"
+    );
+    Some(())
+}
+
+/// Scrolls down and up in steps with the wheel, and after each step clicks a built row in
+/// the middle of the visible ones. Reports the steps whose click did not select that row.
+fn custom_rows_click_while_scrolling(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+) -> Option<()> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_WHEEL,
+    };
+
+    aim_at_row_point(hwnd, list, 2, 40.0)?;
+    let mut failed = Vec::new();
+    for step in 0..30 {
+        if !foreground_is_ours() {
+            println!("     (テストのウィンドウが前面に無いので、ホイールを送らずに通す)");
+            return None;
+        }
+        // 下へ 2 回、上へ 1 回を繰り返す。
+        let (notches, delta) = if step % 3 == 2 {
+            (3, 480_i32)
+        } else {
+            (5, -480_i32)
+        };
+        for _ in 0..notches {
+            send_input(mouse_input(MOUSEEVENTF_WHEEL, delta as u32));
+            pump_until(Duration::from_millis(120), || false);
+        }
+        pump_until(Duration::from_millis(600), || false);
+        let targets = visible_built_rows(list);
+        // 表示中の行が組み立てられていないのは、それ自体が不具合。押さずに進むと、
+        // 1 度も押さないまま通ってしまう。
+        let Some(&index) = targets.get(targets.len() / 2) else {
+            panic!("段 {step}: 表示中の行が組み立てられていない");
+        };
+        if aim_at_row_point(hwnd, list, index, 40.0).is_none() {
+            println!("     (段 {step}: 押す位置へ送れないので、確かめずに通す)");
+            return None;
+        }
+        send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
+        send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
+        pump_until(Duration::from_secs(1), || list.selection() == [index]);
+        let selected = list.selection();
+        println!(
+            "     (段 {step}: 位置 {:.0}、{index} 行目を押した → 選択 {selected:?})",
+            list.scroller().VerticalOffset().unwrap_or(0.0)
+        );
+        if selected != [index] {
+            failed.push((step, index));
+        }
+    }
+    assert!(
+        failed.is_empty(),
+        "行き来しながらクリックで選べなかった (段, 行): {failed:?}"
+    );
+    Some(())
+}
+
+/// The rows of the whole list that are built and lie inside the visible part of the scroll.
+fn visible_built_rows(list: &impl RowsForInput) -> Vec<usize> {
+    use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+    use windows::Foundation::Point as XamlPoint;
+
+    let scroll = list.scroller();
+    let Ok(view) = scroll
+        .TransformToVisual(None)
+        .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+    else {
+        return Vec::new();
+    };
+    let viewport = scroll.ViewportHeight().unwrap_or(0.0) as f32;
+    let Ok(items) = list.list_view().Items() else {
+        return Vec::new();
+    };
+    let count = items.Size().unwrap_or(0);
+    let mut out = Vec::new();
+    for slot in 0..count {
+        let Ok(row) = items
+            .GetAt(slot)
+            .and_then(|item| item.cast::<ListViewItem>())
+        else {
+            continue;
+        };
+        let Ok(at) = row
+            .TransformToVisual(None)
+            .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+        else {
+            continue;
+        };
+        let height = row.ActualHeight().unwrap_or(0.0) as f32;
+        if at.Y > view.Y && at.Y + height < view.Y + viewport {
+            if let Ok(position) = AutomationProperties::GetPositionInSet(&row) {
+                out.push(position as usize - 1);
+            }
+        }
+    }
+    out
+}
+
 fn shift_click_in_margin_scenario(
     hwnd: windows::Win32::Foundation::HWND,
     list: &impl RowsForInput,
@@ -10591,6 +11224,350 @@ fn table_keeps_the_rows_a_failed_build_left(ui: &Ui) -> Result<()> {
         std::panic::resume_unwind(panic);
     }
     Ok(())
+}
+
+/// What a widget's own properties say about where it sits: the alignment on both axes
+/// and its `Grid` cell (column, row, column span, row span).
+type Placement = (HorizontalAlignment, VerticalAlignment, [i32; 4]);
+
+fn placement_of(widget: &dyn Widget) -> Placement {
+    let element = native::<FrameworkElement>(widget);
+    (
+        element.HorizontalAlignment().expect("横の寄せ方"),
+        element.VerticalAlignment().expect("縦の寄せ方"),
+        [
+            Grid::GetColumn(&element).expect("列"),
+            Grid::GetRow(&element).expect("行"),
+            Grid::GetColumnSpan(&element).expect("列の結合"),
+            Grid::GetRowSpan(&element).expect("行の結合"),
+        ],
+    )
+}
+
+/// Takes a widget that is in no container through a `Grid`, a vertical `Stack`, a
+/// horizontal `Stack` and a `Grid` again, and notes its placement on the way: before
+/// the first, in each one, and after leaving each one.
+///
+/// Passing on through several containers also checks that none of them keeps a value
+/// a previous one left as the one to restore.
+fn placements_through_containers(
+    ui: &Ui,
+    widget: &dyn Widget,
+) -> Result<Vec<(&'static str, Placement)>> {
+    let mut seen = vec![("どこにも入っていない", placement_of(widget))];
+    let grid = ui.grid()?;
+    grid.attach(widget, GridCell::new(1, 1));
+    seen.push(("Grid のマス", placement_of(widget)));
+    grid.remove(GridCell::new(1, 1));
+    seen.push(("Grid から外したあと", placement_of(widget)));
+    let column = ui.stack(Orientation::Vertical)?;
+    column.append(widget);
+    seen.push(("縦の Stack", placement_of(widget)));
+    column.remove(0);
+    seen.push(("縦の Stack から外したあと", placement_of(widget)));
+    let row = ui.stack(Orientation::Horizontal)?;
+    row.append(widget);
+    seen.push(("横の Stack", placement_of(widget)));
+    row.remove(0);
+    seen.push(("横の Stack から外したあと", placement_of(widget)));
+    let grid = ui.grid()?;
+    grid.attach(widget, GridCell::new(0, 0));
+    seen.push(("もう一度 Grid のマス", placement_of(widget)));
+    grid.remove(GridCell::new(0, 0));
+    Ok(seen)
+}
+
+/// Checks that `moved`, out of a table cell, is placed everywhere as `fresh` is: a
+/// widget of the same kind, made for the comparison and never in a table.
+fn assert_placed_like_new(
+    ui: &Ui,
+    moved: &dyn Widget,
+    fresh: &dyn Widget,
+    what: &str,
+) -> Result<()> {
+    let moved = placements_through_containers(ui, moved)?;
+    let fresh = placements_through_containers(ui, fresh)?;
+    for ((stop, moved), (_, fresh)) in moved.iter().zip(&fresh) {
+        assert_eq!(
+            moved, fresh,
+            "{what}: {stop}で新しく作った子と同じ配置になること"
+        );
+    }
+    Ok(())
+}
+
+/// A label for the cell checks, given `sizing` if any (`None` leaves it as made).
+fn cell_label(ui: &Ui, text: &str, sizing: Option<Sizing>) -> Result<naui_windows::Label> {
+    let label = ui.label(text)?;
+    if let Some(sizing) = sizing {
+        label.set_sizing(sizing);
+    }
+    Ok(label)
+}
+
+/// A table whose columns have the alignments of [`CELL_ALIGNS`].
+fn table_with_aligned_columns(ui: &Ui) -> Result<naui_windows::Table> {
+    let table = ui.table()?;
+    table.set_columns(
+        &CELL_ALIGNS
+            .iter()
+            .map(|&align| naui_core::TableColumn::new(format!("{align:?}")).align(align))
+            .collect::<Vec<_>>(),
+    );
+    Ok(table)
+}
+
+const CELL_ALIGNS: [Align; 4] = [Align::End, Align::Start, Align::Fill, Align::Center];
+
+/// What a table cell writes across for a column with `align`.
+fn cell_horizontal(align: Align) -> HorizontalAlignment {
+    match align {
+        Align::Start => HorizontalAlignment::Left,
+        Align::Center => HorizontalAlignment::Center,
+        Align::End => HorizontalAlignment::Right,
+        Align::Fill => HorizontalAlignment::Stretch,
+    }
+}
+
+/// A widget taken out of a table cell when its row is replaced carries nothing of the
+/// cell over: not the column's alignment, not the centering in the row, not the
+/// column number (`guide.md`, "Changing and moving widgets after adding").
+///
+/// The cell writes these on the widget itself, and a `Grid` cell does not write the
+/// horizontal alignment again, so the widget of an `End` column used to sit at the
+/// right of its next `Grid` cell, and a `Fill` width child of a `Start` column did not
+/// stretch.
+fn table_cell_child_carries_nothing_over(ui: &Ui) -> Result<()> {
+    use naui_windows::TableCells;
+
+    let kinds = [
+        ("set_sizing なし", None),
+        ("Auto", Some(Sizing::new())),
+        ("幅 Fill", Some(Sizing::fill_width())),
+    ];
+    let table = table_with_aligned_columns(ui)?;
+    // 行ごとに 1 種類の子を、どの列にも置く。
+    let mut cells = Vec::new();
+    for (kind, sizing) in kinds {
+        let mut row = Vec::new();
+        for align in CELL_ALIGNS {
+            row.push(cell_label(ui, &format!("{kind} {align:?}"), sizing)?);
+        }
+        cells.push(row);
+    }
+    {
+        let cells = cells.clone();
+        table.set_row_builder(cells.len(), move |index| {
+            Ok(cells[index]
+                .iter()
+                .fold(TableCells::new(), |row, label| row.cell(label)))
+        });
+    }
+    // 行の少ない表は、画面に出さなくても全部の行を組み立てる。
+    for (row, (kind, _)) in cells.iter().zip(kinds) {
+        for (column, (label, align)) in row.iter().zip(CELL_ALIGNS).enumerate() {
+            let (horizontal, vertical, [placed_column, ..]) = placement_of(label);
+            assert_eq!(
+                horizontal,
+                cell_horizontal(align),
+                "{kind} の子が {align:?} の列の揃えになること"
+            );
+            assert_eq!(
+                vertical,
+                VerticalAlignment::Center,
+                "{kind} の子が行の中央にあること"
+            );
+            assert_eq!(
+                placed_column, column as i32,
+                "{kind} の子が {column} 列目にあること"
+            );
+        }
+    }
+
+    // 行を差し替えると、前の行の子はセルから出る。
+    table.set_row_builder(cells.len(), |index| {
+        Ok(TableCells::new().text(format!("行 {index}")))
+    });
+    for (row, (kind, sizing)) in cells.iter().zip(kinds) {
+        for (label, align) in row.iter().zip(CELL_ALIGNS) {
+            let fresh = cell_label(ui, "新しい子", sizing)?;
+            assert_placed_like_new(ui, label, &fresh, &format!("{kind} の子 ({align:?} の列)"))?;
+        }
+    }
+    Ok(())
+}
+
+/// A `set_sizing` on a widget in a table cell keeps the column's alignment and the
+/// centering in the row. Once the widget leaves the cell, it is placed as a new widget
+/// given that `Sizing`.
+fn table_cell_keeps_its_alignment_through_set_sizing(ui: &Ui) -> Result<()> {
+    use naui_windows::TableCells;
+
+    let table = table_with_aligned_columns(ui)?;
+    let labels = CELL_ALIGNS
+        .iter()
+        .map(|align| ui.label(&format!("{align:?}")))
+        .collect::<Result<Vec<_>>>()?;
+    {
+        let labels = labels.clone();
+        table.set_row_builder(1, move |_| {
+            Ok(labels
+                .iter()
+                .fold(TableCells::new(), |row, label| row.cell(label)))
+        });
+    }
+    for (label, align) in labels.iter().zip(CELL_ALIGNS) {
+        for sizing in [Sizing::new(), Sizing::fill_width(), Sizing::fill()] {
+            label.set_sizing(sizing);
+            let (horizontal, vertical, _) = placement_of(label);
+            assert_eq!(
+                horizontal,
+                cell_horizontal(align),
+                "{sizing:?} のあとも {align:?} の列の揃えが残ること"
+            );
+            assert_eq!(
+                vertical,
+                VerticalAlignment::Center,
+                "{sizing:?} のあとも行の中央にあること ({align:?} の列)"
+            );
+        }
+    }
+    table.set_row_builder(1, |_| Ok(TableCells::new().text("空")));
+    for (label, align) in labels.iter().zip(CELL_ALIGNS) {
+        let fresh = cell_label(ui, "新しい子", Some(Sizing::fill()))?;
+        assert_placed_like_new(
+            ui,
+            label,
+            &fresh,
+            &format!("セルの中で set_sizing した子 ({align:?} の列)"),
+        )?;
+    }
+    Ok(())
+}
+
+/// A row that cannot take one of its widgets (it is still in a `Stack`) gives back the
+/// widgets it already placed, and writes nothing on the one it could not take.
+///
+/// The row either fails to build or leaves that cell empty; either way, the widgets
+/// end up as checked here once the row is replaced.
+fn table_row_refusing_a_widget_leaves_both_as_they_were(ui: &Ui) -> Result<()> {
+    use naui_windows::TableCells;
+
+    let holder = ui.stack(Orientation::Vertical)?;
+    holder.set_align(Align::End);
+    let outsider = ui.label("外")?;
+    holder.append(&outsider);
+    let before = placement_of(&outsider);
+    let placed_first = ui.label("先に置く")?;
+    let table = ui.table()?;
+    table.set_columns(&[
+        naui_core::TableColumn::new("先").align(Align::End),
+        naui_core::TableColumn::new("外").align(Align::Start),
+    ]);
+    {
+        let placed_first = placed_first.clone();
+        let outsider = outsider.clone();
+        table.set_row_builder(1, move |_| {
+            Ok(TableCells::new().cell(&placed_first).cell(&outsider))
+        });
+    }
+    assert_eq!(
+        placement_of(&outsider),
+        before,
+        "行に入れられなかった子の配置が変わらないこと"
+    );
+    table.set_row_builder(1, |_| Ok(TableCells::new().text("空")));
+    let fresh = ui.label("新しい子")?;
+    assert_placed_like_new(
+        ui,
+        &placed_first,
+        &fresh,
+        "入れられない子のある行に先に置いた子",
+    )?;
+    assert_eq!(
+        placement_of(&outsider),
+        before,
+        "行に入れられなかった子の配置が、行を差し替えたあとも変わらないこと"
+    );
+    assert_eq!(holder.len(), 1, "行に入れられなかった子が Stack に残ること");
+    Ok(())
+}
+
+/// [`table_cell_child_carries_nothing_over`] for widgets whose row is scrolled out of
+/// the rows the table builds, while other rows stay built.
+fn table_cell_child_scrolled_out_carries_nothing_over(ui: &Ui) -> Result<()> {
+    use naui_windows::TableCells;
+    use std::collections::hash_map::Entry;
+    use std::collections::HashMap;
+
+    const ROWS: usize = 1_000;
+    let window = ui.window("画面外へ出たセル", 240.0, 160.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[
+        naui_core::TableColumn::new("名前").align(Align::End),
+        naui_core::TableColumn::new("値").align(Align::Start),
+    ]);
+    let labels: Rc<RefCell<HashMap<usize, [naui_windows::Label; 2]>>> = Rc::default();
+    {
+        let ui = ui.clone();
+        let labels = labels.clone();
+        table.set_row_builder(ROWS, move |index| {
+            let mut labels = labels.borrow_mut();
+            let [name, value] = match labels.entry(index) {
+                Entry::Occupied(built) => built.into_mut(),
+                Entry::Vacant(slot) => slot.insert([
+                    ui.label(&format!("{index}"))?,
+                    cell_label(&ui, "値", Some(Sizing::fill_width()))?,
+                ]),
+            };
+            Ok(TableCells::new().cell(name).cell(value))
+        });
+    }
+    table.set_sizing(Sizing::fill());
+    window.set_child(&table);
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+        window.show();
+        let scroll = table_scroller(&table);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            scroll.ViewportHeight().unwrap_or(0.0) > 0.0 && table.row_height() > 0.0
+        });
+        if scroll.ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return Ok(());
+        }
+        pump_until(Duration::from_millis(500), || false);
+        assert!(
+            built_list_row(&table, 0).is_some(),
+            "先頭の行が組み立ててあること"
+        );
+        let built_end = table
+            .native_list_view()
+            .Items()
+            .expect("行")
+            .Size()
+            .expect("行の数") as usize;
+
+        // 窓に残る行があるところまで動かし、先頭の行だけを窓の外へ出す。
+        table.scroll_to_row(built_end + 1);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            built_list_row(&table, 0).is_none()
+        });
+        assert!(
+            built_list_row(&table, 0).is_none(),
+            "先頭の行が窓の外へ出ること"
+        );
+        let [name, value] = labels.borrow()[&0].clone();
+        let fresh_name = ui.label("新しい子")?;
+        assert_placed_like_new(ui, &name, &fresh_name, "End の列から出た子")?;
+        let fresh_value = cell_label(ui, "新しい子", Some(Sizing::fill_width()))?;
+        assert_placed_like_new(ui, &value, &fresh_value, "Start の列から出た幅 Fill の子")?;
+        Ok(())
+    }));
+    window.close();
+    match outcome {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
 }
 
 /// A failed build leaves the rows in the `ListView` looked after: their selection still

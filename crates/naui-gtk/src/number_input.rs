@@ -63,6 +63,9 @@ impl NumberInput {
         native.set_numeric(true);
         native.set_width_chars(0);
         native.set_max_width_chars(FIELD_CHARS);
+        // 右から左の配置でも、欄とボタンの並びと数の書き方は左から右のまま
+        // にする。右から左の段落では "-5" が "5-" と並んでしまう。
+        crate::bin::pin_left_to_right(&native);
         let bin = SizeBin::wrap(&native);
         // 欄が 0 桁まで縮んでも、上下のボタンのぶんの幅は要る。それより狭い
         // 幅を指定されたときに、ボタンが枠の外へはみ出さないようにする。

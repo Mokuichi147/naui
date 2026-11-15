@@ -95,10 +95,9 @@ jobs:
 
       - name: GTK4 / libadwaita を導入
         if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            libgtk-4-dev libadwaita-1-dev build-essential pkg-config
+        uses: ./.github/actions/apt-install
+        with:
+          packages: libgtk-4-dev libadwaita-1-dev build-essential pkg-config
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
@@ -287,10 +286,9 @@ jobs:
 
       # naui-gtk / naui を検証ビルドするのに要る。
       - name: GTK4 / libadwaita を導入
-        run: |
-          sudo apt-get update
-          sudo apt-get install --no-install-recommends -y \
-            libgtk-4-dev libadwaita-1-dev build-essential pkg-config
+        uses: ./.github/actions/apt-install
+        with:
+          packages: libgtk-4-dev libadwaita-1-dev build-essential pkg-config
 
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2

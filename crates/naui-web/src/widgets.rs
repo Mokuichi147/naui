@@ -1489,9 +1489,28 @@ impl Stack {
         }
         self.apply_direction();
         let parent = self.parent_layout();
-        for child in self.0.children.borrow().iter() {
-            crate::layout::layout_for_parent(&child.native_element(), parent);
+        for element in self.placed_children() {
+            crate::layout::layout_for_parent(&element, parent);
         }
+    }
+
+    /// The elements of the children still directly in this stack. A child added to
+    /// another container without being removed from this one moved there, and is left
+    /// alone (see [`crate::handover`]).
+    fn placed_children(&self) -> Vec<Element> {
+        self.0
+            .children
+            .borrow()
+            .iter()
+            .map(|child| child.native_element())
+            .filter(|element| crate::handover::is_placed_in(element, &self.0.element))
+            .collect()
+    }
+
+    /// Forgets the record of `element`, for a child added again: one that moved to
+    /// another container and is coming back, or one moved within this stack.
+    fn forget(children: &mut Vec<Box<dyn Widget>>, element: &Element) {
+        children.retain(|child| child.native_element() != *element);
     }
 
     fn apply_direction(&self) {
@@ -1521,13 +1540,7 @@ impl Stack {
     }
 
     pub fn set_padding(&self, padding: Padding) {
-        let _ = self.0.element.style().set_property(
-            "padding",
-            &format!(
-                "{}px {}px {}px {}px",
-                padding.top, padding.right, padding.bottom, padding.left
-            ),
-        );
+        apply_padding(&self.0.element, padding);
     }
 
     pub fn set_align(&self, align: Align) {
@@ -1548,7 +1561,9 @@ impl Stack {
         let element = child.native_element();
         if self.0.element.append_child(&element).is_ok() {
             crate::layout::apply_child_layout(&element, self.parent_layout());
-            self.0.children.borrow_mut().push(child.boxed_clone());
+            let mut children = self.0.children.borrow_mut();
+            Self::forget(&mut children, &element);
+            children.push(child.boxed_clone());
         }
     }
 
@@ -1557,8 +1572,23 @@ impl Stack {
     pub fn insert(&self, index: usize, child: &dyn Widget) {
         let element = child.native_element();
         let mut children = self.0.children.borrow_mut();
-        let index = index.min(children.len());
-        let anchor = children.get(index).map(|next| next.native_element());
+        let mut index = index.min(children.len());
+        // 同じ子が記録に残っていれば (外さずに入れ直した子)、その分を詰めて数える。
+        if let Some(old) = children
+            .iter()
+            .position(|child| child.native_element() == element)
+        {
+            if old < index {
+                index -= 1;
+            }
+            children.remove(old);
+        }
+        // 前に置く相手は、まだこの中にいる子から選ぶ。外さずにほかへ移った子の
+        // 前には入れられない。
+        let anchor = children[index..]
+            .iter()
+            .map(|next| next.native_element())
+            .find(|next| crate::handover::is_placed_in(next, &self.0.element));
         let inserted = self
             .0
             .element
@@ -1601,4 +1631,18 @@ pub(crate) fn set_disabled(element: &HtmlElement, disabled: bool) {
     } else {
         element.remove_attribute("disabled").ok();
     }
+}
+
+/// Writes `padding` as CSS padding, `start` and `end` on the inline start and end,
+/// so that they are mirrored with the rest of a right-to-left layout (`dir`).
+pub(crate) fn apply_padding(element: &HtmlElement, padding: Padding) {
+    let style = element.style();
+    let _ = style.set_property(
+        "padding-block",
+        &format!("{}px {}px", padding.top, padding.bottom),
+    );
+    let _ = style.set_property(
+        "padding-inline",
+        &format!("{}px {}px", padding.start, padding.end),
+    );
 }

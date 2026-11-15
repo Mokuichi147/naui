@@ -16,11 +16,13 @@ fn main() {
     }
 
     // naui のビルドが target/<profile>/naui-winappsdk/ に置くマニフェスト。
-    // OUT_DIR は target/[<triple>/]<profile>/build/gallery-<hash>/out。
+    // OUT_DIR は target/[<triple>/]<profile>/build/ の下にあり、深さは Cargo の版で
+    // 違う (1.99 までは gallery-<hash>/out、1.100 からは gallery/<hash>/out)。
     let out_dir = std::path::PathBuf::from(std::env::var("OUT_DIR").unwrap());
     let manifest = out_dir
         .ancestors()
-        .nth(3)
+        .find(|path| path.file_name() == Some("build".as_ref()))
+        .and_then(std::path::Path::parent)
         .unwrap()
         .join("naui-winappsdk")
         .join("naui-winappsdk.manifest");

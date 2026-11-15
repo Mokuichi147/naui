@@ -248,6 +248,9 @@ impl Canvas {
         let native: XamlGrid = XamlReader::Load(&HSTRING::from(HOST_XAML))
             .and_then(|element| element.cast::<XamlGrid>())
             .map_err(|e| to_error("create the Canvas", e))?;
+        // 反転は描画の変換なので、描いた面もポインタの座標も裏返る。描画面は
+        // 右から左の配置でも反転させない。
+        crate::direction::pin_left_to_right(&native);
         let this = Self(Rc::new(CanvasInner {
             native,
             draw: DrawHandler::new(),
