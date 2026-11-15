@@ -18,6 +18,7 @@
 //! `GtkListBox` knows only the rows it has.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
 use std::rc::{Rc, Weak};
 
 use gtk::prelude::*;
@@ -30,6 +31,7 @@ use naui_core::{
 
 use crate::bin::SizeBin;
 use crate::callback::{Notifier, SelectionNotifier, Slot};
+use crate::handover::Owner;
 use crate::widgets::{impl_widget, without_signal, Label, Stack, Widget};
 
 /// The spacing between the label and the secondary text.
@@ -195,6 +197,12 @@ struct ListInner {
     row_activate: Notifier<usize>,
     /// The handler for right-clicks.
     context_menu: Notifier<(usize, Point)>,
+    /// Marks the rows' widgets as this list's (see [`crate::handover`]).
+    owner: Owner,
+    /// The rows built since the app last handed rows over ([`List::set_row_builder`],
+    /// [`List::refresh`]) whose widgets were claimed. Building such a row again, when it
+    /// scrolls back into view, does not claim its widget again.
+    claimed: RefCell<HashSet<usize>>,
 }
 
 /// A list of selectable rows. It scrolls by itself.
@@ -236,6 +244,8 @@ impl List {
             bottom_spacer,
             bin,
             rows: RowSource::default(),
+            owner: Owner::new(),
+            claimed: RefCell::new(HashSet::new()),
             window: Cell::new(RowWindow::default()),
             built_start: Cell::new(0),
             rebuilding: Cell::new(false),
@@ -382,7 +392,16 @@ impl List {
     /// through this path.
     ///
     /// Controls inside a row can have their own callbacks as usual.
+    ///
+    /// A row's widget that is still in another container is refused, as GTK refuses
+    /// it: the row is left empty and the widget stays where it is. The widget is placed
+    /// each time the row is built, so if the app puts it in another container later,
+    /// the row is left empty from then on.
     pub fn set_rows(&self, rows: &[ListRow]) {
+        self.0.claimed.borrow_mut().clear();
+        for row in rows {
+            self.claim(row);
+        }
         self.0.rows.set_rows(rows.to_vec());
         self.reset_rows();
     }
@@ -396,6 +415,11 @@ impl List {
     ///
     /// The widgets in a row may be recreated every time it is built. Keep per-row state
     /// in the app's data and build from it inside `build`.
+    ///
+    /// The first time each row is built after this call or [`List::refresh`], its
+    /// widget is handed over the same way as with [`List::set_rows`]. Building it again
+    /// when it scrolls back into view does not take it back from a container the app
+    /// has put it in since.
     ///
     /// ```no_run
     /// # use naui_gtk::{List, ListRow, Ui};
@@ -411,6 +435,7 @@ impl List {
         count: usize,
         build: impl FnMut(usize) -> Result<ListRow> + 'static,
     ) {
+        self.0.claimed.borrow_mut().clear();
         self.0.rows.set_builder(count, build);
         self.reset_rows();
     }
@@ -434,8 +459,28 @@ impl List {
     /// Rebuilds the visible rows. The row count and selection stay.
     ///
     /// Use it when what the function passed to [`List::set_row_builder`] returns has
-    /// changed.
+    /// changed. The rows' widgets are handed over again.
     pub fn refresh(&self) {
+        self.0.claimed.borrow_mut().clear();
+        self.rebuild();
+    }
+
+    /// Takes a row's widget as this list's, if it has no parent or is in one of this
+    /// list's rows (see [`crate::handover`]).
+    fn claim(&self, row: &ListRow) {
+        let ListRowContent::Custom(content) = &row.content else {
+            return;
+        };
+        let bin = content.size_bin();
+        let in_own_row = bin
+            .parent()
+            .and_then(|row| row.parent())
+            .is_some_and(|list| list == *self.0.native.upcast_ref::<gtk::Widget>());
+        self.0.owner.claim(&bin, in_own_row, "List");
+    }
+
+    /// Rebuilds the visible rows, without handing their widgets over again.
+    fn rebuild(&self) {
         self.0.row_height_stale.set(true);
         self.0.rows.forget_selectable();
         // 行を組み立てる関数の中から呼ばれたら、組み立てている側が最初からやり直す。
@@ -467,7 +512,7 @@ impl List {
             .set((height > 0.0).then_some(height as i32));
         // 指定を外したときは、組み立て直した行から測り直す。
         self.0.row_height.set(height);
-        self.refresh();
+        self.rebuild();
     }
 
     /// The row height (logical pixels). 0 if there are no rows or none has been built yet.
@@ -702,8 +747,13 @@ impl List {
                 }
                 // 組み立てに失敗した行は、空の行にする。
                 let row = row.unwrap_or_else(|_| ListRow::from_item(ListItem::new("")));
+                // アプリが行を渡し直してから初めて組み立てた行は、中身を引き取る。
+                // 見えるところへ戻ってきたための組み立てでは引き取らない。
+                if self.0.rows.is_built() && self.0.claimed.borrow_mut().insert(index) {
+                    self.claim(&row);
+                }
                 self.0.rows.note_selectable(index, row.is_selectable());
-                let native = build_row(&row, Rc::downgrade(&self.0));
+                let native = build_row(&row, Rc::downgrade(&self.0), self.0.owner);
                 if let Some(height) = fixed_height {
                     native.set_size_request(-1, height);
                 }
@@ -1157,22 +1207,22 @@ pub(crate) fn report_row_position(row: &gtk::ListBoxRow, index: usize, count: us
 }
 
 /// Builds one row. Both `ListItem`s and custom content go through the same path.
-fn build_row(item: &ListRow, list: Weak<ListInner>) -> gtk::ListBoxRow {
-    let content: SizeBin = match &item.content {
-        ListRowContent::Item(item) => item_content(&item.label, item.detail.as_deref()).size_bin(),
-        ListRowContent::Custom(content) => content.size_bin(),
+///
+/// Custom content goes in only if `owner` may place it (see [`crate::handover`]).
+/// Otherwise the row is left empty, and nothing is written on the content.
+fn build_row(item: &ListRow, list: Weak<ListInner>, owner: Owner) -> gtk::ListBoxRow {
+    let content: Option<SizeBin> = match &item.content {
+        ListRowContent::Item(item) => {
+            Some(item_content(&item.label, item.detail.as_deref()).size_bin())
+        }
+        ListRowContent::Custom(content) => {
+            Some(content.size_bin()).filter(|content| owner.may_place(content))
+        }
     };
-    // 行の幅いっぱいに置く。`SizeBin` の既定は `Center` (中身の大きさに合わせる)
-    // なので、そのままでは文字が行の真ん中へ寄る。大きさを自分で指定している
-    // 中身はそちらが優先される。
-    content.fill_parent();
-    content.set_margin_top(6);
-    content.set_margin_bottom(6);
-    content.set_margin_start(10);
-    content.set_margin_end(10);
-
     let row = crate::row::new();
-    row.set_child(Some(&content));
+    if let Some(content) = content {
+        place_row_content(&row, &content);
+    }
     row.set_selectable(item.selectable);
     row.set_activatable(item.selectable || item.activation.is_some());
     if matches!(&item.content, ListRowContent::Item(item) if !item.enabled) {
@@ -1182,6 +1232,19 @@ fn build_row(item: &ListRow, list: Weak<ListInner>) -> gtk::ListBoxRow {
     row.add_controller(row_double_click_controller(list.clone()));
     row.add_controller(row_context_menu_controller(list));
     row
+}
+
+/// Puts a row's content in the row, filling its width.
+fn place_row_content(row: &gtk::ListBoxRow, content: &SizeBin) {
+    // 行の幅いっぱいに置く。`SizeBin` の既定は `Center` (中身の大きさに合わせる)
+    // なので、そのままでは文字が行の真ん中へ寄る。大きさを自分で指定している
+    // 中身はそちらが優先される。
+    content.fill_parent();
+    content.set_margin_top(6);
+    content.set_margin_bottom(6);
+    content.set_margin_start(10);
+    content.set_margin_end(10);
+    row.set_child(Some(content));
 }
 
 /// The gesture that receives double-clicks on a row.
