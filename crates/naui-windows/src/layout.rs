@@ -48,6 +48,11 @@ enum ParentLayout {
     Window {
         window: usize,
     },
+    /// A widget cell of a `Table` row. The cell decides where the widget sits in its
+    /// column on both axes (see [`set_table_cell_parent`]).
+    TableCell {
+        align: Align,
+    },
 }
 
 impl ParentLayout {
@@ -58,7 +63,7 @@ impl ParentLayout {
                 horizontal_scroll_enabled,
                 ..
             } => !horizontal_scroll_enabled,
-            Self::Window { .. } => true,
+            Self::Window { .. } | Self::TableCell { .. } => true,
         }
     }
 
@@ -69,14 +74,15 @@ impl ParentLayout {
                 vertical_scroll_enabled,
                 ..
             } => !vertical_scroll_enabled,
-            Self::Window { .. } => true,
+            Self::Window { .. } | Self::TableCell { .. } => true,
         }
     }
 
     fn same_kind(self, other: Self) -> bool {
         match (self, other) {
             (Self::Stack { .. }, Self::Stack { .. })
-            | (Self::Scroll { .. }, Self::Scroll { .. }) => true,
+            | (Self::Scroll { .. }, Self::Scroll { .. })
+            | (Self::TableCell { .. }, Self::TableCell { .. }) => true,
             (Self::Window { window: first }, Self::Window { window: second }) => first == second,
             _ => false,
         }
@@ -491,6 +497,49 @@ pub(crate) fn release_stack_child(element: &UIElement) {
     }
 }
 
+/// Records that the widget is in a `Table` cell and places it in the column: across
+/// as the column's alignment says, and centered in the row.
+///
+/// The cell writes this on the widget itself (a `Fill` column has to stretch an Auto
+/// widget, which only its own `HorizontalAlignment` can do), so it goes through the
+/// same record as the other containers: what the widget had before is kept and put
+/// back by [`release_table_cell`], and a `set_sizing` inside the cell does not undo
+/// the column's alignment.
+pub(crate) fn set_table_cell_parent(element: &UIElement, align: Align) {
+    let Ok(framework) = element.cast::<FrameworkElement>() else {
+        return;
+    };
+    set_parent_state(element, &framework, ParentLayout::TableCell { align });
+    apply_table_cell_alignment(&framework, align);
+}
+
+fn apply_table_cell_alignment(element: &FrameworkElement, align: Align) {
+    // 列の中のどこへ置くかは列の指定に従う。`Fill` は列いっぱいに広げる。
+    let _ = element.SetHorizontalAlignment(match align {
+        Align::Center => HorizontalAlignment::Center,
+        Align::End => HorizontalAlignment::Right,
+        Align::Fill => HorizontalAlignment::Stretch,
+        Align::Start => HorizontalAlignment::Left,
+    });
+    let _ = element.SetVerticalAlignment(VerticalAlignment::Center);
+}
+
+/// Undoes what a `Table` cell set on a widget it no longer holds: the alignment it
+/// overrode, and its column, so the widget does not land in some other column of the
+/// next `Grid` or `Stack`.
+pub(crate) fn release_table_cell(element: &UIElement) {
+    let Ok(framework) = element.cast::<FrameworkElement>() else {
+        return;
+    };
+    if matches!(
+        parent_state(&framework),
+        Some(ParentLayout::TableCell { .. })
+    ) {
+        clear_parent_layout(element);
+    }
+    let _ = XamlGrid::SetColumn(&framework, 0);
+}
+
 /// Records the Scroll parent's information on the child and applies Stretch on the
 /// non-scrolling axis.
 pub(crate) fn set_scroll_parent(
@@ -575,6 +624,7 @@ pub(crate) fn reapply_parent_layout(element: &FrameworkElement) {
             );
         }
         ParentLayout::Window { .. } => stretch_non_scrolling_child(element, false, false),
+        ParentLayout::TableCell { align } => apply_table_cell_alignment(element, align),
     }
 }
 

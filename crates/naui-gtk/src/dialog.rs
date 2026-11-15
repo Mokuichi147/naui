@@ -56,6 +56,8 @@ struct DialogInner {
     /// The real dialog, held only while it is open.
     current: RefCell<Option<adw::AlertDialog>>,
     open: Cell<bool>,
+    /// Marks the content as this dialog's (see [`crate::handover`]).
+    owner: crate::handover::Owner,
 }
 
 /// A modal dialog.
@@ -75,6 +77,7 @@ impl Dialog {
             on_response: Notifier::default(),
             current: RefCell::new(None),
             open: Cell::new(false),
+            owner: crate::handover::Owner::new(),
         }))
     }
 
@@ -101,8 +104,21 @@ impl Dialog {
     }
 
     /// The widget placed below the body text.
+    ///
+    /// A widget still in another container is refused, and the previous one stays.
+    /// It is placed each time the dialog opens, so if the app puts it in another
+    /// container in the meantime, the dialog opens without it and leaves it there.
     pub fn set_child(&self, child: &dyn Widget) {
-        *self.0.child.borrow_mut() = Some(child.boxed_clone());
+        let bin = child.size_bin();
+        let in_dialog = self
+            .0
+            .current
+            .borrow()
+            .as_ref()
+            .is_some_and(|native| bin.is_ancestor(native));
+        if self.0.owner.claim(&bin, in_dialog, "Dialog::set_child") {
+            *self.0.child.borrow_mut() = Some(child.boxed_clone());
+        }
     }
 
     /// The buttons to show. With none specified, only "OK" is shown.
@@ -141,8 +157,10 @@ impl Dialog {
 
         if let Some(child) = self.0.child.borrow().as_ref() {
             let bin = child.size_bin();
-            bin.fill_parent();
-            native.set_extra_child(Some(&bin));
+            if self.0.owner.may_place(&bin) {
+                bin.fill_parent();
+                native.set_extra_child(Some(&bin));
+            }
         }
 
         {
