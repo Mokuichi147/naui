@@ -40,8 +40,9 @@ use gtk::cairo;
 use gtk::pango;
 use gtk::prelude::*;
 use naui_core::{
-    Align, DrawCommand, EventResponse, Painter, Path, PathSegment, Point, PointerButton,
-    PointerEvent, PointerPhase, WheelHandler, WHEEL_STEP,
+    Align, Bitmap, BitmapData, DrawCommand, EventResponse, Gradient, GradientShape, Paint, Painter,
+    Path, PathSegment, Point, PointerButton, PointerEvent, PointerPhase, Rect, WheelHandler,
+    WHEEL_STEP,
 };
 
 use crate::bin::SizeBin;
@@ -79,7 +80,12 @@ impl Canvas {
         native.set_draw_func({
             let draw = draw.clone();
             move |area, cr, width, height| {
-                let mut painter = Painter::new(f64::from(width), f64::from(height));
+                let measured = area.clone();
+                let mut painter = Painter::with_text_measure(
+                    f64::from(width),
+                    f64::from(height),
+                    move |text, size| text_width(&text_layout(&measured, text, size)),
+                );
                 let Some(mut f) = draw.borrow_mut().take() else {
                     return;
                 };
@@ -89,7 +95,7 @@ impl Canvas {
                     *slot = Some(f);
                 }
                 drop(slot);
-                replay(area, cr, painter.commands());
+                replay(area, cr, &painter.into_commands());
             }
         });
 
@@ -302,17 +308,30 @@ fn button_from_gdk(button: u32) -> Option<PointerButton> {
 }
 
 /// Draws the commands recorded in the [`Painter`] with cairo.
+///
+/// The whole replay sits inside one `save`, so a transform or clip does not outlast
+/// the draw function, and `Save` / `Restore` map onto cairo's, which cover the
+/// transform and the clip.
 fn replay(area: &gtk::DrawingArea, cr: &cairo::Context, commands: &[DrawCommand]) {
+    let _ = cr.save();
+    let mut depth = 0_usize;
     for command in commands {
         match command {
             DrawCommand::Fill {
                 path,
-                color,
+                paint,
                 opacity,
             } => {
                 trace(cr, path);
-                let (r, g, b) = color.to_unit();
-                cr.set_source_rgba(r, g, b, *opacity);
+                match paint {
+                    Paint::Color(color) => {
+                        let (r, g, b) = color.to_unit();
+                        cr.set_source_rgba(r, g, b, *opacity);
+                    }
+                    Paint::Gradient(gradient) => {
+                        let _ = cr.set_source(gradient_pattern(gradient, *opacity));
+                    }
+                }
                 cr.set_fill_rule(cairo::FillRule::Winding);
                 let _ = cr.fill();
             }
@@ -340,14 +359,11 @@ fn replay(area: &gtk::DrawingArea, cr: &cairo::Context, commands: &[DrawCommand]
                 align,
                 opacity,
             } => {
-                let layout = area.create_pango_layout(Some(text));
-                let mut font = area.pango_context().font_description().unwrap_or_default();
-                font.set_absolute_size(size * f64::from(pango::SCALE));
-                layout.set_font_description(Some(&font));
-                let (width, _) = layout.pixel_size();
+                let layout = text_layout(area, text, *size);
+                let width = text_width(&layout);
                 let x = match align {
-                    Align::Center => at.x - f64::from(width) / 2.0,
-                    Align::End => at.x - f64::from(width),
+                    Align::Center => at.x - width / 2.0,
+                    Align::End => at.x - width,
                     Align::Start | Align::Fill => at.x,
                 };
                 let (r, g, b) = color.to_unit();
@@ -356,8 +372,122 @@ fn replay(area: &gtk::DrawingArea, cr: &cairo::Context, commands: &[DrawCommand]
                 pangocairo::functions::show_layout(cr, &layout);
                 cr.new_path();
             }
+            DrawCommand::Image {
+                bitmap,
+                source,
+                dest,
+                opacity,
+            } => draw_image(cr, bitmap, *source, *dest, *opacity),
+            DrawCommand::Save => {
+                let _ = cr.save();
+                depth += 1;
+            }
+            DrawCommand::Restore => {
+                if depth > 0 {
+                    let _ = cr.restore();
+                    depth -= 1;
+                }
+            }
+            DrawCommand::Transform(t) => {
+                // 今の変換の前に掛ける (`<canvas>` の transform と同じ向き)。
+                cr.transform(cairo::Matrix::new(t.a, t.b, t.c, t.d, t.e, t.f));
+            }
+            DrawCommand::Clip(path) => {
+                trace(cr, path);
+                cr.set_fill_rule(cairo::FillRule::Winding);
+                cr.clip();
+            }
         }
     }
+    for _ in 0..=depth {
+        let _ = cr.restore();
+    }
+}
+
+/// A Pango layout of one line of text in the theme's UI font at `size`.
+fn text_layout(area: &gtk::DrawingArea, text: &str, size: f64) -> pango::Layout {
+    let layout = area.create_pango_layout(Some(text));
+    let mut font = area.pango_context().font_description().unwrap_or_default();
+    font.set_absolute_size(size * f64::from(pango::SCALE));
+    layout.set_font_description(Some(&font));
+    layout
+}
+
+/// The logical width of a layout, in logical pixels (not rounded to whole pixels).
+fn text_width(layout: &pango::Layout) -> f64 {
+    f64::from(layout.size().0) / f64::from(pango::SCALE)
+}
+
+/// A cairo gradient carrying the end colors on past its ends (`EXTEND_PAD`, as on
+/// the other three platforms), with `opacity` applied to every stop.
+fn gradient_pattern(gradient: &Gradient, opacity: f64) -> cairo::Gradient {
+    let pattern: cairo::Gradient = match gradient.shape() {
+        GradientShape::Linear { start, end } => {
+            (*cairo::LinearGradient::new(start.x, start.y, end.x, end.y)).clone()
+        }
+        GradientShape::Radial { center, radius } => {
+            (*cairo::RadialGradient::new(center.x, center.y, 0.0, center.x, center.y, radius))
+                .clone()
+        }
+    };
+    for stop in gradient.stops() {
+        let (r, g, b) = stop.color.to_unit();
+        pattern.add_color_stop_rgba(stop.offset, r, g, b, stop.opacity * opacity);
+    }
+    pattern.set_extend(cairo::Extend::Pad);
+    pattern
+}
+
+/// The cairo surface made from a [`Bitmap`], kept with it. `None` when GDK cannot
+/// read it.
+struct NativeBitmap(Option<cairo::ImageSurface>);
+
+/// Decodes a bitmap into cairo's `ARGB32` (premultiplied, native-endian words).
+///
+/// Files are read by `gdk::Texture::from_bytes`, as `Image::set_bytes` reads them,
+/// and downloaded in GDK's default memory format, which is the same layout.
+fn decode(bitmap: &Bitmap) -> Option<cairo::ImageSurface> {
+    let (width, height, pixels) = match bitmap.data() {
+        BitmapData::Encoded(bytes) => {
+            let texture = gtk::gdk::Texture::from_bytes(&gtk::glib::Bytes::from(bytes))
+                .map_err(|error| eprintln!("naui-gtk: could not read the image: {error}"))
+                .ok()?;
+            let (width, height) = (texture.width(), texture.height());
+            let stride = usize::try_from(width).ok()? * 4;
+            let mut pixels = vec![0; stride * usize::try_from(height).ok()?];
+            texture.download(&mut pixels, stride);
+            (width, height, pixels)
+        }
+        BitmapData::Pixels(rgba) => (
+            i32::try_from(bitmap.width()).ok()?,
+            i32::try_from(bitmap.height()).ok()?,
+            naui_core::media::rgba_to_premultiplied_argb32(rgba),
+        ),
+    };
+    cairo::ImageSurface::create_for_data(pixels, cairo::Format::ARgb32, width, height, width * 4)
+        .ok()
+}
+
+/// Draws the `source` part of the image over `dest`: the surface is scaled so that
+/// `source` covers `dest`, and painted within `dest`.
+///
+/// The edges are padded rather than faded to transparent, so a stretched image
+/// keeps sharp borders (as `drawImage` does).
+fn draw_image(cr: &cairo::Context, bitmap: &Bitmap, source: Rect, dest: Rect, opacity: f64) {
+    let native = bitmap.native(|bitmap| NativeBitmap(decode(bitmap)));
+    let Some(surface) = &native.0 else {
+        return;
+    };
+    let _ = cr.save();
+    cr.rectangle(dest.x, dest.y, dest.width, dest.height);
+    cr.clip();
+    cr.translate(dest.x, dest.y);
+    cr.scale(dest.width / source.width, dest.height / source.height);
+    if cr.set_source_surface(surface, -source.x, -source.y).is_ok() {
+        cr.source().set_extend(cairo::Extend::Pad);
+        let _ = cr.paint_with_alpha(opacity);
+    }
+    let _ = cr.restore();
 }
 
 fn trace(cr: &cairo::Context, path: &Path) {

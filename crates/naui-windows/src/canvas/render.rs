@@ -13,8 +13,12 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
 
-use naui_core::{Align, Color, DrawCommand, Path, PathSegment, Point};
+use naui_core::{
+    Align, Bitmap, BitmapData, Color, DrawCommand, Gradient, GradientShape, Paint, Path,
+    PathSegment, Point, Rect, Transform,
+};
 use naui_winui3::Microsoft::UI::Composition::{CompositionGraphicsDevice, Compositor};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use naui_winui3::{ICompositionGraphicsDeviceInterop, ICompositorInterop};
@@ -24,16 +28,20 @@ use windows::Win32::Foundation::{
 use windows::Win32::Globalization::GetUserDefaultLocaleName;
 use windows::Win32::Graphics::Direct2D::Common::{
     D2D1_ALPHA_MODE_PREMULTIPLIED, D2D1_BEZIER_SEGMENT, D2D1_COLOR_F, D2D1_FIGURE_BEGIN_FILLED,
-    D2D1_FIGURE_END_CLOSED, D2D1_FIGURE_END_OPEN, D2D1_FILL_MODE_WINDING, D2D1_PIXEL_FORMAT,
-    D2D_RECT_F, D2D_SIZE_U,
+    D2D1_FIGURE_END_CLOSED, D2D1_FIGURE_END_OPEN, D2D1_FILL_MODE_WINDING, D2D1_GRADIENT_STOP,
+    D2D1_PIXEL_FORMAT, D2D_RECT_F, D2D_SIZE_U,
 };
 use windows::Win32::Graphics::Direct2D::{
-    D2D1CreateFactory, ID2D1Device, ID2D1DeviceContext, ID2D1Factory1, ID2D1GeometrySink,
-    ID2D1PathGeometry1, ID2D1SolidColorBrush, ID2D1StrokeStyle, D2D1_ANTIALIAS_MODE_ALIASED,
-    D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_CPU_READ, D2D1_BITMAP_OPTIONS_TARGET,
-    D2D1_BITMAP_PROPERTIES1, D2D1_CAP_STYLE_FLAT, D2D1_DASH_STYLE_CUSTOM, D2D1_DASH_STYLE_SOLID,
-    D2D1_DEVICE_CONTEXT_OPTIONS_NONE, D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
-    D2D1_FACTORY_TYPE_MULTI_THREADED, D2D1_LINE_JOIN_MITER, D2D1_MAP_OPTIONS_READ,
+    D2D1CreateFactory, ID2D1Bitmap1, ID2D1Brush, ID2D1Device, ID2D1DeviceContext, ID2D1Factory1,
+    ID2D1Geometry, ID2D1GeometrySink, ID2D1PathGeometry1, ID2D1RenderTarget, ID2D1SolidColorBrush,
+    ID2D1StrokeStyle, D2D1_ANTIALIAS_MODE_ALIASED, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+    D2D1_BITMAP_OPTIONS_CANNOT_DRAW, D2D1_BITMAP_OPTIONS_CPU_READ, D2D1_BITMAP_OPTIONS_NONE,
+    D2D1_BITMAP_OPTIONS_TARGET, D2D1_BITMAP_PROPERTIES1, D2D1_CAP_STYLE_FLAT,
+    D2D1_DASH_STYLE_CUSTOM, D2D1_DASH_STYLE_SOLID, D2D1_DEVICE_CONTEXT_OPTIONS_NONE,
+    D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT, D2D1_EXTEND_MODE_CLAMP,
+    D2D1_FACTORY_TYPE_MULTI_THREADED, D2D1_GAMMA_2_2, D2D1_INTERPOLATION_MODE_LINEAR,
+    D2D1_LAYER_OPTIONS1_NONE, D2D1_LAYER_PARAMETERS1, D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES,
+    D2D1_LINE_JOIN_MITER, D2D1_MAP_OPTIONS_READ, D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES,
     D2D1_STROKE_STYLE_PROPERTIES1, D2D1_STROKE_TRANSFORM_TYPE_NORMAL,
     D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE,
 };
@@ -54,6 +62,11 @@ use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Dxgi::{
     IDXGIDevice, DXGI_ERROR_DEVICE_REMOVED, DXGI_ERROR_DEVICE_RESET,
 };
+use windows::Win32::Graphics::Imaging::{
+    CLSID_WICImagingFactory, GUID_WICPixelFormat32bppPBGRA, IWICImagingFactory,
+    WICBitmapDitherTypeNone, WICBitmapPaletteTypeMedianCut, WICDecodeMetadataCacheOnDemand,
+};
+use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_INPROC_SERVER};
 use windows::Win32::System::Threading::{
     CreateEventW, RegisterWaitForSingleObject, SetEvent, UnregisterWaitEx, INFINITE,
     WT_EXECUTEONLYONCE,
@@ -76,6 +89,7 @@ struct Devices {
     max_surface: u32,
     /// Counts up each time the devices are made again, so that one loss reported
     /// twice (by a failed draw and by the removal event) is recovered from once.
+    /// Never reused in the process ([`next_generation`]).
     generation: u64,
     /// Absent when Direct3D cannot report removal (before Windows 10 1703).
     watch: Option<RemovalWatch>,
@@ -252,6 +266,15 @@ thread_local! {
     static RENDERER: RefCell<Slot> = const { RefCell::new(Slot(None)) };
 }
 
+/// A generation number not given to any devices before. A renderer made again after
+/// [`release`] must not start over from 0: a `Bitmap` keeps the Direct2D bitmap of
+/// the generation it was drawn with, and would hand the old device's bitmap to the
+/// new one.
+fn next_generation() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 /// Runs `f` with this thread's renderer, making it the first time. `None` when the
 /// devices cannot be made (nothing can be drawn then).
 pub(super) fn with_renderer<R>(f: impl FnOnce(&mut Renderer) -> R) -> Option<R> {
@@ -317,7 +340,7 @@ impl Renderer {
         // SAFETY: 既定の設定でファクトリを作るだけ。
         let factory: ID2D1Factory1 =
             unsafe { D2D1CreateFactory(D2D1_FACTORY_TYPE_MULTI_THREADED, None)? };
-        let devices = Devices::new(&factory, 0)?;
+        let devices = Devices::new(&factory, next_generation())?;
         // SAFETY: 共有のファクトリを取るだけ。
         let dwrite: IDWriteFactory = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
         let font_family = HSTRING::from(pick_font_family(&dwrite));
@@ -350,7 +373,7 @@ impl Renderer {
     /// Replaces lost devices. Every surface made from the graphics devices is kept but
     /// emptied, so the caller draws all of them again.
     fn recover(&mut self) -> windows_core::Result<()> {
-        self.devices = Devices::new(&self.factory, self.devices.generation + 1)?;
+        self.devices = Devices::new(&self.factory, next_generation())?;
         for (_, device) in &self.graphics {
             let interop: ICompositionGraphicsDeviceInterop = device.cast()?;
             // SAFETY: 作り直したばかりの Direct2D デバイスを渡す。
@@ -385,12 +408,54 @@ impl Renderer {
         Ok(format)
     }
 
+    /// The width of one line of text as [`draw`](Self::draw) draws it: the layout's
+    /// width including trailing spaces, the same width text is aligned by.
+    fn text_width(&mut self, text: &str, size: f64) -> windows_core::Result<f64> {
+        let format = self.text_format(finite(size))?;
+        let utf16: Vec<u16> = single_line(text).encode_utf16().collect();
+        let mut metrics = DWRITE_TEXT_METRICS::default();
+        // SAFETY: 手元の文字列と書式からレイアウトを作り、寸法を読むだけ。
+        unsafe {
+            let layout = self
+                .dwrite
+                .CreateTextLayout(&utf16, &format, f32::MAX, f32::MAX)?;
+            layout.GetMetrics(&mut metrics)?;
+        }
+        Ok(f64::from(metrics.widthIncludingTrailingWhitespace))
+    }
+
     /// Draws `commands` onto `context`, which is already between `BeginDraw` and
     /// `EndDraw`. Units are logical pixels from the current transform and DPI.
+    ///
+    /// Direct2D keeps neither a stack of states nor relative transforms, so they are
+    /// kept here ([`Replay`]). Every clip pushed is popped again before returning,
+    /// even when a command fails, since `EndDraw` fails on an unbalanced push.
     pub(super) fn draw(
         &mut self,
         context: &ID2D1DeviceContext,
         commands: &[DrawCommand],
+    ) -> windows_core::Result<()> {
+        let mut base = Matrix3x2::default();
+        // SAFETY: 渡された描画中のコンテキストの変換を読むだけ。
+        unsafe { context.GetTransform(&mut base) };
+        let mut replay = Replay {
+            base: from_matrix(&base),
+            local: Transform::IDENTITY,
+            saves: Vec::new(),
+            clips: Vec::new(),
+        };
+        let drawn = self.replay(context, commands, &mut replay);
+        replay.pop_clips(context, 0);
+        // SAFETY: 読んだ変換へ戻すだけ。
+        unsafe { context.SetTransform(&base) };
+        drawn
+    }
+
+    fn replay(
+        &mut self,
+        context: &ID2D1DeviceContext,
+        commands: &[DrawCommand],
+        replay: &mut Replay,
     ) -> windows_core::Result<()> {
         // SAFETY: 渡された描画中のコンテキストへ命令を順に流すだけ。
         unsafe {
@@ -403,15 +468,25 @@ impl Renderer {
                 match command {
                     DrawCommand::Fill {
                         path,
-                        color,
+                        paint,
                         opacity,
                     } => {
-                        brush.SetColor(&color_f(*color, *opacity));
+                        let gradient_fill;
+                        let fill: &ID2D1Brush = match paint {
+                            Paint::Color(color) => {
+                                brush.SetColor(&color_f(*color, *opacity));
+                                &brush
+                            }
+                            Paint::Gradient(gradient) => {
+                                gradient_fill = gradient_brush(context, gradient, *opacity)?;
+                                &gradient_fill
+                            }
+                        };
                         // 棒グラフや点の印に多い長方形は、ジオメトリを作らずに塗る。
                         if let Some(rect) = axis_aligned_rect(path) {
-                            context.FillRectangle(&rect, &brush);
+                            context.FillRectangle(&rect, fill);
                         } else {
-                            context.FillGeometry(&self.geometry(path)?, &brush, None);
+                            context.FillGeometry(&self.geometry(path)?, fill, None);
                         }
                     }
                     DrawCommand::Stroke {
@@ -476,10 +551,116 @@ impl Renderer {
                             D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
                         );
                     }
+                    DrawCommand::Image {
+                        bitmap,
+                        source,
+                        dest,
+                        opacity,
+                    } => {
+                        if let Some(image) = self.d2d_bitmap(context, bitmap)? {
+                            context.DrawBitmap(
+                                &image,
+                                Some(&rect_f(*dest)),
+                                opacity.clamp(0.0, 1.0) as f32,
+                                D2D1_INTERPOLATION_MODE_LINEAR,
+                                Some(&rect_f(*source)),
+                                None,
+                            );
+                        }
+                    }
+                    DrawCommand::Save => replay.saves.push((replay.local, replay.clips.len())),
+                    DrawCommand::Restore => {
+                        if let Some((local, clips)) = replay.saves.pop() {
+                            replay.pop_clips(context, clips);
+                            replay.local = local;
+                            context.SetTransform(&replay.world_matrix());
+                        }
+                    }
+                    DrawCommand::Transform(t) => {
+                        // 今の変換の前に掛ける (`<canvas>` の transform と同じ向き)。
+                        replay.local = t.then(replay.local);
+                        context.SetTransform(&replay.world_matrix());
+                    }
+                    DrawCommand::Clip(path) => {
+                        let world = replay.local.then(replay.base);
+                        // 軸に沿った長方形は軽い切り抜きで済む。回っていれば外接矩形に
+                        // なってしまうので、そのときは図形を型にしたレイヤーを使う。
+                        match axis_aligned_rect(path).filter(|_| world.is_axis_aligned()) {
+                            Some(rect) => {
+                                context
+                                    .PushAxisAlignedClip(&rect, D2D1_ANTIALIAS_MODE_PER_PRIMITIVE);
+                                replay.clips.push(ClipKind::AxisAligned);
+                            }
+                            None => {
+                                let geometry: ID2D1Geometry = self.geometry(path)?.cast()?;
+                                let mut parameters = layer_parameters(geometry);
+                                context.PushLayer(&parameters, None);
+                                // 型は `ManuallyDrop` に入っているので、自分で手放さないと
+                                // 切り抜くたびに 1 つ残る (レイヤーは自分で参照を持つ)。
+                                core::mem::ManuallyDrop::drop(&mut parameters.geometricMask);
+                                replay.clips.push(ClipKind::Layer);
+                            }
+                        }
+                    }
                 }
             }
         }
         Ok(())
+    }
+
+    /// The Direct2D bitmap of `bitmap` for the current devices, made from its decoded
+    /// pixels the first time and again after the devices were replaced. `None` when
+    /// it cannot be decoded, or the device cannot hold it (too large).
+    fn d2d_bitmap(
+        &self,
+        context: &ID2D1DeviceContext,
+        bitmap: &Bitmap,
+    ) -> windows_core::Result<Option<ID2D1Bitmap1>> {
+        let native = bitmap.native(|bitmap| NativeBitmap {
+            pixels: decode(bitmap),
+            device: RefCell::new(None),
+        });
+        let Some((width, height, pixels)) = &native.pixels else {
+            return Ok(None);
+        };
+        let generation = self.devices.generation;
+        if let Some((made, image)) = native.device.borrow().as_ref() {
+            if *made == generation {
+                return Ok(Some(image.clone()));
+            }
+        }
+        let properties = D2D1_BITMAP_PROPERTIES1 {
+            pixelFormat: D2D1_PIXEL_FORMAT {
+                format: DXGI_FORMAT_B8G8R8A8_UNORM,
+                alphaMode: D2D1_ALPHA_MODE_PREMULTIPLIED,
+            },
+            // 96 dpi なら DIP と画素が同じなので、元の矩形を画素で渡せる。
+            dpiX: 96.0,
+            dpiY: 96.0,
+            bitmapOptions: D2D1_BITMAP_OPTIONS_NONE,
+            colorContext: core::mem::ManuallyDrop::new(None),
+        };
+        // SAFETY: 画素の列は幅 × 高さ × 4 バイトで、呼び出しの間生きている。
+        let made = unsafe {
+            context.CreateBitmap(
+                D2D_SIZE_U {
+                    width: *width,
+                    height: *height,
+                },
+                Some(pixels.as_ptr().cast()),
+                width * 4,
+                &properties,
+            )
+        };
+        let image = match made {
+            Ok(image) => image,
+            // 装置の限度 (Direct3D 11 で 16384 画素) を超える大きさなどは、他の
+            // 環境と同じくその画像だけを描かない。装置を失ったときは作り直しへ回す。
+            Err(error) if !is_device_lost(&error) => return Ok(None),
+            Err(error) => return Err(error),
+        };
+        *native.device.borrow_mut() = Some((generation, image.clone()));
+        Ok(Some(image))
     }
 
     fn geometry(&self, path: &Path) -> windows_core::Result<ID2D1PathGeometry1> {
@@ -639,6 +820,213 @@ impl Renderer {
             readable.Unmap()?;
             Ok((pixel_width, pixel_height, pixels))
         }
+    }
+}
+
+/// The transform and clips while commands are replayed.
+struct Replay {
+    /// What the surface had set before the commands (its place in a shared texture).
+    base: Transform,
+    /// What the commands have set, applied before `base`.
+    local: Transform,
+    /// For each `Save` still open: the transform then, and how many clips there were.
+    saves: Vec<(Transform, usize)>,
+    /// The clips pushed, innermost last. Each kind is popped its own way.
+    clips: Vec<ClipKind>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum ClipKind {
+    AxisAligned,
+    Layer,
+}
+
+impl Replay {
+    fn world_matrix(&self) -> Matrix3x2 {
+        to_matrix(&self.local.then(self.base))
+    }
+
+    /// Pops clips until `keep` are left.
+    fn pop_clips(&mut self, context: &ID2D1DeviceContext, keep: usize) {
+        while self.clips.len() > keep {
+            // SAFETY: 積んだのと同じ種類で、積んだ順の逆に戻す。
+            match self.clips.pop() {
+                Some(ClipKind::AxisAligned) => unsafe { context.PopAxisAlignedClip() },
+                Some(ClipKind::Layer) => unsafe { context.PopLayer() },
+                None => {}
+            }
+        }
+    }
+}
+
+/// A layer that lets drawing through only inside `mask`, which is placed by the
+/// world transform in force when it is pushed.
+fn layer_parameters(mask: ID2D1Geometry) -> D2D1_LAYER_PARAMETERS1 {
+    D2D1_LAYER_PARAMETERS1 {
+        // 型があるときは無限の範囲を渡すのが既定の使い方。
+        contentBounds: D2D_RECT_F {
+            left: -f32::MAX,
+            top: -f32::MAX,
+            right: f32::MAX,
+            bottom: f32::MAX,
+        },
+        geometricMask: core::mem::ManuallyDrop::new(Some(mask)),
+        maskAntialiasMode: D2D1_ANTIALIAS_MODE_PER_PRIMITIVE,
+        maskTransform: Matrix3x2::identity(),
+        opacity: 1.0,
+        opacityBrush: core::mem::ManuallyDrop::new(None),
+        layerOptions: D2D1_LAYER_OPTIONS1_NONE,
+    }
+}
+
+/// A gradient brush. Colors interpolate in sRGB (`GAMMA_2_2`) and the ends carry on
+/// (`CLAMP`), as on the other three platforms.
+fn gradient_brush(
+    context: &ID2D1DeviceContext,
+    gradient: &Gradient,
+    opacity: f64,
+) -> windows_core::Result<ID2D1Brush> {
+    let target: &ID2D1RenderTarget = context;
+    let stops: Vec<D2D1_GRADIENT_STOP> = gradient
+        .stops()
+        .iter()
+        .map(|stop| D2D1_GRADIENT_STOP {
+            position: stop.offset as f32,
+            color: color_f(stop.color, stop.opacity * opacity),
+        })
+        .collect();
+    // SAFETY: 手元の停止点からブラシを作るだけ。
+    unsafe {
+        let collection =
+            target.CreateGradientStopCollection(&stops, D2D1_GAMMA_2_2, D2D1_EXTEND_MODE_CLAMP)?;
+        match gradient.shape() {
+            GradientShape::Linear { start, end } => target
+                .CreateLinearGradientBrush(
+                    &D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES {
+                        startPoint: point(start),
+                        endPoint: point(end),
+                    },
+                    None,
+                    &collection,
+                )?
+                .cast(),
+            GradientShape::Radial { center, radius } => target
+                .CreateRadialGradientBrush(
+                    &D2D1_RADIAL_GRADIENT_BRUSH_PROPERTIES {
+                        center: point(center),
+                        gradientOriginOffset: Vector2::new(0.0, 0.0),
+                        radiusX: finite(radius),
+                        radiusY: finite(radius),
+                    },
+                    None,
+                    &collection,
+                )?
+                .cast(),
+        }
+    }
+}
+
+/// What a [`Bitmap`] decodes to, kept with it: its premultiplied BGRA pixels (`None`
+/// when it cannot be decoded), and the Direct2D bitmap made from them for one
+/// generation of devices.
+struct NativeBitmap {
+    pixels: Option<(u32, u32, Vec<u8>)>,
+    device: RefCell<Option<(u64, ID2D1Bitmap1)>>,
+}
+
+/// The size and premultiplied BGRA pixels of a bitmap. Files are decoded by WIC,
+/// the decoder behind `BitmapImage`; XAML's image sources cannot be drawn by
+/// Direct2D.
+fn decode(bitmap: &Bitmap) -> Option<(u32, u32, Vec<u8>)> {
+    match bitmap.data() {
+        BitmapData::Pixels(rgba) => Some((
+            bitmap.width(),
+            bitmap.height(),
+            naui_core::media::rgba_to_premultiplied_bgra(rgba),
+        )),
+        BitmapData::Encoded(bytes) => decode_file(bytes)
+            .map_err(|error| eprintln!("naui-windows: could not read the image: {error}"))
+            .ok(),
+    }
+}
+
+fn decode_file(bytes: &[u8]) -> windows_core::Result<(u32, u32, Vec<u8>)> {
+    // SAFETY: 手元のバイト列を WIC に読ませ、変換した画素を手元の配列へ写すだけ。
+    // ストリームはバイト列を写さずに参照するので、読み終えるまでこの関数の中に置く。
+    unsafe {
+        let factory: IWICImagingFactory =
+            CoCreateInstance(&CLSID_WICImagingFactory, None, CLSCTX_INPROC_SERVER)?;
+        let stream = factory.CreateStream()?;
+        stream.InitializeFromMemory(bytes)?;
+        let decoder = factory.CreateDecoderFromStream(
+            &stream,
+            std::ptr::null(),
+            WICDecodeMetadataCacheOnDemand,
+        )?;
+        let frame = decoder.GetFrame(0)?;
+        let converter = factory.CreateFormatConverter()?;
+        converter.Initialize(
+            &frame,
+            &GUID_WICPixelFormat32bppPBGRA,
+            WICBitmapDitherTypeNone,
+            None,
+            0.0,
+            WICBitmapPaletteTypeMedianCut,
+        )?;
+        let (mut width, mut height) = (0, 0);
+        converter.GetSize(&mut width, &mut height)?;
+        let stride = width
+            .checked_mul(4)
+            .ok_or_else(|| windows_core::Error::from(E_FAIL))?;
+        let mut pixels = vec![0; stride as usize * height as usize];
+        converter.CopyPixels(std::ptr::null(), stride, &mut pixels)?;
+        Ok((width, height, pixels))
+    }
+}
+
+/// Measures text with this thread's renderer. `None` when there is none, or it is
+/// in use (measuring is only asked for while `on_draw` runs, outside any draw).
+pub(super) fn measure_text(text: &str, size: f64) -> Option<f64> {
+    RENDERER
+        .try_with(|slot| {
+            let mut slot = slot.try_borrow_mut().ok()?;
+            if slot.0.is_none() {
+                slot.0 = Renderer::new().ok();
+            }
+            slot.0.as_mut()?.text_width(text, size).ok()
+        })
+        .ok()
+        .flatten()
+}
+
+fn to_matrix(t: &Transform) -> Matrix3x2 {
+    Matrix3x2 {
+        M11: finite(t.a),
+        M12: finite(t.b),
+        M21: finite(t.c),
+        M22: finite(t.d),
+        M31: finite(t.e),
+        M32: finite(t.f),
+    }
+}
+
+fn from_matrix(m: &Matrix3x2) -> Transform {
+    Transform::new(
+        f64::from(m.M11),
+        f64::from(m.M12),
+        f64::from(m.M21),
+        f64::from(m.M22),
+        f64::from(m.M31),
+        f64::from(m.M32),
+    )
+}
+
+fn rect_f(rect: Rect) -> D2D_RECT_F {
+    D2D_RECT_F {
+        left: finite(rect.x),
+        top: finite(rect.y),
+        right: finite(rect.right()),
+        bottom: finite(rect.bottom()),
     }
 }
 

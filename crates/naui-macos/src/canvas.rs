@@ -32,8 +32,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use naui_core::{
-    Align, Color, DrawCommand, EventResponse, Painter, Path, PathSegment, PointerButton,
-    PointerEvent, PointerPhase, WheelHandler, WHEEL_STEP,
+    Align, Bitmap, BitmapData, Color, DrawCommand, EventResponse, Gradient, GradientShape, Paint,
+    Painter, Path, PathSegment, PointerButton, PointerEvent, PointerPhase, Rect, WheelHandler,
+    WHEEL_STEP,
 };
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObjectProtocol};
@@ -41,11 +42,15 @@ use objc2::{
     define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message,
 };
 use objc2_app_kit::{
-    NSBezierPath, NSColor, NSEvent, NSFont, NSFontAttributeName, NSForegroundColorAttributeName,
-    NSLineCapStyle, NSLineJoinStyle, NSStringDrawing, NSTrackingArea, NSTrackingAreaOptions,
-    NSView,
+    NSAffineTransformNSAppKitAdditions, NSBezierPath, NSColor, NSColorSpace,
+    NSCompositingOperation, NSEvent, NSFont, NSFontAttributeName, NSForegroundColorAttributeName,
+    NSGradient, NSGradientDrawingOptions, NSGraphicsContext, NSImage, NSLineCapStyle,
+    NSLineJoinStyle, NSStringDrawing, NSTrackingArea, NSTrackingAreaOptions, NSView,
 };
-use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize, NSString};
+use objc2_foundation::{
+    NSAffineTransform, NSAffineTransformStruct, NSArray, NSAttributedStringKey, NSData,
+    NSDictionary, NSPoint, NSRect, NSSize, NSString,
+};
 
 use crate::trampoline::ValueHandler;
 use crate::widgets::{impl_widget, Widget};
@@ -93,7 +98,8 @@ define_class!(
         #[unsafe(method(drawRect:))]
         fn draw_rect(&self, _dirty: NSRect) {
             let bounds = self.bounds();
-            let mut painter = Painter::new(bounds.size.width, bounds.size.height);
+            let mut painter =
+                Painter::with_text_measure(bounds.size.width, bounds.size.height, text_width);
             let Some(mut draw) = self.ivars().draw.borrow_mut().take() else {
                 return;
             };
@@ -103,7 +109,7 @@ define_class!(
                 *slot = Some(draw);
             }
             drop(slot);
-            replay(painter.commands());
+            replay(&painter.into_commands());
         }
 
         #[unsafe(method(updateTrackingAreas))]
@@ -313,17 +319,29 @@ fn other_button(event: &NSEvent) -> Option<PointerButton> {
 
 /// Draws the commands recorded in the [`Painter`] into the current graphics
 /// context.
+///
+/// The whole replay sits inside one saved graphics state, so a transform or clip
+/// does not outlast `drawRect:`, and `Save` / `Restore` map onto
+/// `saveGraphicsState` / `restoreGraphicsState`, which cover the transform and
+/// the clip.
 fn replay(commands: &[DrawCommand]) {
+    NSGraphicsContext::saveGraphicsState_class();
+    let mut depth = 0_usize;
     for command in commands {
         match command {
             DrawCommand::Fill {
                 path,
-                color,
+                paint,
                 opacity,
             } => {
                 let bezier = to_bezier(path);
-                ns_color(*color, *opacity).setFill();
-                bezier.fill();
+                match paint {
+                    Paint::Color(color) => {
+                        ns_color(*color, *opacity).setFill();
+                        bezier.fill();
+                    }
+                    Paint::Gradient(gradient) => fill_gradient(&bezier, gradient, *opacity),
+                }
             }
             DrawCommand::Stroke {
                 path,
@@ -353,8 +371,136 @@ fn replay(commands: &[DrawCommand]) {
                 align,
                 opacity,
             } => draw_text(text, *at, *size, *color, *align, *opacity),
+            DrawCommand::Image {
+                bitmap,
+                source,
+                dest,
+                opacity,
+            } => draw_image(bitmap, *source, *dest, *opacity),
+            DrawCommand::Save => {
+                NSGraphicsContext::saveGraphicsState_class();
+                depth += 1;
+            }
+            DrawCommand::Restore => {
+                if depth > 0 {
+                    NSGraphicsContext::restoreGraphicsState_class();
+                    depth -= 1;
+                }
+            }
+            DrawCommand::Transform(t) => {
+                let transform = NSAffineTransform::transform();
+                transform.setTransformStruct(NSAffineTransformStruct {
+                    m11: t.a,
+                    m12: t.b,
+                    m21: t.c,
+                    m22: t.d,
+                    tX: t.e,
+                    tY: t.f,
+                });
+                // 今の変換の前に掛ける (`<canvas>` の transform と同じ向き)。
+                transform.concat();
+            }
+            DrawCommand::Clip(path) => to_bezier(path).addClip(),
         }
     }
+    for _ in 0..=depth {
+        NSGraphicsContext::restoreGraphicsState_class();
+    }
+}
+
+/// Fills `bezier` with a gradient: clips to it, then draws the gradient over the
+/// clip. `NSGradient` stops at its ends unless told to carry the end colors on,
+/// which the other three platforms do.
+fn fill_gradient(bezier: &NSBezierPath, gradient: &Gradient, opacity: f64) {
+    let stops = gradient.stops();
+    let colors: Vec<Retained<NSColor>> = stops
+        .iter()
+        .map(|stop| ns_color(stop.color, stop.opacity * opacity))
+        .collect();
+    let colors = NSArray::from_retained_slice(&colors);
+    let locations: Vec<f64> = stops.iter().map(|stop| stop.offset).collect();
+    // SAFETY: 位置の配列は色と同じ長さで、呼び出しの間生きている。
+    let Some(ns_gradient) = (unsafe {
+        NSGradient::initWithColors_atLocations_colorSpace(
+            NSGradient::alloc(),
+            &colors,
+            locations.as_ptr(),
+            &NSColorSpace::sRGBColorSpace(),
+        )
+    }) else {
+        return;
+    };
+    let options = NSGradientDrawingOptions::DrawsBeforeStartingLocation
+        | NSGradientDrawingOptions::DrawsAfterEndingLocation;
+    NSGraphicsContext::saveGraphicsState_class();
+    bezier.addClip();
+    match gradient.shape() {
+        GradientShape::Linear { start, end } => {
+            ns_gradient.drawFromPoint_toPoint_options(ns_point(start), ns_point(end), options)
+        }
+        GradientShape::Radial { center, radius } => ns_gradient
+            .drawFromCenter_radius_toCenter_radius_options(
+                ns_point(center),
+                0.0,
+                ns_point(center),
+                radius,
+                options,
+            ),
+    }
+    NSGraphicsContext::restoreGraphicsState_class();
+}
+
+/// The `NSImage` made from a [`Bitmap`], kept with it. `None` when AppKit cannot
+/// read it.
+struct NativeBitmap(Option<Retained<NSImage>>);
+
+/// Draws the `source` part of the image over `dest`.
+///
+/// The image's size is set to its pixel size, so its points are its pixels (a PNG
+/// saying 144 dpi would otherwise be half as many points). `fromRect:` is in the
+/// image's own coordinates, whose origin is the bottom left, so `source` (from the
+/// top left) is turned over. `respectFlipped:` draws it upright in this flipped
+/// view.
+fn draw_image(bitmap: &Bitmap, source: Rect, dest: Rect, opacity: f64) {
+    let native = bitmap.native(|bitmap| {
+        let image = match bitmap.data() {
+            BitmapData::Encoded(bytes) => Some(bytes.to_vec()),
+            // 画素は PNG に包み、ファイルと同じく sRGB として読ませる (`Image` と同じ)。
+            BitmapData::Pixels(rgba) => {
+                naui_core::media::encode_png(bitmap.width(), bitmap.height(), rgba).ok()
+            }
+        }
+        .and_then(|bytes| NSImage::initWithData(NSImage::alloc(), &NSData::with_bytes(&bytes)));
+        if let Some(image) = &image {
+            image.setSize(NSSize::new(
+                f64::from(bitmap.width()),
+                f64::from(bitmap.height()),
+            ));
+        }
+        NativeBitmap(image)
+    });
+    let Some(image) = &native.0 else {
+        return;
+    };
+    let from = NSRect::new(
+        NSPoint::new(source.x, f64::from(bitmap.height()) - source.bottom()),
+        NSSize::new(source.width, source.height),
+    );
+    let to = NSRect::new(
+        NSPoint::new(dest.x, dest.y),
+        NSSize::new(dest.width, dest.height),
+    );
+    // SAFETY: ヒントは渡さない。
+    unsafe {
+        image.drawInRect_fromRect_operation_fraction_respectFlipped_hints(
+            to,
+            from,
+            NSCompositingOperation::SourceOver,
+            opacity,
+            true,
+            None,
+        )
+    };
 }
 
 fn to_bezier(path: &Path) -> Retained<NSBezierPath> {
@@ -378,6 +524,36 @@ fn to_bezier(path: &Path) -> Retained<NSBezierPath> {
     bezier
 }
 
+/// The attributes text is drawn and measured with: the system font at `size`, and
+/// the color when there is one.
+fn text_attributes(
+    size: f64,
+    fill: Option<&NSColor>,
+) -> Retained<NSDictionary<NSAttributedStringKey, AnyObject>> {
+    let font = NSFont::systemFontOfSize(size);
+    let font_object: &AnyObject = font.as_ref();
+    match fill {
+        Some(fill) => {
+            let color_object: &AnyObject = fill.as_ref();
+            NSDictionary::from_slices(
+                &[unsafe { NSFontAttributeName }, unsafe {
+                    NSForegroundColorAttributeName
+                }],
+                &[font_object, color_object],
+            )
+        }
+        None => NSDictionary::from_slices(&[unsafe { NSFontAttributeName }], &[font_object]),
+    }
+}
+
+/// The width of one line of text as [`draw_text`] draws it.
+fn text_width(text: &str, size: f64) -> f64 {
+    let string = NSString::from_str(text);
+    let attributes = text_attributes(size, None);
+    let measured: NSSize = unsafe { string.sizeWithAttributes(Some(&attributes)) };
+    measured.width
+}
+
 /// Draws one line of text. `at` is the top, and the horizontal position follows
 /// `align`.
 ///
@@ -392,16 +568,8 @@ fn draw_text(
     opacity: f64,
 ) {
     let string = NSString::from_str(text);
-    let font = NSFont::systemFontOfSize(size);
     let fill = ns_color(color, opacity);
-    let font_object: &AnyObject = font.as_ref();
-    let color_object: &AnyObject = fill.as_ref();
-    let attributes = NSDictionary::from_slices(
-        &[unsafe { NSFontAttributeName }, unsafe {
-            NSForegroundColorAttributeName
-        }],
-        &[font_object, color_object],
-    );
+    let attributes = text_attributes(size, Some(&fill));
     let x = match align {
         Align::Start | Align::Fill => at.x,
         Align::Center | Align::End => {
