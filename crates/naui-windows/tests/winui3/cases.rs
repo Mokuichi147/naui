@@ -26,8 +26,8 @@ use naui_winui3::Microsoft::UI::Xaml::Documents::{Hyperlink, Inline, Run};
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::{BitmapImage, SvgImageSource};
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
 use naui_winui3::Microsoft::UI::Xaml::{
-    Application, FrameworkElement, GridUnitType, HorizontalAlignment, RoutedEventHandler, Style,
-    UIElement, VerticalAlignment, Visibility,
+    Application, DependencyProperty, FrameworkElement, GridUnitType, HorizontalAlignment,
+    RoutedEventHandler, Style, UIElement, VerticalAlignment, Visibility,
 };
 use windows::Foundation::{IPropertyValue, PropertyValue};
 use windows::Win32::Foundation::E_NOINTERFACE;
@@ -120,6 +120,10 @@ const CASES: &[Case] = &[
     (
         "Stack から外すと配置を次の親へ戻せる",
         removing_stack_child_restores_alignment,
+    ),
+    (
+        "コンテナから外した子に揃えのローカル値を残さない",
+        removed_child_leaves_no_local_alignment,
     ),
     ("スタックが子を生かし続ける", stack_keeps_children),
     (
@@ -641,6 +645,18 @@ const CASES: &[Case] = &[
         "シートの設定が ContentDialog へ届く",
         sheet_configuration_reaches_the_content_dialog,
     ),
+    (
+        "外さずに別の親へ入れた子を、その場で置くコンテナは断り、前の子を保つ",
+        crate::moved_child::placers_refuse_a_child_with_a_parent,
+    ),
+    (
+        "リストの行と表のセルは親の無い子だけを置き、作り直しても奪わない",
+        crate::moved_child::rows_take_only_free_children,
+    ),
+    (
+        "表示したリストでも渡しただけの子を取り返さず、後の持ち主が置く",
+        crate::moved_child::rows_take_only_free_children_on_screen,
+    ),
 ];
 
 fn sheet_configuration_reaches_the_content_dialog(ui: &Ui) -> Result<()> {
@@ -933,24 +949,32 @@ pub(crate) fn run() {
         std::process::exit(1);
     });
 
+    let shard = Shard::from_env();
     let failed = Arc::new(AtomicUsize::new(0));
     let counter = failed.clone();
     let outcome = run_for_test(move |ui| {
-        for (name, case) in CASES {
+        let mut ran = 0;
+        for (index, (name, case)) in CASES.iter().enumerate() {
             if let Ok(only) = std::env::var("NAUI_ONLY") {
                 if !name.contains(only.as_str()) {
                     continue;
                 }
             }
+            if !shard.takes(index, CASES.len()) {
+                continue;
+            }
+            ran += 1;
             report(name, catch_unwind(AssertUnwindSafe(|| case(ui))), &counter);
         }
 
-        // 2 段構えのケースは、まず仕込みだけ済ませる。
+        // 2 段構えのケースは、まず仕込みだけ済ませる。どれも 1 秒かからないので、
+        // 分けずに、ふだんと同じくほかのケースの後に走るよう、最後のシャードがまとめて受け持つ。
         let mut deferred = Vec::new();
         for (name, setup) in ASYNC_CASES {
-            if std::env::var("NAUI_ONLY").is_ok() {
+            if std::env::var("NAUI_ONLY").is_ok() || !shard.is_last() {
                 continue;
             }
+            ran += 1;
             match catch_unwind(AssertUnwindSafe(|| setup(ui))) {
                 Ok(Ok(check)) => deferred.push((*name, check)),
                 other => report(name, other.map(|result| result.map(|_| ())), &counter),
@@ -971,10 +995,10 @@ pub(crate) fn run() {
             }
             // 結果はここで出し切る。この先はアプリの後片づけなので、そこで
             // 転んでも何が通って何が落ちたかは読める。
-            let total = CASES.len() + ASYNC_CASES.len();
             println!(
-                "\n{total} 件中 {} 件成功",
-                total - later.load(Ordering::Relaxed)
+                "\n{ran} 件中 {} 件成功{}",
+                ran - later.load(Ordering::Relaxed),
+                shard.describe(CASES.len() + ASYNC_CASES.len()),
             );
         });
         checks.send(())?;
@@ -987,6 +1011,66 @@ pub(crate) fn run() {
     }
     if failed.load(Ordering::Relaxed) > 0 {
         std::process::exit(1);
+    }
+}
+
+/// Which part of [`CASES`] this process runs, from `NAUI_SHARD=k/n` (`k` counts from 1).
+///
+/// The cases cannot run in parallel in one process (the app is started only once) nor in
+/// one session (real input fights over the pointer and the foreground window), so CI
+/// splits them across runners instead. Each shard takes a run of [`CASES`] in a row, cut
+/// into `n` equal counts, rather than every `n`-th case: the cases share one process,
+/// and some of them leave state behind that the next case trips over (a case scrolling
+/// a list right after the real-input key cases on another list sees its rows not move).
+/// Cutting into runs keeps every case after the same case as in a full run, except the
+/// first case of each shard.
+///
+/// Without the variable, every case runs.
+#[derive(Clone, Copy)]
+struct Shard {
+    /// Counts from 0.
+    index: usize,
+    count: usize,
+}
+
+impl Shard {
+    fn from_env() -> Self {
+        let Ok(value) = std::env::var("NAUI_SHARD") else {
+            return Self { index: 0, count: 1 };
+        };
+        let parsed = value.split_once('/').and_then(|(k, n)| {
+            let (k, n) = (
+                k.trim().parse::<usize>().ok()?,
+                n.trim().parse::<usize>().ok()?,
+            );
+            (1..=n).contains(&k).then_some(Self {
+                index: k - 1,
+                count: n,
+            })
+        });
+        parsed.unwrap_or_else(|| panic!("NAUI_SHARD は k/n (1 <= k <= n) で指定する: {value:?}"))
+    }
+
+    /// Whether case `index` of `total` falls into this shard.
+    fn takes(self, index: usize, total: usize) -> bool {
+        (total * self.index / self.count..total * (self.index + 1) / self.count).contains(&index)
+    }
+
+    fn is_last(self) -> bool {
+        self.index + 1 == self.count
+    }
+
+    /// A note for the summary line, saying which shard ran out of how many cases in all.
+    fn describe(self, total: usize) -> String {
+        if self.count == 1 {
+            String::new()
+        } else {
+            format!(
+                " (シャード {}/{}、全 {total} 件のうち)",
+                self.index + 1,
+                self.count
+            )
+        }
     }
 }
 
@@ -2269,6 +2353,102 @@ fn removing_stack_child_restores_alignment(ui: &Ui) -> Result<()> {
             .expect("Grid へ移した子の横配置"),
         HorizontalAlignment::Stretch,
         "Stack の Right が次の親へ持ち越されないこと"
+    );
+    Ok(())
+}
+
+/// Whether the element has a local value for `HorizontalAlignment` and
+/// `VerticalAlignment`, in that order.
+fn local_alignment(element: &FrameworkElement) -> (bool, bool) {
+    let unset = DependencyProperty::UnsetValue()
+        .expect("UnsetValue")
+        .cast::<windows_core::IUnknown>()
+        .expect("IUnknown");
+    let has_local = |property: DependencyProperty| {
+        let local = element
+            .ReadLocalValue(&property)
+            .expect("ローカル値")
+            .cast::<windows_core::IUnknown>()
+            .expect("IUnknown");
+        local.as_raw() != unset.as_raw()
+    };
+    (
+        has_local(FrameworkElement::HorizontalAlignmentProperty().expect("横配置のプロパティ")),
+        has_local(FrameworkElement::VerticalAlignmentProperty().expect("縦配置のプロパティ")),
+    )
+}
+
+/// A child whose alignment the app never set gets no local alignment left behind
+/// when it leaves a container.
+///
+/// A `Button`'s style says `Left` / `Center`, but the style only applies in the
+/// live tree. Writing back the value read before that would leave the property's
+/// default `Stretch` as a local value, which beats the style, so the button would
+/// look different from a fresh one. Off screen (and in CI) the template never
+/// applies, so this compares local values instead of the effective ones.
+fn removed_child_leaves_no_local_alignment(ui: &Ui) -> Result<()> {
+    let fresh = ui.button("新しい")?;
+    assert_eq!(
+        local_alignment(&native::<FrameworkElement>(&fresh)),
+        (false, false),
+        "作ったばかりのボタンには揃えのローカル値が無いこと"
+    );
+
+    let vertical = ui.stack(Orientation::Vertical)?;
+    let button = ui.button("縦の Stack")?;
+    vertical.append(&button);
+    assert!(
+        local_alignment(&native::<FrameworkElement>(&button)).0,
+        "縦の Stack の中では横の揃えを Stack が書くこと"
+    );
+    vertical.remove(0);
+    assert_eq!(
+        local_alignment(&native::<FrameworkElement>(&button)),
+        (false, false),
+        "縦の Stack から外したボタンに揃えのローカル値を残さないこと"
+    );
+
+    let horizontal = ui.stack(Orientation::Horizontal)?;
+    let button = ui.button("横の Stack")?;
+    horizontal.append(&button);
+    horizontal.remove(0);
+    assert_eq!(
+        local_alignment(&native::<FrameworkElement>(&button)),
+        (false, false),
+        "横の Stack から外したボタンに揃えのローカル値を残さないこと"
+    );
+
+    let scroll = ui.scroll()?;
+    let button = ui.button("Scroll")?;
+    scroll.set_child(&button);
+    assert!(
+        local_alignment(&native::<FrameworkElement>(&button)).0,
+        "横へ送らない Scroll の中では横の揃えを Scroll が書くこと"
+    );
+    scroll.set_child(&ui.label("差し替え")?);
+    assert_eq!(
+        local_alignment(&native::<FrameworkElement>(&button)),
+        (false, false),
+        "Scroll から外したボタンに揃えのローカル値を残さないこと"
+    );
+
+    // 利用者が Sizing で決めた揃えは、外したあとも残す。
+    let sized = ui.button("Sizing 済み")?;
+    sized.set_sizing(Sizing::AUTO);
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_align(Align::End);
+    stack.append(&sized);
+    stack.remove(0);
+    let sized_native = native::<FrameworkElement>(&sized);
+    assert_eq!(
+        local_alignment(&sized_native),
+        (true, true),
+        "Sizing で書いた揃えはローカル値のまま残ること"
+    );
+    assert_eq!(
+        sized_native.HorizontalAlignment().expect("横配置"),
+        HorizontalAlignment::Left,
+        "Sizing の Left へ戻ること"
     );
     Ok(())
 }
@@ -5546,7 +5726,7 @@ fn show_and_measure(window: &naui_windows::Window, scroll: &naui_windows::Scroll
 /// It is long because a window opened right after keys moved through the rows of a
 /// `ListView` is laid out late, by seconds (see `docs/known-limitations.md`). A case that
 /// gives up waiting passes without checking anything.
-const SCROLL_LAYOUT_TIMEOUT: Duration = Duration::from_secs(20);
+pub(crate) const SCROLL_LAYOUT_TIMEOUT: Duration = Duration::from_secs(20);
 
 fn scroll_measures_and_moves(ui: &Ui) -> Result<()> {
     let (window, scroll, _pane) = tall_scroll(ui, 40)?;
@@ -6080,7 +6260,7 @@ fn preferred_languages_follow_settingchange(ui: &Ui) -> Result<()> {
 /// Image load completion arrives by being queued onto the UI thread's queue from
 /// another thread. Cases run inside `OnLaunched`, so without pumping here it would
 /// never arrive.
-fn pump_until(timeout: Duration, mut done: impl FnMut() -> bool) {
+pub(crate) fn pump_until(timeout: Duration, mut done: impl FnMut() -> bool) {
     use windows::Win32::UI::WindowsAndMessaging::{
         DispatchMessageW, PeekMessageW, TranslateMessage, MSG, PM_REMOVE,
     };

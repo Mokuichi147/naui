@@ -157,6 +157,7 @@ Microsoft.UI.Xaml.Controls.XamlControlsResources
 Microsoft.UI.Xaml.CornerRadius
 Microsoft.UI.Xaml.DataTemplate
 Microsoft.UI.Xaml.DependencyObject
+Microsoft.UI.Xaml.DependencyProperty
 Microsoft.UI.Xaml.Documents.Hyperlink
 Microsoft.UI.Xaml.Documents.HyperlinkClickEventArgs
 Microsoft.UI.Xaml.Documents.Inline

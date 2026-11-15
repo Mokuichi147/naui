@@ -537,7 +537,7 @@ impl NumberInput {
     /// after, for the case where it does not change.
     fn write_native(&self, value: f64) {
         let previous = self.0.silent.replace(true);
-        let _ = self.0.native.SetValue(value);
+        let _ = self.0.native.SetValue2(value);
         self.0.silent.set(previous);
     }
 
