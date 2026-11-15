@@ -1038,7 +1038,7 @@ impl Slider {
     }
 
     pub fn set_value(&self, value: f64) {
-        let _ = self.0.native.SetValue(value.clamp(self.0.min, self.0.max));
+        let _ = self.0.native.SetValue2(value.clamp(self.0.min, self.0.max));
     }
 
     pub fn set_enabled(&self, enabled: bool) {
