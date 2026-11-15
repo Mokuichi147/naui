@@ -9376,3 +9376,835 @@ async fn read_blob(url: &str) -> Option<String> {
         .ok()?;
     text.as_string()
 }
+
+// ------------------------------------------------- 外さずに別の親へ入れた子
+
+/// Where a widget is and the inline style naui writes on it.
+#[derive(Debug, Clone, PartialEq)]
+struct Placed {
+    parent: Option<web_sys::Node>,
+    style: String,
+}
+
+fn placed(widget: &dyn Widget) -> Placed {
+    let element = widget.native_element();
+    let style = element.get_attribute("style").unwrap_or_default();
+    Placed {
+        parent: element.parent_node(),
+        style,
+    }
+}
+
+/// Collects what went wrong, so that one run lists every broken case.
+#[derive(Default)]
+struct Violations(Vec<String>);
+
+impl Violations {
+    fn check(&mut self, ok: bool, what: impl FnOnce() -> String) {
+        if !ok {
+            self.0.push(what());
+        }
+    }
+
+    /// The widget is still where it was, with nothing rewritten on it.
+    fn unchanged(&mut self, child: &dyn Widget, before: &Placed, what: &str) {
+        let now = placed(child);
+        self.check(now == *before, || {
+            format!("{what}: 子が動いたか書き換わった\n  前 {before:?}\n  後 {now:?}")
+        });
+    }
+
+    fn assert_none(self) {
+        assert!(
+            self.0.is_empty(),
+            "{} 件:\n{}",
+            self.0.len(),
+            self.0.join("\n")
+        );
+    }
+}
+
+/// Hands a child to a container.
+type Put = Box<dyn Fn(&dyn Widget)>;
+
+thread_local! {
+    /// What a holder's `exercise` found wrong with the container itself.
+    static EXERCISE_PROBLEMS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+}
+
+/// A container that holds a child, seen through one of its entry points.
+struct Holder {
+    name: &'static str,
+    /// Hands `child` over through the entry point being checked.
+    put: Put,
+    /// The element the child is inside of while this holds it.
+    native: Box<dyn Fn() -> Element>,
+    /// Every operation of the container that does not hand a child over again:
+    /// settings that go through the children, rebuilding, opening and closing,
+    /// replacing and removing.
+    exercise: Box<dyn Fn()>,
+    /// Builders take a widget again with `refresh` (the app hands the rows over again).
+    takes_on_refresh: Option<Box<dyn Fn()>>,
+}
+
+impl Holder {
+    fn holds(&self, child: &dyn Widget) -> bool {
+        (self.native)().contains(Some(child.native_element().as_ref()))
+    }
+}
+
+/// One holder per entry point that takes a `&dyn Widget` child.
+fn holders(ui: &Ui, anchor: &naui_web::Button) -> Result<Vec<Holder>> {
+    let mut all = Vec::new();
+    let label = {
+        let ui = ui.clone();
+        move |text: &str| ui.label(text).expect("ラベル")
+    };
+
+    for insert in [false, true] {
+        let stack = ui.stack(Orientation::Vertical)?;
+        stack.append(&ui.label("前")?);
+        let label = label.clone();
+        all.push(Holder {
+            name: if insert {
+                "Stack::insert"
+            } else {
+                "Stack::append"
+            },
+            put: Box::new({
+                let stack = stack.clone();
+                move |child| match insert {
+                    true => stack.insert(1, child),
+                    false => stack.append(child),
+                }
+            }),
+            native: Box::new({
+                let stack = stack.clone();
+                move || stack.native_element()
+            }),
+            exercise: Box::new({
+                let stack = stack.clone();
+                move || {
+                    stack.set_spacing(12.0);
+                    stack.set_padding(Padding::all(4.0));
+                    stack.set_align(Align::End);
+                    stack.set_orientation(Orientation::Horizontal);
+                    stack.set_orientation(Orientation::Vertical);
+                    // 移っていった子 (記録の 1 番目) の前へ入れても、ちゃんと入る。
+                    let inserted = label("挿入");
+                    stack.insert(1, &inserted);
+                    if inserted.native_element().parent_node().as_ref()
+                        != Some(stack.native_element().as_ref())
+                    {
+                        EXERCISE_PROBLEMS.with(|problems| {
+                            problems
+                                .borrow_mut()
+                                .push("移っていった子の前へ入れたものが Stack に入らない".into())
+                        });
+                    }
+                    stack.remove(2);
+                    stack.clear();
+                }
+            }),
+            takes_on_refresh: None,
+        });
+    }
+    for replace in [false, true] {
+        let grid = ui.grid()?;
+        grid.attach(&ui.label("前")?, GridCell::new(0, 0));
+        let label = label.clone();
+        all.push(Holder {
+            name: if replace {
+                "Grid::replace"
+            } else {
+                "Grid::attach"
+            },
+            put: Box::new({
+                let grid = grid.clone();
+                move |child| match replace {
+                    true => grid.replace(child, GridCell::new(1, 1)),
+                    false => grid.attach(child, GridCell::new(1, 1)),
+                }
+            }),
+            native: Box::new({
+                let grid = grid.clone();
+                move || grid.native_element()
+            }),
+            exercise: Box::new({
+                let grid = grid.clone();
+                move || {
+                    grid.set_spacing(6.0, 6.0);
+                    grid.set_padding(Padding::all(4.0));
+                    grid.set_column_track(1, naui_core::Track::FILL);
+                    grid.set_row_track(1, naui_core::Track::Fixed(30.0));
+                    grid.attach(&label("隣"), GridCell::new(2, 0));
+                    grid.remove(GridCell::new(1, 1));
+                    grid.clear();
+                }
+            }),
+            takes_on_refresh: None,
+        });
+    }
+    let scroll = ui.scroll()?;
+    scroll.set_child(&ui.label("前")?);
+    all.push(Holder {
+        name: "Scroll::set_child",
+        put: Box::new({
+            let scroll = scroll.clone();
+            move |child| scroll.set_child(child)
+        }),
+        native: Box::new({
+            let scroll = scroll.clone();
+            move || scroll.native_element()
+        }),
+        exercise: Box::new({
+            let scroll = scroll.clone();
+            let label = label.clone();
+            move || {
+                scroll.set_policy(
+                    naui_core::ScrollPolicy::Auto,
+                    naui_core::ScrollPolicy::Never,
+                );
+                scroll.scroll_to(0.0, 10.0);
+                scroll.set_child(&label("次"));
+            }
+        }),
+        takes_on_refresh: None,
+    });
+    let group = ui.group("枠")?;
+    group.set_child(&ui.label("前")?);
+    all.push(Holder {
+        name: "Group::set_child",
+        put: Box::new({
+            let group = group.clone();
+            move |child| group.set_child(child)
+        }),
+        native: Box::new({
+            let group = group.clone();
+            move || group.native_element()
+        }),
+        exercise: Box::new({
+            let group = group.clone();
+            let label = label.clone();
+            move || {
+                group.set_padding(Padding::all(20.0));
+                group.set_child(&label("次"));
+            }
+        }),
+        takes_on_refresh: None,
+    });
+    let expander = ui.expander("たたむ")?;
+    expander.set_child(&ui.label("前")?);
+    expander.set_expanded(true);
+    all.push(Holder {
+        name: "Expander::set_child",
+        put: Box::new({
+            let expander = expander.clone();
+            move |child| expander.set_child(child)
+        }),
+        native: Box::new({
+            let expander = expander.clone();
+            move || expander.native_element()
+        }),
+        exercise: Box::new({
+            let expander = expander.clone();
+            let label = label.clone();
+            move || {
+                expander.set_expanded(false);
+                expander.set_expanded(true);
+                expander.set_child(&label("次"));
+            }
+        }),
+        takes_on_refresh: None,
+    });
+    for detail in [false, true] {
+        let panes = ui.adaptive_panes()?;
+        let list_button = ui.button("前の一覧")?;
+        let detail_button = ui.button("前の詳細")?;
+        panes.set_list(&list_button);
+        panes.set_detail(&detail_button);
+        let label = label.clone();
+        all.push(Holder {
+            name: if detail {
+                "AdaptivePanes::set_detail"
+            } else {
+                "AdaptivePanes::set_list"
+            },
+            put: Box::new({
+                let panes = panes.clone();
+                move |child| match detail {
+                    true => panes.set_detail(child),
+                    false => panes.set_list(child),
+                }
+            }),
+            native: Box::new({
+                let panes = panes.clone();
+                move || panes.native_element()
+            }),
+            exercise: Box::new({
+                let panes = panes.clone();
+                move || {
+                    // 1 区画ずつの表示で、フォーカスのある区画を隠すと、もう一方の
+                    // 区画の中身へフォーカスを移す。
+                    panes.set_breakpoint(5000.0);
+                    if detail {
+                        list_button.request_focus();
+                        panes.show(Pane::Detail);
+                    } else {
+                        panes.show(Pane::Detail);
+                        detail_button.request_focus();
+                        panes.go_back();
+                    }
+                    panes.set_breakpoint(10.0);
+                    match detail {
+                        true => panes.set_detail(&label("次")),
+                        false => panes.set_list(&label("次")),
+                    }
+                }
+            }),
+            takes_on_refresh: None,
+        });
+    }
+    for end in [false, true] {
+        let split = ui.split_view(Orientation::Horizontal)?;
+        split.set_start(&ui.label("前の始端")?);
+        split.set_end(&ui.label("前の終端")?);
+        let label = label.clone();
+        all.push(Holder {
+            name: if end {
+                "SplitView::set_end"
+            } else {
+                "SplitView::set_start"
+            },
+            put: Box::new({
+                let split = split.clone();
+                move |child| match end {
+                    true => split.set_end(child),
+                    false => split.set_start(child),
+                }
+            }),
+            native: Box::new({
+                let split = split.clone();
+                move || split.native_element()
+            }),
+            exercise: Box::new({
+                let split = split.clone();
+                move || {
+                    split.set_position(40.0);
+                    match end {
+                        true => split.set_end(&label("次")),
+                        false => split.set_start(&label("次")),
+                    }
+                }
+            }),
+            takes_on_refresh: None,
+        });
+    }
+    let tabs = ui.tabs()?;
+    tabs.add_tab("前", &ui.label("前")?);
+    all.push(Holder {
+        name: "Tabs::add_tab",
+        put: Box::new({
+            let tabs = tabs.clone();
+            move |child| tabs.add_tab("子", child)
+        }),
+        native: Box::new({
+            let tabs = tabs.clone();
+            move || tabs.native_element()
+        }),
+        exercise: Box::new({
+            let tabs = tabs.clone();
+            let label = label.clone();
+            move || {
+                tabs.add_tab("後ろ", &label("後ろ"));
+                tabs.select(1);
+                tabs.set_selected(0);
+                tabs.remove_tab(1);
+                tabs.clear();
+            }
+        }),
+        takes_on_refresh: None,
+    });
+    let popover = ui.popover()?;
+    popover.set_child(&ui.label("前")?);
+    all.push(Holder {
+        name: "Popover::set_child",
+        put: Box::new({
+            let popover = popover.clone();
+            move |child| popover.set_child(child)
+        }),
+        native: Box::new({
+            let popover = popover.clone();
+            move || popover.native_element()
+        }),
+        exercise: Box::new({
+            let popover = popover.clone();
+            let anchor = anchor.clone();
+            let label = label.clone();
+            move || {
+                popover.open(&anchor);
+                popover.close();
+                popover.set_child(&label("次"));
+            }
+        }),
+        takes_on_refresh: None,
+    });
+    let window = ui.window("中身", 200.0, 150.0)?;
+    window.set_child(&ui.label("前")?);
+    all.push(Holder {
+        name: "Window::set_child",
+        put: Box::new({
+            let window = window.clone();
+            move |child| window.set_child(child)
+        }),
+        native: Box::new({
+            let window = window.clone();
+            move || window.native_element()
+        }),
+        exercise: Box::new({
+            let window = window.clone();
+            let ui = ui.clone();
+            let label = label.clone();
+            move || {
+                window.set_sidebar(&ui.sidebar().expect("サイドバー"));
+                window.set_sidebar(&ui.sidebar().expect("サイドバー"));
+                window.clear_sidebar();
+                window.set_toolbar(&ui.toolbar().expect("ツールバー"));
+                window.clear_toolbar();
+                window.set_child(&label("次"));
+            }
+        }),
+        takes_on_refresh: None,
+    });
+    let dialog = ui.dialog("ダイアログ")?;
+    dialog.set_child(&ui.label("前")?);
+    all.push(Holder {
+        name: "Dialog::set_child",
+        put: Box::new({
+            let dialog = dialog.clone();
+            move |child| dialog.set_child(child)
+        }),
+        native: Box::new({
+            let dialog = dialog.clone();
+            move || dialog.native_element()
+        }),
+        exercise: Box::new({
+            let dialog = dialog.clone();
+            let label = label.clone();
+            move || {
+                dialog.open();
+                dialog.close();
+                dialog.open();
+                dialog.set_child(&label("次"));
+                dialog.close();
+            }
+        }),
+        takes_on_refresh: None,
+    });
+    let sheet = ui.sheet("シート")?;
+    sheet.set_child(&ui.label("前")?);
+    all.push(Holder {
+        name: "Sheet::set_child",
+        put: Box::new({
+            let sheet = sheet.clone();
+            move |child| sheet.set_child(child)
+        }),
+        native: Box::new({
+            let sheet = sheet.clone();
+            move || sheet.native_element()
+        }),
+        exercise: Box::new({
+            let sheet = sheet.clone();
+            let label = label.clone();
+            move || {
+                sheet.open();
+                sheet.close();
+                sheet.open();
+                sheet.set_child(&label("次"));
+                sheet.close();
+            }
+        }),
+        takes_on_refresh: None,
+    });
+    let list = ui.list()?;
+    list.set_sizing(Sizing::fixed(200.0, 120.0));
+    all.push(Holder {
+        name: "List::set_rows",
+        put: Box::new({
+            let list = list.clone();
+            let label = label.clone();
+            move |child| list.set_rows(&[ListRow::new(child), ListRow::new(&label("隣"))])
+        }),
+        native: Box::new({
+            let list = list.clone();
+            move || list.native_element()
+        }),
+        exercise: Box::new({
+            let list = list.clone();
+            move || {
+                list.refresh();
+                list.set_row_height(40.0);
+                list.set_row_height(0.0);
+                list.set_selection(&[1]);
+            }
+        }),
+        takes_on_refresh: None,
+    });
+    let list = ui.list()?;
+    list.set_sizing(Sizing::fixed(200.0, 120.0));
+    all.push(Holder {
+        name: "List::set_row_builder",
+        put: Box::new({
+            let list = list.clone();
+            let label = label.clone();
+            move |child| {
+                let child = Rc::new(child.boxed_clone());
+                let label = label.clone();
+                list.set_row_builder(2, move |index| match index {
+                    0 => Ok(ListRow::new(child.as_ref().as_ref())),
+                    _ => Ok(ListRow::new(&label("隣"))),
+                });
+            }
+        }),
+        native: Box::new({
+            let list = list.clone();
+            move || list.native_element()
+        }),
+        exercise: Box::new({
+            let list = list.clone();
+            move || {
+                list.set_row_height(40.0);
+                list.set_row_height(0.0);
+                list.set_selection(&[1]);
+            }
+        }),
+        takes_on_refresh: Some(Box::new({
+            let list = list.clone();
+            move || list.refresh()
+        })),
+    });
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["中身", "名前"]));
+    all.push(Holder {
+        name: "Table::set_row_builder (TableCells::cell)",
+        put: Box::new({
+            let table = table.clone();
+            move |child| {
+                let child = Rc::new(child.boxed_clone());
+                table.set_row_builder(2, move |index| match index {
+                    0 => Ok(TableCells::new().cell(child.as_ref().as_ref()).text("0")),
+                    _ => Ok(TableCells::new().text("-").text("1")),
+                });
+            }
+        }),
+        native: Box::new({
+            let table = table.clone();
+            move || table.native_element()
+        }),
+        exercise: Box::new({
+            let table = table.clone();
+            move || {
+                table.set_row_height(40.0);
+                table.set_row_height(0.0);
+                table.set_columns(&TableColumn::list(["中身", "名前", "追加"]));
+                table.set_selection(&[1]);
+            }
+        }),
+        takes_on_refresh: Some(Box::new({
+            let table = table.clone();
+            move || table.refresh()
+        })),
+    });
+    Ok(all)
+}
+
+/// A `Stack` or a `Grid`, placed on the page, as the other parent.
+enum Other {
+    Stack(naui_web::Stack),
+    Grid(naui_web::Grid),
+}
+
+impl Other {
+    fn new(ui: &Ui, grid: bool) -> Result<Self> {
+        Ok(if grid {
+            let grid = ui.grid()?;
+            grid.attach(&ui.label("先客")?, GridCell::new(0, 0));
+            Other::Grid(grid)
+        } else {
+            let stack = ui.stack(Orientation::Vertical)?;
+            stack.append(&ui.label("先客")?);
+            Other::Stack(stack)
+        })
+    }
+
+    fn name(&self) -> &'static str {
+        match self {
+            Other::Stack(_) => "Stack",
+            Other::Grid(_) => "Grid",
+        }
+    }
+
+    fn add(&self, child: &dyn Widget) {
+        match self {
+            Other::Stack(stack) => stack.append(child),
+            Other::Grid(grid) => grid.attach(child, GridCell::new(1, 0)),
+        }
+    }
+
+    /// Every operation that goes through the children, then taking them all out.
+    fn exercise_and_clear(&self, ui: &Ui) {
+        match self {
+            Other::Stack(stack) => {
+                stack.set_align(Align::End);
+                stack.set_orientation(Orientation::Horizontal);
+                stack.set_spacing(8.0);
+                stack.set_padding(Padding::all(3.0));
+                stack.insert(1, &ui.label("挿入").expect("ラベル"));
+                stack.remove(2);
+                stack.clear();
+            }
+            Other::Grid(grid) => {
+                grid.set_column_track(1, naui_core::Track::FILL);
+                grid.set_row_track(0, naui_core::Track::Fixed(25.0));
+                grid.set_spacing(4.0, 4.0);
+                grid.remove(GridCell::new(1, 0));
+                grid.clear();
+            }
+        }
+    }
+
+    fn native(&self) -> Element {
+        match self {
+            Other::Stack(stack) => stack.native_element(),
+            Other::Grid(grid) => grid.native_element(),
+        }
+    }
+}
+
+fn focused_in(element: &Element) -> bool {
+    let active = element
+        .owner_document()
+        .and_then(|doc| doc.active_element());
+    element.contains(active.as_ref().map(|active| active.as_ref()))
+}
+
+/// A widget added to another container without being removed from the one it is in
+/// moves (the DOM moves it), and the previous container still counts it. Whatever is
+/// done to that container afterwards leaves the widget where it went: nothing takes
+/// it back, rewrites its layout or moves the focus into it.
+#[wasm_bindgen_test]
+fn containers_leave_a_child_moved_without_removal_alone() {
+    with_ui(|ui| {
+        let anchor = ui.button("基準")?;
+        let _anchor = Mounted::new(&anchor);
+        let mut violations = Violations::default();
+        for grid in [false, true] {
+            // 1. 入口から入れた子を、外さずに Stack / Grid へ移す。
+            for holder in holders(ui, &anchor)? {
+                let other = Other::new(ui, grid)?;
+                let _mounted = Mounted::new_element(&other.native());
+                let _holder_mounted = Mounted::new_element(&(holder.native)());
+                let what = format!("{} に入った子を {} へ", holder.name, other.name());
+                let child = ui.text_input("子")?;
+                // Fill の子には、親の並べ方に合わせた指定が付く。
+                child.set_sizing(Sizing::fill_width());
+                (holder.put)(&child);
+                violations.check(holder.holds(&child), || format!("{what}: 最初に入らない"));
+                other.add(&child);
+                let before = placed(&child);
+                violations.check(
+                    before.parent.as_ref() == Some(other.native().as_ref()),
+                    || format!("{what}: 移らない"),
+                );
+                (holder.exercise)();
+                for problem in EXERCISE_PROBLEMS.with(|problems| problems.take()) {
+                    violations.check(false, || format!("{what}: {problem}"));
+                }
+                violations.unchanged(
+                    &child,
+                    &before,
+                    &format!("{what}: 元のコンテナを操作したあと"),
+                );
+                violations.check(!focused_in(&child.native_element()), || {
+                    format!("{what}: 元のコンテナが移った子へフォーカスを入れた")
+                });
+                if let Some(refresh) = &holder.takes_on_refresh {
+                    refresh();
+                    violations.check(holder.holds(&child), || {
+                        format!("{what}: refresh で渡し直しても行へ戻らない")
+                    });
+                }
+            }
+
+            // 2. Stack / Grid の中の子を、外さずに入口へ移す。
+            for holder in holders(ui, &anchor)? {
+                let other = Other::new(ui, grid)?;
+                let _mounted = Mounted::new_element(&other.native());
+                let _holder_mounted = Mounted::new_element(&(holder.native)());
+                let what = format!("{} の中の子を {} へ", other.name(), holder.name);
+                let child = ui.text_input("子")?;
+                child.set_sizing(Sizing::fill_width());
+                other.add(&child);
+                (holder.put)(&child);
+                violations.check(holder.holds(&child), || format!("{what}: 移らない"));
+                let before = placed(&child);
+                other.exercise_and_clear(ui);
+                violations.unchanged(
+                    &child,
+                    &before,
+                    &format!("{what}: 元の {} を操作したあと", other.name()),
+                );
+            }
+        }
+        violations.assert_none();
+        Ok(())
+    });
+}
+
+/// The same for a list's rows when the row holding the widget is out of the window:
+/// it is not taken back when the row is built again, and a widget handed to another
+/// list or table is not taken back by the previous one.
+#[wasm_bindgen_test]
+fn rows_leave_a_child_moved_without_removal_alone() {
+    with_ui(|ui| {
+        const ROWS: usize = ROW_WINDOW_THRESHOLD + 300;
+        let mut violations = Violations::default();
+        for grid in [false, true] {
+            for builder in [false, true] {
+                let other = Other::new(ui, grid)?;
+                let _mounted = Mounted::new_element(&other.native());
+                let what = format!(
+                    "List ({}) の画面外の行から {} へ",
+                    if builder { "組み立て" } else { "set_rows" },
+                    other.name()
+                );
+                let child = ui.text_input("子")?;
+                let (list, _list_mounted) = mounted_list(ui)?;
+                let rows_child = Rc::new(child.boxed_clone());
+                if builder {
+                    let ui = ui.clone();
+                    list.set_row_builder(ROWS, move |index| match index {
+                        0 => Ok(ListRow::new(rows_child.as_ref().as_ref())),
+                        _ => Ok(ListRow::new(&ui.label(&format!("行 {index}"))?)),
+                    });
+                } else {
+                    let mut rows = vec![ListRow::new(&child)];
+                    for index in 1..ROWS {
+                        rows.push(ListRow::new(&ui.label(&format!("行 {index}"))?));
+                    }
+                    list.set_rows(&rows);
+                }
+                let in_list = || {
+                    list.native_element()
+                        .contains(Some(child.native_element().as_ref()))
+                };
+                violations.check(in_list(), || format!("{what}: 最初の行に入らない"));
+                list.scroll_to_row(ROWS - 1);
+                violations.check(!in_list(), || format!("{what}: 画面外へ出ても行が残る"));
+                list.scroll_to_row(0);
+                violations.check(in_list(), || format!("{what}: 戻っても行に戻らない"));
+                list.scroll_to_row(ROWS - 1);
+                other.add(&child);
+                let before = placed(&child);
+                list.scroll_to_row(0);
+                violations.unchanged(&child, &before, &format!("{what}: 行が戻ったとき"));
+                list.set_row_height(40.0);
+                violations.unchanged(&child, &before, &format!("{what}: set_row_height"));
+                if !builder {
+                    list.refresh();
+                    violations.unchanged(&child, &before, &format!("{what}: refresh"));
+                }
+            }
+
+            let other = Other::new(ui, grid)?;
+            let _mounted = Mounted::new_element(&other.native());
+            let what = format!("Table の画面外の行から {} へ", other.name());
+            let child = ui.text_input("子")?;
+            let table = ui.table()?;
+            table.set_columns(&TableColumn::list(["中身", "番号"]));
+            table.set_sizing(Sizing::fixed(240.0, 200.0));
+            let _table_mounted = Mounted::new(&table);
+            let cells_child = Rc::new(child.boxed_clone());
+            table.set_row_builder(ROWS, move |index| match index {
+                0 => Ok(TableCells::new()
+                    .cell(cells_child.as_ref().as_ref())
+                    .text("0")),
+                _ => Ok(TableCells::new().text("-").text(index.to_string())),
+            });
+            let in_table = || {
+                table
+                    .native_element()
+                    .contains(Some(child.native_element().as_ref()))
+            };
+            violations.check(in_table(), || format!("{what}: 最初の行に入らない"));
+            table.scroll_to_row(ROWS - 1);
+            table.scroll_to_row(0);
+            violations.check(in_table(), || format!("{what}: 戻っても行に戻らない"));
+            table.scroll_to_row(ROWS - 1);
+            other.add(&child);
+            let before = placed(&child);
+            table.scroll_to_row(0);
+            violations.unchanged(&child, &before, &format!("{what}: 行が戻ったとき"));
+            table.set_columns(&TableColumn::list(["中身", "番号", "追加"]));
+            violations.unchanged(&child, &before, &format!("{what}: set_columns"));
+        }
+
+        // 置くのが後になるもの同士の受け渡し。前の持ち主は取り返さない。
+        let child = ui.text_input("子")?;
+        let (first, _first_mounted) = mounted_list(ui)?;
+        first.set_rows(&[ListRow::new(&child)]);
+        let second = ui.list()?;
+        // まだ文書に無い一覧へ渡す (行はまだ置かれていない)。
+        second.set_rows(&[ListRow::new(&child)]);
+        first.refresh();
+        first.set_row_height(36.0);
+        violations.check(
+            !first
+                .native_element()
+                .contains(Some(child.native_element().as_ref())),
+            || "List → List: 前の一覧が取り返す".to_string(),
+        );
+        let _second_mounted = Mounted::new(&second);
+        second.set_row_height(30.0);
+        violations.check(
+            second
+                .native_element()
+                .contains(Some(child.native_element().as_ref())),
+            || "List → List: 後の一覧に入らない".to_string(),
+        );
+
+        let child = ui.text_input("子")?;
+        let table = ui.table()?;
+        table.set_columns(&TableColumn::list(["中身"]));
+        let _table_mounted = Mounted::new(&table);
+        let cells_child = Rc::new(child.boxed_clone());
+        table.set_row_builder(1, move |_| {
+            Ok(TableCells::new().cell(cells_child.as_ref().as_ref()))
+        });
+        let (list, _list_mounted) = mounted_list(ui)?;
+        list.set_rows(&[ListRow::new(&child)]);
+        table.set_row_height(30.0);
+        table.set_columns(&TableColumn::list(["中身", "追加"]));
+        violations.check(
+            list.native_element()
+                .contains(Some(child.native_element().as_ref())),
+            || "Table → List: 表が取り返す".to_string(),
+        );
+
+        let child = ui.text_input("子")?;
+        let (list, _list_mounted) = mounted_list(ui)?;
+        list.set_rows(&[ListRow::new(&child)]);
+        let dialog = ui.dialog("ダイアログ")?;
+        dialog.set_child(&child);
+        list.refresh();
+        list.set_row_height(30.0);
+        violations.check(
+            dialog
+                .native_element()
+                .contains(Some(child.native_element().as_ref())),
+            || "List → Dialog: 一覧が取り返す".to_string(),
+        );
+        violations.assert_none();
+        Ok(())
+    });
+}
