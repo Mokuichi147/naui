@@ -26,8 +26,8 @@ use naui_winui3::Microsoft::UI::Xaml::Documents::{Hyperlink, Inline, Run};
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::{BitmapImage, SvgImageSource};
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
 use naui_winui3::Microsoft::UI::Xaml::{
-    Application, FrameworkElement, GridUnitType, HorizontalAlignment, RoutedEventHandler, Style,
-    UIElement, VerticalAlignment, Visibility,
+    Application, DependencyProperty, FrameworkElement, GridUnitType, HorizontalAlignment,
+    RoutedEventHandler, Style, UIElement, VerticalAlignment, Visibility,
 };
 use windows::Foundation::{IPropertyValue, PropertyValue};
 use windows::Win32::Foundation::E_NOINTERFACE;
@@ -120,6 +120,10 @@ const CASES: &[Case] = &[
     (
         "Stack から外すと配置を次の親へ戻せる",
         removing_stack_child_restores_alignment,
+    ),
+    (
+        "コンテナから外した子に揃えのローカル値を残さない",
+        removed_child_leaves_no_local_alignment,
     ),
     ("スタックが子を生かし続ける", stack_keeps_children),
     (
@@ -2277,6 +2281,102 @@ fn removing_stack_child_restores_alignment(ui: &Ui) -> Result<()> {
             .expect("Grid へ移した子の横配置"),
         HorizontalAlignment::Stretch,
         "Stack の Right が次の親へ持ち越されないこと"
+    );
+    Ok(())
+}
+
+/// Whether the element has a local value for `HorizontalAlignment` and
+/// `VerticalAlignment`, in that order.
+fn local_alignment(element: &FrameworkElement) -> (bool, bool) {
+    let unset = DependencyProperty::UnsetValue()
+        .expect("UnsetValue")
+        .cast::<windows_core::IUnknown>()
+        .expect("IUnknown");
+    let has_local = |property: DependencyProperty| {
+        let local = element
+            .ReadLocalValue(&property)
+            .expect("ローカル値")
+            .cast::<windows_core::IUnknown>()
+            .expect("IUnknown");
+        local.as_raw() != unset.as_raw()
+    };
+    (
+        has_local(FrameworkElement::HorizontalAlignmentProperty().expect("横配置のプロパティ")),
+        has_local(FrameworkElement::VerticalAlignmentProperty().expect("縦配置のプロパティ")),
+    )
+}
+
+/// A child whose alignment the app never set gets no local alignment left behind
+/// when it leaves a container.
+///
+/// A `Button`'s style says `Left` / `Center`, but the style only applies in the
+/// live tree. Writing back the value read before that would leave the property's
+/// default `Stretch` as a local value, which beats the style, so the button would
+/// look different from a fresh one. Off screen (and in CI) the template never
+/// applies, so this compares local values instead of the effective ones.
+fn removed_child_leaves_no_local_alignment(ui: &Ui) -> Result<()> {
+    let fresh = ui.button("新しい")?;
+    assert_eq!(
+        local_alignment(&native::<FrameworkElement>(&fresh)),
+        (false, false),
+        "作ったばかりのボタンには揃えのローカル値が無いこと"
+    );
+
+    let vertical = ui.stack(Orientation::Vertical)?;
+    let button = ui.button("縦の Stack")?;
+    vertical.append(&button);
+    assert!(
+        local_alignment(&native::<FrameworkElement>(&button)).0,
+        "縦の Stack の中では横の揃えを Stack が書くこと"
+    );
+    vertical.remove(0);
+    assert_eq!(
+        local_alignment(&native::<FrameworkElement>(&button)),
+        (false, false),
+        "縦の Stack から外したボタンに揃えのローカル値を残さないこと"
+    );
+
+    let horizontal = ui.stack(Orientation::Horizontal)?;
+    let button = ui.button("横の Stack")?;
+    horizontal.append(&button);
+    horizontal.remove(0);
+    assert_eq!(
+        local_alignment(&native::<FrameworkElement>(&button)),
+        (false, false),
+        "横の Stack から外したボタンに揃えのローカル値を残さないこと"
+    );
+
+    let scroll = ui.scroll()?;
+    let button = ui.button("Scroll")?;
+    scroll.set_child(&button);
+    assert!(
+        local_alignment(&native::<FrameworkElement>(&button)).0,
+        "横へ送らない Scroll の中では横の揃えを Scroll が書くこと"
+    );
+    scroll.set_child(&ui.label("差し替え")?);
+    assert_eq!(
+        local_alignment(&native::<FrameworkElement>(&button)),
+        (false, false),
+        "Scroll から外したボタンに揃えのローカル値を残さないこと"
+    );
+
+    // 利用者が Sizing で決めた揃えは、外したあとも残す。
+    let sized = ui.button("Sizing 済み")?;
+    sized.set_sizing(Sizing::AUTO);
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.set_align(Align::End);
+    stack.append(&sized);
+    stack.remove(0);
+    let sized_native = native::<FrameworkElement>(&sized);
+    assert_eq!(
+        local_alignment(&sized_native),
+        (true, true),
+        "Sizing で書いた揃えはローカル値のまま残ること"
+    );
+    assert_eq!(
+        sized_native.HorizontalAlignment().expect("横配置"),
+        HorizontalAlignment::Left,
+        "Sizing の Left へ戻ること"
     );
     Ok(())
 }
