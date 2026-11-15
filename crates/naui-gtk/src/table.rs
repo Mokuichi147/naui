@@ -27,7 +27,7 @@ use naui_core::{
     SelectionGesture, SelectionMode, SortOrder, TableColumn, TableRow, ROW_WINDOW_OVERSCAN,
 };
 
-use crate::bin::SizeBin;
+use crate::bin::{Placement, SizeBin};
 use crate::callback::{SelectionNotifier, SortNotifier};
 use crate::handover::Owner;
 use crate::list::ActivationHandler;
@@ -1196,6 +1196,10 @@ fn release_cells(row: &gtk::Widget) {
     };
     while let Some(cell) = content.first_child() {
         content.remove(&cell);
+        // 列の幅と、列の幅をそろえる組も外す (`Placement::Loose` は作ったときと同じ)。
+        if let Some(bin) = cell.downcast_ref::<SizeBin>() {
+            bin.set_placement(Placement::Loose);
+        }
     }
 }
 
@@ -1220,15 +1224,16 @@ fn build_row(
         match cells.content(index) {
             Some(CellContent::Widget(widget)) if owner.may_place(&widget.size_bin()) => {
                 let bin = widget.size_bin();
-                bin.fill_parent();
-                apply_column_width(&bin, column);
-                // 行を絞っているときは、ウィジェットの幅で列幅を決めない。
-                // 行ごとに中身の幅が違うと、スクロールで列が動いてしまう
-                // (文字のセルを 1 文字ぶんに抑えているのと同じ扱い)。
-                if uniform && column.width.is_none() {
-                    bin.limit_natural_width();
-                }
-                groups[index].add_widget(&bin);
+                // 列の幅は置き場所として覚えさせる。セルから出れば消え、表の中で
+                // 大きさを指定し直しても残る。
+                bin.set_placement(Placement::TableCell {
+                    width: column.width,
+                    // 行を絞っているときは、ウィジェットの幅で列幅を決めない。
+                    // 行ごとに中身の幅が違うと、スクロールで列が動いてしまう
+                    // (文字のセルを 1 文字ぶんに抑えているのと同じ扱い)。
+                    limit_natural: uniform && column.width.is_none(),
+                });
+                bin.join_size_group(&groups[index]);
                 content.append(&bin);
             }
             // 列より短い行は、足りない分が空のセルになる。
