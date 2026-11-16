@@ -178,7 +178,8 @@ impl Image {
         match bitmap.data() {
             naui_core::BitmapData::Encoded(bytes) => self.0.set_bytes(bytes),
             naui_core::BitmapData::Pixels(rgba) => {
-                // `Bitmap` が作るときに大きさと合うことを確かめてあるので、断られない。
+                // `Bitmap` が作るときに大きさと合うことを確かめてある。断られるのは、GTK で
+                // 幅か高さが i32 を超える (8 GiB を超える画素の) ときだけ。
                 let _ = self.0.set_pixels(bitmap.width(), bitmap.height(), rgba);
             }
         }

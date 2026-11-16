@@ -6,6 +6,8 @@
 //! thread after `read_text` / `set_text` has returned (it is not called on the spot
 //! even on platforms where it could be synchronous).
 
+use std::borrow::Cow;
+
 use naui_core::{Bitmap, BitmapData, Error, Result, Tasks};
 use objc2::rc::Retained;
 use objc2::AllocAnyThread;
@@ -78,9 +80,13 @@ fn write_image(image: &Bitmap) -> Result<()> {
     // 元が PNG のファイルならそのまま置く。画素は PNG に包む (無圧縮なので、
     // 置く前に AppKit に圧縮し直させる)。JPEG と GIF も PNG に直す。
     let (bytes, keep) = match image.data() {
-        BitmapData::Encoded(bytes) => (bytes.to_vec(), image.mime() == Some("image/png")),
+        BitmapData::Encoded(bytes) => (Cow::Borrowed(bytes), image.mime() == Some("image/png")),
         BitmapData::Pixels(rgba) => (
-            naui_core::media::encode_png(image.width(), image.height(), rgba)?,
+            Cow::Owned(naui_core::media::encode_png(
+                image.width(),
+                image.height(),
+                rgba,
+            )?),
             false,
         ),
     };

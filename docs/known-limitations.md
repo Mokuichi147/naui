@@ -543,13 +543,13 @@ that shape are covered in
   event.
 - In browsers without `showSaveFilePicker` (Firefox / Safari), `FileSaver` becomes an
   `<a download>` download, and no destination confirmation may appear.
+  `FileEntry::path` is `None` either way.
 - Images on the clipboard are **`image/png` only**, the one image type the
   Clipboard API requires. `Clipboard::set_image` turns JPEG and GIF files into PNG
   through a `<canvas>` (dropping their metadata), and gets an `Err` in browsers
   without `ClipboardItem` (Firefox before 127). `Clipboard::read_image` may ask the
   user for permission (Firefox shows a "Paste" button to press) and reads `None`
   when it is refused.
-  `FileEntry::path` is `None` either way.
 - The input UIs of `DatePicker`, `TimePicker` and `ColorPicker` (calendars,
   spinners, palettes and so on) are shown by the browser, so their look and
   operation differ per browser. `TimePicker` handles values up to minutes even when
