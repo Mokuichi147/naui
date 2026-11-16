@@ -167,10 +167,11 @@ order and its guarantee against re-entry, a component's lifecycle, the
 cancellation of effects. Step 1 (the message queue and the split of `update` and
 `render`: `Program`, `App`, `Dispatch` and `examples/todo`) was released in
 v0.15.0, and steps 2 to 4 (components, effects and lifecycles, unified error
-handling, with `examples/checklist` and `examples/search`) in v0.16.0. What remains
-is the guide below.
+handling, with `examples/checklist` and `examples/search`) in v0.16.0. Step 5, the
+last, is in place for v0.17.0:
 
-5. **A guide for structuring large apps** (P0, for v0.17.0).
+5. **A guide for structuring large apps**:
+   [Structuring large apps](large-apps.md), with `examples/notes`.
 
 ## Drawing in separate crates
 
@@ -240,14 +241,19 @@ v0.17.0.
       testing APIs (`click`, `activate`, and so on) for app developers. Also
       provide a way to resize windows in tests, so apps can check their adaptive
       layouts.
-- [ ] *(app)* **A guide for structuring large apps.** Like
+- [x] *(app)* **A guide for structuring large apps**
+      ([Structuring large apps](large-apps.md), `examples/notes`). Like
       [Translating apps](translating.md), with an example under `examples/`: how to
       split an app into crates by feature (an app crate, a core crate with the
       models and `update` that does not depend on naui, a crate per screen, and
-      services) so that Cargo reuses the build of crates that did not change. A
-      change to a crate's public API still rebuilds the crates that depend on it,
-      so where to draw the boundaries is part of the guide. It is the last step of
-      the application layer track, after steps 1 to 4 were released.
+      services) so that Cargo reuses the build of crates that did not change.
+      Measuring it showed that Cargo does not look at what changed: any change to a
+      crate, a comment included, rebuilds every crate that depends on it, not only a
+      change to its public API. So the guide draws the boundaries by how often each
+      part changes, keeping the core that everything depends on small. The core
+      cannot use naui-app either, so its `update` returns plain requests that the
+      app crate turns into effects, and `Program` is implemented in the app crate.
+      It is the last step of the application layer track.
 
 ## P1: Do next
 

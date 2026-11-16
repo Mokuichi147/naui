@@ -1,0 +1,17 @@
+[package]
+name = "notes-l10n"
+description = "Looking up the notes example's strings in the user's language: Fluent, without naui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+# 訳した文字列そのものは持たない。app クレートの locales/ にあり、文言を変えても
+# 作り直すのは app だけで、このクレートに依存する画面はそのまま使える。
+[dependencies]
+fluent = "0.17"
+# fluent-bundle と同じ版に揃える。0.14 からは icu_locid の型を受け取るので、
+# unic-langid の型をそのまま渡せない。
+fluent-langneg = "0.13"
+unic-langid = "0.9"
