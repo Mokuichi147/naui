@@ -91,8 +91,10 @@ impl Toggle {
     /// disabled.
     pub fn click(&self) {
         if self.0.switch.is_sensitive() {
-            // `GtkSwitch` の `activate` は押したときと同じく切り替える。
-            self.0.switch.emit_activate();
+            // `activate` や利用者のクリックは、アニメーションが有効だと動き終わって
+            // から `active` を変える。その場で通知が届くよう、動き終わりと同じく
+            // `active` を直接変える (通知は止めない)。
+            self.0.switch.set_active(!self.0.switch.is_active());
         }
     }
 

@@ -3301,8 +3301,9 @@ nothing can block:
   [`testing::TIMEOUT`]).
 - [`testing::settle`] lets the event loop run briefly. Use it before checking that
   something **did not** change.
-- [`testing::resize`] resizes a window as the user does by dragging its edge, waits
-  until the window has that size, and settles.
+- [`testing::resize`] resizes a window from code ([`Window::set_size`]), waits
+  until the window has that size, and settles. Adaptive layouts end up as they
+  would after the user resized the window.
 
 To check an adaptive layout, show the window, resize it, and wait for the change.
 Each platform decides some of these itself, so test away from the boundaries:

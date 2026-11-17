@@ -12,7 +12,7 @@ use naui::{
 };
 
 /// The width the form needs to put its parts side by side.
-pub const FORM_BREAKPOINT: f64 = 480.0;
+pub const FORM_BREAKPOINT: f64 = 420.0;
 
 /// The padding around the form.
 pub const PADDING: f64 = 16.0;

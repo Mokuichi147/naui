@@ -101,8 +101,13 @@ pub async fn settle(ui: &Ui) {
     ui.tasks().sleep(SETTLE).await;
 }
 
-/// Resizes `window`'s content area as the user does by dragging its edge, and waits
-/// until the window has that size and its layout has [`settle`]d.
+/// Resizes `window`'s content area from code ([`Window::set_size`]), and waits until
+/// the window has that size and its layout has [`settle`]d.
+///
+/// This is a resize from code, not the user dragging the window's edge. Where a
+/// platform reacts to the drag itself (AppKit collapses a `Sidebar` only during such a
+/// live resize), naui makes the same change for a size set from code, so the
+/// adaptive layout ends up the same.
 ///
 /// Show the window first: adaptive layouts (`Sidebar`'s automatic collapsing,
 /// `Stack::set_breakpoint`, `AdaptivePanes`) follow the size the window is laid out
