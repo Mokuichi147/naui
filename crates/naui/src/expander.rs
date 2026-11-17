@@ -48,4 +48,15 @@ impl Expander {
     pub fn on_toggle(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_toggle(f)
     }
+
+    /// Clicks the heading the way the user does: it expands or collapses and
+    /// [`on_toggle`](Self::on_toggle) is called with the new state. Does nothing
+    /// while disabled.
+    ///
+    /// For tests and automation. The notification arrives before this returns. See
+    /// [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn click(&self) {
+        self.0.click()
+    }
 }

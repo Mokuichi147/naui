@@ -134,4 +134,20 @@ impl Expander {
     pub fn on_toggle(&self, f: impl FnMut(bool) + 'static) {
         self.0.handler.set(f);
     }
+
+    /// Clicks the heading, expanding or collapsing it and notifying `on_toggle`
+    /// (for tests and automation). Does nothing while disabled.
+    ///
+    /// A click on `<summary>` reports through `toggle`, which the browser fires
+    /// later. To notify on the spot as the other platforms do, the state is flipped
+    /// here; the `toggle` that follows matches the known state and is ignored.
+    pub fn click(&self) {
+        if self.0.summary.get_attribute("aria-disabled").as_deref() == Some("true") {
+            return;
+        }
+        let open = !self.0.element.open();
+        self.0.state.set(open);
+        self.0.element.set_open(open);
+        self.0.handler.emit(open);
+    }
 }

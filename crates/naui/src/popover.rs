@@ -56,6 +56,18 @@ impl Popover {
         self.0.close()
     }
 
+    /// Closes it the way a click outside does, so [`on_close`](Self::on_close) is
+    /// called. Does nothing if it is not open.
+    ///
+    /// For tests and automation. **The notification can arrive a moment later**
+    /// (AppKit and the browser report the close from the event loop), so wait for it
+    /// with [`testing::wait_until`](crate::testing::wait_until). See
+    /// [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn dismiss(&self) {
+        self.0.dismiss()
+    }
+
     #[inline]
     pub fn is_open(&self) -> bool {
         self.0.is_open()

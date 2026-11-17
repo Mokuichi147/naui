@@ -36,6 +36,8 @@
 
 mod adaptive_panes;
 mod app;
+#[doc(hidden)]
+pub mod automation;
 mod canvas;
 mod clipboard;
 mod color_picker;
@@ -704,6 +706,33 @@ fn enable_per_monitor_dpi_awareness() {
 
     // SAFETY: 定数のハンドルを渡してプロセスの既定を選ぶだけ。
     let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+}
+
+/// Starts the app, runs the future `start` returns on the event loop until it
+/// finishes, and then ends the app. **For `naui::testing` only.**
+///
+/// Like [`run_for_test`], it can be called only once per process
+/// (`Application::Start`). Unlike it, the future runs on the real event loop after
+/// `OnLaunched` has returned, so windows are shown, laid out and resized as in an
+/// app.
+#[doc(hidden)]
+pub fn run_until_done_for_test<F, Fut>(start: F) -> Result<()>
+where
+    F: FnOnce(&Ui) -> Fut + 'static,
+    Fut: std::future::Future<Output = ()> + 'static,
+{
+    run(Settings::new("naui tests"), move |ui| {
+        let future = start(ui);
+        let done = ui.clone();
+        ui.tasks().spawn(async move {
+            future.await;
+            // 実際のアプリでは AppWindow の `Closing` がする後片づけを、畳む前に
+            // 済ませておく (`run_for_test` と同じ理由)。
+            done.clear_windows_for_shutdown();
+            done.quit();
+        });
+        Ok(())
+    })
 }
 
 /// Calls `build` exactly once when WinUI 3 initialization has finished, and ends

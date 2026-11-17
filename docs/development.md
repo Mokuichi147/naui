@@ -40,6 +40,7 @@ examples/
   todo           An app structured with naui-app
   checklist      An app split into naui-app components
   search         An app running asynchronous work as naui-app effects
+  signup         An app whose UI is tested on all four platforms with naui::testing
   gallery        Demo of every widget, by kind
 tools/
   winui3-bindgen Tool that regenerates naui-winui3's projection from .winmd files

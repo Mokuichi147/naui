@@ -293,6 +293,29 @@ that shape are covered in
   message goes to standard error as usual). With `panic = "abort"` it cannot be
   caught.
 
+### Testing apps
+
+- Not every user action has a method that acts like it. **Typing into text
+  fields** (`set_text` and `set_value` do not call `on_change`), answering a
+  `Dialog` or `Sheet` with its buttons, a `Toast`'s action button, the window's
+  close button (`on_close_request`), pointer events on a `Canvas`, choosing files
+  and dropping them have none yet. Test the code behind them directly, or put the
+  value in with the method that does not notify before the click that reads it.
+- `Link::click` calls `on_click` without opening `href`, unlike a user's click.
+- The tests need a test target with `harness = false` (`naui::test_cases!` writes
+  its `main`): macOS and Linux touch the UI only from the main thread, and WinUI 3
+  starts only once per process. For the same reason **every case shares one
+  `Ui`**, so settings a case changes (the theme, for example) carry over to the
+  cases after it, and a window a failing case opened stays open.
+- A panic inside `on_click` and other native callbacks cannot be caught per case
+  (it cannot unwind through AppKit or WinRT). Check results in the case itself.
+- On the Web, `testing::resize` compares only the width, and a window cannot be
+  wider than the browser's viewport (the page decides the height).
+- Where an adaptive layout switches is not the same everywhere: a `Sidebar`
+  collapses on macOS only below `SIDEBAR_MIN_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH`
+  (it first narrows to its minimum width), and elsewhere below its own width plus
+  `SIDEBAR_COLLAPSE_CONTENT_WIDTH`.
+
 ## Windows
 
 ### Layout

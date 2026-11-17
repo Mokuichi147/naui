@@ -601,9 +601,34 @@ impl Button {
         *self.0.listener.borrow_mut() = listener;
     }
 
-    /// Triggers a click (for tests and automation).
+    /// Clicks it through the same path as a user's click (for tests and
+    /// automation). Does nothing while disabled.
     pub fn click(&self) {
+        // 無効な `<button>` の `click()` はブラウザが何もしない。
         self.0.element.click();
+    }
+}
+
+/// Clicks a check box or switch as a user does: flips it and fires `input` and
+/// `change`. Does nothing while disabled.
+///
+/// A browser runs this activation behavior only for an element in the document;
+/// outside it, `click()` flips `checked` without firing `change`. Widgets are
+/// often clicked before their window is shown (in tests, for example), so the
+/// same events are fired here instead.
+pub(crate) fn click_check(input: &HtmlInputElement) {
+    if input.disabled() {
+        return;
+    }
+    if input.is_connected() {
+        input.click();
+        return;
+    }
+    input.set_checked(!input.checked());
+    for name in ["input", "change"] {
+        if let Ok(event) = web_sys::Event::new(name) {
+            let _ = input.dispatch_event(&event);
+        }
     }
 }
 
@@ -672,9 +697,11 @@ impl Checkbox {
         *self.0.listener.borrow_mut() = listener;
     }
 
-    /// Triggers a click (for tests and automation).
+    /// Clicks it through the same path as a user's click, flipping it and
+    /// notifying `on_toggle` (for tests and automation). Does nothing while
+    /// disabled.
     pub fn click(&self) {
-        self.0.input.click();
+        click_check(&self.0.input);
     }
 }
 

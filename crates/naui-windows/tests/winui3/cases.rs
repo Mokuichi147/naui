@@ -43,6 +43,10 @@ type Case = (&'static str, fn(&Ui) -> Result<()>);
 const CASES: &[Case] = &[
     ("ボタンのクリックがクロージャへ届く", button_click),
     (
+        "click が利用者の操作と同じく通知し、無効なら何もしない",
+        clicks_notify_like_the_user,
+    ),
+    (
         "ボタンのラベルがネイティブと往復する",
         button_label_round_trips,
     ),
@@ -1182,6 +1186,79 @@ fn button_click(ui: &Ui) -> Result<()> {
     invoke(&button);
     assert_eq!(first.get(), 1, "古い通知先へは届かないこと");
     assert_eq!(second.get(), 1, "新しい通知先へ届くこと");
+    Ok(())
+}
+
+/// `click` on the widgets notifies as the user's click does, and does nothing while
+/// disabled.
+fn clicks_notify_like_the_user(ui: &Ui) -> Result<()> {
+    let button = ui.button("押す")?;
+    let clicks = Rc::new(Cell::new(0));
+    button.on_click({
+        let clicks = clicks.clone();
+        move || clicks.set(clicks.get() + 1)
+    });
+    button.click();
+    assert_eq!(clicks.get(), 1, "ボタン");
+    button.set_enabled(false);
+    button.click();
+    assert_eq!(clicks.get(), 1, "無効なボタンは押せない");
+
+    let checks = Rc::new(RefCell::new(Vec::new()));
+    let checkbox = ui.checkbox("同意")?;
+    checkbox.on_toggle({
+        let checks = checks.clone();
+        move |checked| checks.borrow_mut().push(checked)
+    });
+    checkbox.click();
+    assert!(checkbox.is_checked());
+    checkbox.click();
+    assert!(!checkbox.is_checked());
+    checkbox.set_enabled(false);
+    checkbox.click();
+    assert!(!checkbox.is_checked(), "無効なチェックボックスは変わらない");
+    assert_eq!(*checks.borrow(), [true, false]);
+
+    let switches = Rc::new(RefCell::new(Vec::new()));
+    let toggle = ui.toggle("通知")?;
+    toggle.on_toggle({
+        let switches = switches.clone();
+        move |on| switches.borrow_mut().push(on)
+    });
+    toggle.click();
+    assert!(toggle.is_on());
+    toggle.set_enabled(false);
+    toggle.click();
+    assert!(toggle.is_on(), "無効なスイッチは変わらない");
+    assert_eq!(*switches.borrow(), [true]);
+
+    let expansions = Rc::new(RefCell::new(Vec::new()));
+    let expander = ui.expander("詳細")?;
+    expander.on_toggle({
+        let expansions = expansions.clone();
+        move |expanded| expansions.borrow_mut().push(expanded)
+    });
+    expander.click();
+    assert!(expander.is_expanded());
+    expander.click();
+    assert!(!expander.is_expanded());
+    expander.set_enabled(false);
+    expander.click();
+    assert!(!expander.is_expanded(), "無効な見出しは開かない");
+    assert_eq!(*expansions.borrow(), [true, false]);
+
+    // 行き先があっても、click はブラウザを開かずに通知だけする。
+    let link = ui.link("naui", "https://example.com/")?;
+    let follows = Rc::new(Cell::new(0));
+    link.on_click({
+        let follows = follows.clone();
+        move || follows.set(follows.get() + 1)
+    });
+    link.click();
+    assert_eq!(follows.get(), 1, "リンク");
+    link.set_enabled(false);
+    link.click();
+    assert_eq!(follows.get(), 1, "無効なリンクは押せない");
     Ok(())
 }
 

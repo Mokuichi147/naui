@@ -108,4 +108,14 @@ impl Expander {
     pub fn on_toggle(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_toggle.set(f);
     }
+
+    /// Clicks the heading through the same path as a user's click, expanding or
+    /// collapsing it and notifying `on_toggle` (for tests and automation). Does
+    /// nothing while disabled.
+    pub fn click(&self) {
+        if self.0.native.is_sensitive() {
+            // `GtkExpander` の `activate` は見出しを押したときと同じく開け閉めする。
+            self.0.native.emit_activate();
+        }
+    }
 }

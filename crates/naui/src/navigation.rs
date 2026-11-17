@@ -148,6 +148,17 @@ impl Link {
     pub fn on_click(&self, f: impl FnMut() + 'static) {
         self.0.on_click(f)
     }
+
+    /// Calls [`on_click`](Self::on_click) as the user's click does, **without
+    /// opening `href`**, so a test does not open the browser. Does nothing while
+    /// disabled.
+    ///
+    /// For tests and automation. To check where the link leads, read
+    /// [`href`](Self::href). See [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn click(&self) {
+        self.0.click()
+    }
 }
 
 /// A vertical list of navigation items.

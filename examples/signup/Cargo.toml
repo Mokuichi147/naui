@@ -1,0 +1,22 @@
+[package]
+name = "signup"
+description = "Example of testing a naui app's UI on all four platforms with naui::testing"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+naui.workspace = true
+
+# naui::test_cases! が書く入口を使う。macOS と GTK は UI をメインスレッドから
+# しか触れず、WinUI 3 は 1 プロセスで 1 度しか始められないので、Rust 標準の
+# テストハーネス (ケースごとに別スレッド) は使わない。
+[[test]]
+name = "ui"
+harness = false
+
+# Web ではケースごとに #[wasm_bindgen_test] をブラウザで走らせる。
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"

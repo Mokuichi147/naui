@@ -804,6 +804,27 @@ where
     build(&ui)
 }
 
+/// Creates a `Ui` as [`run_for_test`] does, runs the future `start` returns on the
+/// main loop until it finishes, and returns. **For `naui::testing` only.**
+///
+/// It iterates the default `GMainContext` itself instead of running the
+/// `GtkApplication`, which would register the app with the session bus.
+#[doc(hidden)]
+pub fn run_until_done_for_test<F, Fut>(start: F) -> Result<()>
+where
+    F: FnOnce(&Ui) -> Fut,
+    Fut: std::future::Future<Output = ()> + 'static,
+{
+    run_for_test(|ui| {
+        let task = ui.tasks().spawn(start(ui));
+        let context = glib::MainContext::default();
+        while !task.is_finished() {
+            context.iteration(true);
+        }
+        Ok(())
+    })
+}
+
 /// Gives the whole app a layout direction (`gtk_widget_set_default_direction`).
 /// `None` leaves GTK's own choice, which follows the locale.
 ///

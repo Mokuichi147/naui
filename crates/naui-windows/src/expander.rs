@@ -196,4 +196,21 @@ impl Expander {
     pub fn on_toggle(&self, f: impl FnMut(bool) + 'static) {
         self.0.handler.set(f);
     }
+
+    /// Clicks the heading, expanding or collapsing it and notifying `on_toggle`
+    /// (for tests and automation). Does nothing while disabled.
+    ///
+    /// Rewrites `IsExpanded` without silencing it, so WinUI raises `Expanding` /
+    /// `Collapsed` as it does for a click on the heading.
+    pub fn click(&self) {
+        let enabled = self
+            .0
+            .native
+            .cast::<Control>()
+            .and_then(|control| control.IsEnabled())
+            .unwrap_or(false);
+        if enabled {
+            let _ = self.0.native.SetIsExpanded(!self.is_expanded());
+        }
+    }
 }

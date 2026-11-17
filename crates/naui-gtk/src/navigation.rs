@@ -797,4 +797,12 @@ impl Link {
     pub fn on_click(&self, mut f: impl FnMut() + 'static) {
         self.0.on_click.set(move |()| f());
     }
+
+    /// Notifies [`on_click`](Self::on_click) as a user's click does, **without
+    /// opening `href`** (for tests and automation). Does nothing while disabled.
+    pub fn click(&self) {
+        if self.0.native.is_sensitive() {
+            self.0.on_click.emit(());
+        }
+    }
 }

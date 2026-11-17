@@ -140,4 +140,21 @@ impl Toggle {
     pub fn on_toggle(&self, f: impl FnMut(bool) + 'static) {
         self.0.handler.set(f);
     }
+
+    /// Clicks it through the same path as a user's click (UI Automation's Toggle
+    /// pattern), switching it and notifying `on_toggle`, for tests and automation.
+    /// Does nothing while disabled.
+    pub fn click(&self) {
+        let enabled = self
+            .0
+            .native
+            .cast::<Control>()
+            .and_then(|control| control.IsEnabled())
+            .unwrap_or(false);
+        if enabled {
+            if let Ok(element) = self.0.native.cast::<UIElement>() {
+                let _ = crate::automation::toggle(&element);
+            }
+        }
+    }
 }

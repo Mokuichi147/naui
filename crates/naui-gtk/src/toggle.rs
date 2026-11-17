@@ -86,6 +86,16 @@ impl Toggle {
         self.0.on_toggle.set(f);
     }
 
+    /// Clicks it through the same path as a user's click, switching it and
+    /// notifying `on_toggle` (for tests and automation). Does nothing while
+    /// disabled.
+    pub fn click(&self) {
+        if self.0.switch.is_sensitive() {
+            // `GtkSwitch` の `activate` は押したときと同じく切り替える。
+            self.0.switch.emit_activate();
+        }
+    }
+
     /// The switch itself. Public as a backend-specific escape hatch.
     pub fn native_switch(&self) -> gtk::Switch {
         self.0.switch.clone()

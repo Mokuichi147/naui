@@ -3198,3 +3198,137 @@ the new tab was blocked) gets an `Err` as its return value. Writing images needs
 `ClipboardItem` (Firefox 127 and later); without it, `set_image` gets an `Err`.
 On Linux, what the app wrote (text or an image) is offered by the app itself, so it
 is gone when the app quits unless a clipboard manager keeps it.
+
+## Testing apps
+
+An app's UI can be tested the way a user uses it, with the same test code on all
+four platforms. A test builds the app's widgets, operates them through the methods
+that notify **like the user's own action**, and checks what the app did:
+
+| Widget | Acts like the user | Changes without notifying |
+| --- | --- | --- |
+| [`Button`], [`Link`] | `click` | |
+| [`Checkbox`], [`Toggle`], [`Expander`] | `click` | `set_checked`, `set_on`, `set_expanded` |
+| [`ComboBox`], [`EditableComboBox`], [`RadioGroup`], [`Tabs`], [`Navbar`], [`Dock`], [`Menu`], [`Breadcrumbs`], [`Sidebar`] | `select` | `set_selected` |
+| [`PopupMenu`] | `select` | |
+| [`List`], [`Table`] | `select`, `select_many` | `set_selected`, `set_selection` |
+| [`Tree`] | `select`, `expand`, `collapse` | `set_expanded` |
+| [`Pagination`] | `select`, `go_previous`, `go_next` | `set_page` |
+| [`Toolbar`], [`MenuBar`] | `activate` | |
+| [`ColorPicker`] | `pick` | `set_value` |
+| [`SplitView`] | `drag_to` | `set_position` |
+| [`AdaptivePanes`] | `go_back` | |
+| [`Popover`] | `dismiss` | `close` |
+| [`Window`] | [`testing::resize`] | |
+
+`click` goes through each platform's own path for a click (`performClick` on
+macOS, the `clicked` / `activate` signals on Linux, UI Automation's Invoke and
+Toggle patterns on Windows, the DOM's `click()` on the Web), so it does nothing
+while the widget is disabled and the notification arrives before it returns. Two
+exceptions: [`Link::click`] notifies without opening `href`, so a test does not
+open the browser, and [`Popover::dismiss`] can notify a moment later (wait for it
+with [`testing::wait_until`]).
+
+Typing into text fields has no counterpart yet: `set_text` and `set_value` do not
+call `on_change`, so put text in with them before the click that reads it.
+
+### Setting up the tests
+
+Build the UI in a library function that returns the widgets the tests operate,
+and keep `main` to `naui::run` and showing the window. Then add a test target with
+`harness = false`:
+
+```toml
+[[test]]
+name = "ui"
+harness = false
+
+# Only for running the tests on the Web.
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+```
+
+Each test case is an `async fn` taking a [`Ui`]. [`test_cases!`] lists them and
+writes the entry point:
+
+```rust,ignore
+// tests/ui.rs
+use naui::{testing, Orientation, Result, Ui};
+
+naui::test_cases!(greets_by_name, form_lines_up_when_wide);
+
+async fn greets_by_name(ui: Ui) -> Result<()> {
+    let app = my_app::build(&ui)?;
+    app.name.set_text("Ada");
+    app.create.click();
+    assert_eq!(app.status.text(), "Welcome, Ada");
+    app.window.close();
+    Ok(())
+}
+
+async fn form_lines_up_when_wide(ui: Ui) -> Result<()> {
+    let app = my_app::build(&ui)?;
+    app.window.show();
+    testing::resize(&ui, &app.window, 760.0, 420.0).await?;
+    testing::wait_until(&ui, || app.form.current_orientation() == Orientation::Horizontal)
+        .await?;
+    app.window.close();
+    Ok(())
+}
+```
+
+`harness = false` is needed because macOS and Linux touch the UI only from the
+main thread and WinUI 3 starts only once per process, while Rust's own test
+harness runs each test on a thread of its own. Natively, [`test_cases!`] writes a
+`main` that starts the UI once, runs the cases in order on its event loop, and
+reports like `cargo test` (a filter argument picks cases by name). Every case gets
+the same [`Ui`], so close the windows a case opens before it returns. A case fails
+when it returns an error or panics, and the rest still run. Check results in the
+case itself rather than inside `on_click` and the like: a panic inside a native
+callback cannot unwind through AppKit or WinRT.
+
+`examples/signup` in the repository is a complete example.
+
+### Waiting for the event loop
+
+Some results arrive from the event loop rather than on the spot: layout after
+[`Window::show`] or [`Window::set_size`], adaptive changes, timers, spawned tasks,
+and some notifications. The functions in [`testing`] are futures that let the
+event loop run while the case waits, on every platform including the Web, where
+nothing can block:
+
+- [`testing::wait_until`] waits until a condition holds (up to
+  [`testing::TIMEOUT`]).
+- [`testing::settle`] lets the event loop run briefly. Use it before checking that
+  something **did not** change.
+- [`testing::resize`] resizes a window as the user does by dragging its edge, waits
+  until the window has that size, and settles.
+
+To check an adaptive layout, show the window, resize it, and wait for the change.
+Each platform decides some of these itself, so test away from the boundaries:
+`Stack` breakpoints keep a few pixels of slack before switching back, and a
+`Sidebar` collapses on macOS only once it has narrowed to
+[`SIDEBAR_MIN_WIDTH`], while the others collapse it at its own width. A width below
+`SIDEBAR_MIN_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH` collapses it everywhere.
+
+### Running the tests
+
+Natively, `cargo test` runs them. On Linux the tests need a display (CI runs them
+under `xvfb-run`, with `dbus-run-session` for libadwaita).
+
+On the Web each case becomes a `#[wasm_bindgen_test]` that runs in a browser.
+Point Cargo at the runner that comes with the wasm-bindgen CLI (the same version
+as `wasm-bindgen` in `Cargo.lock`) in `.cargo/config.toml`:
+
+```toml
+[target.wasm32-unknown-unknown]
+runner = "wasm-bindgen-test-runner"
+```
+
+```sh
+CHROMEDRIVER="$(command -v chromedriver)" cargo test --target wasm32-unknown-unknown
+```
+
+On the Web a window is an element in the page, so it cannot be wider than the
+browser's viewport, and [`testing::resize`] compares only the width (the page
+decides the height).
