@@ -121,6 +121,14 @@
 //! search overtaken by further typing). See
 //! [`examples/search`](https://github.com/mokuichi147/naui/tree/main/examples/search).
 //!
+//! ## Splitting into crates
+//!
+//! A large app can split into crates by feature, so that a change rebuilds only the
+//! crates it touches: an app crate, a core crate with the models and `update` that does
+//! not depend on naui, a crate per screen, and services. See
+//! [Structuring large apps](https://github.com/mokuichi147/naui/blob/main/docs/large-apps.md)
+//! and [`examples/notes`](https://github.com/mokuichi147/naui/tree/main/examples/notes).
+//!
 //! ## When something goes wrong
 //!
 //! One handler, set with [`run_with_handler`] or [`App::set_error_handler`], receives a

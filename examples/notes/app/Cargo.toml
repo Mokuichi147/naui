@@ -1,0 +1,18 @@
+[package]
+name = "notes"
+description = "Example of a naui app split into crates: an app, a core, screens and a service"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+naui.workspace = true
+naui-app.workspace = true
+notes-core = { path = "../core" }
+notes-l10n = { path = "../l10n" }
+notes-store = { path = "../services/store" }
+notes-sidebar = { path = "../screens/sidebar" }
+notes-list = { path = "../screens/list" }
+notes-editor = { path = "../screens/editor" }

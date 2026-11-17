@@ -64,9 +64,9 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
-        run: cargo build -p naui-core -p naui-macos -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p signup -p gallery
+        run: cargo build -p naui-core -p naui-macos -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p notes -p signup -p gallery
       - name: clippy
-        run: cargo clippy -p naui-core -p naui-macos -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p signup -p gallery --all-targets -- -D warnings
+        run: cargo clippy -p naui-core -p naui-macos -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p notes-core -p notes-store -p notes-l10n -p notes-sidebar -p notes-list -p notes-editor -p notes -p signup -p gallery --all-targets -- -D warnings
       # AppKit の統合テストは harness = false の自前ランナーで、
       # ネイティブのコントロールを実際に作って操作する。
       #
@@ -78,10 +78,11 @@ jobs:
         run: cargo test -p naui-core -p naui-macos -p naui -p naui-app
 
       # 例の単体テスト (UI を作らない)。翻訳の例は言語の選び方と張り直し、
-      # checklist はコンポーネントに分けた update、search は効果を返す update。
+      # checklist はコンポーネントに分けた update、search は効果を返す update、
+      # notes は naui に依存しない core の update、フォルダの読み書き、訳の選択と言語ごとの文字列の揃い、要求から効果への変換。
       # signup は naui::testing で UI を操作し、窓の大きさを変えて確かめる。
       - name: テスト (examples)
-        run: cargo test -p i18n -p checklist -p search -p signup
+        run: cargo test -p i18n -p checklist -p search -p notes-core -p notes-store -p notes-l10n -p notes -p signup
 
   windows:
     name: Windows (WinUI 3)
@@ -96,11 +97,11 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
-        run: cargo build -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p signup -p gallery
+        run: cargo build -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p notes -p signup -p gallery
       # 他の環境と同じく、バックエンドのクレートまで lint をかける。
       # naui-windows は WinRT の生ポインタを触るので、警告を残さない。
       - name: clippy
-        run: cargo clippy -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app -p todo -p checklist -p search -p signup --all-targets -- -D warnings
+        run: cargo clippy -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app -p todo -p checklist -p search -p notes-core -p notes-store -p notes-l10n -p notes-sidebar -p notes-list -p notes-editor -p notes -p signup --all-targets -- -D warnings
       # ランタイムを同梱する経路 (build.rs と naui-winui3::self_contained) は
       # フィーチャーを付けたときだけ組み込まれる。
       - name: clippy (ランタイム同梱)
@@ -328,7 +329,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
-        run: cargo build -p naui-core -p naui-gtk -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p signup -p gallery
+        run: cargo build -p naui-core -p naui-gtk -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p notes -p signup -p gallery
       # GTK4 はディスプレイを要求する。libadwaita は D-Bus のセッションバスから
       # 配色設定を読むため、dbus-run-session も通す。
       - name: テスト

@@ -42,5 +42,8 @@ for a complete app,
 for one split into components, and
 [`examples/search`](https://github.com/mokuichi147/naui/tree/main/examples/search)
 for one with effects.
+[Structuring large apps](https://github.com/mokuichi147/naui/blob/main/docs/large-apps.md)
+splits an app into crates (an app, a core without naui, screens and services), with
+[`examples/notes`](https://github.com/mokuichi147/naui/tree/main/examples/notes).
 
 It is `#![forbid(unsafe_code)]`.

@@ -317,6 +317,13 @@ Fluent wraps the values put into a message (`{ $name }`) in Unicode isolation ma
 sentence around it. Native text rendering does not draw them, but a test that
 compares strings has to remove them, or call `bundle.set_use_isolating(false)`.
 
+An app built with [naui-app](../crates/naui-app) needs no bindings: its `render`
+already sets the screen from the model after every message, so the translation can
+be part of the model and a change of language one more message.
+[Structuring large apps](large-apps.md#translations) does this in
+`examples/notes`, and also shows where to keep the strings when the app is split
+into crates.
+
 ## Letting the user choose a language
 
 An app can also offer its own choice of language, with "follow the OS" as one of

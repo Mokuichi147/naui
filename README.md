@@ -146,6 +146,7 @@ The guides below are currently written in Japanese.
 - [Known limitations](docs/known-limitations.md): limitations per platform
 - [Bundling the runtime](docs/windows-self-contained.md): shipping the Windows App SDK with your exe
 - [Translating apps](docs/translating.md): combining Fluent with naui, following the OS language and its changes ([`examples/i18n`](examples/i18n))
+- [Structuring large apps](docs/large-apps.md): splitting an app into crates by feature so that a change rebuilds only what it touches ([`examples/notes`](examples/notes))
 - [Development](docs/development.md): verification, crate layout, tests, CI, releases
 - [naui-app](crates/naui-app): an optional Model–View–Update structure for larger apps ([`examples/todo`](examples/todo), components in [`examples/checklist`](examples/checklist), asynchronous work in [`examples/search`](examples/search))
 - [Roadmap](docs/roadmap.md): missing features and priorities

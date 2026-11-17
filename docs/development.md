@@ -40,6 +40,7 @@ examples/
   todo           An app structured with naui-app
   checklist      An app split into naui-app components
   search         An app running asynchronous work as naui-app effects
+  notes          A notes app split into crates: app, core, screens and a service
   signup         An app whose UI is tested on all four platforms with naui::testing
   gallery        Demo of every widget, by kind
 tools/

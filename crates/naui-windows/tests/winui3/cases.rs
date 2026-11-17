@@ -332,6 +332,14 @@ const CASES: &[Case] = &[
         list_keeps_the_selection_outside_the_window,
     ),
     (
+        "リストは画面に載る前に選んだ行を載ってから選んで見せる",
+        list_shows_the_selection_set_before_it_is_on_screen,
+    ),
+    (
+        "表は画面に載る前に選んだ行を載ってから選んで見せる",
+        table_shows_the_selection_set_before_it_is_on_screen,
+    ),
+    (
         "Auto の高さのリストは全行を行ごとの高さで組み立てる",
         list_auto_height_builds_every_row,
     ),
@@ -7469,6 +7477,85 @@ fn list_keeps_the_selection_outside_the_window(ui: &Ui) -> Result<()> {
         item(0).SetIsSelected(true).expect("SetIsSelected");
         pump_until(Duration::from_secs(2), || seen.borrow().len() > before);
         assert_eq!(list.selection(), vec![0], "窓の外の行を残さないこと");
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// A selection set while the list is not on screen yet shows once it is, without
+/// notifying. Also after the list leaves the window and comes back.
+fn list_shows_the_selection_set_before_it_is_on_screen(ui: &Ui) -> Result<()> {
+    use naui_core::ListItem;
+
+    let list = ui.list()?;
+    let labels: Vec<String> = (0..20).map(|i| format!("行 {i}")).collect();
+    list.set_items(&ListItem::list(labels.iter().map(String::as_str)));
+    list.set_sizing(Sizing::fill());
+    rows_show_the_selection_set_before_they_are_on_screen(ui, "リストの載る前の選択", &list)
+}
+
+/// [`list_shows_the_selection_set_before_it_is_on_screen`] for a table.
+fn table_shows_the_selection_set_before_it_is_on_screen(ui: &Ui) -> Result<()> {
+    use naui_core::{TableColumn, TableRow};
+
+    let table = ui.table()?;
+    table.set_columns(&[TableColumn::new("名前")]);
+    let labels: Vec<String> = (0..20).map(|i| format!("行 {i}")).collect();
+    table.set_rows(&TableRow::list(labels.iter().map(|l| [l.as_str()])));
+    table.set_sizing(Sizing::fill());
+    rows_show_the_selection_set_before_they_are_on_screen(ui, "表の載る前の選択", &table)
+}
+
+fn rows_show_the_selection_set_before_they_are_on_screen<W: RowsForInput + Widget>(
+    ui: &Ui,
+    title: &str,
+    rows: &W,
+) -> Result<()> {
+    let window = ui.window(title, 240.0, 240.0)?;
+    let placeholder = ui.label("外した")?;
+    let seen = Rc::new(Cell::new(0));
+    rows.on_select({
+        let seen = seen.clone();
+        move |_| seen.set(seen.get() + 1)
+    });
+    let is_selected = |index: usize| {
+        built_list_row(rows, index)
+            .unwrap_or_else(|| panic!("行 {index} が組み立てられていない"))
+            .IsSelected()
+            .expect("IsSelected")
+    };
+    // 載った直後に `ListView` が選択を書き換えるなら、それが済むまで待つ。
+    let settle = || {
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || rows.row_height() > 0.0);
+        pump_until(Duration::from_millis(300), || false);
+    };
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.set_child(rows);
+        rows.set_selection(&[2]);
+        window.show();
+        settle();
+        if rows.scroller().ViewportHeight().unwrap_or(0.0) <= 0.0 {
+            println!("     (ScrollViewer に実寸が付かない環境なので、確かめずに通す)");
+            return;
+        }
+        assert_eq!(rows.selection(), vec![2]);
+        assert!(is_selected(2), "載る前に選んだ行が画面でも選ばれること");
+        assert!(!is_selected(0));
+
+        // 外している間に選び直した行も、戻したときに出る。
+        window.set_child(&placeholder);
+        pump_until(Duration::from_millis(300), || false);
+        rows.set_selection(&[3]);
+        window.set_child(rows);
+        settle();
+        assert_eq!(rows.selection(), vec![3]);
+        assert!(is_selected(3), "戻したときに選んだ行が画面でも選ばれること");
+        assert!(!is_selected(2));
+        assert_eq!(seen.get(), 0, "通知しない経路であること");
     }));
     window.close();
     if let Err(panic) = outcome {

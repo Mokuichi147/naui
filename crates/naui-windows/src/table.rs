@@ -1276,7 +1276,7 @@ impl Table {
         let loaded = RoutedEventHandler::new(move |_, _| {
             let _ = state.try_with_mut(|weak| {
                 if let Some(inner) = weak.upgrade() {
-                    Table(inner).register_wheel_target();
+                    Table(inner).on_loaded();
                 }
             });
             Ok(())
@@ -1286,6 +1286,15 @@ impl Table {
             .Loaded(&loaded)
             .map_err(|e| to_error("subscribe to Table Loaded", e))?;
         Ok(())
+    }
+
+    /// What `Loaded` does, each time the table is put on screen.
+    fn on_loaded(&self) {
+        self.register_wheel_target();
+        // 載る前に行へ書いた `IsSelected` は、載るときに `ListView` に消される。
+        // 覚えている選択を書き直す。
+        let selected = self.0.selected.borrow().clone();
+        self.write_selection(&selected);
     }
 
     /// Registers with the wheel helper, exactly once.
