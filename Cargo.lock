@@ -832,6 +832,70 @@ dependencies = [
 ]
 
 [[package]]
+name = "notes"
+version = "0.16.0"
+dependencies = [
+ "naui",
+ "naui-app",
+ "notes-core",
+ "notes-editor",
+ "notes-l10n",
+ "notes-list",
+ "notes-sidebar",
+ "notes-store",
+]
+
+[[package]]
+name = "notes-core"
+version = "0.16.0"
+
+[[package]]
+name = "notes-editor"
+version = "0.16.0"
+dependencies = [
+ "naui",
+ "naui-app",
+ "notes-core",
+ "notes-l10n",
+]
+
+[[package]]
+name = "notes-l10n"
+version = "0.16.0"
+dependencies = [
+ "fluent",
+ "fluent-langneg",
+ "unic-langid",
+]
+
+[[package]]
+name = "notes-list"
+version = "0.16.0"
+dependencies = [
+ "naui",
+ "naui-app",
+ "notes-core",
+ "notes-l10n",
+]
+
+[[package]]
+name = "notes-sidebar"
+version = "0.16.0"
+dependencies = [
+ "naui",
+ "naui-app",
+ "notes-core",
+ "notes-l10n",
+]
+
+[[package]]
+name = "notes-store"
+version = "0.16.0"
+dependencies = [
+ "notes-core",
+]
+
+[[package]]
 name = "nu-ansi-term"
 version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

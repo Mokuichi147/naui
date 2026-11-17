@@ -1,0 +1,11 @@
+[package]
+name = "notes-store"
+description = "The file the notes example keeps its notes in: a service without naui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+notes-core = { path = "../../core" }
