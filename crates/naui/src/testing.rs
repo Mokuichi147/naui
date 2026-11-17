@@ -64,6 +64,10 @@ pub const TIMEOUT: Duration = Duration::from_secs(5);
 /// How long [`settle`] lets the event loop run.
 pub const SETTLE: Duration = Duration::from_millis(250);
 
+/// How far [`resize`] lets the window's size be off from the one asked for. Rounding
+/// to physical pixels can leave it a pixel off (Windows).
+const SIZE_SLACK: f64 = 2.0;
+
 /// The interval at which [`wait_until`] checks its condition.
 const POLL: Duration = Duration::from_millis(10);
 
@@ -102,7 +106,8 @@ pub async fn settle(ui: &Ui) {
 }
 
 /// Resizes `window`'s content area from code ([`Window::set_size`]), and waits until
-/// the window has that size and its layout has [`settle`]d.
+/// the window has that size (give or take 2 pixels of rounding) and its layout has
+/// [`settle`]d.
 ///
 /// This is a resize from code, not the user dragging the window's edge. Where a
 /// platform reacts to the drag itself (AppKit collapses a `Sidebar` only during such a
@@ -121,8 +126,10 @@ pub async fn settle(ui: &Ui) {
 pub async fn resize(ui: &Ui, window: &Window, width: f64, height: f64) -> Result<()> {
     window.set_size(width, height);
     let reached = |(actual_width, actual_height): (f64, f64)| {
-        let height_matches = cfg!(target_arch = "wasm32") || (actual_height - height).abs() < 0.5;
-        (actual_width - width).abs() < 0.5 && height_matches
+        // 論理ピクセルから物理ピクセルへの丸めで 1 ずれることがある (Windows)。
+        let height_matches =
+            cfg!(target_arch = "wasm32") || (actual_height - height).abs() <= SIZE_SLACK;
+        (actual_width - width).abs() <= SIZE_SLACK && height_matches
     };
     let waited = wait_until(ui, || reached(window.size())).await;
     settle(ui).await;
