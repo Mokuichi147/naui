@@ -52,6 +52,8 @@ objc2-app-kit = { version = "0.3", features = [
     "NSAppearance",
     "NSAttributedString",
     "NSBezierPath",
+    # クリップボードの画像を PNG と TIFF に直す。
+    "NSBitmapImageRep",
     "NSBox",
     "NSButton",
     "NSButtonCell",

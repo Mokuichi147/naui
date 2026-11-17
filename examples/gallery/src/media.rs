@@ -1,9 +1,9 @@
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui::{
-    Align, FileFilter, Fit, GridCell, Orientation, Padding, PlaybackState, Result, Sizing, Track,
-    Ui,
+    Align, Bitmap, FileFilter, Fit, GridCell, Orientation, Padding, PlaybackState, Result, Sizing,
+    Track, Ui,
 };
 
 use crate::parts::{self, Form, Notice};
@@ -63,7 +63,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<(naui::Stack, impl Fn() 
     // ファイルまたは URL の拡張子から表示形式を切り替える。
     parts::section(ui, &pane, "Image / Video / Audio")?;
 
-    let (image_pane, image) = build_image_pane(ui)?;
+    let (image_pane, image) = build_image_pane(ui, notice)?;
     let (video_pane, video) = build_video_pane(ui, notice)?;
     let (audio_pane, audio) = build_audio_pane(ui, notice)?;
 
@@ -187,7 +187,7 @@ fn media_form_of(source: &str) -> Option<usize> {
         .position(|(_, extensions)| extensions.contains(&extension.as_str()))
 }
 
-fn build_image_pane(ui: &Ui) -> Result<(naui::Grid, naui::Image)> {
+fn build_image_pane(ui: &Ui, notice: &Notice) -> Result<(naui::Grid, naui::Image)> {
     let pane = ui.grid()?;
     pane.set_spacing(0.0, 8.0);
     pane.set_padding(Padding::all(8.0));
@@ -217,23 +217,92 @@ fn build_image_pane(ui: &Ui) -> Result<(naui::Grid, naui::Image)> {
     });
     pane.attach(&selector_row, GridCell::new(0, 1));
 
+    // いま出している画像のうち、クリップボードへ書けるもの (画素と貼り付けた画像)。
+    // ファイルの場所と SVG は Bitmap にならないので、その間はコピーできない。
+    let shown: Rc<RefCell<Option<Bitmap>>> = Rc::new(RefCell::new(None));
+    let copy = ui.button("Copy image")?;
+    copy.set_enabled(false);
+
     // ファイルのほかに、埋め込んだ SVG のバイト列と、その場で作った画素も出せる。
     let sources = ["File", "Embedded SVG", "Pixels"];
     let (source_row, source) = parts::choice(ui, "Source", &sources)?;
     source.on_select({
         let image = image.clone();
-        move |index| match index {
-            0 => image.set_source(&sample_image()),
-            1 => image.set_bytes(include_bytes!("../assets/badge.svg")),
-            _ => {
-                let (width, height) = (96, 64);
-                if let Err(error) = image.set_pixels(width, height, &gradient(width, height)) {
-                    eprintln!("gallery: {error}");
+        let shown = shown.clone();
+        let copy = copy.clone();
+        move |index| {
+            let bitmap = match index {
+                0 => {
+                    image.set_source(&sample_image());
+                    None
                 }
-            }
+                1 => {
+                    image.set_bytes(include_bytes!("../assets/badge.svg"));
+                    None
+                }
+                _ => {
+                    let (width, height) = (96, 64);
+                    match Bitmap::from_pixels(width, height, &gradient(width, height)) {
+                        Ok(bitmap) => {
+                            image.set_bitmap(&bitmap);
+                            Some(bitmap)
+                        }
+                        Err(error) => {
+                            eprintln!("gallery: {error}");
+                            None
+                        }
+                    }
+                }
+            };
+            copy.set_enabled(bitmap.is_some());
+            *shown.borrow_mut() = bitmap;
         }
     });
     pane.attach(&source_row, GridCell::new(0, 2));
+
+    // 画像のコピーと貼り付け。貼り付けた画像はそのまま上に出し、またコピーできる。
+    let clipboard_row = parts::row(ui)?;
+    copy.on_click({
+        let clipboard = ui.clipboard();
+        let shown = shown.clone();
+        let notice = notice.clone();
+        move || {
+            let Some(bitmap) = shown.borrow().clone() else {
+                return;
+            };
+            let notice = notice.clone();
+            clipboard.set_image(&bitmap, move |result| match result {
+                Ok(()) => notice.show("Copied the image to the clipboard"),
+                Err(error) => notice.show(&format!("Could not copy: {error}")),
+            });
+        }
+    });
+    let paste = ui.button("Paste image")?;
+    paste.on_click({
+        let clipboard = ui.clipboard();
+        let image = image.clone();
+        let copy = copy.clone();
+        let notice = notice.clone();
+        move || {
+            let image = image.clone();
+            let shown = shown.clone();
+            let copy = copy.clone();
+            let notice = notice.clone();
+            clipboard.read_image(move |bitmap| match bitmap {
+                Some(bitmap) => {
+                    image.set_bitmap(&bitmap);
+                    let (width, height) = bitmap.size();
+                    notice.show(&format!("Pasted a {width} x {height} image"));
+                    copy.set_enabled(true);
+                    *shown.borrow_mut() = Some(bitmap);
+                }
+                None => notice.show("The clipboard holds no image"),
+            });
+        }
+    });
+    clipboard_row.append(&copy);
+    clipboard_row.append(&paste);
+    pane.attach(&clipboard_row, GridCell::new(0, 3));
     Ok((pane, image))
 }
 

@@ -558,7 +558,7 @@ impl Ui {
         self.0.tasks.clone()
     }
 
-    /// The clipboard. Text can be read and written.
+    /// The clipboard. Text and images can be read and written.
     pub fn clipboard(&self) -> Clipboard {
         Clipboard
     }
