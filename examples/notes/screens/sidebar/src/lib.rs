@@ -224,10 +224,11 @@ pub fn build(ui: &Ui, dispatch: &Dispatch<Message>) -> naui::Result<View> {
         }
     });
 
-    // The folder bar: the folder's name, and what can be done to it.
-    let bar = ui.stack(Orientation::Horizontal)?;
-    bar.set_spacing(8.0);
-    bar.set_align(Align::Center);
+    // The folder bar: the folder's name, and under it what can be done to it. The
+    // name has a line of its own, since the list is narrow and the buttons are wide
+    // on some platforms (GTK).
+    let bar = ui.stack(Orientation::Vertical)?;
+    bar.set_spacing(6.0);
     bar.set_padding(Padding {
         start: 12.0,
         end: 8.0,
@@ -249,9 +250,14 @@ pub fn build(ui: &Ui, dispatch: &Dispatch<Message>) -> naui::Result<View> {
         let prompts = prompts.clone();
         move || prompts.delete_folder()
     });
+    let buttons = ui.stack(Orientation::Horizontal)?;
+    buttons.set_spacing(8.0);
+    buttons.set_align(Align::Center);
+    buttons.set_sizing(Sizing::fill_width());
+    buttons.append(&rename_button);
+    buttons.append(&delete_button);
     bar.append(&bar_title);
-    bar.append(&rename_button);
-    bar.append(&delete_button);
+    bar.append(&buttons);
     bar.set_visible(false);
 
     // The strings are set by `translate`, which the app calls before the first render.
