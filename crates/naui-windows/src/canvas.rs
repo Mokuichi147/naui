@@ -52,6 +52,8 @@
 
 mod render;
 
+pub(crate) use render::decode_file;
+
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::{Rc, Weak};

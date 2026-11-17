@@ -944,13 +944,18 @@ fn decode(bitmap: &Bitmap) -> Option<(u32, u32, Vec<u8>)> {
             bitmap.height(),
             naui_core::media::rgba_to_premultiplied_bgra(rgba),
         )),
-        BitmapData::Encoded(bytes) => decode_file(bytes)
+        BitmapData::Encoded(bytes) => decode_file(bytes, &GUID_WICPixelFormat32bppPBGRA)
             .map_err(|error| eprintln!("naui-windows: could not read the image: {error}"))
             .ok(),
     }
 }
 
-fn decode_file(bytes: &[u8]) -> windows_core::Result<(u32, u32, Vec<u8>)> {
+/// Decodes the first frame of an image file with WIC into 4-byte pixels of
+/// `format` (such as `GUID_WICPixelFormat32bppPBGRA`): the size and the pixels.
+pub(crate) fn decode_file(
+    bytes: &[u8],
+    format: &windows_core::GUID,
+) -> windows_core::Result<(u32, u32, Vec<u8>)> {
     // SAFETY: 手元のバイト列を WIC に読ませ、変換した画素を手元の配列へ写すだけ。
     // ストリームはバイト列を写さずに参照するので、読み終えるまでこの関数の中に置く。
     unsafe {
@@ -967,7 +972,7 @@ fn decode_file(bytes: &[u8]) -> windows_core::Result<(u32, u32, Vec<u8>)> {
         let converter = factory.CreateFormatConverter()?;
         converter.Initialize(
             &frame,
-            &GUID_WICPixelFormat32bppPBGRA,
+            format,
             WICBitmapDitherTypeNone,
             None,
             0.0,
