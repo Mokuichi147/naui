@@ -37,10 +37,10 @@ pub struct View {
 pub fn build(ui: &Ui, dispatch: &Dispatch<Message>) -> naui::Result<View> {
     let root = ui.stack(Orientation::Vertical)?;
     root.set_spacing(8.0);
-    root.set_padding(Padding {
-        top: 8.0,
-        ..Padding::default()
-    });
+    // The same margin as the list's, so the text does not run into the window's edges.
+    root.set_padding(Padding::all(8.0));
+    // The folder row starts where the text does (a stack centers its children).
+    root.set_align(Align::Start);
     root.set_sizing(Sizing::fill());
 
     let folders: Rc<RefCell<Vec<String>>> = Rc::default();
