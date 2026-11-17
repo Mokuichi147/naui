@@ -310,7 +310,10 @@ that shape are covered in
 - A panic inside `on_click` and other native callbacks cannot be caught per case
   (it cannot unwind through AppKit or WinRT). Check results in the case itself.
 - On the Web, `testing::resize` compares only the width, and a window cannot be
-  wider than the browser's viewport (the page decides the height).
+  wider than the browser's viewport (the page decides the height). Adaptive
+  changes arrive through `ResizeObserver`, which runs only while the browser
+  renders the page, so in a tab that is not shown (the runner's page opened with
+  `NO_HEADLESS=1` behind another tab, for example) waiting for them times out.
 - Where an adaptive layout switches is not the same everywhere: a `Sidebar`
   collapses on macOS only below `SIDEBAR_MIN_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH`
   (it first narrows to its minimum width), and elsewhere below its own width plus

@@ -3281,7 +3281,8 @@ async fn form_lines_up_when_wide(ui: Ui) -> Result<()> {
 main thread and WinUI 3 starts only once per process, while Rust's own test
 harness runs each test on a thread of its own. Natively, [`test_cases!`] writes a
 `main` that starts the UI once, runs the cases in order on its event loop, and
-reports like `cargo test` (a filter argument picks cases by name). Every case gets
+reports like `cargo test` (name filters, `--skip`, `--exact` and `--list` work as
+they do there). Every case gets
 the same [`Ui`], so close the windows a case opens before it returns. A case fails
 when it returns an error or panics, and the rest still run. Check results in the
 case itself rather than inside `on_click` and the like: a panic inside a native
@@ -3332,4 +3333,7 @@ CHROMEDRIVER="$(command -v chromedriver)" cargo test --target wasm32-unknown-unk
 
 On the Web a window is an element in the page, so it cannot be wider than the
 browser's viewport, and [`testing::resize`] compares only the width (the page
-decides the height).
+decides the height). Adaptive changes there come from `ResizeObserver`, which the
+browser runs only while it renders the page: **in a tab that is not shown, waits
+for them time out**. Run the tests headless, or keep the tab in front when opening
+the runner's page yourself (`NO_HEADLESS=1`).

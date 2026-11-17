@@ -149,9 +149,13 @@ pub async fn resize(ui: &Ui, window: &Window, width: f64, height: f64) -> Result
 ///
 /// [`test_cases!`](crate::test_cases) calls it from the `main` it writes. The UI is
 /// started once, and every case receives a clone of the same [`Ui`] (WinUI 3 can
-/// start only once per process). Arguments that do not start with `-` filter the
-/// cases by name, as `cargo test <filter>` does, and `--exact` makes them match
-/// whole names.
+/// start only once per process). The arguments are read as `cargo test` reads
+/// them: the others filter the cases by name, `--skip <filter>` leaves cases out,
+/// `--exact` makes both match whole names, and `--list` lists the cases selected
+/// without starting the UI (`--format terse` leaves out the count, as tools such as
+/// cargo-nextest expect). There are no ignored cases, so `--ignored` selects none.
+/// Other options, and the values of the ones that take a value, are accepted and
+/// do nothing.
 ///
 /// A case fails when it returns an error or panics. A panic is reported, and the
 /// remaining cases still run. Close the windows a case opens before it returns; a
@@ -164,27 +168,27 @@ pub fn run(cases: &[Case]) -> std::process::ExitCode {
     use std::rc::Rc;
     use std::task::Poll;
 
-    let args: Vec<String> = std::env::args().skip(1).collect();
-    let exact = args.iter().any(|arg| arg == "--exact");
-    let filters: Vec<&String> = args.iter().filter(|arg| !arg.starts_with('-')).collect();
+    let options = Options::parse(std::env::args().skip(1));
     let selected: Vec<Case> = cases
         .iter()
-        .filter(|(name, _)| {
-            filters.is_empty()
-                || filters.iter().any(|filter| {
-                    if exact {
-                        name == filter
-                    } else {
-                        name.contains(filter.as_str())
-                    }
-                })
-        })
+        .filter(|(name, _)| options.selects(name))
         .copied()
         .collect();
     let filtered_out = cases.len() - selected.len();
 
+    if options.list {
+        for (name, _) in &selected {
+            println!("{name}: test");
+        }
+        if !options.terse {
+            println!();
+            println!("{}, 0 benchmarks", count(selected.len(), "test"));
+        }
+        return std::process::ExitCode::SUCCESS;
+    }
+
     println!();
-    println!("running {} tests", selected.len());
+    println!("running {}", count(selected.len(), "test"));
     let failures: Rc<RefCell<Vec<String>>> = Rc::default();
     let passed = Rc::new(std::cell::Cell::new(0usize));
     let started = {
@@ -251,6 +255,84 @@ pub fn run(cases: &[Case]) -> std::process::ExitCode {
         std::process::ExitCode::SUCCESS
     } else {
         std::process::ExitCode::FAILURE
+    }
+}
+
+/// The arguments of [`run`], read as Rust's own test harness reads them.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Debug, Default, PartialEq)]
+struct Options {
+    filters: Vec<String>,
+    skips: Vec<String>,
+    exact: bool,
+    list: bool,
+    terse: bool,
+    /// `--ignored`: only the ignored cases, of which there are none.
+    ignored_only: bool,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Options {
+    fn parse(args: impl IntoIterator<Item = String>) -> Self {
+        // 値を取るオプション。値を名前の絞り込みと取り違えないよう読み飛ばす。
+        const WITH_VALUE: &[&str] = &[
+            "--color",
+            "--format",
+            "--logfile",
+            "--shuffle-seed",
+            "--skip",
+            "--test-threads",
+            "-Z",
+        ];
+        let mut options = Self::default();
+        let mut args = args.into_iter();
+        while let Some(arg) = args.next() {
+            let (flag, inline) = match arg.split_once('=') {
+                Some((flag, value)) if flag.starts_with("--") => (flag, Some(value.to_string())),
+                _ => (arg.as_str(), None),
+            };
+            if !flag.starts_with('-') {
+                options.filters.push(arg);
+                continue;
+            }
+            let value = if WITH_VALUE.contains(&flag) {
+                inline.or_else(|| args.next())
+            } else {
+                None
+            };
+            match flag {
+                "--exact" => options.exact = true,
+                "--list" => options.list = true,
+                "--ignored" => options.ignored_only = true,
+                "--skip" => options.skips.extend(value),
+                "--format" => options.terse = value.as_deref() == Some("terse"),
+                _ => {}
+            }
+        }
+        options
+    }
+
+    fn selects(&self, name: &str) -> bool {
+        let matches = |pattern: &String| {
+            if self.exact {
+                name == pattern
+            } else {
+                name.contains(pattern.as_str())
+            }
+        };
+        !self.ignored_only
+            && (self.filters.is_empty() || self.filters.iter().any(matches))
+            && !self.skips.iter().any(matches)
+    }
+}
+
+/// "1 test" or "2 tests", as Rust's own test harness writes it.
+#[cfg(not(target_arch = "wasm32"))]
+fn count(n: usize, noun: &str) -> String {
+    if n == 1 {
+        format!("1 {noun}")
+    } else {
+        format!("{n} {noun}s")
     }
 }
 
@@ -328,4 +410,64 @@ macro_rules! test_cases {
             )+
         }
     };
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> Options {
+        Options::parse(args.iter().map(|arg| arg.to_string()))
+    }
+
+    #[test]
+    fn plain_arguments_filter_by_part_of_the_name() {
+        let options = parse(&["side"]);
+        assert!(options.selects("sidebar_collapses"));
+        assert!(!options.selects("form_lines_up"));
+        assert!(parse(&[]).selects("anything"));
+    }
+
+    #[test]
+    fn exact_matches_whole_names() {
+        let options = parse(&["--exact", "side"]);
+        assert!(!options.selects("sidebar_collapses"));
+        assert!(options.selects("side"));
+    }
+
+    #[test]
+    fn skip_leaves_cases_out() {
+        let options = parse(&["--skip", "form", "--skip=greets"]);
+        assert!(options.selects("sidebar_collapses"));
+        assert!(!options.selects("form_lines_up"));
+        assert!(!options.selects("create_greets_by_name"));
+    }
+
+    #[test]
+    fn values_of_options_are_not_filters() {
+        let options = parse(&["--test-threads", "1", "--format", "pretty", "--color=never"]);
+        assert!(options.filters.is_empty());
+        assert!(options.selects("anything"));
+    }
+
+    #[test]
+    fn list_and_terse_format_are_read() {
+        let options = parse(&["--list", "--format", "terse"]);
+        assert!(options.list);
+        assert!(options.terse);
+        assert!(!parse(&["--list", "--format=json"]).terse);
+    }
+
+    #[test]
+    fn ignored_selects_nothing() {
+        assert!(!parse(&["--ignored"]).selects("anything"));
+        assert!(parse(&["--include-ignored"]).selects("anything"));
+    }
+
+    #[test]
+    fn counts_are_singular_for_one() {
+        assert_eq!(count(0, "test"), "0 tests");
+        assert_eq!(count(1, "test"), "1 test");
+        assert_eq!(count(6, "test"), "6 tests");
+    }
 }
