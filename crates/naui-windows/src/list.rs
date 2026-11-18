@@ -44,9 +44,10 @@ use naui_core::{
 };
 use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Border, Control, Grid as XamlGrid, ListView, ListViewItem, ListViewSelectionMode,
-    ScrollBarVisibility, ScrollMode, ScrollViewer, ScrollViewerViewChangedEventArgs,
-    SelectionChangedEventHandler, StackPanel, TextBlock,
+    Border, Control, DragItemsCompletedEventArgs, DragItemsStartingEventHandler, Grid as XamlGrid,
+    ListView, ListViewBase, ListViewItem, ListViewSelectionMode, ScrollBarVisibility, ScrollMode,
+    ScrollViewer, ScrollViewerViewChangedEventArgs, SelectionChangedEventHandler, StackPanel,
+    TextBlock,
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::{
     ContextRequestedEventArgs, DoubleTappedEventHandler, KeyEventHandler, PointerEventHandler,
@@ -57,6 +58,7 @@ use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
 use naui_winui3::Microsoft::UI::Xaml::{
     DependencyObject, FocusState, FrameworkElement, RoutedEventHandler, Thickness, UIElement,
 };
+use windows::ApplicationModel::DataTransfer::DataPackageOperation;
 use windows::Foundation::{Point as XamlPoint, PropertyValue, TypedEventHandler};
 use windows::System::VirtualKey;
 use windows_core::{IInspectable, Interface, HSTRING};
@@ -760,6 +762,7 @@ impl List {
             .map_err(|e| to_error("subscribe to the ListView", e))?;
         this.install_wheel_target()?;
         this.install_window_updates()?;
+        this.install_reorder_events()?;
 
         let state = UiThreadCell::new(Rc::downgrade(&this.0));
         let got_focus = RoutedEventHandler::new(move |_, _| {
@@ -2131,6 +2134,147 @@ impl List {
         let _ = list_view.SetAllowDrop(on);
     }
 
+    /// Follows `ListView`'s own reordering: which rows a drag takes, and where the drop
+    /// put them.
+    ///
+    /// `ListView` moves its `ListViewItem`s itself on the drop (`RemoveAt` and
+    /// `InsertAt` on `Items`) before `DragItemsCompleted`. naui reads where they went,
+    /// moves its rows the same way and builds the rows again from them, so its own
+    /// order and selection stay the source of truth.
+    fn install_reorder_events(&self) -> Result<()> {
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let starting = DragItemsStartingEventHandler::new(move |_, args| {
+            let Some(args) = args.as_ref() else {
+                return Ok(());
+            };
+            let _ = state.try_with_mut(|weak| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let list = List(inner);
+                let rows = args
+                    .Items()
+                    .ok()
+                    .and_then(|items| list.rows_of_contents(items.into_iter()));
+                // 選べない行を含むドラッグは始めない (選べない行は押下も握っている)。
+                let rows = rows.filter(|rows| {
+                    list.is_reorderable() && rows.iter().all(|&row| list.is_selectable(row))
+                });
+                match rows {
+                    Some(rows) => {
+                        list.0.dragging.replace(Some(rows));
+                    }
+                    None => {
+                        let _ = args.SetCancel(true);
+                    }
+                }
+            });
+            Ok(())
+        });
+        self.0
+            .list_view
+            .DragItemsStarting(&starting)
+            .map_err(|e| to_error("subscribe to List drags", e))?;
+
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let completed = TypedEventHandler::new(
+            move |_: windows_core::Ref<'_, ListViewBase>,
+                  args: windows_core::Ref<'_, DragItemsCompletedEventArgs>| {
+                let _ = state.try_with_mut(|weak| {
+                    if let Some(inner) = weak.upgrade() {
+                        List(inner).on_drag_completed(args.as_ref());
+                    }
+                });
+                Ok(())
+            },
+        );
+        self.0
+            .list_view
+            .DragItemsCompleted(&completed)
+            .map_err(|e| to_error("subscribe to List drags", e))?;
+        Ok(())
+    }
+
+    /// The rows whose `ListViewItem`s hold these contents, in ascending order. `None` if
+    /// any of them is not one of this list's built rows.
+    ///
+    /// `ListView` names dragged items by their `Content`, since the items are their own
+    /// containers.
+    fn rows_of_contents(&self, contents: impl Iterator<Item = IInspectable>) -> Option<Vec<usize>> {
+        let start = self.0.built_start.get();
+        let native_rows = self.0.native_rows.borrow();
+        let mut rows = Vec::new();
+        for content in contents {
+            let offset = native_rows
+                .iter()
+                .position(|row| row.Content().is_ok_and(|own| same_object(&own, &content)))?;
+            rows.push(start + offset);
+        }
+        rows.sort_unstable();
+        rows.dedup();
+        (!rows.is_empty()).then_some(rows)
+    }
+
+    /// The drag `ListView` started has ended. If it moved its items, the rows move the
+    /// same way.
+    fn on_drag_completed(&self, args: Option<&DragItemsCompletedEventArgs>) {
+        let Some(dragged) = self.0.dragging.take() else {
+            return;
+        };
+        let moved = args
+            .and_then(|args| args.DropResult().ok())
+            .is_some_and(|result| result == DataPackageOperation::Move);
+        let order = self.native_order();
+        let start = self.0.built_start.get();
+        let built: Vec<usize> = (start..start + self.0.native_rows.borrow().len()).collect();
+        match order {
+            Some(order) if moved && order != built => {
+                // 動いた行の塊の前にある、動かなかった行の数から、元の並びの隙間を求める。
+                let first = order.iter().position(|row| dragged.contains(row));
+                let staying_before = first.map_or(0, |first| {
+                    order[..first]
+                        .iter()
+                        .filter(|row| !dragged.contains(row))
+                        .count()
+                });
+                let to = built
+                    .iter()
+                    .filter(|row| !dragged.contains(row))
+                    .nth(staying_before)
+                    .copied()
+                    .unwrap_or(start + built.len());
+                let changed = RowMove::new(dragged.iter().copied(), to)
+                    .within(self.len())
+                    .is_some();
+                if changed {
+                    self.drop_rows(&dragged, to);
+                } else {
+                    // `ListView` の並びと食い違ったままにしない。
+                    self.build_window();
+                }
+            }
+            // 動いていなくても、`ListView` がドラッグの間に選択を変えていることがある。
+            _ => self.write_selection(&self.selection()),
+        }
+    }
+
+    /// The rows in the order `ListView` has their items now, by their numbers before the
+    /// drag. `None` if an item is not one of this list's built rows.
+    fn native_order(&self) -> Option<Vec<usize>> {
+        let items = self.0.list_view.Items().ok()?;
+        let start = self.0.built_start.get();
+        let native_rows = self.0.native_rows.borrow();
+        (0..items.Size().ok()?)
+            .map(|slot| {
+                let item = items.GetAt(slot).ok()?;
+                native_rows
+                    .iter()
+                    .position(|row| same_object(row, &item))
+                    .map(|offset| start + offset)
+            })
+            .collect()
+    }
+
     /// Moves the rows the user dropped, and notifies.
     fn drop_rows(&self, rows: &[usize], to: usize) {
         let rows = rows.iter().copied().filter(|&row| self.is_selectable(row));
@@ -2531,4 +2675,15 @@ fn row_label(text: &str) -> Result<Label> {
     let label = Label::new(text)?;
     label.set_sizing(Sizing::fill_width());
     Ok(label)
+}
+
+/// Whether two references point at the same COM object (compared by their `IUnknown`).
+fn same_object(a: &impl Interface, b: &impl Interface) -> bool {
+    match (
+        a.cast::<windows_core::IUnknown>(),
+        b.cast::<windows_core::IUnknown>(),
+    ) {
+        (Ok(a), Ok(b)) => a.as_raw() == b.as_raw(),
+        _ => false,
+    }
 }

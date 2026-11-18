@@ -164,6 +164,10 @@ const CASES: &[Case] = &[
         list_drag_rows_moves_rows_and_selection,
     ),
     (
+        "リストの行を実際のマウスのドラッグで並べ替えられる",
+        list_reorder_by_a_real_drag,
+    ),
+    (
         "組み立てる行のリストも窓を絞ったまま並べ替えられる",
         list_reorder_with_row_builder,
     ),
@@ -6980,6 +6984,55 @@ fn list_drag_rows_moves_rows_and_selection(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// A row dragged with the real mouse goes through `ListView`'s own reordering:
+/// `DragItemsStarting` takes the row, the drop moves the `ListViewItem`s, and
+/// `DragItemsCompleted` moves naui's rows the same way and tells the app.
+fn list_reorder_by_a_real_drag(ui: &Ui) -> Result<()> {
+    use naui_core::RowMove;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE,
+    };
+
+    with_shown_list_for_input(ui, 8, |hwnd, list| {
+        let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
+        list.on_reorder({
+            let moves = moves.clone();
+            move |moved| moves.borrow_mut().push(moved.clone())
+        });
+        list.set_reorderable(true);
+        aim_at_row_spot(hwnd, list, 0, 40.0, 0.5)?;
+        send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
+        // 少しずつ動かして、ドラッグを始めさせてから下の行へ運ぶ。
+        for (row, fraction) in [(0, 0.8), (1, 0.5), (2, 0.5), (3, 0.5), (3, 0.8)] {
+            aim_at_row_spot(hwnd, list, row, 40.0, fraction)?;
+            send_input(mouse_input(MOUSEEVENTF_MOVE, 0));
+        }
+        pump_until(Duration::from_millis(300), || false);
+        send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
+        pump_until(Duration::from_secs(3), || !moves.borrow().is_empty());
+        let moves = moves.borrow();
+        assert_eq!(moves.len(), 1, "ドロップで 1 回だけ並べ替わる: {moves:?}");
+        assert_eq!(moves[0].rows, vec![0], "つかんだ行だけが動く");
+        assert!(
+            (3..=5).contains(&moves[0].to),
+            "下の行の間へ入る: {:?}",
+            moves[0]
+        );
+        let mut expected: Vec<String> = (0..8).map(|index| format!("行 {index}")).collect();
+        moves[0].apply(&mut expected);
+        assert_eq!(
+            list_texts(list),
+            expected,
+            "ListView の行も naui の並びと同じ"
+        );
+        assert!(
+            list.selection().is_empty(),
+            "選んでいなかったので選択は空のまま"
+        );
+        Some(())
+    })
+}
+
 /// Rows from a builder move too, with only the rows on screen built: the app moves its
 /// data in `on_reorder`, and the rows built afterwards read it.
 fn list_reorder_with_row_builder(ui: &Ui) -> Result<()> {
@@ -9219,6 +9272,17 @@ fn aim_at_row_point(
     index: usize,
     x: f32,
 ) -> Option<()> {
+    aim_at_row_spot(hwnd, list, index, x, 0.5)
+}
+
+/// [`aim_at_row_point`], at a fraction of the row's height from its top.
+fn aim_at_row_spot(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+    index: usize,
+    x: f32,
+    fraction: f32,
+) -> Option<()> {
     use windows::Foundation::Point as XamlPoint;
     use windows::Win32::Foundation::POINT;
     use windows::Win32::Graphics::Gdi::ClientToScreen;
@@ -9233,7 +9297,7 @@ fn aim_at_row_point(
         panic!("{index} 行目が組み立てられていない: 先頭 {first:?} 位置 {:?}", list.scroller().VerticalOffset())
     });
     let scroll = list.scroller();
-    let middle = (row.ActualHeight().expect("行の高さ") / 2.0) as f32;
+    let middle = row.ActualHeight().expect("行の高さ") as f32 * fraction;
     let row_at = || {
         row.TransformToVisual(None)
             .and_then(|to| to.TransformPoint(XamlPoint { X: x, Y: middle }))

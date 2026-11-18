@@ -252,6 +252,13 @@ collected in [Known limitations](known-limitations.md).
   spacers, because `ListView` creates a `ListViewItem` for every row it is given: with
   many rows, only the rows on screen are built, and the spacers carry the height of
   the rest. naui holds the selection, since the `ListView` knows only the rows it has.
+  With `set_reorderable`, `CanReorderItems`, `CanDragItems` and `AllowDrop` are on, and
+  `ListView` moves its own `ListViewItem`s on the drop. naui reads which rows were
+  dragged from `DragItemsStarting` (cancelling a drag that holds a row that cannot be
+  selected) and where they went from the order of `Items` at `DragItemsCompleted`,
+  then moves its rows the same way and builds them again. `ListView` scrolls by itself
+  near its edge only through its own `ScrollViewer`, which naui turns off for the
+  outer one, so it does not scroll while dragging.
 - **`Table`**: WinUI 3 has no `DataGrid` (it belongs to the Community Toolkit), so
   the table is built with `ListView` rows made of `Grid`s, and the header is put in
   a separate `Grid` with the same column definitions to align widths. Only the row
@@ -539,6 +546,11 @@ collected in [Known limitations](known-limitations.md).
   the Ctrl / Shift attached to clicks. `GtkListBox` creates a row for everything it is
   given, so with many rows only the rows on screen go in, two `GtkBox`es outside it
   carry the height of the rest, and naui holds the selection.
+  With `set_reorderable`, each row gets a `GtkDragSource` and the `GtkListBox` a
+  `GtkDropTarget`, for a boxed type that exists only in the process (it names the
+  list; the rows stay in it). `GtkListBox` has only `drag_highlight_row`, which frames
+  a whole row and reads as dropping onto it, so the line between rows is an inset
+  `box-shadow` in libadwaita's `@accent_bg_color`, added with a `GtkCssProvider`.
 - **`Table`**: Instead of `GtkColumnView` (which requires a `GtkListItemFactory` and
   a `GListModel`), it is built from `GtkListBox` rows laid out horizontally, with
   column widths aligned by a `GtkSizeGroup` per column. Sortable headers are `flat`
@@ -599,7 +611,8 @@ collected in [Known limitations](known-limitations.md).
   visuals nor the narrowing.
 - **`DatePicker`**: Uses `datetime-local` so as not to bring in time zones.
 - **`List`**: Using `ListItem::detail` or `ListRow` (rows of arbitrary content), having
-  more than 200 rows, `set_row_builder` or `set_row_height` switches from `<select>` to
+  more than 200 rows, `set_row_builder`, `set_row_height` or `set_reorderable` (an
+  `<option>` cannot be dragged) switches from `<select>` to
   an implementation using `<ul role="listbox">`, and `native_select` then returns
   `None`. With a few text-only rows it stays `<select size>`. The
   content model of `<option>` is text only and can hold neither elements nor line
@@ -617,7 +630,10 @@ collected in [Known limitations](known-limitations.md).
   (`Field` / `SelectedItem` / `Highlight` / `GrayText`). This form is the only way to
   show rows of arbitrary content, so both operating the row itself
   (`ListRow::on_activate`) and the controls inside it are kept, and either path
-  works.
+  works. With `set_reorderable`, selectable rows are `draggable`, the drag carries
+  the list's id under a private `DataTransfer` type, and the line where the rows will
+  land is an inset `box-shadow` in `Highlight`, since no DOM element marks a gap
+  between rows.
 - **`Table`**: `<table role="grid">`. `<table>` has no mechanism for selecting rows,
   so naui adds clicks (⌘ / Ctrl / Shift) and keyboard operation (arrows, Home / End,
   Space). Column widths are decided by `<col>` in a `<colgroup>` and

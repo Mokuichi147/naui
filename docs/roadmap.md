@@ -127,11 +127,19 @@ native counterparts for.
       Dialogs needing more than three buttons can now put the extra controls in a
       `Sheet`'s content, so only toasts remain. Queueing has a native counterpart
       only in `AdwToastOverlay`, so the others would be built in naui.
-- [ ] **Reordering rows in a `List` by drag and drop.** `NSTableView` drag and
-      drop, WinUI `ListView` (`CanReorderItems`), GTK drag sources and drop targets
-      on a `GtkListBox`, and HTML5 drag and drop all support it. It builds on the
-      file drops that are already in place. Still open: the shape of the payload
-      passed between widgets within one app. `Tree` on GTK is built from
+- [x] **Reordering rows in a `List` by drag and drop** (`List::set_reorderable`,
+      `on_reorder` with a `RowMove`, `drag_rows` for tests and `move_rows`).
+      `NSTableView`'s drag and drop, WinUI `ListView`'s `CanReorderItems`, a
+      `GtkDragSource` on each row with a `GtkDropTarget` on the `GtkListBox`, and
+      HTML drag and drop on `draggable` rows. naui moves the rows and keeps the
+      selection on them, then tells the app the rows that moved and the gap they
+      went into, which `RowMove::apply` repeats on the app's data (rows from a
+      builder are built again from it afterwards). Only rows from the same list are
+      taken: a drag carries a mark of the list it came from (a private pasteboard
+      type, a boxed GType, a `DataTransfer` type) while the rows stay in the list,
+      the shape that drags between widgets can grow from later. GTK and the Web have
+      no mark for a gap between rows, so naui draws a line there (the accent color
+      on GTK, the `Highlight` system color on the Web). `Tree` on GTK is built from
       `GtkListBox`, so dragging in `Tree` is left out.
 - [ ] **Typing and answering dialogs in tests.** Since v0.17.0, `click`,
       `select`, `activate`, `pick` and `drag_to` work on all four platforms with
