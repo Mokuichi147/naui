@@ -65,6 +65,8 @@ struct SheetInner {
     /// The boxes the content went in, one per opening. A dialog closed a moment ago
     /// may still hold the content while it animates out.
     holders: RefCell<Vec<glib::WeakRef<adw::Bin>>>,
+    /// The answer [`Sheet::respond`] keeps for the next time it opens.
+    pending: Cell<Option<DialogResponse>>,
 }
 
 /// A modal dialog with arbitrary content (`AdwDialog`).
@@ -86,6 +88,7 @@ impl Sheet {
             open: Cell::new(false),
             owner: crate::handover::Owner::new(),
             holders: RefCell::new(Vec::new()),
+            pending: Cell::new(None),
         }))
     }
 
@@ -230,6 +233,36 @@ impl Sheet {
         self.0.open.set(true);
         *self.0.current.borrow_mut() = Some(current);
         native.present(Some(&parent));
+        if let Some(response) = self.0.pending.take() {
+            let weak = Rc::downgrade(&self.0);
+            crate::dialog::when_shown(&native, move || {
+                if let Some(inner) = weak.upgrade() {
+                    Sheet(inner).respond(response);
+                }
+            });
+        }
+    }
+
+    /// Answers it the way the user does, by clicking its button for `response`
+    /// (`clicked`), so `on_response` is called with it (for tests and automation).
+    /// Nothing happens if it has no such button or the button is disabled.
+    ///
+    /// If it is not open, the answer is kept and given right after it next opens.
+    pub fn respond(&self, response: DialogResponse) {
+        if !self.0.open.get() {
+            self.0.pending.set(Some(response));
+            return;
+        }
+        let button = self.0.current.borrow().as_ref().and_then(|current| {
+            current
+                .buttons
+                .iter()
+                .find(|(role, _)| *role == response)
+                .map(|(_, button)| button.clone())
+        });
+        if let Some(button) = button.filter(|button| button.is_sensitive()) {
+            button.emit_clicked();
+        }
     }
 
     fn build(&self) -> Current {
@@ -254,7 +287,7 @@ impl Sheet {
             let weak = Rc::downgrade(&self.0);
             button.connect_clicked(move |_| {
                 if let Some(inner) = weak.upgrade() {
-                    Sheet(inner).respond(role);
+                    Sheet(inner).finish(role);
                 }
             });
             if role == DialogResponse::Cancel {
@@ -336,7 +369,7 @@ impl Sheet {
     }
 
     /// Closes it and notifies `response`, as a click on that button does.
-    fn respond(&self, response: DialogResponse) {
+    fn finish(&self, response: DialogResponse) {
         if !self.0.open.replace(false) {
             return;
         }

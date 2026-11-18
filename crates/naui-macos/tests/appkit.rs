@@ -1369,7 +1369,7 @@ fn typing_notifies_like_the_user(ui: &Ui) -> Result<()> {
     assert_eq!(*values.borrow(), [4.0]);
     number.submit();
     assert_eq!(*submits.borrow(), [4.0]);
-    number.enter_text("abc");
+    number.enter_text("-");
     assert_eq!(values.borrow().len(), 1, "読めない文字は確定まで待つ");
     number.submit();
     assert_eq!(number.value(), 4.0, "確定で読めない文字は元へ戻る");

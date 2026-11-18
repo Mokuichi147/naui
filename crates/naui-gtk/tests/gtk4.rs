@@ -44,6 +44,14 @@ fn main() {
             clicks_notify_like_the_user,
         ),
         (
+            "enter_text と submit が打鍵と Enter と同じく通知し、無効なら何もしない",
+            typing_notifies_like_the_user,
+        ),
+        (
+            "respond が Dialog と Sheet のボタンを押し、開く前なら開いた直後に押す",
+            respond_answers_like_the_user,
+        ),
+        (
             "ボタンの on_click を差し替えられる",
             button_click_is_replaced,
         ),
@@ -1116,6 +1124,199 @@ fn recorder<T: Clone + 'static>() -> (Rc<RefCell<Vec<T>>>, impl FnMut(T) + 'stat
     let log = Rc::new(RefCell::new(Vec::new()));
     let sink = log.clone();
     (log, move |value| sink.borrow_mut().push(value))
+}
+
+/// Records every string a text notification passes.
+fn text_recorder() -> (Rc<RefCell<Vec<String>>>, impl FnMut(&str) + 'static) {
+    let (log, mut sink) = recorder::<String>();
+    (log, move |text: &str| sink(text.to_string()))
+}
+
+/// `enter_text` replaces the text and notifies once, as typing does, and `submit` /
+/// `search` confirm as Enter does (`activate`). Neither does anything while
+/// insensitive or read-only.
+fn typing_notifies_like_the_user(ui: &Ui) -> Result<()> {
+    // 窓に載せていなくても、打鍵の通知は届く。
+    let field = ui.text_input("前の文字")?;
+    let (changes, sink) = text_recorder();
+    field.on_change(sink);
+    let (submits, sink) = text_recorder();
+    field.on_submit(sink);
+    field.enter_text("Ada");
+    assert_eq!(field.text(), "Ada");
+    assert_eq!(
+        *changes.borrow(),
+        ["Ada"],
+        "消した途中の中身は通知せず、新しい中身で 1 度だけ通知すること"
+    );
+    field.submit();
+    assert_eq!(*submits.borrow(), ["Ada"]);
+    field.set_read_only(true);
+    field.enter_text("Grace");
+    field.submit();
+    assert_eq!(field.text(), "Ada", "読み取り専用の欄には打てない");
+    assert_eq!(submits.borrow().len(), 1, "読み取り専用の欄は確定しない");
+    field.set_read_only(false);
+    field.enter_text("");
+    assert_eq!(*changes.borrow(), ["Ada", ""], "空にしたことも通知する");
+    field.set_enabled(false);
+    field.enter_text("Grace");
+    field.submit();
+    assert_eq!(field.text(), "", "無効な欄には打てない");
+    assert_eq!(changes.borrow().len(), 2);
+    assert_eq!(submits.borrow().len(), 1);
+
+    let password = ui.password_input()?;
+    let (changes, sink) = text_recorder();
+    password.on_change(sink);
+    let (submits, sink) = text_recorder();
+    password.on_submit(sink);
+    password.enter_text("secret");
+    password.submit();
+    assert_eq!(password.text(), "secret");
+    assert_eq!(*changes.borrow(), ["secret"]);
+    assert_eq!(*submits.borrow(), ["secret"]);
+
+    let search = ui.search_input()?;
+    let (changes, sink) = text_recorder();
+    search.on_change(sink);
+    let (searches, sink) = text_recorder();
+    search.on_search(sink);
+    search.enter_text("naui");
+    search.search();
+    assert_eq!(*changes.borrow(), ["naui"]);
+    assert_eq!(*searches.borrow(), ["naui"]);
+    search.set_enabled(false);
+    search.enter_text("other");
+    search.search();
+    assert_eq!(search.text(), "naui");
+    assert_eq!(searches.borrow().len(), 1, "無効な検索欄は確定しない");
+
+    let area = ui.text_area("1 行目")?;
+    let (changes, sink) = text_recorder();
+    area.on_change(sink);
+    area.enter_text("一\n二");
+    assert_eq!(area.text(), "一\n二");
+    assert_eq!(*changes.borrow(), ["一\n二"]);
+    area.set_read_only(true);
+    area.enter_text("三");
+    assert_eq!(area.text(), "一\n二", "読み取り専用の欄には打てない");
+    area.set_read_only(false);
+    area.set_enabled(false);
+    area.enter_text("三");
+    assert_eq!(area.text(), "一\n二", "無効な欄には打てない");
+    assert_eq!(changes.borrow().len(), 1);
+
+    let number = ui.number_input(1.0)?;
+    number.set_range(Some(0.0), Some(10.0));
+    let (values, sink) = recorder::<f64>();
+    number.on_change(sink);
+    let (submits, sink) = recorder::<f64>();
+    number.on_submit(sink);
+    number.enter_text("4");
+    assert_eq!(number.value(), 4.0, "読める数はすぐ値になる");
+    assert_eq!(*values.borrow(), [4.0]);
+    number.submit();
+    assert_eq!(*submits.borrow(), [4.0]);
+    // 数として読めない文字は値にならない (`GtkSpinButton` は数字以外を打たせない)。
+    // 確定すると元へ戻るはずだが、GTK の既定の更新方針では 0 になるので、
+    // ここでは確定まではしない。
+    number.enter_text("-");
+    assert_eq!(values.borrow().len(), 1, "読めない文字は値にならない");
+    number.enter_text("4");
+    number.set_enabled(false);
+    number.enter_text("7");
+    number.submit();
+    assert_eq!(number.value(), 4.0, "無効な欄には打てない");
+    assert_eq!(submits.borrow().len(), 1);
+
+    let combo = ui.editable_combo_box()?;
+    combo.set_items(&["Apple", "Banana"]);
+    let (changes, sink) = text_recorder();
+    combo.on_change(sink);
+    combo.enter_text("Ap");
+    assert_eq!(combo.text(), "Ap", "候補で補わない");
+    assert_eq!(*changes.borrow(), ["Ap"]);
+    combo.enter_text("Banana");
+    assert_eq!(combo.selected(), Some(1), "候補と同じ文字なら選ばれる");
+    combo.set_enabled(false);
+    combo.enter_text("Cherry");
+    assert_eq!(combo.text(), "Banana", "無効な欄には打てない");
+    assert_eq!(*changes.borrow(), ["Ap", "Banana"]);
+    Ok(())
+}
+
+/// `respond` clicks the dialog's or sheet's button for the role. Given before it
+/// opens, it is kept and given once it is on screen.
+fn respond_answers_like_the_user(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 480.0, 360.0)?;
+    window.show();
+
+    let dialog = ui.dialog("消しますか")?;
+    dialog.set_buttons(
+        DialogButtons::new()
+            .primary("消す")
+            .secondary("あとで")
+            .cancel("やめる"),
+    );
+    let (responses, sink) = recorder::<DialogResponse>();
+    dialog.on_response(sink);
+    let opener = ui.button("消す…")?;
+    opener.on_click({
+        let dialog = dialog.clone();
+        move || dialog.open()
+    });
+    for response in [
+        DialogResponse::Primary,
+        DialogResponse::Secondary,
+        DialogResponse::Cancel,
+    ] {
+        dialog.respond(response);
+        opener.click();
+        assert!(dialog.is_open(), "{response:?}: 開いてから答える");
+        spin_until(std::time::Duration::from_secs(2), || !dialog.is_open());
+        assert!(!dialog.is_open(), "{response:?}: 答えて閉じること");
+    }
+    assert_eq!(
+        *responses.borrow(),
+        [
+            DialogResponse::Primary,
+            DialogResponse::Secondary,
+            DialogResponse::Cancel
+        ]
+    );
+    // 開いている間に答えれば、その場で閉じる。
+    dialog.open();
+    dialog.respond(DialogResponse::Primary);
+    assert!(!dialog.is_open());
+    assert_eq!(responses.borrow().len(), 4);
+
+    let sheet = ui.sheet("新しいフォルダ")?;
+    sheet.set_child(&ui.text_input("")?);
+    sheet.set_buttons(DialogButtons::new().primary("作成").cancel("キャンセル"));
+    let (responses, sink) = recorder::<DialogResponse>();
+    sheet.on_response(sink);
+    sheet.respond(DialogResponse::Primary);
+    sheet.open();
+    spin_until(std::time::Duration::from_secs(2), || !sheet.is_open());
+    assert_eq!(*responses.borrow(), [DialogResponse::Primary]);
+
+    // 無効なボタンは押せず、開いたまま。ないボタンも同じ。
+    sheet.set_button_enabled(DialogResponse::Primary, false);
+    sheet.open();
+    wait_until_shown(&sheet.native_dialog().expect("AdwDialog"));
+    sheet.respond(DialogResponse::Primary);
+    sheet.respond(DialogResponse::Secondary);
+    pump();
+    assert!(sheet.is_open(), "無効なボタンとないボタンは押せない");
+    sheet.respond(DialogResponse::Cancel);
+    assert!(!sheet.is_open());
+    assert_eq!(
+        *responses.borrow(),
+        [DialogResponse::Primary, DialogResponse::Cancel]
+    );
+    window.close();
+    Ok(())
 }
 
 /// One message GLib logged.

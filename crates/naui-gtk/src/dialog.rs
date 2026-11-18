@@ -11,6 +11,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
+use gtk::glib;
 use naui_core::{DialogButtons, DialogResponse};
 
 use crate::callback::Notifier;
@@ -58,6 +59,8 @@ struct DialogInner {
     open: Cell<bool>,
     /// Marks the content as this dialog's (see [`crate::handover`]).
     owner: crate::handover::Owner,
+    /// The answer [`Dialog::respond`] keeps for the next time it opens.
+    pending: Cell<Option<DialogResponse>>,
 }
 
 /// A modal dialog.
@@ -78,6 +81,7 @@ impl Dialog {
             current: RefCell::new(None),
             open: Cell::new(false),
             owner: crate::handover::Owner::new(),
+            pending: Cell::new(None),
         }))
     }
 
@@ -184,6 +188,37 @@ impl Dialog {
         self.0.open.set(true);
         *self.0.current.borrow_mut() = Some(native.clone());
         native.present(self.parent().as_ref());
+        if let Some(response) = self.0.pending.take() {
+            let weak = Rc::downgrade(&self.0);
+            when_shown(&native, move || {
+                if let Some(inner) = weak.upgrade() {
+                    Dialog(inner).respond(response);
+                }
+            });
+        }
+    }
+
+    /// Answers it the way the user does, by clicking its button for `response`
+    /// (`clicked` on the `AdwAlertDialog`'s button), so `on_response` is called with
+    /// it (for tests and automation). Nothing happens if it has no such button.
+    ///
+    /// If it is not open, the answer is kept and given right after it next opens.
+    pub fn respond(&self, response: DialogResponse) {
+        let native = self.0.current.borrow().clone();
+        let Some(native) = native.filter(|_| self.0.open.get()) else {
+            self.0.pending.set(Some(response));
+            return;
+        };
+        // `AdwAlertDialog` は応答のボタンを外へ出さないので、ラベルで探す。
+        let buttons = self.0.buttons.borrow().resolved();
+        let Some(label) = buttons.label(response) else {
+            return;
+        };
+        if let Some(button) = find_button(native.upcast_ref(), &label) {
+            if button.is_sensitive() {
+                button.emit_clicked();
+            }
+        }
     }
 
     /// The window the dialog is placed on.
@@ -232,6 +267,56 @@ impl Dialog {
             native.set_extra_child(None::<&gtk::Widget>);
         }
     }
+}
+
+/// The first `GtkButton` labelled `label` in `root`'s widget tree.
+pub(crate) fn find_button(root: &gtk::Widget, label: &str) -> Option<gtk::Button> {
+    let mut child = root.first_child();
+    while let Some(widget) = child {
+        if let Some(button) = widget.downcast_ref::<gtk::Button>() {
+            if button.label().is_some_and(|text| text == label) {
+                return Some(button.clone());
+            }
+        }
+        if let Some(found) = find_button(&widget, label) {
+            return Some(found);
+        }
+        child = widget.next_sibling();
+    }
+    None
+}
+
+/// Calls `f` once `native` is on screen (mapped), on the next main loop iteration,
+/// as a user can click it only once it is shown.
+///
+/// libadwaita 1.5 ignores closing a dialog before its second frame (see
+/// [`close_native`]), so an answer given earlier could leave it open.
+pub(crate) fn when_shown(native: &impl IsA<gtk::Widget>, f: impl FnOnce() + 'static) {
+    let native = native.as_ref();
+    let f = Rc::new(RefCell::new(Some(f)));
+    let run = move || {
+        let f = f.clone();
+        glib::idle_add_local_once(move || {
+            if let Some(f) = f.borrow_mut().take() {
+                f();
+            }
+        });
+    };
+    if native.is_mapped() {
+        run();
+        return;
+    }
+    let handler: Rc<RefCell<Option<glib::SignalHandlerId>>> = Rc::default();
+    let id = native.connect_map({
+        let handler = handler.clone();
+        move |native| {
+            if let Some(id) = handler.borrow_mut().take() {
+                native.disconnect(id);
+            }
+            run();
+        }
+    });
+    *handler.borrow_mut() = Some(id);
 }
 
 /// Closes `native`, even before it has opened.
