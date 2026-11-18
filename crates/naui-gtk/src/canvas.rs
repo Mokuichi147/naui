@@ -15,7 +15,9 @@
 //! middle, 3 for right, 8 and 9 for the side buttons), `GtkGestureDrag` gives
 //! **movement while pressed** (delivered even outside the surface), and
 //! `GtkEventControllerMotion` gives movement while not pressed (hover, delivered
-//! only while inside the surface).
+//! only while inside the surface). The modifier keys come from the state of the
+//! event being handled (`gtk_event_controller_get_current_event_state`), read the
+//! same way as for key events.
 //!
 //! The wheel comes from `GtkEventControllerScroll`. The unit of the amount is given
 //! by `gtk_event_controller_scroll_get_unit`: notched wheels
@@ -36,6 +38,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use crate::keys::modifiers_of;
 use gtk::cairo;
 use gtk::pango;
 use gtk::prelude::*;
@@ -109,7 +112,8 @@ impl Canvas {
             move |gesture, _, x, y| {
                 pointer.emit(
                     PointerEvent::new(PointerPhase::Down, Point::new(x, y))
-                        .button(button_from_gdk(gesture.current_button())),
+                        .button(button_from_gdk(gesture.current_button()))
+                        .modifiers(modifiers_of(gesture.current_event_state())),
                 )
             }
         });
@@ -118,7 +122,8 @@ impl Canvas {
             move |gesture, _, x, y| {
                 pointer.emit(
                     PointerEvent::new(PointerPhase::Up, Point::new(x, y))
-                        .button(button_from_gdk(gesture.current_button())),
+                        .button(button_from_gdk(gesture.current_button()))
+                        .modifiers(modifiers_of(gesture.current_event_state())),
                 )
             }
         });
@@ -137,10 +142,10 @@ impl Canvas {
             let pointer = pointer.clone();
             move |gesture, dx, dy| {
                 let (sx, sy) = gesture.start_point().unwrap_or((0.0, 0.0));
-                pointer.emit(PointerEvent::new(
-                    PointerPhase::Move,
-                    Point::new(sx + dx, sy + dy),
-                ));
+                pointer.emit(
+                    PointerEvent::new(PointerPhase::Move, Point::new(sx + dx, sy + dy))
+                        .modifiers(modifiers_of(gesture.current_event_state())),
+                );
             }
         });
         drag.connect_drag_end({
@@ -168,10 +173,13 @@ impl Canvas {
             let pointer = pointer.clone();
             let dragging = dragging.clone();
             let hover = hover.clone();
-            move |_, x, y| {
+            move |controller, x, y| {
                 hover.set(Point::new(x, y));
                 if !dragging.get() {
-                    pointer.emit(PointerEvent::new(PointerPhase::Move, Point::new(x, y)));
+                    pointer.emit(
+                        PointerEvent::new(PointerPhase::Move, Point::new(x, y))
+                            .modifiers(modifiers_of(controller.current_event_state())),
+                    );
                 }
             }
         });
@@ -192,7 +200,8 @@ impl Canvas {
                     gtk::gdk::ScrollUnit::Surface => 1.0,
                     _ => WHEEL_STEP,
                 };
-                let event = PointerEvent::wheel(hover.get(), dx * scale, dy * scale);
+                let event = PointerEvent::wheel(hover.get(), dx * scale, dy * scale)
+                    .modifiers(modifiers_of(controller.current_event_state()));
                 let response = wheel.emit(event);
                 last_handled.set(response == EventResponse::Handled);
                 match response {
@@ -520,5 +529,24 @@ mod tests {
         assert_eq!(button_from_gdk(9), Some(PointerButton::Forward));
         assert_eq!(button_from_gdk(0), None, "どのボタンでもない");
         assert_eq!(button_from_gdk(4), None);
+    }
+
+    #[test]
+    fn pointer_state_maps_to_modifiers() {
+        use gtk::gdk::ModifierType as M;
+        // 押しているボタンの印は修飾キーに数えない (ドラッグ中の状態に入る)。
+        let held = modifiers_of(M::SHIFT_MASK | M::BUTTON1_MASK);
+        assert_eq!(
+            held,
+            naui_core::Modifiers {
+                shift: true,
+                ..Default::default()
+            }
+        );
+        assert!(modifiers_of(M::BUTTON3_MASK | M::LOCK_MASK).is_empty());
+        let all = modifiers_of(M::CONTROL_MASK | M::ALT_MASK | M::SUPER_MASK);
+        assert!(all.control && all.alt && all.meta && !all.shift);
+        assert!(all.primary(), "Linux では Ctrl が主の修飾キー");
+        assert!(modifiers_of(M::META_MASK).meta);
     }
 }

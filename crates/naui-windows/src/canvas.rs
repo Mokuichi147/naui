@@ -32,7 +32,8 @@
 //! (pressing right while holding left, for example) through `PointerMoved`, so the
 //! set of buttons held is remembered per pointer, and differences from last time
 //! are delivered as presses and releases (treated the same whichever notification
-//! they come through).
+//! they come through). The modifier keys come from
+//! `PointerRoutedEventArgs.KeyModifiers`.
 //!
 //! The wheel amount is 120 per notch (`WHEEL_DELTA`), so 120 is converted to
 //! [`WHEEL_STEP`]. The vertical amount is "positive when turned away", the opposite
@@ -61,8 +62,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use naui_core::{
-    DrawCommand, EventResponse, Painter, Point, PointerButton, PointerEvent, PointerPhase, Result,
-    WheelHandler, WHEEL_STEP,
+    DrawCommand, EventResponse, Modifiers, Painter, Point, PointerButton, PointerEvent,
+    PointerPhase, Result, WheelHandler, WHEEL_STEP,
 };
 use naui_winui3::ICompositionDrawingSurfaceInterop;
 use naui_winui3::Microsoft::Graphics::DirectX::{DirectXAlphaMode, DirectXPixelFormat};
@@ -81,6 +82,7 @@ use naui_winui3::Microsoft::UI::Xaml::{
 };
 use windows::Foundation::TypedEventHandler;
 use windows::Graphics::SizeInt32;
+use windows::System::VirtualKeyModifiers;
 use windows::Win32::Graphics::Direct2D::ID2D1DeviceContext;
 use windows_core::{Interface, HSTRING};
 use windows_numerics::Vector2;
@@ -231,7 +233,9 @@ pub(crate) fn dispatch_wheel(delta: f64, horizontal: bool) -> Option<bool> {
         })
     })?;
     let (x, y) = wheel_amount(delta, horizontal);
-    let handled = inner.wheel.emit(PointerEvent::wheel(point, x, y)) == EventResponse::Handled;
+    // フックのメッセージには修飾キーが無いので、スレッドのキーボードの状態から読む。
+    let event = PointerEvent::wheel(point, x, y).modifiers(crate::keys::modifiers());
+    let handled = inner.wheel.emit(event) == EventResponse::Handled;
     // `Handled` ならメッセージはフックで止まり、XAML へは届かない。
     inner.hook_wheel.set((!handled).then(Instant::now));
     Some(handled)
@@ -382,10 +386,13 @@ impl Canvas {
                         }
                     };
                     let before = previous_buttons(phase, seen, now);
+                    let modifiers = modifiers_of(args);
                     for (phase, button) in button_changes(phase, before, now) {
-                        inner
-                            .pointer
-                            .emit(PointerEvent::new(phase, point).button(button));
+                        inner.pointer.emit(
+                            PointerEvent::new(phase, point)
+                                .button(button)
+                                .modifiers(modifiers),
+                        );
                     }
                 });
                 Ok(())
@@ -478,7 +485,8 @@ impl Canvas {
                     Point::new(f64::from(position.X), f64::from(position.Y)),
                     x,
                     y,
-                );
+                )
+                .modifiers(modifiers_of(args));
                 if inner.wheel.emit(event) == EventResponse::Handled {
                     let _ = args.SetHandled(true);
                 }
@@ -661,6 +669,26 @@ fn repaint_all() {
     });
     for canvas in &canvases {
         schedule_paint(canvas);
+    }
+}
+
+/// The modifier keys held at the time of a pointer event
+/// (`PointerRoutedEventArgs.KeyModifiers`).
+fn modifiers_of(args: &PointerRoutedEventArgs) -> Modifiers {
+    args.KeyModifiers()
+        .map(modifiers_from_virtual)
+        .unwrap_or_default()
+}
+
+/// Reads WinUI's set of modifier keys. `Menu` is Alt, and `Windows` is the Windows
+/// key (the same as `meta` for key events).
+fn modifiers_from_virtual(keys: VirtualKeyModifiers) -> Modifiers {
+    let held = |key: VirtualKeyModifiers| keys.0 & key.0 != 0;
+    Modifiers {
+        shift: held(VirtualKeyModifiers::Shift),
+        control: held(VirtualKeyModifiers::Control),
+        alt: held(VirtualKeyModifiers::Menu),
+        meta: held(VirtualKeyModifiers::Windows),
     }
 }
 
@@ -948,6 +976,30 @@ mod tests {
         assert_eq!(wheel_amount(-240.0, false), (0.0, 2.0 * WHEEL_STEP));
         // 横は右が正のまま。
         assert_eq!(wheel_amount(120.0, true), (WHEEL_STEP, 0.0));
+    }
+
+    #[test]
+    fn virtual_key_modifiers_become_modifiers() {
+        assert!(modifiers_from_virtual(VirtualKeyModifiers::None).is_empty());
+        let keys = VirtualKeyModifiers(VirtualKeyModifiers::Shift.0 | VirtualKeyModifiers::Menu.0);
+        assert_eq!(
+            modifiers_from_virtual(keys),
+            Modifiers {
+                shift: true,
+                alt: true,
+                ..Modifiers::default()
+            }
+        );
+        let control = modifiers_from_virtual(VirtualKeyModifiers::Control);
+        assert!(control.control && control.primary(), "Ctrl は主の修飾キー");
+        assert_eq!(
+            modifiers_from_virtual(VirtualKeyModifiers::Windows),
+            Modifiers {
+                meta: true,
+                ..Modifiers::default()
+            },
+            "Windows キーは meta"
+        );
     }
 
     #[test]

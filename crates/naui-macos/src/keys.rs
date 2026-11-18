@@ -146,14 +146,18 @@ fn is_composing(responder: &NSResponder) -> bool {
 
 /// Maps an AppKit key to a naui key.
 fn to_key_event(event: &NSEvent) -> KeyEvent {
+    KeyEvent::new(key_of(event), modifiers_of(event)).repeat(event.isARepeat())
+}
+
+/// The modifier keys held at the time of an event (keys, mouse and wheel alike).
+pub(crate) fn modifiers_of(event: &NSEvent) -> Modifiers {
     let flags = event.modifierFlags();
-    let modifiers = Modifiers {
+    Modifiers {
         shift: flags.contains(NSEventModifierFlags::Shift),
         control: flags.contains(NSEventModifierFlags::Control),
         alt: flags.contains(NSEventModifierFlags::Option),
         meta: flags.contains(NSEventModifierFlags::Command),
-    };
-    KeyEvent::new(key_of(event), modifiers).repeat(event.isARepeat())
+    }
 }
 
 /// Named keys are read by virtual key code (`kVK_*`, independent of the layout),

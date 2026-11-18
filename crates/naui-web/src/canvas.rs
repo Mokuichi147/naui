@@ -25,6 +25,10 @@
 //! releases too. The browser's context menu on right-click is not shown over the
 //! surface (the drawing surfaces of the other three platforms have none either).
 //!
+//! The modifier keys come from `shiftKey` / `ctrlKey` / `altKey` / `metaKey`, which
+//! pointer and wheel events inherit from `MouseEvent`. Ctrl and ⌘ are delivered as
+//! they are; [`Modifiers::primary`] counts either one, as for key events.
+//!
 //! The wheel comes from `wheel` events. When `deltaMode` is lines (as in older
 //! Firefox defaults), one line becomes 1/3 of [`WHEEL_STEP`]; when pages, the
 //! surface's size. For pixels the browser's amount is delivered as is, so the amount
@@ -35,9 +39,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use naui_core::{
-    Align, Bitmap, BitmapData, Color, DrawCommand, EventResponse, Gradient, GradientShape, Paint,
-    Painter, Path, PathSegment, Point, PointerButton, PointerEvent, PointerPhase, Rect, Result,
-    WheelHandler, WHEEL_STEP,
+    Align, Bitmap, BitmapData, Color, DrawCommand, EventResponse, Gradient, GradientShape,
+    Modifiers, Paint, Painter, Path, PathSegment, Point, PointerButton, PointerEvent, PointerPhase,
+    Rect, Result, WheelHandler, WHEEL_STEP,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{Clamped, JsCast, JsValue};
@@ -187,7 +191,8 @@ impl Canvas {
                 if phase == PointerPhase::Down {
                     let _ = inner.canvas.set_pointer_capture(event.pointer_id());
                 }
-                let mut pointer = PointerEvent::new(phase, inner.local_point(&event));
+                let mut pointer = PointerEvent::new(phase, inner.local_point(&event))
+                    .modifiers(modifiers_of(&event));
                 if phase != PointerPhase::Move {
                     pointer = pointer.button(PointerButton::from_web_button(button));
                 }
@@ -210,7 +215,8 @@ impl Canvas {
                 web_sys::WheelEvent::DOM_DELTA_PAGE => (width, height),
                 _ => (1.0, 1.0),
             };
-            let wheel = PointerEvent::wheel(inner.local_point(&event), dx * scale_x, dy * scale_y);
+            let wheel = PointerEvent::wheel(inner.local_point(&event), dx * scale_x, dy * scale_y)
+                .modifiers(modifiers_of(&event));
             if inner.wheel.emit(wheel) == EventResponse::Handled {
                 event.prevent_default();
             }
@@ -270,6 +276,16 @@ impl Canvas {
     /// The `<canvas>` itself. Public as a backend-specific escape hatch.
     pub fn native_canvas(&self) -> HtmlCanvasElement {
         self.0.canvas.clone()
+    }
+}
+
+/// The modifier keys held at the time of a pointer or wheel event.
+fn modifiers_of(event: &web_sys::MouseEvent) -> Modifiers {
+    Modifiers {
+        shift: event.shift_key(),
+        control: event.ctrl_key(),
+        alt: event.alt_key(),
+        meta: event.meta_key(),
     }
 }
 
