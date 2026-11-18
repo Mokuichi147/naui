@@ -687,8 +687,9 @@ impl TextInput {
         self.0.on_change.set(f);
     }
 
-    /// Replaces the text the way typing does, so `on_change` is called once with
-    /// it (for tests and automation). See [`enter_editable_text`].
+    /// Replaces the text the way typing does, so `on_change` is called once with it
+    /// (for tests and automation). It goes through `GtkEditable`, with `changed`
+    /// emitted once for the new text.
     pub fn enter_text(&self, text: &str) {
         enter_editable_text(&self.0.native, &self.0.handler, text);
     }
@@ -813,8 +814,9 @@ impl PasswordInput {
         self.0.on_submit.set(f);
     }
 
-    /// Replaces the text the way typing does, so `on_change` is called once with
-    /// it (for tests and automation). See [`enter_editable_text`].
+    /// Replaces the text the way typing does, so `on_change` is called once with it
+    /// (for tests and automation). It goes through `GtkEditable`, with `changed`
+    /// emitted once for the new text.
     pub fn enter_text(&self, text: &str) {
         enter_editable_text(&self.0.native, &self.0.handler, text);
     }
@@ -918,8 +920,9 @@ impl SearchInput {
         self.0.on_search.set(f);
     }
 
-    /// Replaces the text the way typing does, so `on_change` is called once with
-    /// it (for tests and automation). See [`enter_editable_text`].
+    /// Replaces the text the way typing does, so `on_change` is called once with it
+    /// (for tests and automation). It goes through `GtkEditable`, with `changed`
+    /// emitted once for the new text.
     pub fn enter_text(&self, text: &str) {
         enter_editable_text(&self.0.native, &self.0.handler, text);
     }
@@ -1048,7 +1051,7 @@ impl TextArea {
     /// The buffer's text is deleted and inserted as one user action, the same
     /// edits typing over a selection makes. That emits `changed` for the emptied
     /// text too, so the app's handler is blocked while deleting, as in
-    /// [`enter_editable_text`]. No key event is delivered.
+    /// `enter_editable_text`. No key event is delivered.
     pub fn enter_text(&self, text: &str) {
         let native = &self.0.native;
         if !native.is_sensitive() || !native.is_editable() {

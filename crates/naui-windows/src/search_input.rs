@@ -177,7 +177,7 @@ impl SearchInput {
     /// and automation). Does nothing while disabled.
     ///
     /// The text goes into the `TextBox` in the `AutoSuggestBox`'s template through
-    /// UI Automation's Value pattern ([`crate::widgets::enter_text_box`]), so WinUI
+    /// UI Automation's Value pattern, so WinUI
     /// reports it as the user's input (`UserInput`). Before the template has been
     /// applied (in a window not shown yet), the text is only set.
     pub fn enter_text(&self, text: &str) {

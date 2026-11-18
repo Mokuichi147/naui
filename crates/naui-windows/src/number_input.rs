@@ -238,7 +238,7 @@ impl NumberInput {
 
     /// Replaces the text in the field the way typing does (for tests and
     /// automation): through UI Automation's Value pattern on the `TextBox` in the
-    /// `NumberBox`'s template ([`crate::widgets::enter_text_box`]). Text that reads
+    /// `NumberBox`'s template (through UI Automation's Value pattern). Text that reads
     /// as a number is taken from its `TextChanged`, so `on_change` arrives a moment
     /// after this returns. Does nothing while disabled, or before the template has
     /// been applied (in a window not shown yet).

@@ -200,7 +200,7 @@ impl EditableComboBox {
 
     /// Replaces the text the way typing does, so `on_change` is called (for tests
     /// and automation). Nothing is completed from the suggestions. Does nothing
-    /// while disabled. See [`crate::widgets::enter_input_text`].
+    /// while disabled. It writes the value and dispatches the `input` event typing fires.
     pub fn enter_text(&self, text: &str) {
         crate::widgets::enter_input_text(&self.0.input, text);
     }

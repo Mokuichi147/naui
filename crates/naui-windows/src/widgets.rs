@@ -748,7 +748,7 @@ impl TextInput {
     }
 
     /// Replaces the text the way typing does, so `on_change` is called (for tests
-    /// and automation). See [`enter_text_box`].
+    /// and automation). It goes through UI Automation's Value pattern.
     pub fn enter_text(&self, text: &str) {
         enter_text_box(&self.0.native, text);
     }
@@ -1072,7 +1072,7 @@ impl TextArea {
     }
 
     /// Replaces the text the way typing does, so `on_change` is called (for tests
-    /// and automation). See [`enter_text_box`].
+    /// and automation). It goes through UI Automation's Value pattern.
     pub fn enter_text(&self, text: &str) {
         enter_text_box(&self.0.native, text);
     }

@@ -783,7 +783,7 @@ impl TextInput {
     }
 
     /// Replaces the text the way typing does, so `on_change` is called (for tests
-    /// and automation). See [`enter_input_text`].
+    /// and automation). It writes the value and dispatches the `input` event typing fires.
     pub fn enter_text(&self, text: &str) {
         enter_input_text(&self.0.input, text);
     }
@@ -886,7 +886,7 @@ impl PasswordInput {
     }
 
     /// Replaces the text the way typing does, so `on_change` is called (for tests
-    /// and automation). See [`enter_input_text`].
+    /// and automation). It writes the value and dispatches the `input` event typing fires.
     pub fn enter_text(&self, text: &str) {
         enter_input_text(&self.0.input, text);
     }
@@ -979,7 +979,7 @@ impl SearchInput {
     }
 
     /// Replaces the text the way typing does, so `on_change` is called (for tests
-    /// and automation). See [`enter_input_text`].
+    /// and automation). It writes the value and dispatches the `input` event typing fires.
     pub fn enter_text(&self, text: &str) {
         enter_input_text(&self.0.input, text);
     }
@@ -1157,7 +1157,7 @@ impl TextArea {
     /// Replaces the text the way typing does: the value is written and an `input`
     /// event is dispatched, so `on_change` is called before this returns (for tests
     /// and automation). Does nothing while disabled or read-only. See
-    /// [`enter_input_text`].
+    /// `enter_input_text`.
     pub fn enter_text(&self, text: &str) {
         let element = &self.0.element;
         if element.disabled() || element.read_only() {

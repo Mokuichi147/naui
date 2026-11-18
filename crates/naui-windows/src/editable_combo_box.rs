@@ -268,7 +268,7 @@ impl EditableComboBox {
 
     /// Replaces the text the way typing does, so `on_change` is called (for tests
     /// and automation): through UI Automation's Value pattern on the `TextBox` in
-    /// the `ComboBox`'s template ([`crate::widgets::enter_text_box`]), so it
+    /// the `ComboBox`'s template (through UI Automation's Value pattern), so it
     /// arrives a moment after this returns. Nothing is completed from the
     /// suggestions. Does nothing while disabled, or before the template has been
     /// applied (in a window not shown yet).

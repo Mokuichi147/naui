@@ -190,7 +190,7 @@ impl NumberInput {
     /// Text that reads as a number is taken at once, so `on_change` is called if the
     /// value changes. `GtkSpinButton` is numeric, so it drops other characters as it
     /// does when they are typed. Does nothing while insensitive. See
-    /// [`crate::widgets::enter_editable_text`].
+    /// `enter_editable_text`.
     pub fn enter_text(&self, text: &str) {
         crate::widgets::enter_editable_text(&self.0.native, &self.0.text_handler, text);
     }

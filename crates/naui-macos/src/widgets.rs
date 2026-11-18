@@ -781,8 +781,9 @@ impl TextInput {
         });
     }
 
-    /// Replaces the text the way typing does, so `on_change` is called (for tests
-    /// and automation). See [`enter_field_text`].
+    /// Replaces the text the way typing does, so `on_change` is called (for tests and
+    /// automation). It goes through AppKit's notification for typed text
+    /// (`NSControlTextDidChangeNotification`), without the field editor.
     pub fn enter_text(&self, text: &str) {
         enter_field_text(&self.0.native, text);
     }
@@ -879,8 +880,9 @@ impl PasswordInput {
         self.0.handlers.set_submit(f);
     }
 
-    /// Replaces the text the way typing does, so `on_change` is called (for tests
-    /// and automation). See [`enter_field_text`].
+    /// Replaces the text the way typing does, so `on_change` is called (for tests and
+    /// automation). It goes through AppKit's notification for typed text
+    /// (`NSControlTextDidChangeNotification`), without the field editor.
     pub fn enter_text(&self, text: &str) {
         enter_field_text(&self.0.native, text);
     }
@@ -963,8 +965,9 @@ impl SearchInput {
         self.0.handlers.set_submit(f);
     }
 
-    /// Replaces the text the way typing does, so `on_change` is called (for tests
-    /// and automation). See [`enter_field_text`].
+    /// Replaces the text the way typing does, so `on_change` is called (for tests and
+    /// automation). It goes through AppKit's notification for typed text
+    /// (`NSControlTextDidChangeNotification`), without the field editor.
     pub fn enter_text(&self, text: &str) {
         enter_field_text(&self.0.native, text);
     }

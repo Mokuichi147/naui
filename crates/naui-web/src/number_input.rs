@@ -171,7 +171,7 @@ impl NumberInput {
     }
 
     /// Replaces the field's text the way typing does (for tests and automation).
-    /// See [`crate::widgets::enter_input_text`]: the browser keeps only a valid
+    /// See `enter_input_text`: the browser keeps only a valid
     /// number in the field, and one is taken as the value at once, so `on_change`
     /// is called if the value changes. Does nothing while disabled.
     pub fn enter_text(&self, text: &str) {

@@ -295,12 +295,25 @@ that shape are covered in
 
 ### Testing apps
 
-- Not every user action has a method that acts like it. **Typing into text
-  fields** (`set_text` and `set_value` do not call `on_change`), answering a
-  `Dialog` or `Sheet` with its buttons, a `Toast`'s action button, the window's
-  close button (`on_close_request`), pointer events on a `Canvas`, choosing files
-  and dropping them have none yet. Test the code behind them directly, or put the
-  value in with the method that does not notify before the click that reads it.
+- Not every user action has a method that acts like it. A `Toast`'s action
+  button, the window's close button (`on_close_request`), pointer events on a
+  `Canvas`, choosing files and dropping them have none yet. Test the code behind
+  them directly.
+- `enter_text`, `submit` and `search` press no key: `on_key_down` is not called,
+  so an `on_key_down` that stops Enter does not stop `submit`, and nothing goes
+  through an IME. `enter_text` replaces the whole text at once, so `on_change` is
+  called once with the new text rather than once per character, and an
+  `EditableComboBox` completes nothing from its suggestions.
+- On Windows, `on_change` arrives from the event loop a moment after `enter_text`
+  returns (WinUI raises `TextChanged` asynchronously), and the field takes typed
+  text only once its window is shown (an unshown control has no template, and so
+  no UI Automation Value pattern). Show the window first and wait for the effect
+  with `testing::wait_until`.
+- `Dialog::respond` and `Sheet::respond` click a button, so a role with no button,
+  or a disabled one, leaves the dialog open; on macOS that leaves `Dialog::open`
+  (and the click that opened it) waiting. Give the answer **before** whatever opens
+  the dialog: on macOS `Dialog::open` returns only once the dialog is answered. On
+  the other platforms the answer arrives a moment after the dialog opens.
 - `Link::click` calls `on_click` without opening `href`, unlike a user's click.
 - The tests need a test target with `harness = false` (`naui::test_cases!` writes
   its `main`): macOS and Linux touch the UI only from the main thread, and WinUI 3
@@ -458,7 +471,11 @@ that shape are covered in
 - On Linux, SVG is read by librsvg's gdk-pixbuf loader (`librsvg2-common` on
   Debian and Ubuntu), which desktops install with GTK.
 - `Expander` has no expand/collapse animation.
-- `Dialog::open` and `PopupMenu::open_at` do not return until closed.
+- `Dialog::open` and `PopupMenu::open_at` do not return until closed. While a
+  `Dialog` opened from inside a `Tasks` task or a timer is shown, other tasks and
+  timers wait until it closes: they run on the main dispatch queue, which does not
+  run again until the work that opened the dialog returns. One opened from a
+  click or another notification does not hold them up.
 - A `Toast` appears in the frontmost window (or the most recently created window
   when none has been decided yet).
 - Attaching a `Toolbar` hides the window's title text (the macOS convention). The
