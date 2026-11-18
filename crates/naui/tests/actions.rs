@@ -126,7 +126,11 @@ async fn typing_notifies_like_the_user(ui: Ui) -> Result<()> {
     combo.on_change(sink);
     combo.enter_text("Ap");
     testing::wait_until(&ui, || last_is(&changes, "Ap")).await?;
-    assert_eq!(combo.text(), "Ap", "nothing is completed from the suggestions");
+    assert_eq!(
+        combo.text(),
+        "Ap",
+        "nothing is completed from the suggestions"
+    );
     combo.enter_text("Banana");
     testing::wait_until(&ui, || last_is(&changes, "Banana")).await?;
     assert_eq!(combo.selected(), Some(1));
@@ -254,7 +258,10 @@ async fn respond_answers_a_sheet(ui: Ui) -> Result<()> {
     sheet.respond(DialogResponse::Primary);
     sheet.respond(DialogResponse::Secondary);
     testing::settle(&ui).await;
-    assert!(sheet.is_open(), "a disabled or missing button cannot be clicked");
+    assert!(
+        sheet.is_open(),
+        "a disabled or missing button cannot be clicked"
+    );
     sheet.respond(DialogResponse::Cancel);
     testing::wait_until(&ui, || !sheet.is_open()).await?;
     assert_eq!(
