@@ -12132,6 +12132,29 @@ fn toast_action_buttons_report_their_index(ui: &Ui) -> Result<()> {
 
     toast.show();
     assert!(toast.is_visible());
+
+    // ボタンの並びは面の内側に収まる。InfoBar は Content の終わり側と下に余白を
+    // 持たないので、何もしないとボタンが面の右端と下端に接する。
+    let laid_out =
+        || row.ActualWidth().unwrap_or(0.0) > 0.0 && bar.ActualWidth().unwrap_or(0.0) > 0.0;
+    pump_until(SCROLL_LAYOUT_TIMEOUT, laid_out);
+    if laid_out() {
+        let origin = row
+            .TransformToVisual(&bar)
+            .and_then(|transform| {
+                transform.TransformPoint(windows::Foundation::Point { X: 0.0, Y: 0.0 })
+            })
+            .expect("面から見たボタンの並びの位置");
+        let end_gap = bar.ActualWidth().unwrap_or(f64::NAN)
+            - (f64::from(origin.X) + row.ActualWidth().unwrap_or(f64::NAN));
+        let bottom_gap = bar.ActualHeight().unwrap_or(f64::NAN)
+            - (f64::from(origin.Y) + row.ActualHeight().unwrap_or(f64::NAN));
+        assert!(end_gap >= 15.5, "終わり側に余白がある: {end_gap}");
+        assert!(bottom_gap >= 15.5, "下に余白がある: {bottom_gap}");
+    } else {
+        println!("     (実寸が付かない環境なので、ボタンの並びの余白は確かめずに通す)");
+    }
+
     automation::invoke(&children.GetAt(1).expect("2 つ目のボタン"));
     assert_eq!(*seen.borrow(), ["action 1", "dismiss"]);
     assert!(!toast.is_visible(), "押すと消える");
