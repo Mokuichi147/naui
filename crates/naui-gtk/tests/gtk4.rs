@@ -1274,8 +1274,17 @@ fn respond_answers_like_the_user(ui: &Ui) -> Result<()> {
         dialog.respond(response);
         opener.click();
         assert!(dialog.is_open(), "{response:?}: 開いてから答える");
-        spin_until(std::time::Duration::from_secs(2), || !dialog.is_open());
+        // naui の印だけでなく、`AdwAlertDialog` そのものが閉じること
+        // (libadwaita 1.5 は出きる前の close を無視する)。
+        let native = dialog.native_dialog().expect("AdwAlertDialog");
+        let closed = Rc::new(Cell::new(false));
+        native.connect_closed({
+            let closed = closed.clone();
+            move |_| closed.set(true)
+        });
+        spin_until(std::time::Duration::from_secs(2), || closed.get());
         assert!(!dialog.is_open(), "{response:?}: 答えて閉じること");
+        assert!(closed.get(), "{response:?}: AdwAlertDialog が閉じること");
     }
     assert_eq!(
         *responses.borrow(),
@@ -1298,7 +1307,14 @@ fn respond_answers_like_the_user(ui: &Ui) -> Result<()> {
     sheet.on_response(sink);
     sheet.respond(DialogResponse::Primary);
     sheet.open();
-    spin_until(std::time::Duration::from_secs(2), || !sheet.is_open());
+    let native = sheet.native_dialog().expect("AdwDialog");
+    let closed = Rc::new(Cell::new(false));
+    native.connect_closed({
+        let closed = closed.clone();
+        move |_| closed.set(true)
+    });
+    spin_until(std::time::Duration::from_secs(2), || closed.get());
+    assert!(closed.get(), "AdwDialog が閉じること");
     assert_eq!(*responses.borrow(), [DialogResponse::Primary]);
 
     // 無効なボタンは押せず、開いたまま。ないボタンも同じ。

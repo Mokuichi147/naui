@@ -178,8 +178,8 @@ impl SearchInput {
     ///
     /// The text goes into the `TextBox` in the `AutoSuggestBox`'s template through
     /// UI Automation's Value pattern, so WinUI
-    /// reports it as the user's input (`UserInput`). Before the template has been
-    /// applied (in a window not shown yet), the text is only set.
+    /// reports it as the user's input (`UserInput`). Nothing is typed before the
+    /// template has been applied (in a window not shown yet).
     pub fn enter_text(&self, text: &str) {
         if !self.is_enabled() {
             return;
@@ -189,11 +189,8 @@ impl SearchInput {
             .native
             .GetTemplateChild(&HSTRING::from(TEXT_BOX_PART))
             .and_then(|part| part.cast::<TextBox>());
-        match field {
-            Ok(field) => crate::widgets::enter_text_box(&field, text),
-            Err(_) => {
-                let _ = self.0.native.SetText(&HSTRING::from(text));
-            }
+        if let Ok(field) = field {
+            crate::widgets::enter_text_box(&field, text);
         }
     }
 
@@ -201,19 +198,13 @@ impl SearchInput {
     /// automation). Does nothing while disabled.
     ///
     /// It goes through UI Automation's Invoke pattern, which the `AutoSuggestBox`
-    /// answers by submitting the query (`QuerySubmitted`). Where that is not
-    /// offered, `on_search` is called directly.
+    /// answers by submitting the query (`QuerySubmitted`).
     pub fn search(&self) {
         if !self.is_enabled() {
             return;
         }
-        let invoked = self
-            .0
-            .native
-            .cast::<UIElement>()
-            .is_ok_and(|element| crate::automation::invoke(&element).is_ok());
-        if !invoked {
-            self.0.on_search.emit(&self.text());
+        if let Ok(element) = self.0.native.cast::<UIElement>() {
+            let _ = crate::automation::invoke(&element);
         }
     }
 }

@@ -313,7 +313,10 @@ that shape are covered in
   or a disabled one, leaves the dialog open; on macOS that leaves `Dialog::open`
   (and the click that opened it) waiting. Give the answer **before** whatever opens
   the dialog: on macOS `Dialog::open` returns only once the dialog is answered. On
-  the other platforms the answer arrives a moment after the dialog opens.
+  the other platforms the answer arrives a moment after the dialog opens. An
+  answer given while it is closed waits for the next `open` that shows it, so one
+  given to a dialog that then could not open (no window shown yet, for example)
+  answers it later.
 - `Link::click` calls `on_click` without opening `href`, unlike a user's click.
 - The tests need a test target with `harness = false` (`naui::test_cases!` writes
   its `main`): macOS and Linux touch the UI only from the main thread, and WinUI 3
@@ -526,6 +529,10 @@ that shape are covered in
   does not switch it.
 - `EditableComboBox` does not narrow options by typed text (pressing the arrow shows
   all options).
+- `NumberInput` (`GtkSpinButton`) does not let characters other than digits, a sign
+  and a decimal point be typed, and confirming text it cannot read as a number
+  (an empty field, or `-` alone) sets the value to 0 instead of reverting it as
+  the other platforms do.
 - `Spinner` is `AdwSpinner`, which arrived in libadwaita 1.6. With libadwaita 1.5 it
   falls back to `GtkSpinner`, which has the same default size and 64 × 64 drawing
   limit but the older look.

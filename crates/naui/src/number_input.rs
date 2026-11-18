@@ -95,9 +95,11 @@ impl NumberInput {
     /// selecting everything and typing over it. Does nothing while disabled.
     ///
     /// As with typing, text that reads as a number is taken as the value at once
-    /// (rounded and kept in range only on confirmation), so [`on_change`](Self::on_change)
-    /// is called if the value changes. Other text, such as `"-"` or `"abc"`, stays in
-    /// the field until [`submit`](Self::submit) or leaving the field reverts it.
+    /// (rounded and kept in range only on confirmation), so
+    /// [`on_change`](Self::on_change) is called if the value changes. Other text,
+    /// such as `"-"`, changes nothing until [`submit`](Self::submit) or leaving the
+    /// field confirms it. What the field keeps of such text is the platform's own:
+    /// the Web and Linux drop characters a number cannot have.
     ///
     /// For tests and automation. It goes through each platform's own path for
     /// typed text; no key is pressed, so `on_key_down` is not called. See

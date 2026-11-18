@@ -214,7 +214,7 @@ impl Dialog {
         let Some(label) = buttons.label(response) else {
             return;
         };
-        if let Some(button) = find_button(native.upcast_ref(), &label) {
+        if let Some(button) = find_button(native.upcast_ref(), label) {
             if button.is_sensitive() {
                 button.emit_clicked();
             }
@@ -286,24 +286,37 @@ pub(crate) fn find_button(root: &gtk::Widget, label: &str) -> Option<gtk::Button
     None
 }
 
-/// Calls `f` once `native` is on screen (mapped), on the next main loop iteration,
-/// as a user can click it only once it is shown.
+/// Calls `f` once `native` is on screen, as a user can click it only once it is
+/// shown: after it is mapped and two frames have been drawn, on the main loop.
 ///
-/// libadwaita 1.5 ignores closing a dialog before its second frame (see
-/// [`close_native`]), so an answer given earlier could leave it open.
+/// libadwaita 1.5 opens the sheet inside `AdwDialog` on its second frame after it
+/// is mapped and ignores closing before then (see [`close_native`]), so an answer
+/// given earlier could leave it on screen.
 pub(crate) fn when_shown(native: &impl IsA<gtk::Widget>, f: impl FnOnce() + 'static) {
-    let native = native.as_ref();
+    /// The frames to wait for after mapping.
+    const FRAMES: u32 = 2;
+
     let f = Rc::new(RefCell::new(Some(f)));
-    let run = move || {
+    let after_frames = move |native: &gtk::Widget| {
         let f = f.clone();
-        glib::idle_add_local_once(move || {
-            if let Some(f) = f.borrow_mut().take() {
-                f();
+        let frames = Cell::new(0);
+        native.add_tick_callback(move |_, _| {
+            frames.set(frames.get() + 1);
+            if frames.get() < FRAMES {
+                return glib::ControlFlow::Continue;
             }
+            let f = f.clone();
+            glib::idle_add_local_once(move || {
+                if let Some(f) = f.borrow_mut().take() {
+                    f();
+                }
+            });
+            glib::ControlFlow::Break
         });
     };
+    let native = native.as_ref();
     if native.is_mapped() {
-        run();
+        after_frames(native);
         return;
     }
     let handler: Rc<RefCell<Option<glib::SignalHandlerId>>> = Rc::default();
@@ -313,7 +326,7 @@ pub(crate) fn when_shown(native: &impl IsA<gtk::Widget>, f: impl FnOnce() + 'sta
             if let Some(id) = handler.borrow_mut().take() {
                 native.disconnect(id);
             }
-            run();
+            after_frames(native);
         }
     });
     *handler.borrow_mut() = Some(id);

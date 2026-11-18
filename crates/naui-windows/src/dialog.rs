@@ -24,7 +24,7 @@ use std::rc::{Rc, Weak};
 use naui_core::{default_response, DialogButtons, DialogResponse, EnabledButtons, Result, Theme};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     ContentDialog, ContentDialogButton, ContentDialogClosingEventArgs, ContentDialogResult,
-    Orientation as XamlOrientation, StackPanel, TextBlock,
+    Control, Orientation as XamlOrientation, StackPanel, TextBlock,
 };
 use naui_winui3::Microsoft::UI::Xaml::{UIElement, Visibility};
 use windows::Foundation::TypedEventHandler;
@@ -357,27 +357,30 @@ impl Dialog {
             .0
             .native
             .GetTemplateChild(&HSTRING::from(part))
-            .and_then(|part| part.cast::<UIElement>());
-        match button {
-            // 無効なボタンは WinUI が断る (利用者と同じく押せない)。
-            Ok(button) => {
-                let _ = crate::automation::invoke(&button);
-            }
-            Err(_) if tries > 0 => {
-                let weak = UiThreadCell::new(Rc::downgrade(&self.0));
-                naui_core::MainThread::post_after(
-                    &crate::main_thread::Dispatcher::for_current_thread(),
-                    PRESS_INTERVAL,
-                    Box::new(move || {
-                        let inner = weak.with_mut(|weak| weak.upgrade());
-                        if let Some(inner) = inner {
-                            Dialog(inner).press(response, tries - 1);
-                        }
-                    }),
-                );
-            }
-            Err(_) => {}
+            .and_then(|part| part.cast::<Control>());
+        // 無効なボタンは利用者と同じく押せない。押せるはずなのに断られたときは、
+        // まだ出きっていないとみなして待つ。
+        let pressed = match &button {
+            Ok(button) if !button.IsEnabled().unwrap_or(false) => return,
+            Ok(button) => button
+                .cast::<UIElement>()
+                .is_ok_and(|button| crate::automation::invoke(&button).is_ok()),
+            Err(_) => false,
+        };
+        if pressed || tries == 0 {
+            return;
         }
+        let weak = UiThreadCell::new(Rc::downgrade(&self.0));
+        naui_core::MainThread::post_after(
+            &crate::main_thread::Dispatcher::for_current_thread(),
+            PRESS_INTERVAL,
+            Box::new(move || {
+                let inner = weak.with_mut(|weak| weak.upgrade());
+                if let Some(inner) = inner {
+                    Dialog(inner).press(response, tries - 1);
+                }
+            }),
+        );
     }
 
     fn show(&self) -> Result<()> {

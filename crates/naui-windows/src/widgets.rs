@@ -835,16 +835,14 @@ impl TextInput {
 ///
 /// WinUI raises `TextChanged` from the event loop, so `on_change` arrives a moment
 /// after this returns. A `TextBox` whose template has not been applied (in a window
-/// not shown yet) has no Value pattern; its text is then set directly.
+/// not shown yet) has no Value pattern, and nothing is typed, as a user cannot type
+/// into a field that is not on screen.
 pub(crate) fn enter_text_box(native: &TextBox, text: &str) {
     if !native.IsEnabled().unwrap_or(false) || native.IsReadOnly().unwrap_or(true) {
         return;
     }
-    let typed = native
-        .cast::<UIElement>()
-        .is_ok_and(|element| crate::automation::set_value(&element, text).is_ok());
-    if !typed {
-        let _ = native.SetText(&HSTRING::from(text));
+    if let Ok(element) = native.cast::<UIElement>() {
+        let _ = crate::automation::set_value(&element, text);
     }
 }
 
@@ -902,19 +900,15 @@ impl PasswordInput {
     /// Replaces the text the way typing does, so `on_change` is called (for tests
     /// and automation). Does nothing while disabled.
     ///
-    /// It goes through UI Automation's Value pattern where the `PasswordBox` offers
-    /// it, and otherwise sets `Password`, which raises the same `PasswordChanged`
-    /// typing does.
+    /// It goes through UI Automation's Value pattern, so WinUI raises
+    /// `PasswordChanged`, and needs the window to be shown (see `enter_text_box`).
     pub fn enter_text(&self, text: &str) {
         let native = &self.0.native;
         if !native.IsEnabled().unwrap_or(false) {
             return;
         }
-        let typed = native
-            .cast::<UIElement>()
-            .is_ok_and(|element| crate::automation::set_value(&element, text).is_ok());
-        if !typed {
-            let _ = native.SetPassword(&HSTRING::from(text));
+        if let Ok(element) = native.cast::<UIElement>() {
+            let _ = crate::automation::set_value(&element, text);
         }
     }
 
