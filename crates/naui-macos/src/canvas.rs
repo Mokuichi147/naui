@@ -282,12 +282,17 @@ impl Canvas {
     /// Pointer (mouse) presses, moves and releases. Positions are logical pixels with
     /// the surface's top left as origin. Moves also arrive while nothing is pressed
     /// (hover). Presses and releases carry which button ([`PointerEvent::button`]).
+    /// Every event carries the modifier keys held at that moment
+    /// ([`PointerEvent::modifiers`]).
     pub fn on_pointer(&self, f: impl FnMut(PointerEvent) + 'static) {
         self.0.view.ivars().pointer.set(f);
     }
 
     /// The wheel (including two-finger scrolling on a trackpad). Amounts are logical
     /// pixels.
+    ///
+    /// The modifier keys held come with it ([`PointerEvent::modifiers`]), for
+    /// example to zoom only while Ctrl or ⌘ is held.
     ///
     /// Returning `Handled` keeps it from reaching the outer scroll view. With
     /// `Continue`, the outer `NSScrollView` scrolls as usual.

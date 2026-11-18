@@ -165,14 +165,17 @@ native counterparts for.
       `TreeView` have a multiple selection mode, and the Web's tree is naui's own
       with `aria-multiselectable`. Whether a selected branch also selects its
       children differs between them, and is decided first.
-- [ ] **Modifier keys in `Canvas`'s pointer notifications.** `PointerEvent`
-      tells buttons apart but not ⇧, Ctrl, ⌥ / Alt or ⌘, so a drawing app cannot
-      tell a click from a ⇧-click. `KeyEvent` already carries them as
-      `Modifiers`, and `PointerEvent` is `#[non_exhaustive]`, so a field can be
-      added without breaking apps. Every platform's pointer event carries them
-      (`NSEvent`'s `modifierFlags`, `GdkModifierType` from the event, WinUI's
-      `KeyModifiers` on `PointerRoutedEventArgs`, `shiftKey` and the others on DOM
-      events), so it is light.
+- [x] **Modifier keys in `Canvas`'s pointer notifications.** `PointerEvent`
+      has a `modifiers` field (the same `Modifiers` as `KeyEvent`), set on every
+      phase that `on_pointer` and `on_wheel` receive: `Down`, `Move` (hover
+      included), `Up` and `Wheel`. Each event reports the keys held at its own
+      moment. They are read from `NSEvent`'s `modifierFlags` on macOS, the state
+      of the event being handled (`current_event_state`) on GTK, WinUI's
+      `KeyModifiers` on `PointerRoutedEventArgs` on Windows (the keyboard state for
+      wheels taken by the `WH_MOUSE_LL` hook, whose messages carry none), and
+      `shiftKey`, `ctrlKey`, `altKey` and `metaKey` on the Web, each through the
+      same reading as key events. Ctrl and ⌘ are delivered as they are, and
+      `Modifiers::primary` decides which is primary, counting either on the Web.
 
 ## v0.19.0
 
@@ -277,8 +280,7 @@ planned, and the versions above may change to meet them.
   `Tree` items change `TreeItem`, whose fields are public, so a new field breaks
   apps that build it with a struct literal (more than one action on a toast,
   which changed `Toast::action` and `on_action`, was done in v0.18.0). Items that only
-  add, such as multiple selection in `Tree` and modifier keys on `PointerEvent`,
-  can also come after.
+  add, such as multiple selection in `Tree`, can also come after.
 - **Public types are reviewed for growth.** Each public struct and enum is
   checked for whether it may gain fields or variants later. Those that may get
   `#[non_exhaustive]`, or private fields with constructors, as `PointerEvent`
