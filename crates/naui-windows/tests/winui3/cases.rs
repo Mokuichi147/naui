@@ -9541,6 +9541,11 @@ fn shift_range_scenario(
                 (y >= top && y < bottom).then_some((index, top))
             })
         };
+        // 続けて送る (人が勢いよく回すのと同じ)。ただし、行が動かないまま何回も積み上げると、
+        // 残りが数秒あとにまとめて流れ、押す行を決めたあとで窓が大きく動くことがある。
+        // 見た目が動かないうちに送るのは 3 回までにする。
+        let mut last_seen = under_pointer();
+        let mut unseen = 0;
         for _ in 0..60 {
             if !foreground_is_ours() {
                 return None;
@@ -9548,11 +9553,16 @@ fn shift_range_scenario(
             if built_list_row(list, 7).is_none() {
                 break;
             }
-            // 1 回ずつ、行が動いたのを見てから次を送る。届く前に積み上げると、残りが
-            // あとでまとめて流れ、押す行を決めたあとで窓が大きく動くことがある。
-            let before = under_pointer();
+            if unseen >= 3 {
+                pump_until(Duration::from_secs(2), || under_pointer() != last_seen);
+            }
+            let now = under_pointer();
+            if now != last_seen {
+                last_seen = now;
+                unseen = 0;
+            }
             send_input(mouse_input(MOUSEEVENTF_WHEEL, (-480_i32) as u32));
-            pump_until(Duration::from_secs(1), || under_pointer() != before);
+            unseen += 1;
         }
         pump_until(Duration::from_millis(500), || false);
         // ホイールもこの先のクリックも、ポインターの下へ届く。
