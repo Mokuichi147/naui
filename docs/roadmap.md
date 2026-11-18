@@ -123,10 +123,20 @@ v0.17.0.
 Gaps that ordinary apps run into right away and that all four platforms have
 native counterparts for.
 
-- [ ] **Relax the limits on toasts** (queueing, more than one action, position).
-      Dialogs needing more than three buttons can now put the extra controls in a
-      `Sheet`'s content, so only toasts remain. Queueing has a native counterpart
-      only in `AdwToastOverlay`, so the others would be built in naui.
+- [x] **Relax the limits on toasts** (queueing, more than one action, position).
+      `Toast::show` now waits its turn in a queue, with `ToastPriority::High` to
+      come up at once and put the current one back at the front, in the order
+      `AdwToastOverlay` uses; `is_queued` tells a waiting toast. The queue is one
+      `ToastQueue` in naui-core shared by all four backends, since
+      `AdwToastOverlay` keeps one per window and has no signal for a waiting toast
+      coming up. `set_actions` takes a list of labels and `on_action` the index
+      (replacing `set_action` and `action`): in a row with the text on macOS and
+      the Web, `ActionButton` for one and a row in `Content` below the text for
+      more on WinUI's `InfoBar`, and `AdwToast`'s own button for one and its custom
+      title for more on GTK. `ToastPosition` places it at the start, center or end
+      of the top or bottom edge (safe-area constraints on macOS, `InfoBar`
+      alignment on WinUI, logical CSS insets on the Web); `AdwToastOverlay` has no
+      placement, so GTK stays at the bottom center.
 - [ ] **Reordering rows in a `List` by drag and drop.** `NSTableView` drag and
       drop, WinUI `ListView` (`CanReorderItems`), GTK drag sources and drop targets
       on a `GtkListBox`, and HTML5 drag and drop all support it. It builds on the
@@ -255,10 +265,10 @@ conditions for making that promise. They are a draft, settled before v1.0.0 is
 planned, and the versions above may change to meet them.
 
 - **Items that change existing API come first.** Items on this page that would
-  change what is public rather than add to it are done before v1.0.0. More than
-  one action on a toast changes `Toast::action` and `on_action`, which assume one
-  button. Widgets in `Tree` items change `TreeItem`, whose fields are public, so
-  a new field breaks apps that build it with a struct literal. Items that only
+  change what is public rather than add to it are done before v1.0.0. Widgets in
+  `Tree` items change `TreeItem`, whose fields are public, so a new field breaks
+  apps that build it with a struct literal (more than one action on a toast,
+  which changed `Toast::action` and `on_action`, was done in v0.18.0). Items that only
   add, such as multiple selection in `Tree` and modifier keys on `PointerEvent`,
   can also come after.
 - **Public types are reviewed for growth.** Each public struct and enum is

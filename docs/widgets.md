@@ -285,11 +285,16 @@ collected in [Known limitations](known-limitations.md).
   `IsPrimaryButtonEnabled` / `IsSecondaryButtonEnabled`. An empty title sets
   `Title` to null, which leaves the title area out (for `Dialog` too).
 - **`Toast`**: It looks like an `InfoBar`. However, `InfoBar` is meant to be a band
-  laid out inside a page, so it is moved to the bottom center and overlaid on the
-  content layer. The action button goes in `ActionButton`, so WinUI decides whether
-  it is placed to the right of or below the text. No close button (×) is shown
-  (`IsClosable` is turned off). It disappears in three ways — timeout, the action
-  button and `dismiss` — because the other three platforms have no × either.
+  laid out inside a page, so it is overlaid on the content layer, and the position
+  becomes its `HorizontalAlignment` (`Left` / `Center` / `Right`, mirrored by a
+  right-to-left `FlowDirection`) and `VerticalAlignment` (`Top` / `Bottom`), 24 px
+  from the edges. One action button goes in `ActionButton`, so WinUI decides
+  whether it is placed to the right of or below the text; `InfoBar` has room for
+  only one there, so two or more go in a row in `Content`, on their own line below
+  the text (where WinUI's guidance puts additional buttons). No close button (×) is
+  shown (`IsClosable` is turned off). It disappears in three ways — timeout, an
+  action button and `dismiss` — because the other three platforms have no × either.
+  The queue is naui's (`ToastQueue`, shared by the four backends).
 - **`Canvas`**: a `SpriteVisual` showing a `CompositionDrawingSurface` is placed
   over a `Grid` with `ElementCompositionPreview::SetElementChildVisual`, and the
   `on_draw` commands are replayed onto it with Direct2D (text with DirectWrite).
@@ -425,7 +430,11 @@ collected in [Known limitations](known-limitations.md).
   the content. The window's size follows the content's constraints through its
   `contentViewController`, with a minimum width of 320 pt (`SHEET_MIN_WIDTH`).
 - **`Toast`**: AppKit has no toast control, so it is built by overlaying an
-  `NSVisualEffectView` (the same material as `NSPopover`) on the window content.
+  `NSVisualEffectView` (the same material as `NSPopover`) on the window content,
+  with the text and the action buttons in a row. The position is constrained to the
+  content's safe area (so a toolbar does not cover a toast at the top), 24 pt in,
+  using leading and trailing anchors for the start and end sides. The queue is
+  naui's (`ToastQueue`).
 - **`Window` position and state**: While minimized, `frame` stays the original
   frame, so it is read and written as is. For maximizing, the frame before zooming
   is remembered in `windowShouldZoom:toFrame:`, and the window is moved to the
@@ -553,6 +562,15 @@ collected in [Known limitations](known-limitations.md).
   converts it back to the content size (subtracting the window's CSS frame measured
   in the normal state, which can differ while maximized).
 
+- **`Toast`**: `AdwToast` on the window's `AdwToastOverlay`. The overlay keeps a
+  queue per window but has no signal for "a waiting toast came up", so the order is
+  kept by naui's `ToastQueue` (in the same order as the overlay's: `High` comes up
+  at once and puts the current one back at the front), and only the toast whose
+  turn it is is added. One action is `AdwToast`'s own button; it has room for only
+  one, so two or more are laid out after the text in a custom title
+  (`adw_toast_set_custom_title`) instead. The overlay always places toasts at the
+  bottom center, so the position is ignored.
+
 ### Web construction
 
 - **`Separator` / `Group`**: `<hr>` and `<fieldset>` + `<legend>`, so they are
@@ -665,8 +683,11 @@ collected in [Known limitations](known-limitations.md).
   off screen. Newer parts such as `position-visibility` still
   differ between engines and are not used.
 - **`Toast`**: Pages have no standard element for transient notifications, so a
-  `<div role="status">` is shown at the bottom center with `position: fixed` (the
-  `Notification` API goes outside the page and is a different thing).
+  `<div role="status">` with `<button>`s is shown with `position: fixed` (the
+  `Notification` API goes outside the page and is a different thing). The position
+  is written with logical properties (`inset-block-*`, `inset-inline-*`), so the
+  start and end sides swap in a right-to-left page; the center uses both inline
+  insets and automatic margins. The queue is naui's (`ToastQueue`).
 
 ## Main data types
 
@@ -690,7 +711,7 @@ collected in [Known limitations](known-limitations.md).
 - `MenuSpec` / `MenuItem` / `MenuShortcut`: menu bar headings, items and shortcuts
 - `SidebarSection` / `SidebarItem`: sidebar groups (headings) and items (text and icons)
 - `DialogButtons` / `DialogResponse`: dialog and sheet buttons and responses
-- `ToastSpec`: toast text, action button and time until it disappears
+- `ToastSpec` / `ToastPriority` / `ToastPosition`: toast text, action buttons, time until it disappears, how it takes its turn in the queue, and where it appears
 
 `WeakWidget`, the weak reference used to touch a widget itself from inside its
 notifications, is created with each widget's `downgrade()` (see

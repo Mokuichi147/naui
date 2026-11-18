@@ -2926,17 +2926,18 @@ cancel button when there is no primary one), except on Linux (see
 
 ## Toasts
 
-A [`Toast`] is a notification that shows a short message at the bottom of the
-screen and **disappears by itself**. Unlike a dialog it does not block the user, so
+A [`Toast`] is a notification that shows a short message at the edge of the
+window and **disappears by itself**. Unlike a dialog it does not block the user, so
 use it for news about something already done, such as "Saved".
 
 ```no_run
-# use naui::{Result, Ui};
+# use naui::{Result, ToastPosition, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let toast = ui.toast("Saved")?;
-toast.set_action("Undo"); // optional; an empty string removes it
+let toast = ui.toast("Deleted")?;
+toast.set_actions(&["Undo", "Show"]); // optional; an empty list removes them
 toast.set_timeout(3.0); // seconds; with 0 it does not disappear by itself
-toast.on_action(|| println!("undo"));
+toast.set_position(ToastPosition::TopEnd); // the default is the bottom center
+toast.on_action(|index| println!("action {index}")); // 0 is "Undo"
 toast.show();
 # Ok(())
 # }
@@ -2946,17 +2947,30 @@ toast.show();
 | --- | --- | --- | --- | --- |
 | `Toast` | An `InfoBar` overlaid on the content | An `NSVisualEffectView` overlaid on the content | `AdwToast` + `AdwToastOverlay` | `<div role="status">` |
 
-**Only Linux has a native toast** (`AdwToast`). Windows's `InfoBar` /
-`TeachingTip` cannot be used because naui does not project them, and macOS and
-browsers have nothing corresponding at all, so on the remaining three platforms
-naui builds the same shape. Notifications sent to the OS notification center are a
-separate mechanism that leaves the app, so they are not covered.
+**Only Linux has a native toast** (`AdwToast`). macOS and browsers have nothing
+corresponding at all, and Windows's `InfoBar` is a band laid inside a page, so on
+the remaining three platforms naui builds the same shape. Notifications sent to the
+OS notification center are a separate mechanism that leaves the app, so they are
+not covered.
 
-**Only one is shown at a time**, and a newly shown one replaces the previous one
-(naui also aligns `AdwToastOverlay`'s queueing to this behavior). Dismissing with
-[`Toast::dismiss`] and being replaced do not call `on_dismiss` (the same rule as
-[`Dialog::close`]: the app's own operations are not notified). Only on Linux is the
-time granularity **seconds**, so values under one second become one second.
+**One toast is on screen at a time, and the others wait their turn**, the way
+`AdwToastOverlay` queues them. [`Toast::show`] puts a toast at the back of the
+queue; with [`ToastPriority::High`] it comes up at once instead, and the one it
+interrupts goes back to the front of the queue. Its time starts when it comes up.
+[`Toast::is_visible`] tells whether it is on screen and [`Toast::is_queued`]
+whether it is waiting. To replace the toast on screen, [`Toast::dismiss`] it first.
+
+Dismissing with [`Toast::dismiss`] and being put back in the queue do not call
+`on_dismiss` (the same rule as [`Dialog::close`]: the app's own operations are not
+notified). When a toast goes by itself, the next one is already on screen by the
+time `on_dismiss` is called.
+
+Some things differ by platform. `AdwToastOverlay` always places toasts at the
+bottom center, so **Linux ignores [`ToastPosition`]**. `AdwToast` has room for one
+button, so with two or more actions they go after the text in its custom title;
+on Windows they go in a row below the text. Only on Linux is the time granularity
+**seconds**, so values under one second become one second, and only Linux has a
+close button (×), which calls `on_dismiss`.
 
 ## Other threads and async
 
