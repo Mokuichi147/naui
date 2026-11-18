@@ -328,7 +328,7 @@ fn main() {
             tree_multiple_selection_round_trips,
         ),
         (
-            "ツリーの複数選択で ⇧ は隠れた選択を残し、修飾なしの操作は置き換える",
+            "ツリーの複数選択で ⌘ は隠れた選択を残し、⇧ と修飾なしは選び直す",
             tree_modifier_keys_decide_hidden_selection,
         ),
         (
@@ -12924,8 +12924,9 @@ fn tree_multiple_selection_round_trips(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// With ⇧ (or ⌘) held, AppKit's change keeps the items hidden inside collapsed
-/// branches; a plain arrow key replaces them, as in `GtkListBox`.
+/// ⌘ adds to an AppKit selection and keeps the items hidden inside collapsed
+/// branches; a ⇧ range and a plain arrow key select anew and drop them, as for rows
+/// outside the window of a long `List` (`keeps_hidden_selection`).
 fn tree_modifier_keys_decide_hidden_selection(ui: &Ui) -> Result<()> {
     let mtm = MainThreadMarker::new().expect("メインスレッド");
     let app = NSApplication::sharedApplication(mtm);
@@ -12935,55 +12936,59 @@ fn tree_modifier_keys_decide_hidden_selection(ui: &Ui) -> Result<()> {
     tree.set_sizing(Sizing::fill());
     tree.set_selection_mode(SelectionMode::Multiple);
     window.set_child(&tree);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
     window.show();
     let native = window.native_window();
+    // 押下がアプリのアクティブ化に使われないよう、key とアクティブを待つ
+    // (`shown_list_for_events` と同じ)。
+    let ready = |native: &NSWindow| native.isKeyWindow() && app.isActive();
+    for _ in 0..60 {
+        if ready(&native) {
+            break;
+        }
+        pump(0.05);
+        deliver_events(&app);
+    }
     let outline = tree.native_outline_view();
     native.makeFirstResponder(Some(&outline));
+    let content_view = native.contentView().expect("contentView");
+    content_view.layoutSubtreeIfNeeded();
 
     let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
     tree.on_select({
         let seen = seen.clone();
         move |path| seen.borrow_mut().push(path.to_vec())
     });
+    let arrows = NSEventModifierFlags::NumericPad | NSEventModifierFlags::Function;
+    // 行は 0 src, 1 main.rs, 2 lib.rs, 3 docs (閉じて guide > intro.md を隠す)。
+    let hide_intro = || {
+        tree.set_selection(&[vec![0, 1], vec![1, 0, 0]]);
+        tree.collapse(&[1]);
+        assert_eq!(outline_selected_rows(&outline), vec![2]);
+    };
 
-    // src を開いて lib.rs と、docs > guide > intro.md を選び、docs を閉じて隠す。
-    // 行は 0 src, 1 main.rs, 2 lib.rs, 3 docs。
-    tree.set_selection(&[vec![0, 1], vec![1, 0, 0]]);
-    tree.collapse(&[1]);
-    assert_eq!(outline_selected_rows(&outline), vec![2]);
-
-    // ⇧ + ↓ は AppKit の範囲を広げ、隠れた intro.md も残す。
-    let down = "\u{F701}";
+    // ⇧ + ↓ は AppKit の範囲を広げるが、naui では選び直しなので隠れた intro.md は外れる。
+    hide_intro();
     press_key(
         &app,
         &native,
-        down,
+        "\u{F701}",
         125,
-        NSEventModifierFlags::Shift
-            | NSEventModifierFlags::NumericPad
-            | NSEventModifierFlags::Function,
+        NSEventModifierFlags::Shift | arrows,
     );
     assert_eq!(
         outline_selected_rows(&outline),
         vec![2, 3],
         "AppKit が範囲を広げること"
     );
-    assert_eq!(
-        tree.selection(),
-        vec![vec![0, 1], vec![1], vec![1, 0, 0]],
-        "⇧ では隠れた選択が残ること"
-    );
+    assert_eq!(tree.selection(), vec![vec![0, 1], vec![1]], "⇧ は選び直し");
     assert_eq!(*seen.borrow(), vec![vec![0, 1]]);
 
-    // 修飾なしの ↑ は 1 つだけを選び、隠れた選択も外す。
-    let up = "\u{F700}";
-    press_key(
-        &app,
-        &native,
-        up,
-        126,
-        NSEventModifierFlags::NumericPad | NSEventModifierFlags::Function,
-    );
+    // 修飾なしの ↑ も選び直し。
+    hide_intro();
+    press_key(&app, &native, "\u{F700}", 126, arrows);
     let picked = tree.selection();
     assert_eq!(picked.len(), 1, "1 つだけになること: {picked:?}");
     assert!(!picked.contains(&vec![1, 0, 0]), "隠れた選択も外れること");
@@ -12994,6 +12999,38 @@ fn tree_modifier_keys_decide_hidden_selection(ui: &Ui) -> Result<()> {
         1,
         "開いても戻らないこと"
     );
+
+    // ⌘ のクリックで足すと、隠れた選択は残る。本物の押下が届く環境でだけ確かめる。
+    if ready(&native) {
+        hide_intro();
+        let point = row_center_in_window(&outline, 1);
+        for kind in [NSEventType::LeftMouseDown, NSEventType::LeftMouseUp] {
+            let event = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+                kind,
+                point,
+                NSEventModifierFlags::Command,
+                0.0,
+                native.windowNumber(),
+                None,
+                0,
+                1,
+                1.0,
+            )
+            .expect("マウスイベント");
+            app.postEvent_atStart(&event, false);
+        }
+        deliver_events(&app);
+        assert_eq!(
+            outline_selected_rows(&outline),
+            vec![1, 2],
+            "⌘ で main.rs を足すこと"
+        );
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0, 0], vec![0, 1], vec![1, 0, 0]],
+            "⌘ では隠れた選択が残ること"
+        );
+    }
     window.close();
     Ok(())
 }

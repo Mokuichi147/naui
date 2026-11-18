@@ -17,7 +17,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use naui_core::{SelectionMode, TreeItem};
+use naui_core::{keeps_hidden_selection, SelectionGesture, SelectionMode, TreeItem};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
@@ -388,10 +388,11 @@ impl TreeSource {
     ///
     /// - When rows disappear only because their branch was collapsed, nothing has
     ///   changed for naui: they stay selected while hidden.
-    /// - With ⌘ or ⇧ held (adding, removing or extending), hidden selected items are
-    ///   kept along with what AppKit selected.
-    /// - Otherwise (a plain click or arrow key) the selection is replaced, hidden items
-    ///   included, as GTK's `GtkListBox` does.
+    /// - With ⌘ held (adding or removing), hidden selected items are kept along with
+    ///   what AppKit selected.
+    /// - Otherwise (a plain click, an arrow key or a ⇧ range) the selection is made
+    ///   anew, hidden items dropped, as GTK's `GtkListBox` does. This is the same rule
+    ///   as for rows outside the window of a long `List` ([`keeps_hidden_selection`]).
     fn take_native_selection(&self, outline: &NSOutlineView) -> bool {
         let state = self.ivars();
         let native = selected_paths(outline, &state.nodes);
@@ -404,13 +405,13 @@ impl TreeSource {
         if removed_only_hidden && native.len() < before.len() {
             return false;
         }
+        let (shown, hidden): (Vec<_>, Vec<_>) = before
+            .into_iter()
+            .partition(|path| state.is_shown(outline, path));
+        let gesture = current_gesture(MainThreadMarker::from(self));
         let mut picked = native;
-        if state.mode.get().is_multiple() && extends_selection(MainThreadMarker::from(self)) {
-            picked.extend(
-                before
-                    .into_iter()
-                    .filter(|path| !state.is_shown(outline, path)),
-            );
+        if state.mode.get().is_multiple() && keeps_hidden_selection(&shown, &picked, gesture) {
+            picked.extend(hidden);
         }
         let picked = state
             .mode
@@ -510,11 +511,12 @@ fn selection_rows(
     Retained::into_super(set)
 }
 
-/// Whether the event AppKit is handling now adds to the selection rather than
-/// replacing it (⌘ or ⇧ with a click or a key, as `NSTableView` reads them).
-fn extends_selection(mtm: MainThreadMarker) -> bool {
+/// How the event AppKit is handling now changes the selection, read from its
+/// modifier keys as `NSTableView` reads them (⇧ takes precedence, as on Windows).
+/// `Unknown` when no click or key is being handled.
+fn current_gesture(mtm: MainThreadMarker) -> SelectionGesture {
     let Some(event) = NSApplication::sharedApplication(mtm).currentEvent() else {
-        return false;
+        return SelectionGesture::Unknown;
     };
     let pointer_or_key = matches!(
         event.r#type(),
@@ -523,10 +525,17 @@ fn extends_selection(mtm: MainThreadMarker) -> bool {
             | NSEventType::LeftMouseDragged
             | NSEventType::KeyDown
     );
-    pointer_or_key
-        && event
-            .modifierFlags()
-            .intersects(NSEventModifierFlags::Command | NSEventModifierFlags::Shift)
+    if !pointer_or_key {
+        return SelectionGesture::Unknown;
+    }
+    let flags = event.modifierFlags();
+    if flags.contains(NSEventModifierFlags::Shift) {
+        SelectionGesture::Extend
+    } else if flags.contains(NSEventModifierFlags::Command) {
+        SelectionGesture::Toggle
+    } else {
+        SelectionGesture::Plain
+    }
 }
 
 struct TreeInner {
