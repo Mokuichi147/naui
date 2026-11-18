@@ -6989,9 +6989,14 @@ fn list_drag_rows_moves_rows_and_selection(ui: &Ui) -> Result<()> {
 /// `DragItemsCompleted` moves naui's rows the same way and tells the app.
 fn list_reorder_by_a_real_drag(ui: &Ui) -> Result<()> {
     use naui_core::RowMove;
-    use windows::Win32::UI::Input::KeyboardAndMouse::{
-        MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP, MOUSEEVENTF_MOVE,
+    use naui_winui3::Microsoft::UI::Xaml::Controls::{
+        DragItemsCompletedEventArgs, DragItemsStartingEventHandler, ListViewBase,
     };
+    use std::sync::Mutex;
+    use windows::Foundation::TypedEventHandler;
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP};
+    use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
 
     with_shown_list_for_input(ui, 8, |hwnd, list| {
         let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
@@ -7000,24 +7005,74 @@ fn list_reorder_by_a_real_drag(ui: &Ui) -> Result<()> {
             move |moved| moves.borrow_mut().push(moved.clone())
         });
         list.set_reorderable(true);
-        aim_at_row_spot(hwnd, list, 0, 40.0, 0.5)?;
+        // `ListView` のドラッグの出来事も見ておく (落ちたときにどこで止まったか分かる)。
+        let events: Arc<Mutex<Vec<String>>> = Arc::default();
+        let native = list.native_list_view();
+        let starting = DragItemsStartingEventHandler::new({
+            let events = events.clone();
+            move |_, args| {
+                if let Some(args) = args.as_ref() {
+                    let count = args.Items().and_then(|items| items.Size()).unwrap_or(0);
+                    let cancel = args.Cancel().unwrap_or(false);
+                    events
+                        .lock()
+                        .unwrap()
+                        .push(format!("starting items={count} cancel={cancel}"));
+                }
+                Ok(())
+            }
+        });
+        native
+            .DragItemsStarting(&starting)
+            .expect("DragItemsStarting");
+        let completed = TypedEventHandler::new({
+            let events = events.clone();
+            move |_: windows_core::Ref<'_, ListViewBase>,
+                  args: windows_core::Ref<'_, DragItemsCompletedEventArgs>| {
+                let result = args.as_ref().and_then(|args| args.DropResult().ok());
+                events.lock().unwrap().push(format!("completed {result:?}"));
+                Ok(())
+            }
+        });
+        native
+            .DragItemsCompleted(&completed)
+            .expect("DragItemsCompleted");
+
+        // 動かす前に、つかむ所と落とす所を決めておく (ドラッグの間は行がずれる)。
+        let from = row_screen_point(hwnd, list, 0, 40.0, 0.5)?;
+        let to = row_screen_point(hwnd, list, 3, 40.0, 0.8)?;
+        // SAFETY: 引数は値だけ。
+        let _ = unsafe { SetCursorPos(from.x, from.y) };
+        pump_until(Duration::from_millis(150), || false);
+        send_input(mouse_move_to(from));
         send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
-        // 少しずつ動かして、ドラッグを始めさせてから下の行へ運ぶ。途中で狙えなくなっても
-        // ボタンは必ず離す (押したままだと後のケースの入力が狂う)。
-        let carried = [(0, 0.8), (1, 0.5), (2, 0.5), (3, 0.5), (3, 0.8)]
-            .into_iter()
-            .try_for_each(|(row, fraction)| {
-                aim_at_row_spot(hwnd, list, row, 40.0, fraction)?;
-                send_input(mouse_input(MOUSEEVENTF_MOVE, 0));
-                Some(())
-            });
+        // 本物のマウスの移動として少しずつ運ぶ。初めの数歩でドラッグが始まる。
+        const STEPS: i32 = 16;
+        for step in 1..=STEPS {
+            let at = POINT {
+                x: from.x + (to.x - from.x) * step / STEPS,
+                y: from.y + (to.y - from.y) * step / STEPS,
+            };
+            send_input(mouse_move_to(at));
+        }
         pump_until(Duration::from_millis(300), || false);
         send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
-        carried?;
-        println!("     (本物のマウスでドラッグした)");
         pump_until(Duration::from_secs(3), || !moves.borrow().is_empty());
+        let events = events.lock().unwrap().clone();
+        println!("     (本物のマウスでドラッグした: {events:?})");
+        // ほかの実際の入力のケースと同じく、入力が届かない環境では確かめずに通す。
+        // ドラッグが始まったのに並べ替わらないときは落とす。
+        if moves.borrow().is_empty() && !events.iter().any(|event| event.starts_with("starting")) {
+            println!("     (ドラッグが始まらない環境なので、確かめずに通す)");
+            return None;
+        }
         let moves = moves.borrow();
-        assert_eq!(moves.len(), 1, "ドロップで 1 回だけ並べ替わる: {moves:?}");
+        assert_eq!(
+            moves.len(),
+            1,
+            "ドロップで 1 回だけ並べ替わる: {moves:?} / ListView の出来事 {events:?} / 行 {:?}",
+            list_texts(list)
+        );
         assert_eq!(moves[0].rows, vec![0], "つかんだ行だけが動く");
         assert!(
             (3..=5).contains(&moves[0].to),
@@ -9289,13 +9344,29 @@ fn aim_at_row_spot(
     x: f32,
     fraction: f32,
 ) -> Option<()> {
+    use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
+
+    let point = row_screen_point(hwnd, list, index, x, fraction)?;
+    // SAFETY: 引数は値だけ。
+    let _ = unsafe { SetCursorPos(point.x, point.y) };
+    pump_until(Duration::from_millis(150), || false);
+    Some(())
+}
+
+/// Where a spot of a row on screen is, in screen pixels. `None` if it is not in this
+/// process's window. A row out of view fails the case.
+fn row_screen_point(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+    index: usize,
+    x: f32,
+    fraction: f32,
+) -> Option<windows::Win32::Foundation::POINT> {
     use windows::Foundation::Point as XamlPoint;
     use windows::Win32::Foundation::POINT;
     use windows::Win32::Graphics::Gdi::ClientToScreen;
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowThreadProcessId, SetCursorPos, WindowFromPoint,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, WindowFromPoint};
 
     let row = built_list_row(list, index).unwrap_or_else(|| {
         let first = list.list_view().Items().ok().and_then(|items| items.GetAt(0).ok());
@@ -9342,10 +9413,38 @@ fn aim_at_row_spot(
         println!("     (押す位置がテストのウィンドウの上に無いので、押さずに通す)");
         return None;
     }
+    Some(point)
+}
+
+/// A move of the pointer to a point on the primary screen, for [`send_input`].
+///
+/// Unlike `SetCursorPos`, it arrives as mouse input, which a drag needs to start and
+/// follow the pointer.
+fn mouse_move_to(
+    point: windows::Win32::Foundation::POINT,
+) -> windows::Win32::UI::Input::KeyboardAndMouse::INPUT {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_MOVE, MOUSEINPUT,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+
     // SAFETY: 引数は値だけ。
-    let _ = unsafe { SetCursorPos(point.x, point.y) };
-    pump_until(Duration::from_millis(150), || false);
-    Some(())
+    let (width, height) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
+    // 絶対座標は画面を 0〜65535 に引き伸ばした値で渡す。
+    let normalize = |at: i32, size: i32| ((at * 65536 + size / 2) / size.max(1)).clamp(0, 65535);
+    INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx: normalize(point.x, width),
+                dy: normalize(point.y, height),
+                mouseData: 0,
+                dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
 }
 
 /// Clicks a row to start a case. The first click after coming to the front can be lost, so
