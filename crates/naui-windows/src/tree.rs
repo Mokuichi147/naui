@@ -22,13 +22,20 @@
 //! and a cover that absorbs presses is laid over the row's content**. The cover
 //! covers only what is right of the expander chevron, so branches that cannot be
 //! selected can still be expanded.
+//!
+//! `TreeView`'s multiple selection is check boxes that also select a branch's
+//! descendants, which is not what naui's multiple selection means. With
+//! [`SelectionMode::Multiple`] the frame holds a `ListView` laid out as a tree instead
+//! ([`multi`]).
+
+mod multi;
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use naui_core::{Result, TreeItem};
+use naui_core::{Result, SelectionMode, TreeItem};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Border, Grid as XamlGrid, ListViewBase, TreeView, TreeViewCollapsedEventArgs,
@@ -156,8 +163,13 @@ struct TreeInner {
     /// notification**. Matching what we wrote ourselves against what arrived from user
     /// actions prevents notifying twice for the same expansion.
     expanded: RefCell<HashSet<Vec<usize>>>,
-    /// The selected item. `None` for no selection.
-    selected: RefCell<Option<Vec<usize>>>,
+    /// The selected items, normalized ([`SelectionMode::normalize_paths`]). Those
+    /// inside collapsed branches remain too. At most one with single selection.
+    selected: RefCell<Vec<Vec<usize>>>,
+    mode: Cell<SelectionMode>,
+    /// The `ListView` used for multiple selection ([`multi`]). Created the first time
+    /// multiple selection is chosen.
+    multi: RefCell<Option<multi::MultiView>>,
     handler: SelectionHandler,
     expand: ExpandHandler,
     /// Stops notifications only while selection or expansion is being changed from
@@ -204,7 +216,9 @@ impl Tree {
             items: RefCell::new(Vec::new()),
             nodes: RefCell::new(Vec::new()),
             expanded: RefCell::new(HashSet::new()),
-            selected: RefCell::new(None),
+            selected: RefCell::new(Vec::new()),
+            mode: Cell::new(SelectionMode::Single),
+            multi: RefCell::new(None),
             handler: SelectionHandler::new(),
             expand: ExpandHandler::new(),
             silent: Rc::new(Cell::new(false)),
@@ -223,7 +237,7 @@ impl Tree {
     /// Expansion returns to what [`TreeItem::expanded`] says.
     pub fn set_items(&self, items: &[TreeItem]) {
         *self.0.items.borrow_mut() = items.to_vec();
-        *self.0.selected.borrow_mut() = None;
+        self.0.selected.borrow_mut().clear();
         let mut expanded = HashSet::new();
         TreeItem::walk(items, |path, item| {
             if item.expanded && !item.is_leaf() {
@@ -231,7 +245,11 @@ impl Tree {
             }
         });
         *self.0.expanded.borrow_mut() = expanded;
-        if let Err(error) = self.rebuild() {
+        let built = match self.is_multi() {
+            true => self.multi_rebuild(),
+            false => self.rebuild(),
+        };
+        if let Err(error) = built {
             eprintln!("naui-windows: failed to build the tree: {error}");
         }
     }
@@ -245,8 +263,45 @@ impl Tree {
         self.len() == 0
     }
 
-    /// The path of the selected item. `None` if nothing is selected.
+    /// Switches between single and multiple selection. The selection is cleared
+    /// without notifying.
+    ///
+    /// Multiple selection lays the tree out in a `ListView` with Ctrl / Shift
+    /// selection instead of the `TreeView` (see [`multi`]); switching back shows the
+    /// `TreeView` again.
+    pub fn set_selection_mode(&self, mode: SelectionMode) {
+        let was_multi = self.is_multi();
+        self.0.mode.set(mode);
+        self.0.selected.borrow_mut().clear();
+        let switched = match (was_multi, mode.is_multiple()) {
+            (false, true) => self.enter_multi(),
+            (true, false) => {
+                self.leave_multi();
+                self.rebuild()
+            }
+            _ => Ok(()),
+        };
+        if let Err(error) = switched {
+            eprintln!("naui-windows: failed to switch the tree's selection mode: {error}");
+        }
+        match self.is_multi() {
+            true => self.multi_write_selection(),
+            false => self.write_native_selection(None),
+        }
+    }
+
+    pub fn selection_mode(&self) -> SelectionMode {
+        self.0.mode.get()
+    }
+
+    /// The path of the first selected item. `None` if nothing is selected.
     pub fn selected(&self) -> Option<Vec<usize>> {
+        self.0.selected.borrow().first().cloned()
+    }
+
+    /// The paths of the selected items in the order the tree shows them, including
+    /// items hidden inside collapsed branches.
+    pub fn selection(&self) -> Vec<Vec<usize>> {
         self.0.selected.borrow().clone()
     }
 
@@ -264,6 +319,10 @@ impl Tree {
         self.without_notifying(|this| {
             this.write_expanded(&path[..path.len().saturating_sub(1)], true)
         });
+        if self.is_multi() {
+            self.multi_scroll_to(path);
+            return;
+        }
         let node = self
             .0
             .nodes
@@ -294,24 +353,36 @@ impl Tree {
     /// selection. Items inside a collapsed branch are selected after their ancestors
     /// are expanded so they become visible.
     pub fn set_selected(&self, path: &[usize]) {
-        self.write_selected(path);
+        self.write_selection(&[path.to_vec()]);
+    }
+
+    /// Replaces the selection without notifying. Paths that cannot be selected are
+    /// left out, and the branches holding the rest are expanded.
+    pub fn set_selection(&self, paths: &[Vec<usize>]) {
+        self.write_selection(paths);
     }
 
     /// Clears the selection without notifying.
     pub fn clear_selection(&self) {
-        self.write_selected(&[]);
+        self.write_selection(&[]);
     }
 
     /// Selects one item through the same path as a user's selection (notifies).
     pub fn select(&self, path: &[usize]) {
-        self.write_selected(path);
+        self.select_many(&[path.to_vec()]);
+    }
+
+    /// Replaces the selection through the same path as a user's selection
+    /// (notifies).
+    pub fn select_many(&self, paths: &[Vec<usize>]) {
+        self.write_selection(paths);
         // 同じ行を選び直すと `SelectionChanged` は起きないため、
         // 通知の回数をそろえてここで 1 回だけ出す。
         let actual = self.selected().unwrap_or_default();
         self.0.handler.emit(&actual);
     }
 
-    /// Called with the path of the selected item when the selection changes.
+    /// Called with the path of the first selected item when the selection changes.
     ///
     /// When the selection is cleared, it is called with an empty path.
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
@@ -357,8 +428,23 @@ impl Tree {
     }
 
     /// The inner `TreeView`. Public as a backend-specific escape hatch.
+    ///
+    /// With multiple selection the frame shows a `ListView` instead
+    /// ([`Tree::native_list_view`]).
     pub fn native_tree_view(&self) -> TreeView {
         self.0.tree_view.clone()
+    }
+
+    /// The `ListView` shown in place of the `TreeView` with multiple selection. `None`
+    /// until multiple selection is first chosen. Public as a backend-specific escape
+    /// hatch.
+    pub fn native_list_view(&self) -> Option<naui_winui3::Microsoft::UI::Xaml::Controls::ListView> {
+        self.native_multi_list_view()
+    }
+
+    /// Whether the tree is laid out for multiple selection now.
+    fn is_multi(&self) -> bool {
+        self.0.mode.get().is_multiple()
     }
 
     // -------------------------------------------------------------- 購読
@@ -567,15 +653,23 @@ impl Tree {
     // --------------------------------------------------------- 状態の反映
 
     /// Remembers and writes the selection (no notification).
-    fn write_selected(&self, path: &[usize]) {
-        let picked = TreeItem::selectable(&self.0.items.borrow(), path).then(|| path.to_vec());
-        if let Some(path) = picked.as_deref() {
+    fn write_selection(&self, paths: &[Vec<usize>]) {
+        let picked = self
+            .0
+            .mode
+            .get()
+            .normalize_paths(&self.0.items.borrow(), paths);
+        // 先に覚えておく。祖先を開くと、開いた先の選択の書き戻しが走る。
+        *self.0.selected.borrow_mut() = picked.clone();
+        for path in &picked {
             // 見えていないと選んだことが分からないので、祖先を開く。
             // 葉には開閉が無いので、開くのは親から上だけ。
-            self.write_expanded(&path[..path.len().saturating_sub(1)], true);
+            self.write_expanded(&path[..path.len() - 1], true);
         }
-        self.write_native_selection(picked.as_deref());
-        *self.0.selected.borrow_mut() = picked;
+        match self.is_multi() {
+            true => self.multi_write_selection(),
+            false => self.write_native_selection(picked.first().map(Vec::as_slice)),
+        }
     }
 
     /// Rewrites only the selection on the WinUI side (notifications are stopped).
@@ -623,6 +717,10 @@ impl Tree {
                 };
             }
         }
+        if self.is_multi() {
+            self.multi_sync();
+            return;
+        }
         for branch in &branches {
             self.write_native_expanded(branch, expanded);
         }
@@ -663,6 +761,10 @@ impl Tree {
                 set.extend(branches.iter().cloned());
             }
         }
+        if self.is_multi() {
+            self.multi_sync();
+            return;
+        }
         // `walk` は親が先なので、開くときも祖先から順に届く。
         for path in &branches {
             self.write_native_expanded(path, expanded);
@@ -685,7 +787,8 @@ impl Tree {
             .0
             .selected
             .borrow()
-            .clone()
+            .first()
+            .cloned()
             .filter(|path| self.is_path_shown(path));
         let current = self
             .0
@@ -753,17 +856,17 @@ impl Tree {
                 .0
                 .selected
                 .borrow()
-                .as_deref()
+                .first()
                 .is_some_and(|path| !self.is_path_shown(path))
         {
             return;
         }
         // 自分で書き換えた分が遅れて届くことがあるので、変わったときだけ
         // 通知する。
-        if *self.0.selected.borrow() == picked {
+        if self.0.selected.borrow().first() == picked.as_ref() {
             return;
         }
-        *self.0.selected.borrow_mut() = picked;
+        *self.0.selected.borrow_mut() = picked.into_iter().collect();
         let actual = self.selected().unwrap_or_default();
         self.0.handler.emit(&actual);
     }

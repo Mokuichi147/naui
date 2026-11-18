@@ -336,6 +336,10 @@ const CASES: &[Case] = &[
         list_shows_the_selection_set_before_it_is_on_screen,
     ),
     (
+        "ツリーの複数選択は ListView で組み、閉じた枝の中の選択を覚える",
+        tree_multiple_selection_uses_a_list_view,
+    ),
+    (
         "表は画面に載る前に選んだ行を載ってから選んで見せる",
         table_shows_the_selection_set_before_it_is_on_screen,
     ),
@@ -7477,6 +7481,154 @@ fn list_keeps_the_selection_outside_the_window(ui: &Ui) -> Result<()> {
         item(0).SetIsSelected(true).expect("SetIsSelected");
         pump_until(Duration::from_secs(2), || seen.borrow().len() > before);
         assert_eq!(list.selection(), vec![0], "窓の外の行を残さないこと");
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// Multiple selection in a `Tree` swaps the `TreeView` for a `ListView` with Ctrl /
+/// Shift selection (`TreeView`'s own multiple selection selects a branch's
+/// descendants too). Items inside a collapsed branch stay selected, and come back
+/// selected when it is expanded.
+fn tree_multiple_selection_uses_a_list_view(ui: &Ui) -> Result<()> {
+    use naui_core::{SelectionMode, TreeItem};
+    use naui_winui3::Microsoft::UI::Xaml::Controls::{FontIcon, ListViewSelectionMode};
+
+    let window = ui.window("ツリーの複数選択", 300.0, 320.0)?;
+    let tree = ui.tree()?;
+    tree.set_items(&[
+        TreeItem::new("src").children([TreeItem::new("main.rs"), TreeItem::new("lib.rs")]),
+        TreeItem::new("docs").child(TreeItem::new("guide").child(TreeItem::new("intro.md"))),
+        TreeItem::new("target")
+            .enabled(false)
+            .child(TreeItem::new("debug")),
+    ]);
+    tree.set_sizing(Sizing::fill());
+    window.set_child(&tree);
+    let seen = Rc::new(RefCell::new(Vec::<Vec<usize>>::new()));
+    tree.on_select({
+        let seen = seen.clone();
+        move |path| seen.borrow_mut().push(path.to_vec())
+    });
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        let frame = tree.native_element().cast::<Border>().expect("枠は Border");
+        let child = || frame.Child().expect("枠の中身");
+        assert!(tree.native_list_view().is_none(), "単一選択の間は作らない");
+        assert!(child()
+            .cast::<naui_winui3::Microsoft::UI::Xaml::Controls::TreeView>()
+            .is_ok());
+
+        tree.set_selection_mode(SelectionMode::Multiple);
+        assert_eq!(tree.selection_mode(), SelectionMode::Multiple);
+        let list = tree.native_list_view().expect("複数選択の ListView");
+        assert!(
+            child().cast::<ListView>().is_ok(),
+            "枠の中身が ListView に替わる"
+        );
+        assert_eq!(
+            list.SelectionMode().expect("SelectionMode"),
+            ListViewSelectionMode::Extended,
+            "Ctrl / Shift で選ぶ形"
+        );
+        let items = list.Items().expect("Items");
+        let count = || items.Size().expect("Size");
+        let row = |index: u32| {
+            items
+                .GetAt(index)
+                .and_then(|item| item.cast::<ListViewItem>())
+                .expect("行")
+        };
+        assert_eq!(count(), 3, "閉じた枝の中の行は ListView に入れない");
+
+        // 閉じた枝の中も、祖先を開いて選ぶ。選べない項目と無いパスは落とす。
+        tree.set_selection(&[vec![1, 0, 0], vec![0, 1], vec![2, 0], vec![9]]);
+        assert_eq!(tree.selection(), vec![vec![0, 1], vec![1, 0, 0]]);
+        // 行は 0 src, 1 main.rs, 2 lib.rs, 3 docs, 4 guide, 5 intro.md, 6 target。
+        assert_eq!(count(), 7);
+
+        window.show();
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || list.IsLoaded().unwrap_or(false));
+        pump_until(Duration::from_millis(300), || false);
+        let picked: Vec<u32> = (0..count())
+            .filter(|&index| row(index).IsSelected().unwrap_or(false))
+            .collect();
+        assert_eq!(picked, vec![2, 5], "載る前に選んだ行が画面でも選ばれる");
+        assert!(seen.borrow().is_empty(), "set_selection は通知しない");
+
+        // 段は左の余白で付ける。枝の山形は開閉で向きが変わる。
+        let line = |index: u32| {
+            row(index)
+                .Content()
+                .and_then(|content| content.cast::<Grid>())
+                .expect("行の中身は Grid")
+        };
+        assert_eq!(line(5).Margin().expect("Margin").Left, 32.0, "2 段下がる");
+        let glyph = |index: u32| {
+            line(index)
+                .Children()
+                .and_then(|children| children.GetAt(0))
+                .and_then(|child| child.cast::<XamlButton>())
+                .and_then(|button| button.Content())
+                .and_then(|content| content.cast::<FontIcon>())
+                .and_then(|icon| icon.Glyph())
+                .expect("山形")
+                .to_string()
+        };
+        assert_eq!(glyph(3), "\u{E70D}", "開いた枝は下向き");
+
+        // 枝を閉じても中の選択は覚えていて、開き直すと戻る。通知はしない。
+        tree.collapse(&[1]);
+        assert_eq!(count(), 5);
+        assert_eq!(glyph(3), "\u{E76C}", "閉じた枝は横向き");
+        assert_eq!(tree.selection(), vec![vec![0, 1], vec![1, 0, 0]]);
+        tree.expand(&[1]);
+        assert_eq!(count(), 7);
+        assert!(row(5).IsSelected().unwrap_or(false), "開き直すと選択が戻る");
+        assert!(seen.borrow().is_empty());
+
+        // ListView 側で選ぶと (ここでは修飾キーが押されていない)、選び直しなので
+        // 隠れた選択は落ちる。
+        tree.collapse(&[1]);
+        row(1).SetIsSelected(true).expect("SetIsSelected");
+        pump_until(Duration::from_secs(2), || !seen.borrow().is_empty());
+        assert_eq!(tree.selection(), vec![vec![0, 0], vec![0, 1]]);
+        assert_eq!(
+            seen.borrow().last(),
+            Some(&vec![0, 0]),
+            "先頭の 1 つを通知する"
+        );
+
+        // すべて選んでも、選べない項目は外れる。
+        list.SelectAll().expect("SelectAll");
+        pump_until(Duration::from_secs(2), || tree.selection().len() > 2);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0], vec![0, 0], vec![0, 1], vec![1]]
+        );
+        pump_until(Duration::from_millis(300), || false);
+        assert!(
+            !row(4).IsSelected().unwrap_or(true),
+            "target は ListView でも外れる"
+        );
+
+        // 単一選択に戻すと TreeView が戻り、選択は外れる。
+        let before = seen.borrow().len();
+        tree.set_selection_mode(SelectionMode::Single);
+        assert!(child()
+            .cast::<naui_winui3::Microsoft::UI::Xaml::Controls::TreeView>()
+            .is_ok());
+        assert!(tree.selection().is_empty());
+        assert_eq!(seen.borrow().len(), before, "切り替えは通知しない");
+        tree.set_selection(&[vec![1], vec![0, 1]]);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0, 1]],
+            "単一選択では先頭の 1 つだけ"
+        );
     }));
     window.close();
     if let Err(panic) = outcome {
