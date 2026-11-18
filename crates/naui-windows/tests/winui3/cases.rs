@@ -160,6 +160,14 @@ const CASES: &[Case] = &[
         list_accepts_row_activate_and_context_menu,
     ),
     (
+        "リストの行をドラッグで並べ替えると選択がついてくる",
+        list_drag_rows_moves_rows_and_selection,
+    ),
+    (
+        "組み立てる行のリストも窓を絞ったまま並べ替えられる",
+        list_reorder_with_row_builder,
+    ),
+    (
         "行の多いリストが見えている行だけを組み立てる",
         list_builds_only_the_rows_it_needs,
     ),
@@ -6856,6 +6864,158 @@ fn list_accepts_row_activate_and_context_menu(ui: &Ui) -> Result<()> {
     // 差し替えられる。
     list.on_row_activate(|_| {});
     list.on_context_menu(|_, _| {});
+    Ok(())
+}
+
+/// The first text inside a XAML element, looking through panels, borders and content
+/// controls.
+fn first_text(element: &windows_core::IInspectable) -> Option<String> {
+    use naui_winui3::Microsoft::UI::Xaml::Controls::{ContentControl, Panel};
+
+    if let Ok(text) = element.cast::<TextBlock>() {
+        return text.Text().ok().map(|text| text.to_string());
+    }
+    if let Ok(content) = element.cast::<ContentControl>() {
+        return first_text(&content.Content().ok()?);
+    }
+    if let Ok(border) = element.cast::<Border>() {
+        return first_text(&border.Child().ok()?.cast().ok()?);
+    }
+    let children = element.cast::<Panel>().ok()?.Children().ok()?;
+    (0..children.Size().ok()?).find_map(|i| first_text(&children.GetAt(i).ok()?.cast().ok()?))
+}
+
+/// The text of each row the `ListView` has now.
+fn list_texts(list: &naui_windows::List) -> Vec<String> {
+    let items = list.native_list_view().Items().expect("Items");
+    (0..items.Size().expect("Size"))
+        .map(|slot| first_text(&items.GetAt(slot).expect("行")).unwrap_or_default())
+        .collect()
+}
+
+/// `drag_rows` moves the rows like the user's drop: the rows and the selection move,
+/// `on_reorder` is told, `on_select` is not. Reordering is `ListView`'s own.
+fn list_drag_rows_moves_rows_and_selection(ui: &Ui) -> Result<()> {
+    use naui_core::{ListItem, RowMove, SelectionMode};
+
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("東京"),
+        ListItem::new("大阪"),
+        ListItem::new("札幌"),
+        ListItem::new("那覇").enabled(false),
+        ListItem::new("福岡"),
+    ]);
+    list.set_selection_mode(SelectionMode::Multiple);
+    let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
+    list.on_reorder({
+        let moves = moves.clone();
+        move |moved| moves.borrow_mut().push(moved.clone())
+    });
+    let selections = Rc::new(Cell::new(0));
+    list.on_select({
+        let selections = selections.clone();
+        move |_| selections.set(selections.get() + 1)
+    });
+    let native = list.native_list_view();
+
+    // 並べ替えを許すまでは、ドラッグは何もしない。
+    assert!(!list.is_reorderable());
+    assert!(!native.CanReorderItems().expect("CanReorderItems"));
+    list.drag_rows(&[0], 3);
+    assert!(moves.borrow().is_empty());
+
+    list.set_reorderable(true);
+    assert!(list.is_reorderable());
+    assert!(native.CanReorderItems().expect("CanReorderItems"));
+    assert!(native.CanDragItems().expect("CanDragItems"));
+    assert!(native.AllowDrop().expect("AllowDrop"));
+    list.set_selection(&[0, 2]);
+    list.drag_rows(&[0, 2], 5);
+    assert_eq!(list_texts(&list), ["大阪", "那覇", "福岡", "東京", "札幌"]);
+    assert_eq!(*moves.borrow(), vec![RowMove::new([0, 2], 5)]);
+    assert_eq!(list.selection(), vec![3, 4], "選択は動いた行についていく");
+    let items = native.Items().expect("Items");
+    let shown: Vec<bool> = (0..items.Size().expect("Size"))
+        .map(|slot| {
+            items
+                .GetAt(slot)
+                .and_then(|row| row.cast::<ListViewItem>())
+                .and_then(|row| row.IsSelected())
+                .expect("IsSelected")
+        })
+        .collect();
+    assert_eq!(
+        shown,
+        [false, false, false, true, true],
+        "ListView の選択も動いた行に付く"
+    );
+    assert_eq!(
+        selections.get(),
+        0,
+        "選ばれている行は同じなので on_select は来ない"
+    );
+
+    // 選べない行はつかめない。ほかの行といっしょでも、その行だけ残る。
+    list.drag_rows(&[1], 0);
+    assert_eq!(moves.borrow().len(), 1, "選べない行だけなら何も起きない");
+    list.drag_rows(&[1, 4], 0);
+    assert_eq!(list_texts(&list), ["札幌", "大阪", "那覇", "福岡", "東京"]);
+    assert_eq!(moves.borrow()[1], RowMove::new([4], 0));
+    assert_eq!(list.selection(), vec![0, 4]);
+
+    // 自分の場所へ落としても通知しない。
+    list.drag_rows(&[1], 2);
+    assert_eq!(moves.borrow().len(), 2);
+
+    // move_rows は通知せず、並べ替えを許していなくても動かす。
+    list.set_reorderable(false);
+    assert!(!native.CanReorderItems().expect("CanReorderItems"));
+    assert!(!native.CanDragItems().expect("CanDragItems"));
+    list.move_rows(&RowMove::new([0], 5));
+    assert_eq!(list_texts(&list), ["大阪", "那覇", "福岡", "東京", "札幌"]);
+    assert_eq!(list.selection(), vec![3, 4]);
+    assert_eq!(moves.borrow().len(), 2);
+    assert_eq!(selections.get(), 0);
+    Ok(())
+}
+
+/// Rows from a builder move too, with only the rows on screen built: the app moves its
+/// data in `on_reorder`, and the rows built afterwards read it.
+fn list_reorder_with_row_builder(ui: &Ui) -> Result<()> {
+    use naui_windows::ListRow;
+
+    const ROWS: usize = 1000;
+    let data: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(
+        (0..ROWS).map(|index| format!("行 {index}")).collect(),
+    ));
+    let list = ui.list()?;
+    list.set_sizing(Sizing::fixed(240.0, 200.0));
+    list.set_row_builder(ROWS, {
+        let data = data.clone();
+        let ui = ui.clone();
+        move |index| Ok(ListRow::new(&ui.label(&data.borrow()[index])?))
+    });
+    list.on_reorder({
+        let data = data.clone();
+        move |moved| moved.apply(&mut data.borrow_mut())
+    });
+    list.set_reorderable(true);
+    assert!(
+        list_texts(&list).len() < ROWS,
+        "画面に出ている行だけを組み立てる"
+    );
+    list.set_selected(0);
+    list.drag_rows(&[0], 2);
+    assert_eq!(data.borrow()[..3], ["行 1", "行 0", "行 2"]);
+    assert_eq!(list_texts(&list)[..3], ["行 1", "行 0", "行 2"]);
+    assert_eq!(list.selection(), vec![1], "選択は動いた行についていく");
+
+    // 窓の外へ動かしても、選択は覚えている。
+    list.drag_rows(&[1], ROWS);
+    assert_eq!(data.borrow()[ROWS - 1], "行 0");
+    assert_eq!(list.selection(), vec![ROWS - 1]);
+    assert_eq!(list_texts(&list)[..2], ["行 1", "行 2"]);
     Ok(())
 }
 

@@ -39,8 +39,8 @@ use std::sync::Arc;
 
 use naui_core::{
     keeps_row_window, list_row_window, merge_hidden_selection, Align, ListItem, Modifiers,
-    Orientation, Point, Result, RowSource, RowWindow, SelectionGesture, SelectionMode, Sizing,
-    TextColor, TextStyle, ROW_WINDOW_OVERSCAN,
+    Orientation, Point, Result, RowMove, RowSource, RowWindow, SelectionGesture, SelectionMode,
+    Sizing, TextColor, TextStyle, ROW_WINDOW_OVERSCAN,
 };
 use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
@@ -603,6 +603,40 @@ struct ListInner {
     row_activate: SelectHandler,
     /// The handler for right-clicks.
     context_menu: ContextMenuHandler,
+    /// Whether the user can drag rows ([`List::set_reorderable`]).
+    reorderable: Cell<bool>,
+    /// The rows being dragged, from `DragItemsStarting` to `DragItemsCompleted`.
+    /// `ListView` moves its items itself on the drop, so the selection it reports in
+    /// between is ignored.
+    dragging: RefCell<Option<Vec<usize>>>,
+    /// The handler told about rows the user moved ([`List::on_reorder`]).
+    reorder: ReorderHandler,
+}
+
+/// The closure told about rows the user moved.
+///
+/// It is taken out only for the duration of the call, so the list can be operated from
+/// inside it.
+#[derive(Default)]
+struct ReorderHandler(RefCell<Option<ReorderCallback>>);
+
+type ReorderCallback = Box<dyn FnMut(&RowMove)>;
+
+impl ReorderHandler {
+    fn set(&self, f: impl FnMut(&RowMove) + 'static) {
+        *self.0.borrow_mut() = Some(Box::new(f));
+    }
+
+    fn emit(&self, moved: &RowMove) {
+        let Some(mut f) = self.0.borrow_mut().take() else {
+            return;
+        };
+        f(moved);
+        let mut slot = self.0.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+    }
 }
 
 /// A vertical list of selectable rows (`ListView`).
@@ -693,6 +727,9 @@ impl List {
             hovered,
             row_activate: SelectHandler::new(),
             context_menu: ContextMenuHandler::new(),
+            reorderable: Cell::new(false),
+            dragging: RefCell::new(None),
+            reorder: ReorderHandler::default(),
         }));
 
         // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
@@ -707,7 +744,8 @@ impl List {
             let _ = state.try_with_mut(|weak| {
                 if let Some(inner) = weak.upgrade() {
                     let list = List(inner);
-                    if !list.0.silent.get() {
+                    // ドラッグの間は `ListView` が行を動かしていて、行の番号が合わない。
+                    if !list.0.silent.get() && list.0.dragging.borrow().is_none() {
                         let indices = list.read_native_selection();
                         *list.0.selected.borrow_mut() = indices.clone();
                         list.0.handler.emit(&indices);
@@ -2040,6 +2078,94 @@ impl List {
     /// for empty space without rows.
     pub fn on_context_menu(&self, f: impl FnMut(usize, Point) + 'static) {
         self.0.context_menu.set(f);
+    }
+
+    /// Lets the user rearrange the rows by dragging them within this list. Off by
+    /// default.
+    ///
+    /// This is `ListView`'s own reordering (`CanReorderItems`): the user drags a row, or
+    /// the selection when the row pressed is selected, the rows open a gap where it will
+    /// land, and naui moves the rows when they are dropped ([`List::on_reorder`]). Rows
+    /// that cannot be selected cannot be dragged. Drops from other widgets and other
+    /// apps are refused. The list does not scroll by itself while the pointer is near
+    /// its edge.
+    pub fn set_reorderable(&self, reorderable: bool) {
+        self.0.reorderable.set(reorderable);
+        self.apply_reorderable();
+    }
+
+    pub fn is_reorderable(&self) -> bool {
+        self.0.reorderable.get()
+    }
+
+    /// Called after the user moved rows by dragging them ([`List::set_reorderable`]).
+    ///
+    /// The selection has followed the rows ([`List::on_select`] is not called). Move the
+    /// app's data the same way with [`RowMove::apply`]; the rows on screen are built
+    /// again once this returns, and for rows from [`List::set_row_builder`] they read
+    /// it.
+    pub fn on_reorder(&self, f: impl FnMut(&RowMove) + 'static) {
+        self.0.reorder.set(f);
+    }
+
+    /// Moves `rows` into the gap `to` through the same path as the user's drop
+    /// (notifies). Does nothing unless the list is reorderable; rows that cannot be
+    /// selected stay where they are.
+    pub fn drag_rows(&self, rows: &[usize], to: usize) {
+        if self.is_reorderable() {
+            self.drop_rows(rows, to);
+        }
+    }
+
+    /// Moves rows without notifying. The selection stays on the rows it was on.
+    pub fn move_rows(&self, moved: &RowMove) {
+        self.apply_move(moved, false);
+    }
+
+    /// Turns `ListView`'s own reordering on or off.
+    fn apply_reorderable(&self) {
+        let on = self.0.reorderable.get();
+        let list_view = &self.0.list_view;
+        let _ = list_view.SetCanDragItems(on);
+        let _ = list_view.SetCanReorderItems(on);
+        let _ = list_view.SetAllowDrop(on);
+    }
+
+    /// Moves the rows the user dropped, and notifies.
+    fn drop_rows(&self, rows: &[usize], to: usize) {
+        let rows = rows.iter().copied().filter(|&row| self.is_selectable(row));
+        self.apply_move(&RowMove::new(rows, to), true);
+    }
+
+    /// Moves the rows and the selection with them, notifies if asked, and builds the
+    /// rows on screen again.
+    ///
+    /// The app moves its data in the notification, and rows from a builder read it, so
+    /// the rows are built only after it. If the app replaced the rows in it, they are
+    /// built already.
+    fn apply_move(&self, moved: &RowMove, notify: bool) {
+        let Some(moved) = moved.within(self.len()) else {
+            return;
+        };
+        self.0.rows.move_rows(&moved);
+        let picked = moved.new_indices(&self.selection());
+        *self.0.selected.borrow_mut() = picked;
+        let remap = |cell: &Cell<Option<usize>>| cell.set(cell.get().map(|i| moved.new_index(i)));
+        remap(&self.0.anchor);
+        remap(&self.0.pointer_row);
+        let generation = self.0.rows.generation();
+        if notify {
+            self.0.reorder.emit(&moved);
+        }
+        if self.0.rows.generation() != generation {
+            return;
+        }
+        // 行を組み立てる関数の中から呼ばれたら、組み立てている側が最初からやり直す。
+        if self.0.rebuilding.get() {
+            self.0.rows.invalidate();
+            return;
+        }
+        self.build_window();
     }
 
     /// The inner `ListView`. Public as a backend-specific escape hatch.
