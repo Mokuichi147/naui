@@ -385,11 +385,7 @@ impl Dialog {
     /// Whether the `ContentDialog` is still in the visual tree, from this opening or
     /// one on its way out.
     fn is_loaded(&self) -> bool {
-        self.0
-            .native
-            .cast::<naui_winui3::Microsoft::UI::Xaml::FrameworkElement>()
-            .and_then(|element| element.IsLoaded())
-            .unwrap_or(false)
+        is_element_loaded(&self.0.native)
     }
 
     /// Calls `f` on the UI thread after [`RETRY_INTERVAL`], if the dialog is still
@@ -422,10 +418,12 @@ impl Dialog {
     ///
     /// If it is not open, the answer is kept and given once it next opens. The
     /// buttons are part of the `ContentDialog`'s template, which is applied a moment
-    /// after it is shown, so the click waits for them. Where the template is still
-    /// missing after about a second, or a click WinUI took leaves it open for half a
-    /// second (seen on CI runners, whose windows nothing draws, with the secondary
-    /// button), it closes the dialog with that role itself.
+    /// after it is shown, so the click waits for them. When it opens again, the
+    /// buttons from the last opening are there before they are loaded again, and a
+    /// click on them does nothing, so the click also waits until they are loaded.
+    /// Where they are still missing or not loaded after about a second, or a click
+    /// WinUI took leaves it open for half a second (windows nothing draws, as on CI
+    /// runners), it closes the dialog with that role itself.
     pub fn respond(&self, response: DialogResponse) {
         if self.0.open.get() && self.0.shown.get() {
             self.press(response, PRESS_TRIES);
@@ -452,9 +450,12 @@ impl Dialog {
             .native
             .GetTemplateChild(&HSTRING::from(part))
             .and_then(|part| part.cast::<Control>());
+        // 開き直した直後は、前の回のテンプレートのボタンがまだ読み込まれていない。
+        // それを Invoke しても受け付けるだけで何も起きないので、読み込まれるまで待つ。
         // 無効なボタンは利用者と同じく押せない。押せるはずなのに断られたときは、
         // まだ出きっていないとみなして待つ。
         let pressed = match &button {
+            Ok(button) if !is_element_loaded(button) => false,
             Ok(button) if !button.IsEnabled().unwrap_or(false) => return,
             Ok(button) => button
                 .cast::<UIElement>()
@@ -462,8 +463,8 @@ impl Dialog {
             Err(_) => false,
         };
         if pressed {
-            // WinUI が受け付けたのに閉じないことがある (何も描かれていない窓の
-            // 副ボタン)。同じ回のまま開いていれば、その役割で閉じる。
+            // WinUI が受け付けたのに閉じないことがある (何も描かれていない窓)。
+            // 同じ回のまま開いていれば、その役割で閉じる。
             let opening = self.0.opening.get();
             self.later_by(RECHECK_INTERVAL, move |this| {
                 if this.0.open.get() && this.0.opening.get() == opening {
@@ -568,4 +569,12 @@ fn response_for(result: ContentDialogResult) -> DialogResponse {
         ContentDialogResult::Secondary => DialogResponse::Secondary,
         _ => DialogResponse::Cancel,
     }
+}
+
+/// Whether the element is in the live visual tree (`FrameworkElement.IsLoaded`).
+fn is_element_loaded(element: &impl Interface) -> bool {
+    element
+        .cast::<naui_winui3::Microsoft::UI::Xaml::FrameworkElement>()
+        .and_then(|element| element.IsLoaded())
+        .unwrap_or(false)
 }

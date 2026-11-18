@@ -311,9 +311,9 @@ that shape are covered in
   `testing::wait_until`. Where the template is missing (a window not shown yet, or
   one nothing draws, as on CI runners), naui writes the text and calls `on_change`
   itself, and closes a dialog with the role itself when its button has not
-  appeared within a second or a click on it leaves the dialog open (on CI runners
-  the secondary button takes the click without closing), without going through
-  UI Automation. Right after the
+  appeared (or, after the dialog opens again, been loaded again) within a second
+  or a click on it leaves the dialog open, without going through UI Automation.
+  Right after the
   first window is shown, `Dialog::open` and `Sheet::open` wait until WinUI can show
   them (its `XamlRoot`), for up to 10 seconds.
 - `Dialog::respond` and `Sheet::respond` click a button, so a role with no button,
