@@ -82,7 +82,7 @@ pub use layout::{
     Breakpoint, GridCell, Length, ScrollMetrics, ScrollPolicy, ScrollTarget, Sizing,
     StackArrangement, Track,
 };
-pub use list::{ListItem, SelectionMode};
+pub use list::{ListItem, RowMove, SelectionMode};
 pub use main_thread::{MainThread, Tasks, Work};
 pub use media::{Fit, PlaybackState};
 pub use menu::{MenuHandler, MenuItem, MenuShortcut, MenuSpec};

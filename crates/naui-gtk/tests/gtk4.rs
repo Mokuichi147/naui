@@ -712,6 +712,18 @@ fn main() {
             list_row_activate_notifies,
         ),
         (
+            "リストの行をドラッグで並べ替えると選択がついてくる",
+            list_drag_rows_moves_rows_and_selection,
+        ),
+        (
+            "リストの行の並べ替えが GtkDragSource と GtkDropTarget を通る",
+            list_reorder_goes_through_drag_source_and_drop_target,
+        ),
+        (
+            "組み立てる行のリストも窓を絞ったまま並べ替えられる",
+            list_reorder_with_row_builder,
+        ),
+        (
             "リストの右クリックが行と位置を通知する",
             list_context_menu_notifies,
         ),
@@ -5789,6 +5801,269 @@ fn shown_list_for_events(ui: &Ui) -> Result<(naui_gtk::Window, naui_gtk::List)> 
         tick(&list.native_widget());
     }
     Ok((window, list))
+}
+
+/// The text of each row the `GtkListBox` has now.
+fn list_texts(list: &naui_gtk::List) -> Vec<String> {
+    list_box_rows(&list_box_of(list))
+        .iter()
+        .map(|row| row_texts(row).into_iter().next().unwrap_or_default())
+        .collect()
+}
+
+/// `drag_rows` moves the rows like the user's drop: the rows and the selection move,
+/// `on_reorder` is told, `on_select` is not.
+fn list_drag_rows_moves_rows_and_selection(ui: &Ui) -> Result<()> {
+    use naui_core::RowMove;
+
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("東京"),
+        ListItem::new("大阪"),
+        ListItem::new("札幌"),
+        ListItem::new("那覇").enabled(false),
+        ListItem::new("福岡"),
+    ]);
+    list.set_selection_mode(SelectionMode::Multiple);
+    let (moves, mut sink) = recorder::<RowMove>();
+    list.on_reorder(move |moved| sink(moved.clone()));
+    let selections = Rc::new(Cell::new(0));
+    list.on_select({
+        let selections = selections.clone();
+        move |_| selections.set(selections.get() + 1)
+    });
+
+    // 並べ替えを許すまでは、ドラッグは何もしない。
+    assert!(!list.is_reorderable());
+    list.drag_rows(&[0], 3);
+    assert!(moves.borrow().is_empty());
+
+    list.set_reorderable(true);
+    assert!(list.is_reorderable());
+    list.set_selection(&[0, 2]);
+    list.drag_rows(&[0, 2], 5);
+    assert_eq!(list_texts(&list), ["大阪", "那覇", "福岡", "東京", "札幌"]);
+    assert_eq!(*moves.borrow(), vec![RowMove::new([0, 2], 5)]);
+    assert_eq!(list.selection(), vec![3, 4], "選択は動いた行についていく");
+    let native = list_box_of(&list);
+    let shown: Vec<i32> = native
+        .selected_rows()
+        .iter()
+        .map(|row| row.index())
+        .collect();
+    assert_eq!(shown, vec![3, 4], "GtkListBox の選択も動いた行に付く");
+    assert_eq!(
+        selections.get(),
+        0,
+        "選ばれている行は同じなので on_select は来ない"
+    );
+
+    // 選べない行はつかめない。ほかの行といっしょでも、その行だけ残る。
+    list.drag_rows(&[1], 0);
+    assert_eq!(moves.borrow().len(), 1, "選べない行だけなら何も起きない");
+    list.drag_rows(&[1, 4], 0);
+    assert_eq!(list_texts(&list), ["札幌", "大阪", "那覇", "福岡", "東京"]);
+    assert_eq!(moves.borrow()[1], RowMove::new([4], 0));
+    assert_eq!(list.selection(), vec![0, 4]);
+
+    // 自分の場所へ落としても通知しない。
+    list.drag_rows(&[1], 2);
+    assert_eq!(moves.borrow().len(), 2);
+
+    // move_rows は通知せず、並べ替えを許していなくても動かす。
+    list.set_reorderable(false);
+    list.move_rows(&RowMove::new([0], 5));
+    assert_eq!(list_texts(&list), ["大阪", "那覇", "福岡", "東京", "札幌"]);
+    assert_eq!(list.selection(), vec![3, 4]);
+    assert_eq!(moves.borrow().len(), 2);
+    assert_eq!(selections.get(), 0);
+    Ok(())
+}
+
+/// The controller of type `T` attached to `widget`.
+fn controller_of<T: IsA<gtk::EventController> + IsA<glib::Object>>(
+    widget: &impl IsA<gtk::Widget>,
+) -> T {
+    let controllers = widget.observe_controllers();
+    (0..controllers.n_items())
+        .filter_map(|index| controllers.item(index))
+        .find_map(|item| item.downcast::<T>().ok())
+        .expect("コントローラが付いていること")
+}
+
+/// Starts a drag on a row as GTK does (`prepare` on its drag source), and returns the
+/// value the drag carries.
+fn start_row_drag(row: &gtk::ListBoxRow) -> Option<glib::Value> {
+    let source: gtk::DragSource = controller_of(row);
+    let provider =
+        source.emit_by_name::<Option<gtk::gdk::ContentProvider>>("prepare", &[&5.0f64, &5.0f64])?;
+    let kind = glib::Type::from_name("NauiListRowDrag").expect("行のドラッグの型");
+    Some(provider.value(kind).expect("ドラッグの値"))
+}
+
+/// The color of a row's top edge and of a point halfway down its left margin, as
+/// drawn.
+fn row_line_pixels(list: &gtk::ListBox, row: &gtk::ListBoxRow) -> ((u8, u8, u8), (u8, u8, u8)) {
+    let width = row.width().max(1);
+    let height = row.height().max(1);
+    let snapshot = gtk::Snapshot::new();
+    list.snapshot_child(row, &snapshot);
+    let node = snapshot.to_node().expect("行を描いたものがあること");
+    let mut surface = gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, width, height)
+        .expect("画像の生成");
+    let cr = gtk::cairo::Context::new(&surface).expect("コンテキストの生成");
+    // 行の位置ぶんずらして、行の左上を画像の原点にそろえる。
+    let origin = row.compute_bounds(list).expect("行の位置");
+    cr.translate(-f64::from(origin.x()), -f64::from(origin.y()));
+    node.draw(&cr);
+    drop(cr);
+    surface.flush();
+    let stride = surface.stride() as usize;
+    let data = surface.data().expect("画素の読み出し");
+    let read = |x: usize, y: usize| -> (u8, u8, u8) {
+        let i = y * stride + x * 4;
+        (data[i + 2], data[i + 1], data[i])
+    };
+    (read(2, 0), read(2, height as usize / 2))
+}
+
+/// A drag of rows goes through GTK's drag and drop: each row's `GtkDragSource` starts it
+/// (only for selectable rows of a reorderable list), the `GtkListBox`'s `GtkDropTarget`
+/// draws the line where it lands and takes only this list's own rows.
+fn list_reorder_goes_through_drag_source_and_drop_target(ui: &Ui) -> Result<()> {
+    use naui_core::RowMove;
+
+    let (window, list) = shown_list_for_events(ui)?;
+    let (moves, mut sink) = recorder::<RowMove>();
+    list.on_reorder(move |moved| sink(moved.clone()));
+    let native = list_box_of(&list);
+    let row = |index: i32| native.row_at_index(index).expect("行");
+    assert!(
+        start_row_drag(&row(0)).is_none(),
+        "並べ替えを許すまでは行をつかめない"
+    );
+
+    list.set_reorderable(true);
+    assert!(start_row_drag(&row(3)).is_none(), "選べない行はつかめない");
+    let target: gtk::DropTarget = controller_of(&native);
+    let bounds = |index: i32| row(index).compute_bounds(&native).expect("行の位置");
+    let motion =
+        |y: f32| target.emit_by_name::<gtk::gdk::DragAction>("motion", &[&10.0f64, &f64::from(y)]);
+    let drop = |value: &glib::Value, y: f32| {
+        target.emit_by_name::<bool>(
+            "drop",
+            &[&glib::BoxedValue(value.clone()), &10.0f64, &f64::from(y)],
+        )
+    };
+
+    // ドラッグが始まるまでは受けない。
+    assert_eq!(motion(1.0), gtk::gdk::DragAction::empty());
+
+    // ほかのリストの行は受けない。
+    let other = ui.list()?;
+    other.set_items(&ListItem::list(["よそ"]));
+    other.set_reorderable(true);
+    let foreign = start_row_drag(&list_box_of(&other).row_at_index(0).expect("行"))
+        .expect("よそのリストの行もつかめる");
+    assert!(!drop(&foreign, 1.0), "よそのリストの行は落とせない");
+
+    // 3 行目を 2 行目の上半分へ: 2 行目の前へ入る。線は 2 行目の上に出る。
+    let value = start_row_drag(&row(2)).expect("選べる行はつかめる");
+    let second = bounds(1);
+    let upper = second.y() + second.height() / 4.0;
+    assert_eq!(motion(upper), gtk::gdk::DragAction::MOVE);
+    assert!(
+        row(1).has_css_class("naui-drop-before"),
+        "線は入る先の行の上に出る"
+    );
+    tick(&native);
+    let (top, middle) = row_line_pixels(&native, &row(1));
+    assert!(
+        top.2 > top.0 + 60 && top != middle,
+        "行の上端に強調色の線が描かれること: 上端 {top:?} / 中ほど {middle:?}"
+    );
+    // 最後の行の下半分では、最後の行の下に出る。
+    let last = bounds(3);
+    assert_eq!(
+        motion(last.y() + last.height() * 0.75),
+        gtk::gdk::DragAction::MOVE
+    );
+    assert!(!row(1).has_css_class("naui-drop-before"), "前の線は消える");
+    assert!(row(3).has_css_class("naui-drop-after"));
+    target.emit_by_name::<()>("leave", &[]);
+    assert!(
+        !row(3).has_css_class("naui-drop-after"),
+        "離れたら線は消える"
+    );
+
+    assert!(drop(&value, upper));
+    assert_eq!(list_texts(&list), ["札幌", "東京", "仙台", "大阪"]);
+    assert_eq!(*moves.borrow(), vec![RowMove::new([2], 1)]);
+    assert!(
+        !drop(&value, upper),
+        "落としたあとは同じドラッグをもう受けない"
+    );
+
+    // 選ばれている行をつかむと、選択ごと動く。
+    list.set_selection_mode(SelectionMode::Multiple);
+    list.set_selection(&[0, 1]);
+    let value = start_row_drag(&row(1)).expect("選ばれている行をつかむ");
+    let last = bounds(3);
+    assert!(drop(&value, last.y() + last.height() * 0.75));
+    assert_eq!(list_texts(&list), ["仙台", "大阪", "札幌", "東京"]);
+    assert_eq!(moves.borrow()[1], RowMove::new([0, 1], 4));
+    assert_eq!(list.selection(), vec![2, 3]);
+    window.close();
+    Ok(())
+}
+
+/// Rows from a builder move too, with only the rows on screen built: the app moves its
+/// data in `on_reorder`, and the rows built afterwards read it.
+fn list_reorder_with_row_builder(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 1000;
+    let window = ui.window("組み立てる行", 320.0, 240.0)?;
+    let data: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(
+        (0..ROWS).map(|index| format!("行 {index}")).collect(),
+    ));
+    let list = ui.list()?;
+    list.set_row_builder(ROWS, {
+        let data = data.clone();
+        let ui = ui.clone();
+        move |index| Ok(ListRow::new(&ui.label(&data.borrow()[index])?))
+    });
+    list.on_reorder({
+        let data = data.clone();
+        move |moved| moved.apply(&mut data.borrow_mut())
+    });
+    list.set_reorderable(true);
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+    window.show();
+    for _ in 0..3 {
+        tick(&list.native_widget());
+    }
+    let native = list_box_of(&list);
+    assert!(
+        list_box_rows(&native).len() < ROWS,
+        "画面に出ている行だけを組み立てる"
+    );
+    list.set_selected(0);
+    list.drag_rows(&[0], 2);
+    assert_eq!(data.borrow()[..3], ["行 1", "行 0", "行 2"]);
+    assert_eq!(list_texts(&list)[..3], ["行 1", "行 0", "行 2"]);
+    assert_eq!(list.selection(), vec![1], "選択は動いた行についていく");
+
+    // 窓の外へ動かしても、選択は覚えている。
+    list.drag_rows(&[1], ROWS);
+    assert_eq!(data.borrow()[ROWS - 1], "行 0");
+    assert_eq!(list.selection(), vec![ROWS - 1]);
+    assert!(
+        native.selected_rows().is_empty(),
+        "窓の外の行は GtkListBox にない"
+    );
+    assert_eq!(list_texts(&list)[..2], ["行 1", "行 2"]);
+    window.close();
+    Ok(())
 }
 
 /// Double-clicks, and Enter while a row has focus, reach `on_row_activate`.
