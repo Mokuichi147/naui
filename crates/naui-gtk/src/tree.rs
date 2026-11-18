@@ -16,13 +16,13 @@
 //! Selection, keyboard navigation and scrolling are done by `GtkListBox` and
 //! `GtkScrolledWindow` (GTK4 skips invisible rows).
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::Rc;
 
 use gtk::glib;
 use gtk::prelude::*;
-use naui_core::{Sizing, TreeItem};
+use naui_core::{SelectionMode, Sizing, TreeItem};
 
 use crate::bin::SizeBin;
 use crate::callback::{ExpandNotifier, SelectionNotifier};
@@ -53,8 +53,11 @@ struct TreeInner {
     twisties: RefCell<Vec<Option<gtk::Button>>>,
     /// The items remembered as expanded. Those inside collapsed branches remain too.
     expanded: RefCell<HashSet<Vec<usize>>>,
-    /// The selected item. `None` for no selection.
-    selected: RefCell<Option<Vec<usize>>>,
+    /// The selected items, normalized ([`SelectionMode::normalize_paths`]). Those
+    /// inside collapsed branches remain too (their rows stay selected while
+    /// invisible).
+    selected: RefCell<Vec<Vec<usize>>>,
+    mode: Cell<SelectionMode>,
     on_select: SelectionNotifier,
     on_expand: ExpandNotifier,
     handler: RefCell<Option<glib::SignalHandlerId>>,
@@ -90,7 +93,8 @@ impl Tree {
             rows: RefCell::new(Vec::new()),
             twisties: RefCell::new(Vec::new()),
             expanded: RefCell::new(HashSet::new()),
-            selected: RefCell::new(None),
+            selected: RefCell::new(Vec::new()),
+            mode: Cell::new(SelectionMode::Single),
             on_select: SelectionNotifier::default(),
             on_expand: ExpandNotifier::default(),
             handler: RefCell::new(None),
@@ -117,7 +121,7 @@ impl Tree {
             stored.clear();
             stored.extend_from_slice(items);
         }
-        *self.0.selected.borrow_mut() = None;
+        self.0.selected.borrow_mut().clear();
         let mut expanded = HashSet::new();
         TreeItem::walk(items, |path, item| {
             if item.expanded && !item.is_leaf() {
@@ -137,8 +141,37 @@ impl Tree {
         self.len() == 0
     }
 
-    /// The path of the selected item. `None` if nothing is selected.
+    /// Switches between single and multiple selection. The selection is cleared
+    /// without notifying.
+    pub fn set_selection_mode(&self, mode: SelectionMode) {
+        self.0.mode.set(mode);
+        let multiple = mode.is_multiple();
+        // 複数から単一へ切り替えると GTK が選択を落として通知するので、止めておく。
+        without_signal(&self.0.native, &self.0.handler, || {
+            self.0.native.set_selection_mode(match multiple {
+                // `Multiple` は「⌘ / Ctrl や Shift を押しながら選ぶ」形。
+                true => gtk::SelectionMode::Multiple,
+                false => gtk::SelectionMode::Single,
+            });
+        });
+        // `GtkListBox` は「1 クリックで確定」(既定) の間、クリックに付いている
+        // Ctrl / Shift を読まず、必ず「その行だけを選ぶ」に倒す (`List` と同じ)。
+        self.0.native.set_activate_on_single_click(!multiple);
+        self.write_selection(&[]);
+    }
+
+    pub fn selection_mode(&self) -> SelectionMode {
+        self.0.mode.get()
+    }
+
+    /// The path of the first selected item. `None` if nothing is selected.
     pub fn selected(&self) -> Option<Vec<usize>> {
+        self.0.selected.borrow().first().cloned()
+    }
+
+    /// The paths of the selected items in the order the tree shows them, including
+    /// items hidden inside collapsed branches.
+    pub fn selection(&self) -> Vec<Vec<usize>> {
         self.0.selected.borrow().clone()
     }
 
@@ -167,22 +200,34 @@ impl Tree {
     /// selection. Items inside a collapsed branch are selected after their ancestors
     /// are expanded so they become visible.
     pub fn set_selected(&self, path: &[usize]) {
-        self.write_selected(path);
+        self.write_selection(&[path.to_vec()]);
+    }
+
+    /// Replaces the selection without notifying. Paths that cannot be selected are
+    /// left out, and the branches holding the rest are expanded.
+    pub fn set_selection(&self, paths: &[Vec<usize>]) {
+        self.write_selection(paths);
     }
 
     /// Clears the selection without notifying.
     pub fn clear_selection(&self) {
-        self.write_selected(&[]);
+        self.write_selection(&[]);
     }
 
     /// Selects one item through the same path as a user's selection (notifies).
     pub fn select(&self, path: &[usize]) {
-        self.write_selected(path);
+        self.select_many(&[path.to_vec()]);
+    }
+
+    /// Replaces the selection through the same path as a user's selection
+    /// (notifies).
+    pub fn select_many(&self, paths: &[Vec<usize>]) {
+        self.write_selection(paths);
         let actual = self.selected().unwrap_or_default();
         self.0.on_select.emit(&actual);
     }
 
-    /// Called with the path of the selected item when the selection changes.
+    /// Called with the path of the first selected item when the selection changes.
     ///
     /// When the selection is cleared, it is called with an empty path.
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
@@ -343,18 +388,23 @@ impl Tree {
     }
 
     /// Applies the selection to the native side.
+    ///
+    /// Rows inside collapsed branches are selected too: `GtkListBox` keeps
+    /// invisible rows selected, so they show as selected again when reopened.
     fn show_selection(&self) {
-        let selected = self.0.selected.borrow().clone();
-        let index = selected.and_then(|path| {
-            self.0
-                .rows
-                .borrow()
-                .iter()
-                .position(|row| row.as_slice() == path.as_slice())
-        });
+        let selected: HashSet<Vec<usize>> = self.0.selected.borrow().iter().cloned().collect();
+        let indices: Vec<usize> = self
+            .0
+            .rows
+            .borrow()
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| selected.contains(*row))
+            .map(|(index, _)| index)
+            .collect();
         without_signal(&self.0.native, &self.0.handler, || {
             self.0.native.unselect_all();
-            if let Some(index) = index {
+            for index in indices {
                 if let Some(row) = self.0.native.row_at_index(index as i32) {
                     self.0.native.select_row(Some(&row));
                 }
@@ -363,15 +413,25 @@ impl Tree {
     }
 
     /// Remembers and writes the selection (no notification).
-    fn write_selected(&self, path: &[usize]) {
-        let picked = TreeItem::selectable(&self.0.items.borrow(), path).then(|| path.to_vec());
-        if let Some(path) = picked.as_deref() {
+    fn write_selection(&self, paths: &[Vec<usize>]) {
+        let picked = self
+            .0
+            .mode
+            .get()
+            .normalize_paths(&self.0.items.borrow(), paths);
+        for path in &picked {
             // 見えていないと選んだことが分からないので、祖先を開く。
             // 葉には開閉が無いので、開くのは親から上だけ。
             self.write_expanded(&path[..path.len().saturating_sub(1)], true);
         }
         *self.0.selected.borrow_mut() = picked;
         self.show_selection();
+    }
+
+    /// Whether the item at `path` is visible now (all its ancestors are expanded).
+    fn is_shown(&self, path: &[usize]) -> bool {
+        let expanded = self.0.expanded.borrow();
+        (1..path.len()).all(|depth| expanded.contains(&path[..depth]))
     }
 
     /// Remembers the expansion state and redraws (no notification). Expanding also
@@ -422,12 +482,34 @@ impl Tree {
     }
 
     /// When the selection changes on the GTK side.
+    ///
+    /// `GtkListBox` already follows naui's rules for hidden rows: a plain click
+    /// unselects every row, invisible ones included, and Ctrl leaves them alone. Only
+    /// rows that were hidden and not selected before are left out, so that Ctrl + A
+    /// and Shift ranges never reach into collapsed branches.
     fn on_native_selection(&self) {
-        let picked = self.0.native.selected_row().and_then(|row| {
-            let index = row.index().max(0) as usize;
-            self.0.rows.borrow().get(index).cloned()
-        });
+        let before: HashSet<Vec<usize>> = self.0.selected.borrow().iter().cloned().collect();
+        let picked: Vec<Vec<usize>> = {
+            let rows = self.0.rows.borrow();
+            self.0
+                .native
+                .selected_rows()
+                .iter()
+                .filter_map(|row| rows.get(row.index().max(0) as usize).cloned())
+                .collect()
+        };
+        let (kept, stray): (Vec<_>, Vec<_>) = picked
+            .into_iter()
+            .partition(|path| self.is_shown(path) || before.contains(path));
+        let picked = self
+            .0
+            .mode
+            .get()
+            .normalize_paths(&self.0.items.borrow(), &kept);
         *self.0.selected.borrow_mut() = picked;
+        if !stray.is_empty() {
+            self.show_selection();
+        }
         let actual = self.selected().unwrap_or_default();
         self.0.on_select.emit(&actual);
     }

@@ -215,6 +215,53 @@ impl TreeItem {
     }
 }
 
+impl crate::SelectionMode {
+    /// [`normalize`](crate::SelectionMode::normalize) for trees, whose items are
+    /// referred to by paths.
+    ///
+    /// - Drops paths that point at no item
+    /// - Drops items that cannot be selected ([`TreeItem::selectable`])
+    /// - Sorts them in the order the tree shows them (depth-first, parents first) and
+    ///   removes duplicates
+    /// - Keeps only the first one for [`SelectionMode::Single`](crate::SelectionMode::Single)
+    ///
+    /// Selecting a branch does not select its children: each item is selected on its
+    /// own, as rows of a list are. Every backend passes the selection through this
+    /// before handing it to the native side.
+    ///
+    /// ```
+    /// # use naui_core::{SelectionMode, TreeItem};
+    /// let items = vec![
+    ///     TreeItem::new("src").children(TreeItem::list(["main.rs", "lib.rs"])),
+    ///     TreeItem::new("target").enabled(false).child(TreeItem::new("debug")),
+    /// ];
+    /// let picked = SelectionMode::Multiple.normalize_paths(
+    ///     &items,
+    ///     &[vec![0, 1], vec![0], vec![1, 0], vec![0, 1], vec![9]],
+    /// );
+    /// assert_eq!(picked, vec![vec![0], vec![0, 1]]);
+    /// // With single selection only the first one remains.
+    /// assert_eq!(
+    ///     SelectionMode::Single.normalize_paths(&items, &[vec![0, 1], vec![0]]),
+    ///     vec![vec![0]]
+    /// );
+    /// ```
+    pub fn normalize_paths(self, items: &[TreeItem], paths: &[Vec<usize>]) -> Vec<Vec<usize>> {
+        let mut picked: Vec<Vec<usize>> = paths
+            .iter()
+            .filter(|path| TreeItem::selectable(items, path))
+            .cloned()
+            .collect();
+        // パスの辞書順は、親が先の深さ優先 (木に並ぶ順) と同じ。
+        picked.sort_unstable();
+        picked.dedup();
+        if !self.is_multiple() {
+            picked.truncate(1);
+        }
+        picked
+    }
+}
+
 fn walk_inner(items: &[TreeItem], path: &mut Vec<usize>, f: &mut impl FnMut(&[usize], &TreeItem)) {
     for (index, item) in items.iter().enumerate() {
         path.push(index);
@@ -341,6 +388,33 @@ mod tests {
                 vec![2],
                 vec![2, 0],
             ]
+        );
+    }
+
+    #[test]
+    fn normalize_paths_follows_the_tree_order() {
+        use crate::SelectionMode;
+        let items = sample();
+        assert_eq!(
+            SelectionMode::Multiple.normalize_paths(
+                &items,
+                &[vec![1, 0], vec![0], vec![0, 1], vec![1, 0], vec![1]]
+            ),
+            vec![vec![0], vec![0, 1], vec![1], vec![1, 0]],
+            "親が先の深さ優先に並べ、重複を落とすこと"
+        );
+        assert_eq!(
+            SelectionMode::Multiple.normalize_paths(
+                &items,
+                &[vec![2], vec![2, 0], vec![], vec![9], vec![0, 0, 0]]
+            ),
+            Vec::<Vec<usize>>::new(),
+            "選べない項目と無いパスは落とすこと"
+        );
+        assert_eq!(
+            SelectionMode::Single.normalize_paths(&items, &[vec![2], vec![1, 0], vec![0, 1]]),
+            vec![vec![0, 1]],
+            "単一選択は木に並ぶ順で最初の 1 つだけ"
         );
     }
 

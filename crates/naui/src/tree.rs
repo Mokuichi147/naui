@@ -1,5 +1,5 @@
 use crate::sys;
-use naui_core::TreeItem;
+use naui_core::{SelectionMode, TreeItem};
 
 /// A list whose nested items can be expanded and collapsed. It scrolls by itself.
 ///
@@ -9,6 +9,12 @@ use naui_core::TreeItem;
 ///
 /// Its height is not determined by its contents, so set it with
 /// [`Tree::set_sizing`].
+///
+/// With [`SelectionMode::Multiple`], several items can be selected with ⌘ / Ctrl or
+/// Shift, as in a [`List`](crate::List). Each item is selected on its own: selecting
+/// a branch does not select its children. Selected items inside a branch that is
+/// collapsed stay selected while hidden, until the selection is replaced (a click
+/// without ⌘ / Ctrl or Shift, for example).
 #[derive(Clone)]
 pub struct Tree(pub(crate) sys::Tree);
 
@@ -34,10 +40,32 @@ impl Tree {
         self.0.is_empty()
     }
 
-    /// The path of the selected item. `None` if nothing is selected.
+    /// Switches between single and multiple selection. Single selection by default.
+    ///
+    /// Switching clears the selection without notifying, as [`List`](crate::List)
+    /// does.
+    #[inline]
+    pub fn set_selection_mode(&self, mode: SelectionMode) {
+        self.0.set_selection_mode(mode)
+    }
+
+    #[inline]
+    pub fn selection_mode(&self) -> SelectionMode {
+        self.0.selection_mode()
+    }
+
+    /// The path of the first selected item, in the order the tree shows them. `None`
+    /// if nothing is selected.
     #[inline]
     pub fn selected(&self) -> Option<Vec<usize>> {
         self.0.selected()
+    }
+
+    /// The paths of the selected items in the order the tree shows them (parents
+    /// first), including items hidden inside collapsed branches.
+    #[inline]
+    pub fn selection(&self) -> Vec<Vec<usize>> {
+        self.0.selection()
     }
 
     /// Scrolls until the item at `path` is visible. The selection does not change.
@@ -60,6 +88,16 @@ impl Tree {
         self.0.set_selected(path)
     }
 
+    /// Replaces the selection without notifying.
+    ///
+    /// Paths that point at no item and items that cannot be selected are left out
+    /// (with single selection, only the first remaining item is selected). Branches
+    /// holding the selected items are expanded so they become visible.
+    #[inline]
+    pub fn set_selection(&self, paths: &[Vec<usize>]) {
+        self.0.set_selection(paths)
+    }
+
     /// Clears the selection without notifying.
     #[inline]
     pub fn clear_selection(&self) {
@@ -72,9 +110,19 @@ impl Tree {
         self.0.select(path)
     }
 
-    /// Called with the path of the selected item when the selection changes.
+    /// Replaces the selection through the same path as a user's selection
+    /// (notifies). Paths are left out as in [`Tree::set_selection`].
+    #[inline]
+    pub fn select_many(&self, paths: &[Vec<usize>]) {
+        self.0.select_many(paths)
+    }
+
+    /// Called with the path of the first selected item ([`Tree::selected`]) every
+    /// time the selection changes.
     ///
-    /// When the selection is cleared, it is called with an empty path.
+    /// When the selection is cleared, it is called with an empty path. With
+    /// multiple selection, read [`Tree::selection`] inside it for every selected
+    /// item.
     #[inline]
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
         self.0.on_select(f)

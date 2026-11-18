@@ -885,6 +885,14 @@ fn main() {
         ),
         ("ツリーが選べない枝を飛ばす", tree_skips_disabled_branches),
         (
+            "ツリーの複数選択が GtkListBox と往復し、閉じた枝の中の選択を覚える",
+            tree_multiple_selection_round_trips,
+        ),
+        (
+            "ツリーの単一選択も閉じた枝の中で覚えている",
+            tree_keeps_a_single_selection_inside_a_collapsed_branch,
+        ),
+        (
             "ツリーの開閉ボタンがクロージャへ届く",
             tree_expansion_notifies,
         ),
@@ -8402,6 +8410,130 @@ fn tree_native_selection_notifies(ui: &Ui) -> Result<()> {
     tree.clear_selection();
     assert_eq!(tree.selected(), None);
     assert_eq!(log.borrow().len(), 3);
+    Ok(())
+}
+
+/// The paths selected on the `GtkListBox` side, as depth-first row positions.
+fn tree_native_selected_rows(tree: &naui_gtk::Tree) -> Vec<i32> {
+    let mut rows: Vec<i32> = tree_box_of(tree)
+        .selected_rows()
+        .iter()
+        .map(|row| row.index())
+        .collect();
+    rows.sort_unstable();
+    rows
+}
+
+fn tree_multiple_selection_round_trips(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+    let native = tree_box_of(&tree);
+    assert_eq!(tree.selection_mode(), SelectionMode::Single);
+    assert!(native.activates_on_single_click());
+
+    tree.set_selection_mode(SelectionMode::Multiple);
+    assert_eq!(tree.selection_mode(), SelectionMode::Multiple);
+    assert_eq!(native.selection_mode(), gtk::SelectionMode::Multiple);
+    assert!(
+        !native.activates_on_single_click(),
+        "複数選択では、クリックの Ctrl / Shift を GTK4 に読ませる"
+    );
+    tree.set_expanded(&[0], true);
+    tree.set_expanded(&[1], true);
+
+    let (log, sink) = recorder::<Vec<usize>>();
+    tree.on_select({
+        let mut sink = sink;
+        move |path: &[usize]| sink(path.to_vec())
+    });
+
+    // 行の番号は全項目の深さ優先: 0 src, 1 main.rs, 2 lib.rs, 3 docs, 4 guide, 5 intro.md。
+    // Ctrl のクリックと同じく、GtkListBox 側で行を足していく。
+    native.select_row(native.row_at_index(1).as_ref());
+    native.select_row(native.row_at_index(3).as_ref());
+    assert_eq!(tree.selection(), vec![vec![0, 0], vec![1]]);
+    assert_eq!(tree.selected(), Some(vec![0, 0]));
+    assert_eq!(
+        log.borrow().as_slice(),
+        [vec![0, 0], vec![0, 0]],
+        "先頭の 1 つを通知する"
+    );
+
+    // プログラムから選ぶと、閉じた枝も開いて見せる (通知しない)。
+    tree.set_selection(&[vec![1, 0, 0], vec![0, 0], vec![9]]);
+    assert_eq!(tree.selection(), vec![vec![0, 0], vec![1, 0, 0]]);
+    assert!(tree.is_expanded(&[1, 0]));
+    assert_eq!(tree_native_selected_rows(&tree), [1, 5]);
+    assert_eq!(log.borrow().len(), 2);
+
+    // 枝を閉じても、中の選択は覚えている (GtkListBox の行も選ばれたまま)。
+    tree.collapse(&[1]);
+    assert_eq!(tree.selection(), vec![vec![0, 0], vec![1, 0, 0]]);
+    assert_eq!(tree_native_selected_rows(&tree), [1, 5]);
+    // Ctrl で足しても、隠れた選択は残る。
+    native.select_row(native.row_at_index(2).as_ref());
+    assert_eq!(
+        tree.selection(),
+        vec![vec![0, 0], vec![0, 1], vec![1, 0, 0]]
+    );
+
+    // Ctrl + A は見えている行を足す。閉じた枝の中の行は、元から選んでいたもの以外は入らない。
+    native.emit_by_name::<()>("select-all", &[]);
+    assert_eq!(
+        tree.selection(),
+        vec![vec![0], vec![0, 0], vec![0, 1], vec![1], vec![1, 0, 0]]
+    );
+    assert_eq!(tree_native_selected_rows(&tree), [0, 1, 2, 3, 5]);
+
+    // 開き直すと、覚えていた選択が見える。
+    tree.expand(&[1]);
+    assert!(native.row_at_index(5).expect("intro.md").is_selected());
+
+    // GtkListBox 側で全部外すと、空のパスで通知する。
+    native.unselect_all();
+    assert!(tree.selection().is_empty());
+    assert_eq!(log.borrow().last(), Some(&Vec::new()));
+
+    // select_many は 1 回通知する。select は 1 つに置き換える。
+    let before = log.borrow().len();
+    tree.select_many(&[vec![1], vec![0, 1]]);
+    assert_eq!(tree.selection(), vec![vec![0, 1], vec![1]]);
+    assert_eq!(log.borrow().len(), before + 1);
+    tree.select(&[0]);
+    assert_eq!(tree.selection(), vec![vec![0]]);
+
+    // 単一選択へ戻すと選択は外れ、元のふるまいに戻る。
+    let before = log.borrow().len();
+    tree.set_selection_mode(SelectionMode::Single);
+    assert!(tree.selection().is_empty());
+    assert!(native.activates_on_single_click());
+    assert_eq!(log.borrow().len(), before, "切り替えは通知しない");
+    tree.set_selection(&[vec![1], vec![0, 1]]);
+    assert_eq!(
+        tree.selection(),
+        vec![vec![0, 1]],
+        "単一選択では先頭の 1 つだけ"
+    );
+    Ok(())
+}
+
+fn tree_keeps_a_single_selection_inside_a_collapsed_branch(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+    let (log, sink) = recorder::<Vec<usize>>();
+    tree.on_select({
+        let mut sink = sink;
+        move |path: &[usize]| sink(path.to_vec())
+    });
+    tree.select(&[0, 1]);
+    tree.collapse(&[0]);
+    assert_eq!(tree.selected(), Some(vec![0, 1]), "隠れても選んだまま");
+    tree.expand(&[0]);
+    assert!(tree_box_of(&tree)
+        .row_at_index(2)
+        .expect("lib.rs")
+        .is_selected());
+    assert_eq!(log.borrow().len(), 1, "開閉で選択の通知は起きない");
     Ok(())
 }
 

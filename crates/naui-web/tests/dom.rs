@@ -9704,6 +9704,255 @@ fn tree_opens_ancestors_and_scrolls_to_an_item() {
     });
 }
 
+/// The tree used by the multiple selection tests: src (two leaves), docs (guide >
+/// intro.md) and a disabled target (debug).
+fn multi_tree() -> Vec<naui_core::TreeItem> {
+    use naui_core::TreeItem;
+    vec![
+        TreeItem::new("src")
+            .expanded(true)
+            .children([TreeItem::new("main.rs"), TreeItem::new("lib.rs")]),
+        TreeItem::new("docs")
+            .expanded(true)
+            .child(TreeItem::new("guide").child(TreeItem::new("intro.md"))),
+        TreeItem::new("target")
+            .enabled(false)
+            .child(TreeItem::new("debug")),
+    ]
+}
+
+/// The row (the clickable line) of the tree item whose label is `label`.
+fn tree_row(root: &Element, label: &str) -> Element {
+    let items = root.query_selector_all("[role=treeitem]").expect("項目");
+    (0..items.length())
+        .filter_map(|i| items.item(i))
+        .map(|node| node.unchecked_into::<Element>())
+        .filter_map(|item| item.first_element_child())
+        .find(|row| row.text_content().is_some_and(|text| text.ends_with(label)))
+        .unwrap_or_else(|| panic!("「{label}」の行"))
+}
+
+/// Clicks a tree row with ⌘ / Ctrl or Shift held, as the user does.
+fn click_tree_row(root: &Element, label: &str, ctrl: bool, shift: bool) {
+    let init = MouseEventInit::new();
+    init.set_bubbles(true);
+    init.set_ctrl_key(ctrl);
+    init.set_shift_key(shift);
+    let event = MouseEvent::new_with_mouse_event_init_dict("click", &init).expect("イベント");
+    tree_row(root, label).dispatch_event(&event).expect("配送");
+}
+
+/// The labels of the items marked `aria-selected="true"`, in the order of the tree.
+fn tree_selected_labels(root: &Element) -> Vec<String> {
+    let items = root
+        .query_selector_all("[role=treeitem][aria-selected=true]")
+        .expect("項目");
+    (0..items.length())
+        .filter_map(|i| items.item(i))
+        .map(|node| node.unchecked_into::<Element>())
+        .filter_map(|item| {
+            item.first_element_child()?
+                .last_element_child()?
+                .text_content()
+        })
+        .collect()
+}
+
+#[wasm_bindgen_test]
+fn tree_selects_several_items_with_modifier_clicks() {
+    with_ui(|ui| {
+        let tree = ui.tree()?;
+        tree.set_items(&multi_tree());
+        let mounted = Mounted::new(&tree);
+        let root = &mounted.0;
+        assert_eq!(
+            tree.selection_mode(),
+            SelectionMode::Single,
+            "既定は単一選択"
+        );
+        assert_eq!(root.get_attribute("aria-multiselectable"), None);
+
+        tree.set_selection_mode(SelectionMode::Multiple);
+        assert_eq!(
+            root.get_attribute("aria-multiselectable").as_deref(),
+            Some("true")
+        );
+        let seen = Rc::new(RefCell::new(Vec::<Vec<usize>>::new()));
+        tree.on_select({
+            let seen = seen.clone();
+            move |path| seen.borrow_mut().push(path.to_vec())
+        });
+
+        // ふつうのクリックは 1 つだけ選ぶ。Ctrl で足し、Shift で範囲を選ぶ。
+        click_tree_row(root, "main.rs", false, false);
+        click_tree_row(root, "docs", true, false);
+        assert_eq!(tree.selection(), vec![vec![0, 0], vec![1]]);
+        click_tree_row(root, "guide", false, true);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![1], vec![1, 0]],
+            "Shift は起点 (最後に Ctrl で押した docs) から、見えている項目を選ぶ"
+        );
+        assert_eq!(tree_selected_labels(root), vec!["docs", "guide"]);
+        // 通知は先頭の 1 つ。
+        assert_eq!(*seen.borrow(), vec![vec![0, 0], vec![0, 0], vec![1]]);
+
+        // 枝を選んでも、子は選ばれない。Ctrl で外せる。
+        click_tree_row(root, "src", true, false);
+        assert_eq!(tree.selection(), vec![vec![0], vec![1], vec![1, 0]]);
+        click_tree_row(root, "docs", true, false);
+        assert_eq!(tree.selection(), vec![vec![0], vec![1, 0]]);
+        assert_eq!(tree.selected(), Some(vec![0]));
+
+        // 閉じた枝の中の選択は覚えていて、Ctrl で足しても残る。
+        tree.collapse(&[1]);
+        assert_eq!(tree.selection(), vec![vec![0], vec![1, 0]]);
+        click_tree_row(root, "main.rs", true, false);
+        assert_eq!(tree.selection(), vec![vec![0], vec![0, 0], vec![1, 0]]);
+        tree.expand(&[1]);
+        assert_eq!(tree_selected_labels(root), vec!["src", "main.rs", "guide"]);
+        // ふつうのクリックは、隠れた選択も含めて置き換える。
+        tree.collapse(&[1]);
+        click_tree_row(root, "lib.rs", false, false);
+        assert_eq!(tree.selection(), vec![vec![0, 1]]);
+
+        // 選べない枝は、クリックしても選ばれない。
+        click_tree_row(root, "target", true, false);
+        assert_eq!(tree.selection(), vec![vec![0, 1]]);
+
+        // 単一選択へ戻すと選択は外れ、通知しない。
+        let notified = seen.borrow().len();
+        tree.set_selection_mode(SelectionMode::Single);
+        assert!(tree.selection().is_empty());
+        assert_eq!(seen.borrow().len(), notified);
+        click_tree_row(root, "main.rs", false, false);
+        click_tree_row(root, "lib.rs", true, false);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0, 1]],
+            "単一選択では Ctrl も置き換える"
+        );
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn tree_selection_from_code_is_normalized() {
+    with_ui(|ui| {
+        let tree = ui.tree()?;
+        tree.set_items(&multi_tree());
+        tree.collapse_all();
+        let mounted = Mounted::new(&tree);
+        let seen = Rc::new(RefCell::new(Vec::<Vec<usize>>::new()));
+        tree.on_select({
+            let seen = seen.clone();
+            move |path| seen.borrow_mut().push(path.to_vec())
+        });
+
+        // 単一選択では、木に並ぶ順で最初の 1 つだけ。
+        tree.set_selection(&[vec![1, 0, 0], vec![0, 1]]);
+        assert_eq!(tree.selection(), vec![vec![0, 1]]);
+
+        tree.set_selection_mode(SelectionMode::Multiple);
+        tree.set_selection(&[vec![1, 0, 0], vec![2, 0], vec![0, 1], vec![9], vec![0, 1]]);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0, 1], vec![1, 0, 0]],
+            "選べない項目と無いパスを落とし、木に並ぶ順にそろえる"
+        );
+        assert!(
+            tree.is_expanded(&[0]) && tree.is_expanded(&[1, 0]),
+            "祖先を開く"
+        );
+        assert_eq!(tree_selected_labels(&mounted.0), vec!["lib.rs", "intro.md"]);
+        assert!(seen.borrow().is_empty(), "set_selection は通知しない");
+
+        tree.select_many(&[vec![1], vec![0]]);
+        assert_eq!(tree.selection(), vec![vec![0], vec![1]]);
+        assert_eq!(*seen.borrow(), vec![vec![0]], "select_many は 1 回通知する");
+        tree.select(&[1, 0]);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![1, 0]],
+            "select は 1 つに置き換える"
+        );
+
+        // 作り直すと外れる。
+        tree.set_items(&multi_tree());
+        assert!(tree.selection().is_empty());
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn tree_extends_the_selection_with_keys() {
+    with_ui(|ui| {
+        let tree = ui.tree()?;
+        tree.set_items(&multi_tree());
+        tree.set_selection_mode(SelectionMode::Multiple);
+        let mounted = Mounted::new(&tree);
+        let root = &mounted.0;
+
+        click_tree_row(root, "src", false, false);
+        // Shift + ↓ は範囲を広げる。
+        press_shortcut(root, "ArrowDown", false, true, false);
+        press_shortcut(root, "ArrowDown", false, true, false);
+        assert_eq!(tree.selection(), vec![vec![0], vec![0, 0], vec![0, 1]]);
+        // Ctrl + ↓ は指す項目だけを動かし、Space で足す。
+        press_shortcut(root, "ArrowDown", true, false, false);
+        press_shortcut(root, "ArrowDown", true, false, false);
+        assert_eq!(tree.selection(), vec![vec![0], vec![0, 0], vec![0, 1]]);
+        press_shortcut(root, " ", false, false, false);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0], vec![0, 0], vec![0, 1], vec![1, 0]]
+        );
+        press_shortcut(root, " ", false, false, false);
+        assert_eq!(tree.selection(), vec![vec![0], vec![0, 0], vec![0, 1]]);
+        // 矢印だけなら 1 つに戻る。
+        press_shortcut(root, "ArrowUp", false, false, false);
+        assert_eq!(tree.selection(), vec![vec![1]]);
+
+        // Ctrl + A は見えている選べる項目を足す。閉じた枝の中の選択は残る。
+        tree.set_selection(&[vec![1, 0, 0]]);
+        tree.collapse(&[1, 0]);
+        assert!(press_shortcut(root, "a", true, false, false));
+        assert_eq!(
+            tree.selection(),
+            vec![
+                vec![0],
+                vec![0, 0],
+                vec![0, 1],
+                vec![1],
+                vec![1, 0],
+                vec![1, 0, 0]
+            ]
+        );
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn tree_keeps_a_single_selection_inside_a_collapsed_branch() {
+    with_ui(|ui| {
+        let tree = ui.tree()?;
+        tree.set_items(&multi_tree());
+        let mounted = Mounted::new(&tree);
+        let seen = Rc::new(Cell::new(0));
+        tree.on_select({
+            let seen = seen.clone();
+            move |_| seen.set(seen.get() + 1)
+        });
+        click_tree_row(&mounted.0, "lib.rs", false, false);
+        tree.collapse(&[0]);
+        assert_eq!(tree.selected(), Some(vec![0, 1]), "隠れても選んだまま");
+        tree.expand(&[0]);
+        assert_eq!(tree_selected_labels(&mounted.0), vec!["lib.rs"]);
+        assert_eq!(seen.get(), 1, "開閉で選択の通知は起きない");
+        Ok(())
+    });
+}
+
 // ------------------------------------------------------------- WebWidgetExt
 
 #[wasm_bindgen_test]

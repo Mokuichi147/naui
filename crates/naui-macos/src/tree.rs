@@ -17,14 +17,15 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use naui_core::TreeItem;
+use naui_core::{SelectionMode, TreeItem};
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
-    NSControlTextEditingDelegate, NSOutlineView, NSOutlineViewDataSource, NSOutlineViewDelegate,
-    NSScrollView, NSTableColumn, NSTableColumnResizingOptions, NSTableViewColumnAutoresizingStyle,
-    NSTableViewDataSource, NSTableViewDelegate, NSTableViewStyle, NSView,
+    NSApplication, NSControlTextEditingDelegate, NSEventModifierFlags, NSEventType, NSOutlineView,
+    NSOutlineViewDataSource, NSOutlineViewDelegate, NSScrollView, NSTableColumn,
+    NSTableColumnResizingOptions, NSTableViewColumnAutoresizingStyle, NSTableViewDataSource,
+    NSTableViewDelegate, NSTableViewStyle, NSView,
 };
 use objc2_foundation::{NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSString};
 
@@ -177,6 +178,14 @@ struct SourceState {
     /// code, since AppKit sends notifications even for `expandItem:` and
     /// `selectRowIndexes:`.
     silent: Rc<Cell<bool>>,
+    /// The selected items as seen by naui (normalized, in tree order).
+    ///
+    /// AppKit **deselects the rows inside a branch when it is collapsed**, while naui
+    /// keeps them selected but hidden (as GTK, Windows and the Web do). So the
+    /// selection is held here, and written back to AppKit when the branch is
+    /// expanded again ([`TreeSource::restore_selection`]).
+    selection: Rc<RefCell<Vec<Vec<usize>>>>,
+    mode: Rc<Cell<SelectionMode>>,
     /// Row heights. Measured once at creation.
     heights: RowHeights,
 }
@@ -189,6 +198,13 @@ impl SourceState {
             true => set.insert(path.to_vec()),
             false => set.remove(path),
         };
+    }
+
+    /// Whether the item at the path has a row now (all its ancestors are expanded).
+    fn is_shown(&self, outline: &NSOutlineView, path: &[usize]) -> bool {
+        self.nodes
+            .find(path)
+            .is_some_and(|node| unsafe { outline.rowForItem(Some(&node)) } >= 0)
     }
 
     /// The number of children of the item the path points at. The empty path points at
@@ -296,8 +312,15 @@ define_class!(
             let Ok(outline) = object.downcast::<NSOutlineView>() else {
                 return;
             };
-            let path = selected_path(&outline, &state.nodes);
-            state.handler.emit(&path);
+            if self.take_native_selection(&outline) {
+                let first = state
+                    .selection
+                    .borrow()
+                    .first()
+                    .cloned()
+                    .unwrap_or_default();
+                state.handler.emit(&first);
+            }
         }
 
         // AppKit は枝を開閉すると、その中の枝の開閉も連鎖して通知してくる
@@ -315,6 +338,14 @@ define_class!(
 
         #[unsafe(method(outlineViewItemDidExpand:))]
         fn item_did_expand(&self, notification: &NSNotification) {
+            // 開いて見えるようになった行へ、覚えている選択を書き戻す。連鎖して
+            // 開き直された中の枝の分も含めて、来るたびに合わせる。
+            if let Some(outline) = notification
+                .object()
+                .and_then(|object| object.downcast::<NSOutlineView>().ok())
+            {
+                self.restore_selection(&outline);
+            }
             self.notify_expansion(notification, true);
         }
 
@@ -350,6 +381,58 @@ impl TreeSource {
         };
         let items = state.items.borrow();
         TreeItem::at(&items, &path).is_some_and(|item| item.detail.is_some())
+    }
+
+    /// Takes in a selection the user changed on the AppKit side. Returns whether naui's
+    /// selection changed (whether to notify).
+    ///
+    /// - When rows disappear only because their branch was collapsed, nothing has
+    ///   changed for naui: they stay selected while hidden.
+    /// - With ⌘ or ⇧ held (adding, removing or extending), hidden selected items are
+    ///   kept along with what AppKit selected.
+    /// - Otherwise (a plain click or arrow key) the selection is replaced, hidden items
+    ///   included, as GTK's `GtkListBox` does.
+    fn take_native_selection(&self, outline: &NSOutlineView) -> bool {
+        let state = self.ivars();
+        let native = selected_paths(outline, &state.nodes);
+        let before = state.selection.borrow().clone();
+        let removed_only_hidden = native.iter().all(|path| before.contains(path))
+            && before
+                .iter()
+                .filter(|path| !native.contains(path))
+                .all(|path| !state.is_shown(outline, path));
+        if removed_only_hidden && native.len() < before.len() {
+            return false;
+        }
+        let mut picked = native;
+        if state.mode.get().is_multiple() && extends_selection(MainThreadMarker::from(self)) {
+            picked.extend(
+                before
+                    .into_iter()
+                    .filter(|path| !state.is_shown(outline, path)),
+            );
+        }
+        let picked = state
+            .mode
+            .get()
+            .normalize_paths(&state.items.borrow(), &picked);
+        *state.selection.borrow_mut() = picked;
+        true
+    }
+
+    /// Writes the remembered selection back to the rows AppKit shows now (without
+    /// notifying). Only when they differ, since AppKit notifies even for the same
+    /// selection.
+    fn restore_selection(&self, outline: &NSOutlineView) {
+        let state = self.ivars();
+        let wanted = selection_rows(outline, &state.nodes, &state.selection.borrow());
+        let current = outline.selectedRowIndexes();
+        if current.isEqualToIndexSet(&wanted) {
+            return;
+        }
+        let previous = state.silent.replace(true);
+        outline.selectRowIndexes_byExtendingSelection(&wanted, false);
+        state.silent.set(previous);
     }
 
     /// Remembers the item about to be expanded or collapsed. Only the first in a chain
@@ -391,16 +474,59 @@ fn notified_path(state: &SourceState, notification: &NSNotification) -> Option<V
     state.nodes.path(Some(&item))
 }
 
-/// The path of the selected item. Empty if nothing is selected.
-fn selected_path(outline: &NSOutlineView, nodes: &Nodes) -> Vec<usize> {
-    let row = outline.selectedRow();
-    if row < 0 {
-        return Vec::new();
+/// The paths of the rows AppKit has selected, from the top (only visible rows).
+fn selected_paths(outline: &NSOutlineView, nodes: &Nodes) -> Vec<Vec<usize>> {
+    let rows = outline.selectedRowIndexes();
+    let mut paths = Vec::new();
+    let mut row = rows.firstIndex();
+    while row != objc2_foundation::NSNotFound as usize {
+        if let Some(path) = outline
+            .itemAtRow(row as NSInteger)
+            .and_then(|item| nodes.path(Some(&item)))
+        {
+            paths.push(path);
+        }
+        row = rows.indexGreaterThanIndex(row);
     }
-    outline
-        .itemAtRow(row)
-        .and_then(|item| nodes.path(Some(&item)))
-        .unwrap_or_default()
+    paths
+}
+
+/// The rows of the selected items that are visible now. Hidden ones have no row.
+fn selection_rows(
+    outline: &NSOutlineView,
+    nodes: &Nodes,
+    selection: &[Vec<usize>],
+) -> Retained<NSIndexSet> {
+    let set = NSMutableIndexSet::new();
+    for path in selection {
+        let Some(node) = nodes.find(path) else {
+            continue;
+        };
+        let row = unsafe { outline.rowForItem(Some(&node)) };
+        if row >= 0 {
+            set.addIndex(row as usize);
+        }
+    }
+    Retained::into_super(set)
+}
+
+/// Whether the event AppKit is handling now adds to the selection rather than
+/// replacing it (⌘ or ⇧ with a click or a key, as `NSTableView` reads them).
+fn extends_selection(mtm: MainThreadMarker) -> bool {
+    let Some(event) = NSApplication::sharedApplication(mtm).currentEvent() else {
+        return false;
+    };
+    let pointer_or_key = matches!(
+        event.r#type(),
+        NSEventType::LeftMouseDown
+            | NSEventType::LeftMouseUp
+            | NSEventType::LeftMouseDragged
+            | NSEventType::KeyDown
+    );
+    pointer_or_key
+        && event
+            .modifierFlags()
+            .intersects(NSEventModifierFlags::Command | NSEventModifierFlags::Shift)
 }
 
 struct TreeInner {
@@ -415,8 +541,11 @@ struct TreeInner {
     /// The expansion state as seen by naui (the same as [`SourceState::expanded`]).
     expanded: Rc<RefCell<HashSet<Vec<usize>>>>,
     silent: Rc<Cell<bool>>,
+    /// The selection as seen by naui (the same as [`SourceState::selection`]).
+    selection: Rc<RefCell<Vec<Vec<usize>>>>,
+    mode: Rc<Cell<SelectionMode>>,
     /// Delegates and data sources are weak references, so they are held.
-    _source: Retained<TreeSource>,
+    source: Retained<TreeSource>,
 }
 
 /// A list whose nested items can be expanded and collapsed (NSOutlineView).
@@ -472,6 +601,8 @@ impl Tree {
         let expand = ExpandHandler::default();
         let expanded: Rc<RefCell<HashSet<Vec<usize>>>> = Rc::new(RefCell::new(HashSet::new()));
         let silent = Rc::new(Cell::new(false));
+        let selection: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+        let mode = Rc::new(Cell::new(SelectionMode::Single));
         let source = TreeSource::new(
             mtm,
             SourceState {
@@ -482,6 +613,8 @@ impl Tree {
                 target: RefCell::new(None),
                 expanded: expanded.clone(),
                 silent: silent.clone(),
+                selection: selection.clone(),
+                mode: mode.clone(),
                 heights: RowHeights::measure(mtm),
             },
         );
@@ -503,7 +636,9 @@ impl Tree {
             expand,
             expanded,
             silent,
-            _source: source,
+            selection,
+            mode,
+            source,
         }))
     }
 
@@ -514,6 +649,7 @@ impl Tree {
         *self.0.items.borrow_mut() = items.to_vec();
         self.0.nodes.reset(items);
         self.0.expanded.borrow_mut().clear();
+        self.0.selection.borrow_mut().clear();
         self.without_notifying(|this| {
             this.0.outline.reloadData();
             unsafe { this.0.outline.deselectAll(None) };
@@ -535,10 +671,29 @@ impl Tree {
         self.len() == 0
     }
 
-    /// The path of the selected item. `None` if nothing is selected.
+    /// Switches between single and multiple selection. The selection is cleared
+    /// without notifying.
+    pub fn set_selection_mode(&self, mode: SelectionMode) {
+        self.0.mode.set(mode);
+        self.0
+            .outline
+            .setAllowsMultipleSelection(mode.is_multiple());
+        self.clear_selection();
+    }
+
+    pub fn selection_mode(&self) -> SelectionMode {
+        self.0.mode.get()
+    }
+
+    /// The path of the first selected item. `None` if nothing is selected.
     pub fn selected(&self) -> Option<Vec<usize>> {
-        let path = selected_path(&self.0.outline, &self.0.nodes);
-        (!path.is_empty()).then_some(path)
+        self.0.selection.borrow().first().cloned()
+    }
+
+    /// The paths of the selected items in the order the tree shows them, including
+    /// items hidden inside collapsed branches.
+    pub fn selection(&self) -> Vec<Vec<usize>> {
+        self.0.selection.borrow().clone()
     }
 
     /// Scrolls until the item at `path` is visible. The selection does not change.
@@ -569,24 +724,36 @@ impl Tree {
     /// exist clears the selection. Items inside a collapsed branch are selected after
     /// their ancestors are expanded so they become visible.
     pub fn set_selected(&self, path: &[usize]) {
-        self.without_notifying(|this| this.apply_selected(path));
+        self.set_selection(&[path.to_vec()]);
+    }
+
+    /// Replaces the selection without notifying. Paths that cannot be selected are
+    /// left out, and the branches holding the rest are expanded.
+    pub fn set_selection(&self, paths: &[Vec<usize>]) {
+        self.without_notifying(|this| this.apply_selection(paths));
     }
 
     /// Clears the selection without notifying.
     pub fn clear_selection(&self) {
-        self.without_notifying(|this| unsafe { this.0.outline.deselectAll(None) });
+        self.set_selection(&[]);
     }
 
     /// Selects one item through the same path as a user's selection (notifies).
     pub fn select(&self, path: &[usize]) {
-        // AppKit は同じ項目を選び直すとデリゲートを呼ばない。
-        // 通知の回数をそろえるため、ここで 1 回だけ出す。
-        self.without_notifying(|this| this.apply_selected(path));
-        let actual = selected_path(&self.0.outline, &self.0.nodes);
-        self.0.handler.emit(&actual);
+        self.select_many(&[path.to_vec()]);
     }
 
-    /// Called with the path of the selected item when the selection changes.
+    /// Replaces the selection through the same path as a user's selection
+    /// (notifies).
+    pub fn select_many(&self, paths: &[Vec<usize>]) {
+        // AppKit は同じ項目を選び直すとデリゲートを呼ばない。
+        // 通知の回数をそろえるため、ここで 1 回だけ出す。
+        self.set_selection(paths);
+        let first = self.selected().unwrap_or_default();
+        self.0.handler.emit(&first);
+    }
+
+    /// Called with the path of the first selected item when the selection changes.
     ///
     /// When the selection is cleared, it is called with an empty path.
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
@@ -681,30 +848,20 @@ impl Tree {
         }
     }
 
-    /// Applies the selection to the native side.
-    fn apply_selected(&self, path: &[usize]) {
-        let deselect = || unsafe { self.0.outline.deselectAll(None) };
-        if !TreeItem::selectable(&self.0.items.borrow(), path) {
-            deselect();
-            return;
+    /// Remembers the selection and applies it to the native side.
+    fn apply_selection(&self, paths: &[Vec<usize>]) {
+        let picked = self
+            .0
+            .mode
+            .get()
+            .normalize_paths(&self.0.items.borrow(), paths);
+        // 見えていない行は選べないので、先にすべての祖先を開いてから行を引く
+        // (開くたびに行の番号がずれる)。
+        for path in &picked {
+            self.apply_expanded(&path[..path.len() - 1], true);
         }
-        // 見えていない行は選べないので、祖先を開いてから探す。
-        self.apply_expanded(path, true);
-        let Some(node) = self.0.nodes.find(path) else {
-            deselect();
-            return;
-        };
-        let row = unsafe { self.0.outline.rowForItem(Some(&node)) };
-        if row < 0 {
-            deselect();
-            return;
-        }
-        let set = NSMutableIndexSet::new();
-        set.addIndex(row as usize);
-        let set: &NSIndexSet = set.as_ref();
-        self.0
-            .outline
-            .selectRowIndexes_byExtendingSelection(set, false);
+        *self.0.selection.borrow_mut() = picked;
+        self.0.source.restore_selection(&self.0.outline);
     }
 
     /// Operates with notifications from AppKit stopped.
