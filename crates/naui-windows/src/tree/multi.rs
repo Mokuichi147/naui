@@ -460,6 +460,7 @@ impl Tree {
             let Ok(items) = multi.list_view.Items() else {
                 return;
             };
+            let selected = self.0.selected.borrow();
             let previous = self.0.silent.replace(true);
             // どちらも深さ優先の順 (行の番号の昇順) なので、並べて突き合わせる。
             let (mut old, mut new, mut at) = (0, 0, 0u32);
@@ -480,7 +481,15 @@ impl Tree {
                         old += 1;
                     }
                     (_, Some(b)) => {
-                        if let Ok(element) = multi.rows[*b].item.cast::<IInspectable>() {
+                        let row = &multi.rows[*b];
+                        // 入れる行の `IsSelected` を、覚えている選択に合わせてから入れる。
+                        // `ListView` は入れた行の `IsSelected` を自分の選択として拾い、
+                        // あとから書いた分は行を組むときに消してしまう。抜いたときの
+                        // `IsSelected` が残っていると、外した選択が戻ってくる。
+                        let _ = row
+                            .item
+                            .SetIsSelected(selected.binary_search(&row.path).is_ok());
+                        if let Ok(element) = row.item.cast::<IInspectable>() {
                             let _ = items.InsertAt(at, &element);
                         }
                         new += 1;

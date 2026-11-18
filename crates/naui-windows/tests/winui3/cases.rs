@@ -7616,6 +7616,36 @@ fn tree_multiple_selection_uses_a_list_view(ui: &Ui) -> Result<()> {
             "先頭の 1 つを通知する"
         );
 
+        // 落とした隠れた選択は、枝を開き直しても戻らない。抜いた行に残った
+        // IsSelected を、入れ直したときに ListView が選択として拾わないこと。
+        let notified = seen.borrow().len();
+        tree.expand(&[1]);
+        pump_until(Duration::from_millis(500), || false);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0, 0], vec![0, 1]],
+            "intro.md は選ばれていない"
+        );
+        assert_eq!(picked(), vec![1, 2], "ListView でも intro.md は外れている");
+        assert_eq!(seen.borrow().len(), notified, "開いただけでは通知しない");
+
+        // 覚えている隠れた選択は、画面の上で閉じて開き直しても選ばれて見える。
+        tree.set_selection(&[vec![0, 0], vec![1, 0, 0]]);
+        pump_until(Duration::from_millis(300), || false);
+        tree.collapse(&[1]);
+        pump_until(Duration::from_millis(300), || false);
+        tree.expand(&[1]);
+        pump_until(Duration::from_millis(500), || false);
+        assert_eq!(tree.selection(), vec![vec![0, 0], vec![1, 0, 0]]);
+        assert_eq!(picked(), vec![1, 5], "開き直した intro.md も選ばれて見える");
+        assert_eq!(
+            seen.borrow().len(),
+            notified,
+            "開閉と set_selection は通知しない"
+        );
+        tree.set_selection(&[vec![0, 0], vec![0, 1]]);
+        tree.collapse(&[1]);
+
         // すべて選んでも、選べない項目は外れる。
         list.SelectAll().expect("SelectAll");
         pump_until(Duration::from_secs(2), || tree.selection().len() > 2);
