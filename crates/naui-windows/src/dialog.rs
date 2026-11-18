@@ -38,6 +38,9 @@ use crate::Slot;
 
 /// How long [`Dialog::open`] and [`Dialog::respond`] wait before trying again.
 const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
+/// How long [`Dialog::respond`] waits for a clicked button to close the dialog
+/// before clicking it again.
+const RECHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
 /// How many more times [`Dialog::respond`] looks for the button (about a second).
 const PRESS_TRIES: u32 = 50;
 /// How many more times [`Dialog::open`] tries to show it (about 10 seconds).
@@ -68,6 +71,8 @@ struct DialogInner {
     forced: Cell<Option<DialogResponse>>,
     /// Whether a `Closing` still to come belongs to an opening already finished.
     stale_closing: Cell<bool>,
+    /// Counts the times it has been shown, to tell one opening from the next.
+    opening: Cell<u64>,
 }
 
 /// A modal dialog (ContentDialog).
@@ -117,6 +122,7 @@ impl Dialog {
             shown: Cell::new(false),
             forced: Cell::new(None),
             stale_closing: Cell::new(false),
+            opening: Cell::new(0),
         }));
         this.set_title(title);
         this.apply_buttons()?;
@@ -157,11 +163,6 @@ impl Dialog {
 
     /// Cleanup and notification on close.
     fn finish(&self, result: ContentDialogResult) {
-        eprintln!(
-            "DIAG dialog Closing: stale={} forced={:?}",
-            self.0.stale_closing.get(),
-            self.0.forced.get()
-        );
         if self.0.stale_closing.replace(false) {
             return; // もう閉じたことにした回の `Closing`。
         }
@@ -357,17 +358,14 @@ impl Dialog {
         }
         match self.show() {
             Ok(()) => {
-                eprintln!("DIAG dialog shown (tries left {tries})");
                 self.0.shown.set(true);
                 self.0.stale_closing.set(false);
+                self.0.opening.set(self.0.opening.get().wrapping_add(1));
                 if let Some(response) = self.0.pending.take() {
                     self.press(response, PRESS_TRIES);
                 }
             }
-            Err(error) if tries > 0 && crate::window::has_owner_window() => {
-                if tries.is_multiple_of(50) {
-                    eprintln!("DIAG dialog not shown yet ({tries}): {error}");
-                }
+            Err(_) if tries > 0 && crate::window::has_owner_window() => {
                 self.later(move |this| this.try_show(tries - 1));
             }
             Err(error) => {
@@ -380,11 +378,16 @@ impl Dialog {
     /// Calls `f` on the UI thread after [`RETRY_INTERVAL`], if the dialog is still
     /// alive.
     fn later(&self, f: impl FnOnce(&Dialog) + 'static) {
+        self.later_by(RETRY_INTERVAL, f);
+    }
+
+    /// Calls `f` on the UI thread after `delay`, if the dialog is still alive.
+    fn later_by(&self, delay: std::time::Duration, f: impl FnOnce(&Dialog) + 'static) {
         let weak = UiThreadCell::new(Rc::downgrade(&self.0));
         let f = UiThreadCell::new(Some(f));
         naui_core::MainThread::post_after(
             &crate::main_thread::Dispatcher::for_current_thread(),
-            RETRY_INTERVAL,
+            delay,
             Box::new(move || {
                 let inner = weak.with_mut(|weak| weak.upgrade());
                 let f = f.with_mut(Option::take);
@@ -441,7 +444,14 @@ impl Dialog {
             Err(_) => false,
         };
         if pressed {
-            eprintln!("DIAG dialog pressed {response:?} through UIA");
+            // 開き直した直後に押すと、WinUI が受け付けたのに閉じないことがある
+            // (前の回が閉じきる前)。同じ回のまま開いていれば、少し待って押し直す。
+            let opening = self.0.opening.get();
+            self.later_by(RECHECK_INTERVAL, move |this| {
+                if this.0.open.get() && this.0.opening.get() == opening && tries > 0 {
+                    this.press(response, tries - 1);
+                }
+            });
             return;
         }
         if tries > 0 {
@@ -457,13 +467,8 @@ impl Dialog {
         if response != DialogResponse::Cancel && !self.0.enabled.get().get(response) {
             return;
         }
-        eprintln!("DIAG dialog closing with {response:?} itself");
         self.0.forced.set(Some(response));
-        let hidden = self.0.native.Hide();
-        eprintln!(
-            "DIAG dialog hide: {hidden:?}, open after hide: {}",
-            self.0.open.get()
-        );
+        let _ = self.0.native.Hide();
         // `Closing` が来ないまま (何も描かれていない窓) なら、ここで閉じたことにする。
         self.later(|this| {
             let Some(response) = this.0.forced.take() else {
