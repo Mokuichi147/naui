@@ -1347,6 +1347,9 @@ impl List {
             let _ = state.try_with_mut(|weak| {
                 if let Some(inner) = weak.upgrade() {
                     inner.pointer_row.set(Some(index));
+                    // 新しい押下より前のドラッグは終わっている。完了が届かずに残った
+                    // ドラッグで選択の通知を止めたままにしない。
+                    inner.dragging.take();
                 }
             });
             Ok(())
@@ -2132,6 +2135,10 @@ impl List {
         let _ = list_view.SetCanDragItems(on);
         let _ = list_view.SetCanReorderItems(on);
         let _ = list_view.SetAllowDrop(on);
+        // 途中で切ると `DragItemsCompleted` は来ない。
+        if !on {
+            self.0.dragging.take();
+        }
     }
 
     /// Follows `ListView`'s own reordering: which rows a drag takes, and where the drop
@@ -2205,9 +2212,12 @@ impl List {
         let native_rows = self.0.native_rows.borrow();
         let mut rows = Vec::new();
         for content in contents {
-            let offset = native_rows
-                .iter()
-                .position(|row| row.Content().is_ok_and(|own| same_object(&own, &content)))?;
+            // WinUI のソースでは、自分自身がコンテナの項目は `Content` で渡る。項目その
+            // ものが渡っても受けられるようにしておく。
+            let offset = native_rows.iter().position(|row| {
+                same_object(row, &content)
+                    || row.Content().is_ok_and(|own| same_object(&own, &content))
+            })?;
             rows.push(start + offset);
         }
         rows.sort_unstable();

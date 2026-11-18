@@ -7002,13 +7002,19 @@ fn list_reorder_by_a_real_drag(ui: &Ui) -> Result<()> {
         list.set_reorderable(true);
         aim_at_row_spot(hwnd, list, 0, 40.0, 0.5)?;
         send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
-        // 少しずつ動かして、ドラッグを始めさせてから下の行へ運ぶ。
-        for (row, fraction) in [(0, 0.8), (1, 0.5), (2, 0.5), (3, 0.5), (3, 0.8)] {
-            aim_at_row_spot(hwnd, list, row, 40.0, fraction)?;
-            send_input(mouse_input(MOUSEEVENTF_MOVE, 0));
-        }
+        // 少しずつ動かして、ドラッグを始めさせてから下の行へ運ぶ。途中で狙えなくなっても
+        // ボタンは必ず離す (押したままだと後のケースの入力が狂う)。
+        let carried = [(0, 0.8), (1, 0.5), (2, 0.5), (3, 0.5), (3, 0.8)]
+            .into_iter()
+            .try_for_each(|(row, fraction)| {
+                aim_at_row_spot(hwnd, list, row, 40.0, fraction)?;
+                send_input(mouse_input(MOUSEEVENTF_MOVE, 0));
+                Some(())
+            });
         pump_until(Duration::from_millis(300), || false);
         send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
+        carried?;
+        println!("     (本物のマウスでドラッグした)");
         pump_until(Duration::from_secs(3), || !moves.borrow().is_empty());
         let moves = moves.borrow();
         assert_eq!(moves.len(), 1, "ドロップで 1 回だけ並べ替わる: {moves:?}");
