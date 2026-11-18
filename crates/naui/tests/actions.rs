@@ -9,8 +9,7 @@
 //! Each backend's own integration tests check the native side in more detail. These
 //! check what an app's tests rely on, the same way on all four platforms. Windows
 //! needs this event loop: its integration tests run before the window is on screen,
-//! where a `TextBox` has no template (so no UI Automation Value pattern) and a
-//! `ContentDialog` cannot be shown.
+//! where a `TextBox` raises no `TextChanged` and a `ContentDialog` cannot be shown.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -82,10 +81,15 @@ async fn typing_notifies_like_the_user(ui: Ui) -> Result<()> {
     field.on_submit(sink);
     field.enter_text("Ada");
     assert_eq!(field.text(), "Ada");
-    // Windows は `TextChanged` を後から出すので、届くまで待つ。
     testing::wait_until(&ui, || last_is(&changes, "Ada")).await?;
     field.submit();
     assert_eq!(*submits.borrow(), ["Ada"]);
+    // 続けて打っても、打つたびに 1 度だけ呼ぶ (Windows では、あとから来る
+    // `TextChanged` で二重に呼ばない)。
+    field.enter_text("Grace");
+    field.enter_text("Hopper");
+    testing::settle(&ui).await;
+    assert_eq!(*changes.borrow(), ["Ada", "Grace", "Hopper"]);
 
     let (changes, sink) = text_recorder();
     password.on_change(sink);

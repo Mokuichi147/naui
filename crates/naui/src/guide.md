@@ -3238,11 +3238,13 @@ with [`testing::wait_until`]).
 and typing over it, so `on_change` is called once with the new text, and `submit`
 (`search` on [`SearchInput`]) confirms as Enter does. They go through each
 platform's own path for typed text (AppKit's text-change notification,
-`GtkEditable`, UI Automation's Value pattern, the DOM's `input` event), but no key
-is pressed: `on_key_down` is not called and no IME is involved. ([`TextArea`] has
-no `submit`, since Enter types a newline there.) **On Windows `on_change` can
-arrive a moment after `enter_text` returns** (WinUI raises `TextChanged` from the
-event loop), so show the window first and wait for what the notification does:
+`GtkEditable`, the DOM's `input` event), but no key is pressed: `on_key_down` is
+not called and no IME is involved. On Windows, WinUI gives the app's own process
+no UI Automation Value pattern for a text field, so naui writes the text and calls
+`on_change` itself before `enter_text` returns, whether or not the window has been
+drawn. ([`TextArea`] has no `submit`, since Enter types a newline there.) Wait for
+what the notification does with [`testing::wait_until`] where it takes effect
+later:
 
 ```rust,ignore
 app.window.show();

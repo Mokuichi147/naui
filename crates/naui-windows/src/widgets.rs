@@ -749,9 +749,10 @@ impl TextInput {
         self.0.on_submit.emit(&text);
     }
 
-    /// Replaces the text the way typing does, so `on_change` is called (for tests
-    /// and automation): through UI Automation's Value pattern, or where the
-    /// `TextBox` has no template yet, by writing the text and notifying right away.
+    /// Replaces the text the way typing does, so `on_change` is called with it once,
+    /// before this returns (for tests and automation). It writes the text without
+    /// going through UI Automation, the same on every window. Does nothing while
+    /// disabled or read-only.
     pub fn enter_text(&self, text: &str) {
         enter_text_box(&self.0.native, &self.0.change, text, text);
     }
@@ -824,24 +825,18 @@ impl TextInput {
 /// Replaces a `TextBox`'s text the way typing does, for `enter_text` (tests and
 /// automation). Does nothing while it is disabled or read-only.
 ///
-/// It goes through UI Automation's Value pattern (`SetValue`), the path assistive
-/// technology types with, so WinUI raises `TextChanged`, which arrives from the
-/// event loop a moment after this returns.
-///
-/// A `TextBox` has the Value pattern only once WinUI has applied its template,
-/// which it does when the window is drawn. Where it has not (a window not shown
-/// yet, or one nothing draws, as on CI runners), the text is written to `Text` and
-/// `change` is notified with `notified` right away, since WinUI raises no
-/// `TextChanged` there either. A `TextChanged` for the same text that might still
-/// follow is not notified again.
+/// It writes `Text` and notifies `change` with `notified` right away, the same on
+/// every window, drawn or not. It does not go through UI Automation: from inside
+/// the process, the `TextBox`'s peer (`TextBoxAutomationPeer`) hands out no Value
+/// pattern even once the window is drawn (`GetPattern` returns empty for every
+/// pattern; only UI Automation clients in other processes see one). The
+/// `TextChanged` WinUI raises later for the written text is not notified again.
 pub(crate) fn enter_text_box(native: &TextBox, change: &ChangeHandler, text: &str, notified: &str) {
     if !is_typable(native) {
         return;
     }
-    if !type_with_automation(native, text) {
-        let _ = native.SetText(&HSTRING::from(text));
-        change.emit_typed(notified);
-    }
+    let _ = native.SetText(&HSTRING::from(text));
+    change.emit_typed(notified);
 }
 
 /// Whether a user could type into the `TextBox` (enabled and not read-only).
@@ -849,19 +844,10 @@ pub(crate) fn is_typable(native: &TextBox) -> bool {
     native.IsEnabled().unwrap_or(false) && !native.IsReadOnly().unwrap_or(true)
 }
 
-/// Types `text` over the `TextBox`'s text through UI Automation's Value pattern.
-/// `false` where it has no such pattern yet (no template applied).
-pub(crate) fn type_with_automation(native: &TextBox, text: &str) -> bool {
-    native
-        .cast::<UIElement>()
-        .is_ok_and(|element| crate::automation::set_value(&element, text).is_ok())
-}
-
 /// The app's `on_change` for a field whose native change event naui subscribes to.
 ///
-/// It also remembers the text `enter_text` notified for itself where it could not
-/// go through UI Automation, so that a native event for the same text that may
-/// follow is not notified twice.
+/// It also remembers the text `enter_text` notified for itself, so that the native
+/// events that follow for it are not notified twice.
 #[derive(Clone)]
 pub(crate) struct ChangeHandler {
     handler: TextHandler,
@@ -882,9 +868,23 @@ impl ChangeHandler {
 
     /// The native control changed: notifies, unless it is the text `enter_text`
     /// has already notified.
+    ///
+    /// The native event comes later and reads the text as it is then, so after
+    /// `enter_text` twice in a row both events read the second text. That text is
+    /// therefore kept until a different one arrives, rather than for one event.
     pub(crate) fn native_changed(&self, text: &str) {
-        let echo = self.echo.try_with_mut(|echo| echo.take()).flatten();
-        if echo.as_deref() == Some(text) {
+        let echoed = self
+            .echo
+            .try_with_mut(|echo| {
+                if echo.as_deref() == Some(text) {
+                    true
+                } else {
+                    *echo = None;
+                    false
+                }
+            })
+            .unwrap_or(false);
+        if echoed {
             return;
         }
         self.handler.emit(text);
@@ -970,24 +970,20 @@ impl PasswordInput {
         self.0.on_submit.emit(&text);
     }
 
-    /// Replaces the text the way typing does, so `on_change` is called (for tests
-    /// and automation). Does nothing while disabled.
+    /// Replaces the text the way typing does, so `on_change` is called with it once,
+    /// before this returns (for tests and automation). Does nothing while disabled.
     ///
-    /// It goes through UI Automation's Value pattern, so WinUI raises
-    /// `PasswordChanged`. Where the `PasswordBox` has no template yet, it writes the
-    /// password and notifies right away instead.
+    /// It writes the password and notifies right away, as
+    /// [`TextInput::enter_text`] does (the `PasswordBox`'s peer hands out no Value
+    /// pattern inside the process either). The `PasswordChanged` that follows is
+    /// not notified again.
     pub fn enter_text(&self, text: &str) {
         let native = &self.0.native;
         if !native.IsEnabled().unwrap_or(false) {
             return;
         }
-        let typed = native
-            .cast::<UIElement>()
-            .is_ok_and(|element| crate::automation::set_value(&element, text).is_ok());
-        if !typed {
-            let _ = native.SetPassword(&HSTRING::from(text));
-            self.0.change.emit_typed(text);
-        }
+        let _ = native.SetPassword(&HSTRING::from(text));
+        self.0.change.emit_typed(text);
     }
 
     /// Confirms it as Enter does, so `on_submit` is called (for tests and
@@ -1136,9 +1132,10 @@ impl TextArea {
         }
     }
 
-    /// Replaces the text the way typing does, so `on_change` is called (for tests
-    /// and automation): through UI Automation's Value pattern, or where the
-    /// `TextBox` has no template yet, by writing the text and notifying right away.
+    /// Replaces the text the way typing does, so `on_change` is called with it once,
+    /// before this returns (for tests and automation). It writes the text without
+    /// going through UI Automation, the same on every window. Does nothing while
+    /// disabled or read-only.
     pub fn enter_text(&self, text: &str) {
         enter_text_box(&self.0.native, &self.0.change, text, &unix_newlines(text));
     }

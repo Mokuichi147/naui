@@ -304,18 +304,21 @@ that shape are covered in
   through an IME. `enter_text` replaces the whole text at once, so `on_change` is
   called once with the new text rather than once per character, and an
   `EditableComboBox` completes nothing from its suggestions.
-- On Windows, `enter_text` and `respond` go through UI Automation, which reaches a
-  control only once WinUI has applied its template, when the window is drawn.
-  `on_change` then arrives from the event loop a moment after `enter_text` returns
-  (WinUI raises `TextChanged` asynchronously); wait for its effect with
-  `testing::wait_until`. Where the template is missing (a window not shown yet, or
-  one nothing draws, as on CI runners), naui writes the text and calls `on_change`
-  itself, and closes a dialog with the role itself when its button has not
-  appeared (or, after the dialog opens again, been loaded again) within a second
-  or a click on it leaves the dialog open, without going through UI Automation.
-  Right after the
-  first window is shown, `Dialog::open` and `Sheet::open` wait until WinUI can show
-  them (its `XamlRoot`), for up to 10 seconds.
+- On Windows, `enter_text` does not go through UI Automation: WinUI gives the
+  app's own process no Value pattern for a text field, even once the window is
+  drawn (UI Automation clients in other processes, such as Narrator, do get one).
+  naui writes the text and calls `on_change` itself before `enter_text` returns,
+  the same whether or not the window has been drawn. `search` and `respond` click
+  through UI Automation's Invoke pattern, so their notifications arrive a moment
+  later; wait for their effect with `testing::wait_until`. `search` calls
+  `on_search` itself where the Invoke pattern is not offered. A dialog's buttons
+  are in its template, which WinUI applies only once the dialog is drawn, so
+  where they are missing (a window nothing draws, as on CI runners) `respond`
+  closes the dialog with the role itself when its button has not appeared (or,
+  after the dialog opens again, been loaded again) within a second or a click on
+  it leaves the dialog open. Right after the first window is shown, `Dialog::open` and
+  `Sheet::open` wait until WinUI can show them (its `XamlRoot`), for up to 10
+  seconds.
 - `Dialog::respond` and `Sheet::respond` click a button, so a role with no button,
   or a disabled one, leaves the dialog open; on macOS that leaves `Dialog::open`
   (and the click that opened it) waiting. Give the answer **before** whatever opens

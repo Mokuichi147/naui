@@ -32,7 +32,6 @@ use windows_core::{IInspectable, Interface, Result, Type, HRESULT, HSTRING};
 #[derive(Clone, Copy)]
 pub(crate) enum Pattern {
     Invoke = 0,
-    Value = 2,
     SelectionItem = 11,
     Toggle = 15,
 }
@@ -196,21 +195,6 @@ pub struct ISelectionItemProvider_Vtbl {
     pub Select: unsafe extern "system" fn(*mut c_void) -> HRESULT,
 }
 
-windows_core::imp::define_interface!(
-    IValueProvider,
-    IValueProvider_Vtbl,
-    0x984f11cf_4611_588e_b52e_b96a12322c71
-);
-
-#[repr(C)]
-#[doc(hidden)]
-pub struct IValueProvider_Vtbl {
-    pub base__: windows_core::IInspectable_Vtbl,
-    IsReadOnly: usize,
-    Value: usize,
-    pub SetValue: unsafe extern "system" fn(*mut c_void, *mut c_void) -> HRESULT,
-}
-
 // ------------------------------------------------------------------ 使う口
 
 /// Clicks through the same path as an actual click (the Invoke pattern).
@@ -233,25 +217,6 @@ pub fn toggle(element: &UIElement) -> Result<()> {
 pub fn select(element: &UIElement) -> Result<()> {
     let provider: ISelectionItemProvider = provider(element, Pattern::SelectionItem)?;
     unsafe { (Interface::vtable(&provider).Select)(Interface::as_raw(&provider)) }.ok()
-}
-
-/// Replaces the text through the same path assistive technology types with (the
-/// Value pattern's `SetValue`).
-///
-/// WinUI refuses it for a disabled or read-only control, and a control whose
-/// template has not been applied (not shown yet) has no Value pattern; both come
-/// back as the error.
-pub fn set_value(element: &UIElement, text: &str) -> Result<()> {
-    let provider: IValueProvider = provider(element, Pattern::Value)?;
-    let text = HSTRING::from(text);
-    // HSTRING は借りて渡すだけなので、生のポインタをそのまま渡す。
-    unsafe {
-        (Interface::vtable(&provider).SetValue)(
-            Interface::as_raw(&provider),
-            std::mem::transmute_copy::<HSTRING, *mut c_void>(&text),
-        )
-    }
-    .ok()
 }
 
 /// The name passed to assistive technology.

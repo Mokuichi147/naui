@@ -237,32 +237,26 @@ impl NumberInput {
     }
 
     /// Replaces the text in the field the way typing does (for tests and
-    /// automation): through UI Automation's Value pattern on the `TextBox` in the
-    /// `NumberBox`'s template. Text that reads as a number is taken from its
-    /// `TextChanged`, so `on_change` arrives a moment after this returns. Does
-    /// nothing while disabled.
+    /// automation). Text that reads as a number is taken as typed text is, so
+    /// `on_change` is called before this returns. Does nothing while disabled.
     ///
-    /// Where the template has not been applied (a window not drawn yet), the text is
-    /// read the same way right away instead, so `on_change` is called before this
-    /// returns.
+    /// It writes the text into the `TextBox` in the `NumberBox`'s template (where
+    /// the template has been applied) and reads it right away, the same on every
+    /// window. It does not go through UI Automation: the `TextBox`'s peer hands out
+    /// no Value pattern inside the process.
     pub fn enter_text(&self, text: &str) {
         if !self.0.native.IsEnabled().unwrap_or(false) {
             return;
         }
+        // 確定は入力欄の文字を読むので、そこへも書いておく。
         let field = self.0.field.borrow().clone();
-        let typed = field
-            .as_ref()
-            .is_some_and(|field| crate::widgets::type_with_automation(field, text));
-        if !typed {
-            // 確定は入力欄の文字を読むので、そこへも書いておく。
-            if let Some(field) = &field {
-                let previous = self.0.silent.replace(true);
-                let _ = field.SetText(&HSTRING::from(text));
-                self.0.silent.set(previous);
-            }
-            if let Some(shown) = self.parse_shown(text) {
-                self.accept(shown, false);
-            }
+        if let Some(field) = field {
+            let previous = self.0.silent.replace(true);
+            let _ = field.SetText(&HSTRING::from(text));
+            self.0.silent.set(previous);
+        }
+        if let Some(shown) = self.parse_shown(text) {
+            self.accept(shown, false);
         }
     }
 

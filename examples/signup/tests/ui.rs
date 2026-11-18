@@ -26,7 +26,7 @@ naui::test_cases!(
 /// Clicking "Create account" greets the name typed in.
 async fn create_greets_by_name(ui: Ui) -> Result<()> {
     let app = build(&ui)?;
-    // On Windows, UI Automation reaches a field only once its window is drawn.
+    // On Windows, UI Automation reaches a button only once its window is drawn.
     app.window.show();
     app.name.enter_text("Ada");
     app.create.click();
@@ -40,7 +40,6 @@ async fn typing_shows_the_name(ui: Ui) -> Result<()> {
     let app = build(&ui)?;
     app.window.show();
     app.name.enter_text("Ada");
-    // On Windows the notification comes a moment after typing, so wait for it.
     testing::wait_until(&ui, || app.preview.text() == "Signing up as Ada").await?;
     app.name.enter_text("");
     testing::wait_until(&ui, || app.preview.text().is_empty()).await?;

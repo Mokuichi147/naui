@@ -14,7 +14,7 @@ use std::sync::Arc;
 use naui_core::Result;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     AutoSuggestBox, AutoSuggestBoxQuerySubmittedEventArgs, AutoSuggestBoxTextChangedEventArgs,
-    AutoSuggestionBoxTextChangeReason, Control, TextBox,
+    AutoSuggestionBoxTextChangeReason, Control,
 };
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::UIElement;
@@ -31,9 +31,6 @@ use crate::widgets::{impl_widget, Widget};
 const AUTO_SUGGEST_BOX_XAML: &str = r#"<AutoSuggestBox
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     QueryIcon="Find"/>"#;
-
-/// The name of the input field in the `AutoSuggestBox`'s template.
-const TEXT_BOX_PART: &str = "TextBox";
 
 struct SearchInputInner {
     native: AutoSuggestBox,
@@ -173,29 +170,19 @@ impl SearchInput {
             .unwrap_or(false)
     }
 
-    /// Replaces the text the way typing does, so `on_change` is called (for tests
-    /// and automation). Does nothing while disabled.
+    /// Replaces the text the way typing does, so `on_change` is called with it once,
+    /// before this returns (for tests and automation). Does nothing while disabled.
     ///
-    /// The text goes into the `TextBox` in the `AutoSuggestBox`'s template through
-    /// UI Automation's Value pattern, so WinUI
-    /// reports it as the user's input (`UserInput`). Where the template has not been
-    /// applied (a window not drawn yet), the text is written to `Text` and
-    /// `on_change` is notified right away instead (WinUI reports a written `Text` as
-    /// a change from code, which naui does not notify).
+    /// The text is written to `Text` and `on_change` is notified right away, the
+    /// same on every window (WinUI reports a written `Text` as a change from code,
+    /// which naui does not notify). It does not go through UI Automation: the
+    /// `TextBox` in the template hands out no Value pattern inside the process.
     pub fn enter_text(&self, text: &str) {
         if !self.is_enabled() {
             return;
         }
-        let typed = self
-            .0
-            .native
-            .GetTemplateChild(&HSTRING::from(TEXT_BOX_PART))
-            .and_then(|part| part.cast::<TextBox>())
-            .is_ok_and(|field| crate::widgets::type_with_automation(&field, text));
-        if !typed {
-            let _ = self.0.native.SetText(&HSTRING::from(text));
-            self.0.on_change.emit(text);
-        }
+        let _ = self.0.native.SetText(&HSTRING::from(text));
+        self.0.on_change.emit(text);
     }
 
     /// Confirms it as Enter does, so `on_search` is called (for tests and
