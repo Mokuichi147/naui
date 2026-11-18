@@ -545,12 +545,14 @@ mod tests {
         stranded: std::cell::Cell<bool>,
     }
 
+    /// Run from inside `present`.
+    type Hook = Box<dyn FnMut(&Rc<Fake>)>;
+
     thread_local! {
         static LOG: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
         static QUEUE: RefCell<ToastQueue<Fake>> = const { RefCell::new(ToastQueue::new()) };
         /// Run from inside `present`, to check the queue is not borrowed then.
-        static ON_PRESENT: RefCell<Option<Box<dyn FnMut(&Rc<Fake>)>>> =
-            const { RefCell::new(None) };
+        static ON_PRESENT: RefCell<Option<Hook>> = const { RefCell::new(None) };
     }
 
     impl ToastSlot for Fake {
