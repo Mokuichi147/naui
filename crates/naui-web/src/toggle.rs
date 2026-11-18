@@ -89,9 +89,11 @@ impl Toggle {
         *self.0.listener.borrow_mut() = listener;
     }
 
-    /// Triggers a click (for tests and automation).
+    /// Clicks it through the same path as a user's click, switching it and
+    /// notifying `on_toggle` (for tests and automation). Does nothing while
+    /// disabled.
     pub fn click(&self) {
-        self.0.input.click();
+        crate::widgets::click_check(&self.0.input);
     }
 
     /// The switch itself. Public as a backend-specific escape hatch.

@@ -580,6 +580,17 @@ impl Button {
             *self.0.token.borrow_mut() = Some(token);
         }
     }
+
+    /// Clicks it through the same path as a user's click (UI Automation's Invoke
+    /// pattern, so WinUI itself raises `Click`), for tests and automation. Does
+    /// nothing while disabled.
+    pub fn click(&self) {
+        if self.0.native.IsEnabled().unwrap_or(false) {
+            if let Ok(element) = self.0.native.cast::<UIElement>() {
+                let _ = crate::automation::invoke(&element);
+            }
+        }
+    }
 }
 
 // --------------------------------------------------------------- Checkbox
@@ -669,6 +680,17 @@ impl Checkbox {
             }
         }
         *self.0.tokens.borrow_mut() = tokens;
+    }
+
+    /// Clicks it through the same path as a user's click (UI Automation's Toggle
+    /// pattern), flipping it and notifying `on_toggle`, for tests and automation.
+    /// Does nothing while disabled.
+    pub fn click(&self) {
+        if self.0.native.IsEnabled().unwrap_or(false) {
+            if let Ok(element) = self.0.native.cast::<UIElement>() {
+                let _ = crate::automation::toggle(&element);
+            }
+        }
     }
 }
 

@@ -30,7 +30,7 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSArray, NSEdgeInsets, NSString, NSURL};
 
-use crate::trampoline::{ActionTarget, SelectHandler, TabObserver};
+use crate::trampoline::{ActionTarget, SelectHandler, TabObserver, ValueHandler};
 use crate::widgets::{impl_sizing, impl_widget, Widget};
 
 /// Creates a horizontal stack. Used to compose navigation widgets.
@@ -912,7 +912,10 @@ struct LinkInner {
     /// Shared with the trampoline, so that the result of `set_href` takes effect on
     /// click.
     href: Rc<RefCell<String>>,
-    target: RefCell<Option<Retained<ActionTarget>>>,
+    /// `on_click`. Held apart from the trampoline so that [`Link::click`] can notify
+    /// without opening `href`.
+    handler: Rc<ValueHandler<()>>,
+    _target: Retained<ActionTarget>,
 }
 
 /// A link.
@@ -932,14 +935,27 @@ impl Link {
         native.setBordered(false);
         native.setContentTintColor(Some(&NSColor::linkColor()));
 
-        let this = Self(Rc::new(LinkInner {
+        let href = Rc::new(RefCell::new(href.to_string()));
+        let handler: Rc<ValueHandler<()>> = Rc::default();
+        // href を開いてから利用者の通知先を呼ぶ。通知先が無くても href は開く。
+        let target = ActionTarget::new(mtm, {
+            let href = href.clone();
+            let handler = handler.clone();
+            move || {
+                open_href(&href.borrow());
+                handler.emit(());
+            }
+        });
+        unsafe {
+            native.setTarget(Some(&target));
+            native.setAction(Some(sel!(invoke:)));
+        }
+        Self(Rc::new(LinkInner {
             native,
-            href: Rc::new(RefCell::new(href.to_string())),
-            target: RefCell::new(None),
-        }));
-        // href を開くだけのハンドラを既定で入れておく。
-        this.on_click(|| {});
-        this
+            href,
+            handler,
+            _target: target,
+        }))
     }
 
     pub fn text(&self) -> String {
@@ -966,22 +982,15 @@ impl Link {
     ///
     /// If `href` is not empty, it is opened in the browser before the callback.
     pub fn on_click(&self, mut f: impl FnMut() + 'static) {
-        let mtm = MainThreadMarker::from(&*self.0.native);
-        let href = self.0.href.clone();
-        let target = ActionTarget::new(mtm, move || {
-            open_href(&href.borrow());
-            f();
-        });
-        unsafe {
-            self.0.native.setTarget(Some(&target));
-            self.0.native.setAction(Some(sel!(invoke:)));
-        }
-        *self.0.target.borrow_mut() = Some(target);
+        self.0.handler.set(move |()| f());
     }
 
-    /// Triggers a click (for tests and automation).
+    /// Notifies [`on_click`](Self::on_click) as a user's click does, **without
+    /// opening `href`** (for tests and automation). Does nothing while disabled.
     pub fn click(&self) {
-        unsafe { self.0.native.performClick(None) };
+        if self.0.native.isEnabled() {
+            self.0.handler.emit(());
+        }
     }
 }
 

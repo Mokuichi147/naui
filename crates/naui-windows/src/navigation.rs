@@ -1159,7 +1159,9 @@ struct LinkInner {
     native: HyperlinkButton,
     label: TextBlock,
     href: RefCell<String>,
-    token: RefCell<Option<i64>>,
+    /// `on_click`. Held apart from `Click` so that [`Link::click`] can notify
+    /// without opening `href`.
+    handler: HandlerCell<dyn FnMut()>,
 }
 
 /// A link (HyperlinkButton).
@@ -1178,11 +1180,23 @@ impl Link {
             .SetContent(&label)
             .map_err(|e| to_error("set the HyperlinkButton content", e))?;
 
+        let handler: HandlerCell<dyn FnMut()> = Arc::new(UiThreadCell::new(None));
+        let clicked = RoutedEventHandler::new({
+            let handler = handler.clone();
+            move |_sender, _args| {
+                emit_click(&handler);
+                Ok(())
+            }
+        });
+        native
+            .Click(&clicked)
+            .map_err(|e| to_error("subscribe to the HyperlinkButton", e))?;
+
         let this = Self(Rc::new(LinkInner {
             native,
             label,
             href: RefCell::new(String::new()),
-            token: RefCell::new(None),
+            handler,
         }));
         this.set_href(href);
         Ok(this)
@@ -1223,16 +1237,28 @@ impl Link {
     ///
     /// Opening `href` is done by WinUI itself.
     pub fn on_click(&self, f: impl FnMut() + 'static) {
-        if let Some(token) = self.0.token.borrow_mut().take() {
-            let _ = self.0.native.RemoveClick(token);
-        }
-        let f = UiThreadCell::new(f);
-        let handler = RoutedEventHandler::new(move |_sender, _args| {
-            f.with_mut(|f| f());
-            Ok(())
-        });
-        if let Ok(token) = self.0.native.Click(&handler) {
-            *self.0.token.borrow_mut() = Some(token);
+        self.0.handler.with_mut(|slot| *slot = Some(Box::new(f)));
+    }
+
+    /// Notifies [`on_click`](Self::on_click) as a user's click does, **without
+    /// opening `href`** (for tests and automation). Does nothing while disabled.
+    pub fn click(&self) {
+        if self.0.native.IsEnabled().unwrap_or(false) {
+            emit_click(&self.0.handler);
         }
     }
+}
+
+/// Calls a link's `on_click`. The closure is taken out for the duration of the call,
+/// so replacing it from inside the notification does not double-borrow.
+fn emit_click(handler: &HandlerCell<dyn FnMut()>) {
+    let Some(Some(mut f)) = handler.try_with_mut(|slot| slot.take()) else {
+        return;
+    };
+    f();
+    let _ = handler.try_with_mut(|slot| {
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+    });
 }

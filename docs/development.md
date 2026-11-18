@@ -41,6 +41,7 @@ examples/
   checklist      An app split into naui-app components
   search         An app running asynchronous work as naui-app effects
   notes          A notes app split into crates: app, core, screens and a service
+  signup         An app whose UI is tested on all four platforms with naui::testing
   gallery        Demo of every widget, by kind
 tools/
   winui3-bindgen Tool that regenerates naui-winui3's projection from .winmd files
@@ -100,7 +101,8 @@ CHROMEDRIVER="$(command -v chromedriver)" \
 
 Passing `GECKODRIVER` runs the same tests in Firefox. Without a driver at hand,
 add `NO_HEADLESS=1` and the runner prints the URL it is listening on; open it in
-any browser and the results appear on that page.
+any browser and the results appear on that page. Keep that tab in front: a hidden
+tab is not rendered, so tests that wait for layout (`ResizeObserver`) time out.
 
 ```sh
 NO_HEADLESS=1 cargo test --target wasm32-unknown-unknown -p naui-web

@@ -503,6 +503,14 @@ impl Button {
     pub fn on_click(&self, mut f: impl FnMut() + 'static) {
         self.0.on_click.set(move |()| f());
     }
+
+    /// Clicks it through the same path as a user's click (`clicked`), for tests
+    /// and automation. Does nothing while disabled.
+    pub fn click(&self) {
+        if self.0.native.is_sensitive() {
+            self.0.native.emit_clicked();
+        }
+    }
 }
 
 // --------------------------------------------------------------- Checkbox
@@ -560,6 +568,16 @@ impl Checkbox {
     /// Called with the new state every time the user toggles it.
     pub fn on_toggle(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_toggle.set(f);
+    }
+
+    /// Clicks it through the same path as a user's click, flipping the check and
+    /// notifying `on_toggle` (for tests and automation). Does nothing while
+    /// disabled.
+    pub fn click(&self) {
+        if self.0.native.is_sensitive() {
+            // `GtkCheckButton` の `activate` は押したときと同じく反転させる。
+            self.0.native.emit_activate();
+        }
     }
 }
 

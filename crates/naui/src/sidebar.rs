@@ -128,9 +128,11 @@ impl Sidebar {
     ///
     /// - **macOS**: `NSSplitViewItem`'s `canCollapseFromWindowResize`. The content pane
     ///   gets that minimum width; as the user narrows the window, the sidebar first
-    ///   narrows to [`SIDEBAR_MIN_WIDTH`](crate::SIDEBAR_MIN_WIDTH), then collapses. A
-    ///   [`Window::set_size`](crate::Window::set_size) narrower than that stops at that
-    ///   width instead of collapsing it.
+    ///   narrows to [`SIDEBAR_MIN_WIDTH`](crate::SIDEBAR_MIN_WIDTH), then collapses.
+    ///   AppKit does this only while the user drags the window's edge, so for a size
+    ///   set from code ([`Window::set_size`](crate::Window::set_size), or attaching to
+    ///   a narrow window) naui collapses it below the same width, and expands it again
+    ///   when the window gets wide enough.
     /// - **Windows**: `NavigationView`'s `PaneDisplayMode::Auto`. It collapses into the
     ///   strip of icons, and opening it while narrow lays the pane over the content.
     /// - **Linux** and **Web**: naui decides from the window's width (`AdwBreakpoint`

@@ -78,6 +78,7 @@ mod sheet;
 mod sidebar;
 mod split_view;
 mod table;
+pub mod testing;
 mod time_picker;
 mod toast;
 mod toggle;

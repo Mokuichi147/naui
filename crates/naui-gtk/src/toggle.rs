@@ -86,6 +86,18 @@ impl Toggle {
         self.0.on_toggle.set(f);
     }
 
+    /// Clicks it through the same path as a user's click, switching it and
+    /// notifying `on_toggle` (for tests and automation). Does nothing while
+    /// disabled.
+    pub fn click(&self) {
+        if self.0.switch.is_sensitive() {
+            // `activate` や利用者のクリックは、アニメーションが有効だと動き終わって
+            // から `active` を変える。その場で通知が届くよう、動き終わりと同じく
+            // `active` を直接変える (通知は止めない)。
+            self.0.switch.set_active(!self.0.switch.is_active());
+        }
+    }
+
     /// The switch itself. Public as a backend-specific escape hatch.
     pub fn native_switch(&self) -> gtk::Switch {
         self.0.switch.clone()

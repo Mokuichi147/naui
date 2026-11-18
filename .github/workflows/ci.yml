@@ -64,9 +64,9 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
-        run: cargo build -p naui-core -p naui-macos -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p notes -p gallery
+        run: cargo build -p naui-core -p naui-macos -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p notes -p signup -p gallery
       - name: clippy
-        run: cargo clippy -p naui-core -p naui-macos -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p notes-core -p notes-store -p notes-l10n -p notes-sidebar -p notes-list -p notes-editor -p notes -p gallery --all-targets -- -D warnings
+        run: cargo clippy -p naui-core -p naui-macos -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p notes-core -p notes-store -p notes-l10n -p notes-sidebar -p notes-list -p notes-editor -p notes -p signup -p gallery --all-targets -- -D warnings
       # AppKit の統合テストは harness = false の自前ランナーで、
       # ネイティブのコントロールを実際に作って操作する。
       #
@@ -80,8 +80,9 @@ jobs:
       # 例の単体テスト (UI を作らない)。翻訳の例は言語の選び方と張り直し、
       # checklist はコンポーネントに分けた update、search は効果を返す update、
       # notes は naui に依存しない core の update、フォルダの読み書き、訳の選択と言語ごとの文字列の揃い、要求から効果への変換。
+      # signup は naui::testing で UI を操作し、窓の大きさを変えて確かめる。
       - name: テスト (examples)
-        run: cargo test -p i18n -p checklist -p search -p notes-core -p notes-store -p notes-l10n -p notes
+        run: cargo test -p i18n -p checklist -p search -p notes-core -p notes-store -p notes-l10n -p notes -p signup
 
   windows:
     name: Windows (WinUI 3)
@@ -96,11 +97,11 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
-        run: cargo build -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p notes -p gallery
+        run: cargo build -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p notes -p signup -p gallery
       # 他の環境と同じく、バックエンドのクレートまで lint をかける。
       # naui-windows は WinRT の生ポインタを触るので、警告を残さない。
       - name: clippy
-        run: cargo clippy -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app -p todo -p checklist -p search -p notes-core -p notes-store -p notes-l10n -p notes-sidebar -p notes-list -p notes-editor -p notes --all-targets -- -D warnings
+        run: cargo clippy -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app -p todo -p checklist -p search -p notes-core -p notes-store -p notes-l10n -p notes-sidebar -p notes-list -p notes-editor -p notes -p signup --all-targets -- -D warnings
       # ランタイムを同梱する経路 (build.rs と naui-winui3::self_contained) は
       # フィーチャーを付けたときだけ組み込まれる。
       - name: clippy (ランタイム同梱)
@@ -139,9 +140,10 @@ jobs:
         runtime: [framework, self-contained]
         shard: [1, 2, 3]
         include:
+          # signup は naui::testing で UI を操作する例 (窓を出して大きさも変える)。
           - runtime: framework
             label: フレームワーク依存
-            packages: -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app
+            packages: -p naui-core -p naui-winui3 -p naui-windows -p naui -p naui-app -p signup
             features: ""
           # 同じテストを、exe の隣へ同梱したランタイムで走らせる。build.rs が
           # nuget.org から部品を取ってきて `target/debug/naui-winappsdk/` へまとめ、
@@ -327,7 +329,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: ビルド
-        run: cargo build -p naui-core -p naui-gtk -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p notes -p gallery
+        run: cargo build -p naui-core -p naui-gtk -p naui -p naui-app -p counter -p i18n -p todo -p checklist -p search -p notes -p signup -p gallery
       # GTK4 はディスプレイを要求する。libadwaita は D-Bus のセッションバスから
       # 配色設定を読むため、dbus-run-session も通す。
       - name: テスト
@@ -335,7 +337,7 @@ jobs:
         run: |
           xvfb-run -a --server-args="-screen 0 1280x1024x24" \
             dbus-run-session -- \
-            cargo test -p naui-core -p naui-gtk -p naui -p naui-app
+            cargo test -p naui-core -p naui-gtk -p naui -p naui-app -p signup
 
   web:
     name: Web (wasm / DOM)
@@ -360,7 +362,7 @@ jobs:
           tool: wasm-bindgen-cli@${{ steps.wb.outputs.version }}
       # __api_contract がバックエンド間のシグネチャのずれを型検査で拾う。
       - name: API 互換性を確認
-        run: cargo check --target wasm32-unknown-unknown -p naui-core -p naui-web -p naui -p naui-app
+        run: cargo check --target wasm32-unknown-unknown -p naui-core -p naui-web -p naui -p naui-app -p signup --all-targets
       # Web バックエンドはウィジェットを自前で描かず、ブラウザの挙動
       # (`<label>` を押すとチェックが入る、同じ name のラジオが排他になる、
       # Flexbox が子を並べる) にそのまま乗っている。そこは実ブラウザの上
@@ -381,14 +383,14 @@ jobs:
           driver="${CHROMEWEBDRIVER:-/usr/bin}/chromedriver"
           [ -x "$driver" ] || { echo "chromedriver が見つかりません: $driver" >&2; exit 1; }
           CHROMEDRIVER="$driver" WASM_BINDGEN_TEST_DRIVER_TIMEOUT=30 \
-            cargo test --target wasm32-unknown-unknown -p naui-web
+            cargo test --target wasm32-unknown-unknown -p naui-web -p signup
       - name: ブラウザテスト (Firefox)
         timeout-minutes: 10
         run: |
           driver="${GECKOWEBDRIVER:-/usr/bin}/geckodriver"
           [ -x "$driver" ] || { echo "geckodriver が見つかりません: $driver" >&2; exit 1; }
           GECKODRIVER="$driver" WASM_BINDGEN_TEST_DRIVER_TIMEOUT=30 \
-            cargo test --target wasm32-unknown-unknown -p naui-web
+            cargo test --target wasm32-unknown-unknown -p naui-web -p signup
       - name: Gallery を wasm へビルド
         run: ./build.sh
         working-directory: examples/gallery/web

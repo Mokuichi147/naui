@@ -21,6 +21,7 @@ members = [
     "examples/notes/screens/sidebar",
     "examples/notes/screens/list",
     "examples/notes/screens/editor",
+    "examples/signup",
     "examples/gallery",
 ]
 exclude = ["tools/winui3-bindgen"]

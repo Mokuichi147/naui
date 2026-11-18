@@ -37,6 +37,18 @@ impl Button {
     pub fn on_click(&self, f: impl FnMut() + 'static) {
         self.0.on_click(f)
     }
+
+    /// Clicks it the way the user does, so [`on_click`](Self::on_click) is called.
+    /// Does nothing while disabled.
+    ///
+    /// For tests and automation. It goes through each platform's own path for a
+    /// click (`performClick`, `clicked`, UI Automation's Invoke pattern, the DOM's
+    /// `click()`), so the notification arrives before this returns. See
+    /// [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn click(&self) {
+        self.0.click()
+    }
 }
 
 /// A check box (`GtkCheckButton`).
@@ -66,6 +78,17 @@ impl Checkbox {
     #[inline]
     pub fn on_toggle(&self, f: impl FnMut(bool) + 'static) {
         self.0.on_toggle(f)
+    }
+
+    /// Clicks it the way the user does: the check flips and
+    /// [`on_toggle`](Self::on_toggle) is called with the new state. Does nothing
+    /// while disabled.
+    ///
+    /// For tests and automation. The notification arrives before this returns. See
+    /// [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn click(&self) {
+        self.0.click()
     }
 }
 

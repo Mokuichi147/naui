@@ -36,6 +36,8 @@
 
 mod adaptive_panes;
 mod app;
+#[doc(hidden)]
+pub mod automation;
 mod canvas;
 mod clipboard;
 mod color_picker;
@@ -704,6 +706,88 @@ fn enable_per_monitor_dpi_awareness() {
 
     // SAFETY: 定数のハンドルを渡してプロセスの既定を選ぶだけ。
     let _ = unsafe { SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+}
+
+/// Starts the app, runs the future `start` returns on the event loop until it
+/// finishes, and then ends the app. **For `naui::testing` only.**
+///
+/// Like [`run_for_test`], it can be called only once per process
+/// (`Application::Start`). Unlike it, the future runs on the real event loop after
+/// `OnLaunched` has returned, so windows are shown, laid out and resized as in an
+/// app.
+#[doc(hidden)]
+pub fn run_until_done_for_test<F, Fut>(start: F) -> Result<()>
+where
+    F: FnOnce(&Ui) -> Fut + 'static,
+    Fut: std::future::Future<Output = ()> + 'static,
+{
+    run(Settings::new("naui tests"), move |ui| {
+        // テストのケースは窓を閉じては次の窓を作る。既定の OnLastWindowClose の
+        // ままだと、最後の窓を閉じた時点で XAML が Dispatcher を畳み始め、次の
+        // ケースの窓を動かすとアクセス違反で落ちる。畳むのは `quit` からだけにする。
+        keep_running_after_the_last_window();
+        let future = start(ui);
+        let done = ui.clone();
+        ui.tasks().spawn(async move {
+            future.await;
+            // 実際のアプリでは AppWindow の `Closing` がする後片づけを、畳む前に
+            // 済ませておく (`run_for_test` と同じ理由)。
+            done.clear_windows_for_shutdown();
+            done.quit();
+        });
+        Ok(())
+    })
+}
+
+/// Sets `Application.DispatcherShutdownMode` to `OnExplicitShutdown`, so closing the
+/// last window does not wind the app down; only `Application::Exit` does.
+///
+/// The property (`IApplication3`, Windows App SDK 1.5 and later) is left out of the
+/// [`naui_winui3`] projection, so its vtable is written here, the same way as
+/// [`automation`]. On an older runtime the interface is missing and nothing changes.
+fn keep_running_after_the_last_window() {
+    use windows_core::Interface;
+
+    /// `Microsoft.UI.Xaml.DispatcherShutdownMode.OnExplicitShutdown`.
+    const ON_EXPLICIT_SHUTDOWN: i32 = 1;
+
+    let Ok(app) = naui_winui3::Microsoft::UI::Xaml::Application::Current() else {
+        return;
+    };
+    let Ok(app) = app.cast::<shutdown_mode::IApplication3>() else {
+        return;
+    };
+    // SAFETY: `IApplication3` の vtable は .winmd から作った投影と同じ並び
+    // (`DispatcherShutdownMode` の取得、設定の順) で、UI スレッドから呼んでいる。
+    let _ = unsafe {
+        (Interface::vtable(&app).SetDispatcherShutdownMode)(
+            Interface::as_raw(&app),
+            ON_EXPLICIT_SHUTDOWN,
+        )
+    };
+}
+
+/// The hand-written `IApplication3` for [`keep_running_after_the_last_window`].
+#[allow(non_snake_case)]
+mod shutdown_mode {
+    windows_core::imp::define_interface!(
+        IApplication3,
+        IApplication3_Vtbl,
+        0xbe941595_61fe_5b36_a3d3_962a647d7c6f
+    );
+    windows_core::imp::interface_hierarchy!(
+        IApplication3,
+        windows_core::IUnknown,
+        windows_core::IInspectable
+    );
+
+    #[repr(C)]
+    pub struct IApplication3_Vtbl {
+        pub base__: windows_core::IInspectable_Vtbl,
+        DispatcherShutdownMode: usize,
+        pub SetDispatcherShutdownMode:
+            unsafe extern "system" fn(*mut core::ffi::c_void, i32) -> windows_core::HRESULT,
+    }
 }
 
 /// Calls `build` exactly once when WinUI 3 initialization has finished, and ends

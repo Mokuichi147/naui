@@ -637,9 +637,12 @@ impl Button {
         *self.0.target.borrow_mut() = Some(target);
     }
 
-    /// Triggers a click (for tests and automation).
+    /// Clicks it through the same path as a user's click (for tests and
+    /// automation). Does nothing while disabled.
     pub fn click(&self) {
-        unsafe { self.0.native.performClick(None) };
+        if self.0.native.isEnabled() {
+            unsafe { self.0.native.performClick(None) };
+        }
     }
 }
 
@@ -700,9 +703,12 @@ impl Checkbox {
         *self.0.target.borrow_mut() = Some(target);
     }
 
-    /// Triggers a click (for tests and automation).
+    /// Clicks it through the same path as a user's click (for tests and
+    /// automation). Does nothing while disabled.
     pub fn click(&self) {
-        unsafe { self.0.native.performClick(None) };
+        if self.0.native.isEnabled() {
+            unsafe { self.0.native.performClick(None) };
+        }
     }
 }
 

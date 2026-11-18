@@ -24,7 +24,7 @@ use web_sys::{Document, Element, HtmlElement};
 
 use crate::layout::{apply_child_layout, fill_parent, mark_parent, ParentLayout};
 use crate::to_error;
-use crate::widgets::{create, impl_widget, set_disabled, Listener, Widget};
+use crate::widgets::{create, impl_widget, set_disabled, Listener, ValueHandler, Widget};
 
 /// The "selected" handler of navigation widgets.
 ///
@@ -854,7 +854,10 @@ impl Pagination {
 
 struct LinkInner {
     element: HtmlElement,
-    listener: RefCell<Option<Listener>>,
+    /// `on_click`. Held apart from the `click` listener so that [`Link::click`]
+    /// can notify without following `href`.
+    handler: Rc<ValueHandler<()>>,
+    _listener: Listener,
     /// `on_file_drop`.
     file_drop: crate::file_drop::FileDrop,
 }
@@ -874,9 +877,15 @@ impl Link {
         element.set_text_content(Some(text));
         let _ = element.set_attribute("target", "_blank");
         let _ = element.set_attribute("rel", "noopener noreferrer");
+        let handler: Rc<ValueHandler<()>> = Rc::default();
+        let listener = Listener::attach(element.as_ref(), "click", {
+            let handler = handler.clone();
+            move || handler.emit(())
+        })?;
         let this = Self(Rc::new(LinkInner {
             element,
-            listener: RefCell::new(None),
+            handler,
+            _listener: listener,
             file_drop: Default::default(),
         }));
         this.set_href(href);
@@ -917,13 +926,15 @@ impl Link {
     /// Called on click. Setting it again removes the previous one.
     ///
     /// Opening `href` is done by the browser itself.
-    pub fn on_click(&self, f: impl FnMut() + 'static) {
-        let listener = Listener::attach(self.0.element.as_ref(), "click", f).ok();
-        *self.0.listener.borrow_mut() = listener;
+    pub fn on_click(&self, mut f: impl FnMut() + 'static) {
+        self.0.handler.set(move |()| f());
     }
 
-    /// Triggers a click (for tests and automation).
+    /// Notifies [`on_click`](Self::on_click) as a user's click does, **without
+    /// following `href`** (for tests and automation). Does nothing while disabled.
     pub fn click(&self) {
-        self.0.element.click();
+        if self.0.element.get_attribute("aria-disabled").as_deref() != Some("true") {
+            self.0.handler.emit(());
+        }
     }
 }

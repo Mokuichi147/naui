@@ -193,9 +193,12 @@ impl Expander {
         self.0.handler.set(f);
     }
 
-    /// Triggers a click on the heading (for tests and automation).
+    /// Clicks the heading through the same path as a user's click (for tests and
+    /// automation). Does nothing while disabled.
     pub fn click(&self) {
-        unsafe { self.0.header.performClick(None) };
+        if self.0.header.isEnabled() {
+            unsafe { self.0.header.performClick(None) };
+        }
     }
 
     /// The heading button. Public as a backend-specific escape hatch.

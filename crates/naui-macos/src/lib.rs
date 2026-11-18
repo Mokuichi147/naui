@@ -698,6 +698,31 @@ where
     build(&ui)
 }
 
+/// Starts a `Ui` as [`run_for_test`] does, runs the future `start` returns on the
+/// run loop until it finishes, and returns. **For `naui::testing` only.**
+///
+/// The run loop is driven with `NSRunLoop` in short slices, the same as the
+/// integration tests do, so timers, deferred layout and `Tasks` all progress while
+/// the future waits. It does not call `NSApplication::run`, whose `terminate`
+/// would end the process.
+#[doc(hidden)]
+pub fn run_until_done_for_test<F, Fut>(start: F) -> Result<()>
+where
+    F: FnOnce(&Ui) -> Fut,
+    Fut: std::future::Future<Output = ()> + 'static,
+{
+    run_for_test(|ui| {
+        let task = ui.tasks().spawn(start(ui));
+        while !task.is_finished() {
+            objc2::rc::autoreleasepool(|_| {
+                let until = objc2_foundation::NSDate::dateWithTimeIntervalSinceNow(0.01);
+                objc2_foundation::NSRunLoop::currentRunLoop().runUntilDate(&until);
+            });
+        }
+        Ok(())
+    })
+}
+
 /// Builds the main menu. **For automated tests only.**
 ///
 /// In real apps, [`run`] calls it at startup.

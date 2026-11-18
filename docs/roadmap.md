@@ -240,10 +240,16 @@ v0.17.0.
       through WIC),
       and `image/png` in a `ClipboardItem` on the Web, where the browser turns
       JPEG and GIF into PNG.
-- [ ] **Publish the testing facilities across platforms.** Gather the existing
-      testing APIs (`click`, `activate`, and so on) for app developers. Also
-      provide a way to resize windows in tests, so apps can check their adaptive
-      layouts.
+- [x] **Publish the testing facilities across platforms.** `click` on `Button`,
+      `Checkbox`, `Toggle`, `Expander` and `Link`, and `Popover::dismiss`, now on
+      all four platforms (`performClick`, GTK's `clicked` / `activate`, UI
+      Automation's Invoke and Toggle patterns, the DOM's `click()`), join the
+      existing `select`, `activate`, `pick` and `drag_to`. `naui::testing` runs
+      `async` test cases on the event loop with `naui::test_cases!` (one `main`
+      natively, a `#[wasm_bindgen_test]` per case on the Web), with
+      `wait_until`, `settle` and `resize` for checking adaptive layouts.
+      `examples/signup` tests its UI this way. Typing into text fields and
+      answering dialogs have no counterpart yet.
 - [x] *(app)* **A guide for structuring large apps**
       ([Structuring large apps](large-apps.md), `examples/notes`). Like
       [Translating apps](translating.md), with an example under `examples/`: how to

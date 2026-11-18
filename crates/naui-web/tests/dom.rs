@@ -190,6 +190,115 @@ fn button_click_reaches_the_closure() {
     });
 }
 
+/// `click` on the widgets notifies as the user's click does, on the spot, and does
+/// nothing while disabled. It works before the widget is placed in the page, where
+/// the browser does not fire `change` for `click()` on a check box.
+#[wasm_bindgen_test]
+fn clicks_notify_like_the_user() {
+    with_ui(|ui| {
+        let button = ui.button("押す")?;
+        let clicks = Rc::new(Cell::new(0));
+        button.on_click({
+            let clicks = clicks.clone();
+            move || clicks.set(clicks.get() + 1)
+        });
+        button.click();
+        assert_eq!(clicks.get(), 1, "ボタン");
+        button.set_enabled(false);
+        button.click();
+        assert_eq!(clicks.get(), 1, "無効なボタンは押せない");
+
+        for mounted in [false, true] {
+            let checkbox = ui.checkbox("同意")?;
+            let _mounted = mounted.then(|| Mounted::new(&checkbox));
+            let checks = Rc::new(RefCell::new(Vec::new()));
+            checkbox.on_toggle({
+                let checks = checks.clone();
+                move |checked| checks.borrow_mut().push(checked)
+            });
+            checkbox.click();
+            assert!(checkbox.is_checked());
+            checkbox.click();
+            assert!(!checkbox.is_checked());
+            checkbox.set_enabled(false);
+            checkbox.click();
+            assert!(!checkbox.is_checked(), "無効なチェックボックスは変わらない");
+            assert_eq!(
+                *checks.borrow(),
+                [true, false],
+                "ページに置いたか: {mounted}"
+            );
+
+            let toggle = ui.toggle("通知")?;
+            let _mounted = mounted.then(|| Mounted::new(&toggle));
+            let switches = Rc::new(RefCell::new(Vec::new()));
+            toggle.on_toggle({
+                let switches = switches.clone();
+                move |on| switches.borrow_mut().push(on)
+            });
+            toggle.click();
+            assert!(toggle.is_on());
+            toggle.set_enabled(false);
+            toggle.click();
+            assert!(toggle.is_on(), "無効なスイッチは変わらない");
+            assert_eq!(*switches.borrow(), [true], "ページに置いたか: {mounted}");
+        }
+
+        // `toggle` イベントを待たずに、その場で通知する。
+        let expander = ui.expander("詳細")?;
+        let _mounted = Mounted::new(&expander);
+        let expansions = Rc::new(RefCell::new(Vec::new()));
+        expander.on_toggle({
+            let expansions = expansions.clone();
+            move |expanded| expansions.borrow_mut().push(expanded)
+        });
+        expander.click();
+        assert!(expander.is_expanded());
+        expander.click();
+        assert!(!expander.is_expanded());
+        expander.set_enabled(false);
+        expander.click();
+        assert!(!expander.is_expanded(), "無効な見出しは開かない");
+        assert_eq!(*expansions.borrow(), [true, false]);
+
+        // 行き先があっても、click はページを離れずに通知だけする。
+        let link = ui.link("naui", "https://example.com/")?;
+        let _mounted = Mounted::new(&link);
+        let follows = Rc::new(Cell::new(0));
+        link.on_click({
+            let follows = follows.clone();
+            move || follows.set(follows.get() + 1)
+        });
+        link.click();
+        assert_eq!(follows.get(), 1, "リンク");
+        link.set_enabled(false);
+        link.click();
+        assert_eq!(follows.get(), 1, "無効なリンクは押せない");
+        Ok(())
+    });
+}
+
+/// The `toggle` the browser fires later for an `Expander::click` is not reported a
+/// second time.
+#[wasm_bindgen_test]
+async fn expander_click_notifies_once() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let expander = ui.expander("詳細")?;
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        expander.on_toggle({
+            let seen = seen.clone();
+            move |expanded| seen.borrow_mut().push(expanded)
+        });
+        kept = Some((Mounted::new(&expander), expander, seen));
+        Ok(())
+    });
+    let (_mounted, expander, seen) = kept.expect("組み立て");
+    expander.click();
+    next_frames().await;
+    assert_eq!(*seen.borrow(), [true], "後から届く toggle を数えない");
+}
+
 #[wasm_bindgen_test]
 fn button_on_click_replaces_the_previous_closure() {
     with_ui(|ui| {
