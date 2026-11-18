@@ -589,7 +589,7 @@ impl Tree {
     /// Settles the selection made by a user's action, redraws and notifies.
     ///
     /// Unlike [`Tree::write_selection`] it expands nothing: the user can only pick
-    /// visible items, and hidden ones kept by ⌘ / Ctrl or Shift stay hidden.
+    /// visible items, and hidden ones kept by ⌘ / Ctrl stay hidden.
     fn commit(&self, paths: &[Vec<usize>]) {
         let picked = self
             .0

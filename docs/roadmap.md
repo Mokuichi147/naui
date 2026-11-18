@@ -267,8 +267,7 @@ planned, and the versions above may change to meet them.
   one action on a toast changes `Toast::action` and `on_action`, which assume one
   button. Widgets in `Tree` items change `TreeItem`, whose fields are public, so
   a new field breaks apps that build it with a struct literal. Items that only
-  add, such as multiple selection in `Tree` and modifier keys on `PointerEvent`,
-  can also come after.
+  add, such as modifier keys on `PointerEvent`, can also come after.
 - **Public types are reviewed for growth.** Each public struct and enum is
   checked for whether it may gain fields or variants later. Those that may get
   `#[non_exhaustive]`, or private fields with constructors, as `PointerEvent`

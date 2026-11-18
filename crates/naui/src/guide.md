@@ -3240,7 +3240,7 @@ that notify **like the user's own action**, and checks what the app did:
 | [`ComboBox`], [`EditableComboBox`], [`RadioGroup`], [`Tabs`], [`Navbar`], [`Dock`], [`Menu`], [`Breadcrumbs`], [`Sidebar`] | `select` | `set_selected` |
 | [`PopupMenu`] | `select` | |
 | [`List`], [`Table`] | `select`, `select_many` | `set_selected`, `set_selection` |
-| [`Tree`] | `select`, `expand`, `collapse` | `set_expanded` |
+| [`Tree`] | `select`, `select_many`, `expand`, `collapse` | `set_selected`, `set_selection`, `set_expanded` |
 | [`Pagination`] | `select`, `go_previous`, `go_next` | `set_page` |
 | [`Toolbar`], [`MenuBar`] | `activate` | |
 | [`ColorPicker`] | `pick` | `set_value` |

@@ -13,8 +13,9 @@ use naui_core::{SelectionMode, TreeItem};
 /// With [`SelectionMode::Multiple`], several items can be selected with ⌘ / Ctrl or
 /// Shift, as in a [`List`](crate::List). Each item is selected on its own: selecting
 /// a branch does not select its children. Selected items inside a branch that is
-/// collapsed stay selected while hidden, until the selection is replaced (a click
-/// without ⌘ / Ctrl or Shift, for example).
+/// collapsed stay selected while hidden. Adding or removing items with ⌘ / Ctrl keeps
+/// them; a plain click or a Shift range selects anew and drops them, as for rows off
+/// screen in a long `List`.
 #[derive(Clone)]
 pub struct Tree(pub(crate) sys::Tree);
 

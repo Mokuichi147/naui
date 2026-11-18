@@ -560,9 +560,9 @@ collected in [Known limitations](known-limitations.md).
 - **`Tree`**: Instead of `GtkTreeExpander` (only for `GtkListView`), it is built
   from `GtkListBox` rows and disclosure buttons. Rows inside collapsed branches are
   only made invisible, so they keep their selection; with `SelectionMode::Multiple`
-  the `GtkListBox` selects with Ctrl / Shift as for `List`, and rows that were not
-  selected before are taken out of what Ctrl + A or a Shift range reaches into a
-  collapsed branch.
+  the `GtkListBox` selects with Ctrl / Shift as for `List` (its Shift ranges and
+  Ctrl + A pick only visible rows, and a plain click or a Shift range unselects the
+  invisible ones too).
 - **`Window` state**: On X11, the window manager sometimes does not restore a window
   with `unminimize` alone, so restoring from minimized also asks for it to be brought
   to the front with `present`. Minimizing requested before showing is applied after

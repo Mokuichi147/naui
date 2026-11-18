@@ -42,7 +42,7 @@ use windows_core::{IInspectable, Interface, HSTRING};
 
 use super::Tree;
 use crate::layout::ListScrollTarget;
-use crate::list::{hold_unselectable_press, item_content, new_row_item, transparent_grid};
+use crate::list::{hold_unselectable_press, item_content, item_padding, new_row_item};
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 use crate::widgets::Widget;
@@ -128,6 +128,10 @@ impl Tree {
                 pending_scroll: None,
             });
         }
+        // ホイールの補助は、登録の新しいものからポインターの乗っている側を選ぶ。
+        // 外した `TreeView` の登録を残すと、そちらへ吸われるので手放す (戻したときに
+        // `Loaded` で登録し直される)。
+        *self.0.wheel.borrow_mut() = None;
         let list_view = self.multi_list_view();
         if let Some(list_view) = list_view {
             let _ = self.0.native.SetChild(&list_view);
@@ -137,6 +141,10 @@ impl Tree {
 
     /// Puts the `TreeView` back in the frame.
     pub(super) fn leave_multi(&self) {
+        if let Some(multi) = self.0.multi.borrow_mut().as_mut() {
+            // `enter_multi` と同じ理由で、外す側の登録を手放す。
+            multi.wheel = None;
+        }
         let _ = self.0.native.SetChild(&self.0.tree_view);
     }
 
@@ -266,13 +274,28 @@ impl Tree {
         let line = XamlReader::Load(&HSTRING::from(ROW_XAML))
             .and_then(|element| element.cast::<XamlGrid>())
             .map_err(|e| to_error("create the tree row", e))?;
+        // 行の余白は `List` と同じ。選べない行は余白を行の中身へ移し、字下げも含めて
+        // 行の全体で押下を受け止める (`List` の選べない行と同じ形)。字下げは内側の
+        // 余白で付けるので、どちらでも中身の左が段の分だけ下がる。
+        let _ = native.SetPadding(item_padding(selectable));
         let depth = path.len().saturating_sub(1) as f64;
-        let _ = line.SetMargin(Thickness {
-            Left: INDENT * depth,
-            Top: 0.0,
-            Right: 0.0,
-            Bottom: 0.0,
+        let inner = match selectable {
+            true => Thickness {
+                Left: 0.0,
+                Top: 0.0,
+                Right: 0.0,
+                Bottom: 0.0,
+            },
+            false => item_padding(true),
+        };
+        let _ = line.SetPadding(Thickness {
+            Left: inner.Left + INDENT * depth,
+            ..inner
         });
+        if !selectable {
+            // 山形のボタンは自分で押下を受けるので、ここまで届かず開閉できる。
+            hold_unselectable_press(&line)?;
+        }
         let twisty = line
             .Children()
             .and_then(|children| children.GetAt(0))
@@ -307,24 +330,10 @@ impl Tree {
             }
         };
 
-        // 文字は `List` と同じ組み方。選べない項目は、押下を受け止める入れ物で包む
-        // (行ごと無効にすると、山形まで押せなくなる)。
-        let content =
+        // 文字は `List` と同じ組み方 (選べない項目は淡くなる)。行ごと無効にはしない
+        // (山形まで押せなくなる)。
+        let content: UIElement =
             item_content(&item.label, item.detail.as_deref(), selectable)?.native_element();
-        let content: UIElement = match selectable {
-            true => content,
-            false => {
-                let holder = transparent_grid()?;
-                hold_unselectable_press(&holder)?;
-                holder
-                    .Children()
-                    .and_then(|children| children.Append(&content))
-                    .map_err(|e| to_error("add to the tree row", e))?;
-                holder
-                    .cast::<UIElement>()
-                    .map_err(|e| to_error("convert the tree row", e))?
-            }
-        };
         if let Ok(framework) = content.cast::<FrameworkElement>() {
             let _ = XamlGrid::SetColumn(&framework, 1);
         }

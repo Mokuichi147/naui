@@ -483,10 +483,11 @@ impl Tree {
 
     /// When the selection changes on the GTK side.
     ///
-    /// `GtkListBox` already follows naui's rules for hidden rows: a plain click
-    /// unselects every row, invisible ones included, and Ctrl leaves them alone. Only
-    /// rows that were hidden and not selected before are left out, so that Ctrl + A
-    /// and Shift ranges never reach into collapsed branches.
+    /// `GtkListBox` already follows naui's rules for hidden rows: a plain click and a
+    /// Shift range unselect every row first, invisible ones included, and Ctrl leaves
+    /// them alone. Its ranges and Ctrl + A pick only visible rows; rows that were
+    /// hidden and not selected before are still left out here, in case a version
+    /// reaches into collapsed branches.
     fn on_native_selection(&self) {
         let before: HashSet<Vec<usize>> = self.0.selected.borrow().iter().cloned().collect();
         let picked: Vec<Vec<usize>> = {
