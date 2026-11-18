@@ -6,19 +6,22 @@
 //! overlaying an `NSVisualEffectView` on the window's content (the same material as
 //! `NSPopover`).
 //!
-//! It is shown in **the frontmost window**, placed on its `contentView`. An
-//! `NSTimer` counts down until it disappears.
+//! It is shown in **the frontmost window** at the time it comes up, placed on its
+//! `contentView`. An `NSTimer` counts down until it disappears. Which toast is on
+//! screen and which wait is decided by [`naui_core::ToastQueue`], shared with the
+//! other backends.
 //!
 //! ## Differences from other platforms
 //!
 //! On GTK4, `AdwToast` corresponds directly, but on macOS it is a view naui builds
-//! as described above. The position (bottom center) and rounded corners are also
-//! decided here.
+//! as described above. The position (six places along the top and bottom edges,
+//! inside the safe area so that a toolbar does not cover it), the row of action
+//! buttons and the rounded corners are also decided here.
 
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use naui_core::ToastSpec;
+use naui_core::{Align, ToastPosition, ToastPriority, ToastQueue, ToastSlot, ToastSpec};
 use objc2::rc::Retained;
 use objc2::{sel, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
@@ -30,8 +33,8 @@ use objc2_foundation::{NSArray, NSEdgeInsets, NSPoint, NSRect, NSSize, NSString,
 
 use crate::trampoline::{ActionTarget, SharedSlot};
 
-/// The distance from the bottom edge.
-const BOTTOM_MARGIN: f64 = 24.0;
+/// The distance from the top or bottom edge.
+const EDGE_MARGIN: f64 = 24.0;
 /// The margin left at the left and right edges. When the window is narrow, the toast
 /// shrinks instead.
 const SIDE_MARGIN: f64 = 24.0;
@@ -48,7 +51,7 @@ const SHADOW_OFFSET: NSSize = NSSize {
 /// The name given to the overlaid view. Used to identify the toast from the native
 /// side.
 const IDENTIFIER: &str = "naui.toast";
-/// The spacing between the text and the button.
+/// The spacing between the text and the buttons.
 const SPACING: f64 = 12.0;
 /// The padding around the content.
 const PADDING: NSEdgeInsets = NSEdgeInsets {
@@ -59,8 +62,8 @@ const PADDING: NSEdgeInsets = NSEdgeInsets {
 };
 
 thread_local! {
-    /// The toast showing now. Only one is shown at a time, and a new one replaces it.
-    static CURRENT: RefCell<Option<Toast>> = const { RefCell::new(None) };
+    /// The toast on screen and the ones waiting their turn.
+    static QUEUE: RefCell<ToastQueue<ToastInner>> = const { RefCell::new(ToastQueue::new()) };
 }
 
 /// The slot for one closure.
@@ -68,19 +71,24 @@ thread_local! {
 /// It is taken out only for the duration of the call so that showing the toast again
 /// from inside the notification does not double-borrow the `RefCell` (the same
 /// design as `Dialog`).
-#[derive(Clone, Default)]
-struct Callback(SharedSlot<dyn FnMut()>);
+struct Callback<A>(SharedSlot<dyn FnMut(A)>);
 
-impl Callback {
-    fn set(&self, f: impl FnMut() + 'static) {
+impl<A> Default for Callback<A> {
+    fn default() -> Self {
+        Self(Rc::default())
+    }
+}
+
+impl<A> Callback<A> {
+    fn set(&self, f: impl FnMut(A) + 'static) {
         *self.0.borrow_mut() = Some(Box::new(f));
     }
 
-    fn emit(&self) {
+    fn emit(&self, arg: A) {
         let Some(mut f) = self.0.borrow_mut().take() else {
             return;
         };
-        f();
+        f(arg);
         let mut slot = self.0.borrow_mut();
         if slot.is_none() {
             *slot = Some(f);
@@ -88,18 +96,18 @@ impl Callback {
     }
 }
 
-/// What is held only while it is shown.
+/// What is held only while it is on screen.
 struct Presentation {
     /// The view overlaid on the window. It casts a shadow, so it is separate from the
     /// `NSVisualEffectView` that rounds the corners and clips the content (doing both in
     /// the same view would clip away the shadow too).
     container: Retained<NSView>,
-    /// The row laying out the text and the button horizontally.
+    /// The row laying out the text and the buttons horizontally.
     row: Retained<NSStackView>,
     /// The text being shown.
     label: Retained<NSTextField>,
-    /// The action button. Absent if there is none.
-    button: Option<Retained<NSButton>>,
+    /// The action buttons, in order.
+    buttons: Vec<Retained<NSButton>>,
     /// The timer for disappearing automatically. Absent if it never disappears.
     timer: Option<Retained<NSTimer>>,
 }
@@ -108,17 +116,55 @@ struct ToastInner {
     mtm: MainThreadMarker,
     spec: RefCell<ToastSpec>,
     shown: RefCell<Option<Presentation>>,
-    /// The relay for the action button and the timer. **Kept alive as long as the
-    /// toast.**
+    /// The relays for the action buttons (one per index) and the timer. **Kept alive
+    /// as long as the toast**, and the button relays only ever grow.
     ///
     /// `NSControl` targets are weak references, so something must hold them. They are
-    /// not recreated every time it is shown so that dismissing it from inside the relay
-    /// (the button was clicked, or time ran out) **does not free the relay that is
+    /// not recreated every time it is shown, nor dropped when the buttons are
+    /// replaced, so that dismissing it or changing the buttons from inside a relay (a
+    /// button was clicked, or time ran out) **does not free the relay that is
     /// currently running**.
-    action_target: RefCell<Option<Retained<ActionTarget>>>,
+    action_targets: RefCell<Vec<Retained<ActionTarget>>>,
     timer_target: RefCell<Option<Retained<ActionTarget>>>,
-    on_action: Callback,
-    on_dismiss: Callback,
+    on_action: Callback<usize>,
+    on_dismiss: Callback<()>,
+}
+
+impl ToastSlot for ToastInner {
+    fn present(this: &Rc<Self>) -> bool {
+        let Some(host) = host_view(this.mtm) else {
+            return false;
+        };
+        let toast = Toast(this.clone());
+        let presentation = toast.build(&host);
+        *this.shown.borrow_mut() = Some(presentation);
+        true
+    }
+
+    fn withdraw(this: &Rc<Self>) {
+        let Some(shown) = this.shown.borrow_mut().take() else {
+            return;
+        };
+        if let Some(timer) = shown.timer {
+            timer.invalidate();
+        }
+        shown.container.removeFromSuperview();
+    }
+
+    fn is_stranded(this: &Rc<Self>) -> bool {
+        let shown = this.shown.borrow();
+        let Some(shown) = shown.as_ref() else {
+            return false;
+        };
+        let Some(window) = shown.container.window() else {
+            return true;
+        };
+        // 表示する前の窓にも出せるので、見えていないだけでは決めない。
+        // 閉じた窓は見えておらず、次に出す先でもなくなっている。
+        !window.isVisible()
+            && crate::window::frontmost(this.mtm)
+                .is_none_or(|front| !std::ptr::eq(&*front, &*window))
+    }
 }
 
 /// A transient notification (an overlaid `NSVisualEffectView`).
@@ -133,31 +179,33 @@ impl Toast {
             mtm,
             spec: RefCell::new(ToastSpec::new(message)),
             shown: RefCell::new(None),
-            action_target: RefCell::new(None),
+            action_targets: RefCell::new(Vec::new()),
             timer_target: RefCell::new(None),
             on_action: Callback::default(),
             on_dismiss: Callback::default(),
         }));
-        this.install_targets();
+        let for_timer = Rc::downgrade(&this.0);
+        *this.0.timer_target.borrow_mut() = Some(ActionTarget::new(mtm, move || {
+            if let Some(inner) = for_timer.upgrade() {
+                Toast(inner).finish(None);
+            }
+        }));
         this
     }
 
-    /// Creates the relays for the action button and the timer. They are reused from then
-    /// on.
-    fn install_targets(&self) {
-        let mtm = self.0.mtm;
-        let for_action = Rc::downgrade(&self.0);
-        *self.0.action_target.borrow_mut() = Some(ActionTarget::new(mtm, move || {
-            if let Some(inner) = for_action.upgrade() {
-                Toast(inner).finish(true);
-            }
-        }));
-        let for_timer = Rc::downgrade(&self.0);
-        *self.0.timer_target.borrow_mut() = Some(ActionTarget::new(mtm, move || {
-            if let Some(inner) = for_timer.upgrade() {
-                Toast(inner).finish(false);
-            }
-        }));
+    /// The relay for the button at `index`, created on first use.
+    fn action_target(&self, index: usize) -> Retained<ActionTarget> {
+        let mut targets = self.0.action_targets.borrow_mut();
+        while targets.len() <= index {
+            let i = targets.len();
+            let weak = Rc::downgrade(&self.0);
+            targets.push(ActionTarget::new(self.0.mtm, move || {
+                if let Some(inner) = weak.upgrade() {
+                    Toast(inner).finish(Some(i));
+                }
+            }));
+        }
+        targets[index].clone()
     }
 
     /// The string to show. Calling it while shown updates it on the spot (the time until
@@ -173,31 +221,27 @@ impl Toast {
         self.0.spec.borrow().message().to_string()
     }
 
-    /// The action button's label. **Passing an empty string removes the button.**
+    /// The action buttons' labels, laid out in this order. **Passing an empty list
+    /// removes the buttons.**
     ///
-    /// Calling it while shown adds or removes it on the spot.
-    pub fn set_action(&self, label: &str) {
-        self.0.spec.borrow_mut().set_action(label);
-        let action = self.0.spec.borrow().action().map(str::to_string);
+    /// Calling it while shown replaces them on the spot.
+    pub fn set_actions<S: AsRef<str>>(&self, labels: &[S]) {
+        self.0.spec.borrow_mut().set_actions(labels);
+        let labels = self.0.spec.borrow().actions().to_vec();
         if let Some(shown) = self.0.shown.borrow_mut().as_mut() {
-            self.apply_action(shown, action.as_deref());
+            self.apply_actions(shown, &labels);
         }
     }
 
-    /// The action button's label. The empty string if there is no button.
-    pub fn action(&self) -> String {
-        self.0
-            .spec
-            .borrow()
-            .action()
-            .unwrap_or_default()
-            .to_string()
+    /// The action buttons' labels. Empty if there are none.
+    pub fn actions(&self) -> Vec<String> {
+        self.0.spec.borrow().actions().to_vec()
     }
 
     /// Seconds until it disappears automatically. **Passing 0 means it never
     /// disappears automatically.**
     ///
-    /// Takes effect from the next [`show`](Self::show).
+    /// Takes effect from the next time it comes up.
     pub fn set_timeout(&self, seconds: f64) {
         self.0.spec.borrow_mut().set_timeout(seconds);
     }
@@ -206,63 +250,72 @@ impl Toast {
         self.0.spec.borrow().timeout()
     }
 
+    /// How it takes its turn when shown. Takes effect from the next
+    /// [`show`](Self::show).
+    pub fn set_priority(&self, priority: ToastPriority) {
+        self.0.spec.borrow_mut().set_priority(priority);
+    }
+
+    pub fn priority(&self) -> ToastPriority {
+        self.0.spec.borrow().priority()
+    }
+
+    /// Where in the window it appears. Takes effect from the next time it comes up.
+    pub fn set_position(&self, position: ToastPosition) {
+        self.0.spec.borrow_mut().set_position(position);
+    }
+
+    pub fn position(&self) -> ToastPosition {
+        self.0.spec.borrow().position()
+    }
+
     /// The current settings.
     pub fn spec(&self) -> ToastSpec {
         self.0.spec.borrow().clone()
     }
 
-    /// Called when the action button is clicked. Setting it again removes the previous
-    /// one.
+    /// Called with the index of the clicked action button. Setting it again removes
+    /// the previous one.
     ///
     /// Clicking it makes the toast disappear, so `on_dismiss` is called next.
-    pub fn on_action(&self, f: impl FnMut() + 'static) {
+    pub fn on_action(&self, f: impl FnMut(usize) + 'static) {
         self.0.on_action.set(f);
     }
 
     /// Called when it disappears. Setting it again removes the previous one.
     ///
-    /// It is called **when it times out** and **when it is closed by the action
-    /// button**. It is not called when it is closed with [`dismiss`](Self::dismiss) or
-    /// replaced by another toast (the same rule as
+    /// It is called **when it times out** and **when it is closed by an action
+    /// button**. It is not called when it is closed with [`dismiss`](Self::dismiss)
+    /// or put back in the queue by a `High` toast (the same rule as
     /// [`Dialog::close`](crate::Dialog::close): the app's own actions are not
     /// notified).
-    pub fn on_dismiss(&self, f: impl FnMut() + 'static) {
-        self.0.on_dismiss.set(f);
+    pub fn on_dismiss(&self, mut f: impl FnMut() + 'static) {
+        self.0.on_dismiss.set(move |()| f());
     }
 
-    /// Shows the toast.
-    ///
-    /// **Only one is shown at a time**; if another toast is showing, it is replaced
-    /// (the replaced one's `on_dismiss` is not called). Does nothing if there is no
-    /// window to show it in yet.
+    /// Shows the toast: on screen at once, or at the back of the queue (see
+    /// [`naui_core::ToastQueue`]).
     pub fn show(&self) {
-        let Some(host) = host_view(self.0.mtm) else {
-            return;
-        };
-        // 自分自身を出し直すときも、いったん片付けてから組み立て直す。
-        if let Some(previous) = CURRENT.with(|slot| slot.borrow_mut().take()) {
-            previous.take_down();
-        }
-        let presentation = self.build(&host);
-        *self.0.shown.borrow_mut() = Some(presentation);
-        CURRENT.with(|slot| *slot.borrow_mut() = Some(self.clone()));
+        let priority = self.0.spec.borrow().priority();
+        ToastQueue::show(&QUEUE, &self.0, priority);
     }
 
-    /// Closes the toast being shown. `on_dismiss` is not called.
+    /// Closes the toast, or takes it out of the queue. `on_dismiss` is not called.
     pub fn dismiss(&self) {
-        if !self.is_visible() {
-            return;
-        }
-        self.forget_current();
-        self.take_down();
+        ToastQueue::remove(&QUEUE, &self.0);
     }
 
-    /// Whether it is showing now.
+    /// Whether it is on screen now.
     pub fn is_visible(&self) -> bool {
         self.0.shown.borrow().is_some()
     }
 
-    /// The overlaid view. `None` if it is not shown.
+    /// Whether it is waiting its turn in the queue.
+    pub fn is_queued(&self) -> bool {
+        ToastQueue::is_waiting_in(&QUEUE, &self.0)
+    }
+
+    /// The overlaid view. `None` if it is not on screen.
     ///
     /// Public as a backend-specific escape hatch.
     pub fn native_view(&self) -> Option<Retained<NSView>> {
@@ -273,22 +326,21 @@ impl Toast {
             .map(|shown| shown.container.clone())
     }
 
-    /// Reattaches the action button. Removes it if `label` is `None`.
-    fn apply_action(&self, shown: &mut Presentation, label: Option<&str>) {
-        if let Some(button) = shown.button.take() {
+    /// Replaces the action buttons.
+    fn apply_actions(&self, shown: &mut Presentation, labels: &[String]) {
+        for button in shown.buttons.drain(..) {
             shown.row.removeArrangedSubview(&button);
             button.removeFromSuperview();
         }
-        let Some(label) = label else {
-            return;
-        };
-        let button = self.action_button(label);
-        shown.row.addArrangedSubview(&button);
-        shown.button = Some(button);
+        for (index, label) in labels.iter().enumerate() {
+            let button = self.action_button(index, label);
+            shown.row.addArrangedSubview(&button);
+            shown.buttons.push(button);
+        }
     }
 
-    /// A button that dismisses the toast through `on_action` when clicked.
-    fn action_button(&self, label: &str) -> Retained<NSButton> {
+    /// A button that dismisses the toast through `on_action(index)` when clicked.
+    fn action_button(&self, index: usize, label: &str) -> Retained<NSButton> {
         let button = unsafe {
             NSButton::buttonWithTitle_target_action(
                 &NSString::from_str(label),
@@ -297,11 +349,10 @@ impl Toast {
                 self.0.mtm,
             )
         };
-        if let Some(target) = self.0.action_target.borrow().as_ref() {
-            unsafe {
-                button.setTarget(Some(target));
-                button.setAction(Some(sel!(invoke:)));
-            }
+        let target = self.action_target(index);
+        unsafe {
+            button.setTarget(Some(&target));
+            button.setAction(Some(sel!(invoke:)));
         }
         button
     }
@@ -354,13 +405,41 @@ impl Toast {
         let label = NSTextField::labelWithString(&NSString::from_str(spec.message()), mtm);
         row.addArrangedSubview(&label);
 
-        let button = spec.action().map(|action| {
-            let button = self.action_button(action);
-            row.addArrangedSubview(&button);
-            button
-        });
+        let mut presentation = Presentation {
+            container,
+            row,
+            label,
+            buttons: Vec::new(),
+            timer: None,
+        };
+        self.apply_actions(&mut presentation, spec.actions());
+        let Presentation { container, row, .. } = &presentation;
 
-        host.addSubview(&container);
+        host.addSubview(container);
+        // 上端はツールバーの下から数える (全面の中身でも隠れないように)。
+        let safe = host.safeAreaLayoutGuide();
+        let position = spec.position();
+        let vertical = if position.is_top() {
+            container
+                .topAnchor()
+                .constraintEqualToAnchor_constant(&safe.topAnchor(), EDGE_MARGIN)
+        } else {
+            container
+                .bottomAnchor()
+                .constraintEqualToAnchor_constant(&safe.bottomAnchor(), -EDGE_MARGIN)
+        };
+        // 始まり・終わりは leading / trailing なので、右から左の配置では入れ替わる。
+        let horizontal = match position.align() {
+            Align::Start => container
+                .leadingAnchor()
+                .constraintEqualToAnchor_constant(&safe.leadingAnchor(), SIDE_MARGIN),
+            Align::End => container
+                .trailingAnchor()
+                .constraintEqualToAnchor_constant(&safe.trailingAnchor(), -SIDE_MARGIN),
+            _ => container
+                .centerXAnchor()
+                .constraintEqualToAnchor(&safe.centerXAnchor()),
+        };
         NSLayoutConstraint::activateConstraints(&NSArray::from_retained_slice(&[
             surface
                 .leadingAnchor()
@@ -382,22 +461,18 @@ impl Toast {
                 .constraintEqualToAnchor(&surface.topAnchor()),
             row.bottomAnchor()
                 .constraintEqualToAnchor(&surface.bottomAnchor()),
-            container
-                .centerXAnchor()
-                .constraintEqualToAnchor(&host.centerXAnchor()),
-            container
-                .bottomAnchor()
-                .constraintEqualToAnchor_constant(&host.bottomAnchor(), -BOTTOM_MARGIN),
+            vertical,
+            horizontal,
             // 文字が長くてもウィンドウからはみ出さない。
             container
                 .widthAnchor()
                 .constraintLessThanOrEqualToAnchor_constant(
-                    &host.widthAnchor(),
+                    &safe.widthAnchor(),
                     -SIDE_MARGIN * 2.0,
                 ),
         ]));
 
-        let timer = self.0.timer_target.borrow().as_ref().and_then(|target| {
+        presentation.timer = self.0.timer_target.borrow().as_ref().and_then(|target| {
             spec.timeout_millis().map(|_| unsafe {
                 NSTimer::scheduledTimerWithTimeInterval_target_selector_userInfo_repeats(
                     spec.timeout(),
@@ -408,51 +483,22 @@ impl Toast {
                 )
             })
         });
-
-        Presentation {
-            container,
-            row,
-            label,
-            button,
-            timer,
-        }
+        presentation
     }
 
-    /// Tells the app it disappeared. `action` is whether the action button closed it.
-    fn finish(&self, action: bool) {
+    /// Tells the app it disappeared by itself. `action` is the index of the action
+    /// button that closed it, if one did.
+    ///
+    /// The next toast in the queue comes up before the app is told.
+    fn finish(&self, action: Option<usize>) {
         if !self.is_visible() {
             return;
         }
-        self.forget_current();
-        self.take_down();
-        if action {
-            self.0.on_action.emit();
+        ToastQueue::remove(&QUEUE, &self.0);
+        if let Some(index) = action {
+            self.0.on_action.emit(index);
         }
-        self.0.on_dismiss.emit();
-    }
-
-    /// Removes the view and stops the timer. No notification.
-    fn take_down(&self) {
-        let Some(shown) = self.0.shown.borrow_mut().take() else {
-            return;
-        };
-        if let Some(timer) = shown.timer {
-            timer.invalidate();
-        }
-        shown.container.removeFromSuperview();
-    }
-
-    /// If "the toast showing now" is this one, vacates that slot.
-    fn forget_current(&self) {
-        CURRENT.with(|slot| {
-            let mine = slot
-                .borrow()
-                .as_ref()
-                .is_some_and(|current| Rc::ptr_eq(&current.0, &self.0));
-            if mine {
-                slot.borrow_mut().take();
-            }
-        });
+        self.0.on_dismiss.emit(());
     }
 }
 

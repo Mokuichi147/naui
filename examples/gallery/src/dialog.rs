@@ -1,8 +1,12 @@
-use naui::{Align, DialogButtons, DialogResponse, Orientation, PopoverPosition, Result, Ui};
+use naui::{
+    Align, DialogButtons, DialogResponse, Orientation, PopoverPosition, Result, ToastPosition,
+    ToastPriority, Ui,
+};
 
 use crate::parts::{self, Notice};
 
-/// Dialog の既定ボタンと3つの応答、任意の子ウィジェット。Sheet・Popover・Toast の出し方。
+/// Dialog の既定ボタンと3つの応答、任意の子ウィジェット。Sheet・Popover・Toast の出し方
+/// (Toast は待ち行列・複数の操作・優先度・位置)。
 pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
@@ -153,13 +157,12 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     pane.append(&open_popover);
     pane.append(&side_row);
 
-    // 画面の下端に出て自分で消える通知。同時に出るのは 1 つで、新しいものが
-    // 前のものを置き換える。
+    // 画面の端に出て自分で消える通知。同時に出るのは 1 つで、後から出したものは
+    // 前のものが消えるまで並んで待つ。
     parts::section(ui, &pane, "Toast")?;
     let toasts = parts::row(ui)?;
 
-    // ギャラリーの操作結果の知らせもトーストなので、ここで出すものとは
-    // 互いに置き換え合う。
+    // ギャラリーの操作結果の知らせもトーストなので、ここで出すものと同じ列に並ぶ。
 
     // 何秒かで自分から消えるトースト。
     let saved = ui.toast("Saved")?;
@@ -175,19 +178,32 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     });
     toasts.append(&show_saved);
 
-    // 操作ボタン付き。押すと通知が届き、そのまま消える。
+    // 操作ボタン付き。押したボタンの番号が届き、そのまま消える。
     let deleted = ui.toast("Deleted")?;
-    deleted.set_action("Undo");
+    deleted.set_actions(&["Undo", "Show"]);
     deleted.on_action({
         let notice = notice.clone();
-        move || notice.show("Undone (on_action)")
+        move |index| match index {
+            0 => notice.show("Undone (on_action 0)"),
+            _ => notice.show("Shown (on_action 1)"),
+        }
     });
-    let show_deleted = ui.button("With action")?;
+    let show_deleted = ui.button("With actions")?;
     show_deleted.on_click({
         let deleted = deleted.clone();
         move || deleted.show()
     });
     toasts.append(&show_deleted);
+
+    // 優先度 High は並ばずにすぐ出て、出ていたものを列の先頭へ戻す。
+    let urgent = ui.toast("Connection lost")?;
+    urgent.set_priority(ToastPriority::High);
+    let show_urgent = ui.button("High priority")?;
+    show_urgent.on_click({
+        let urgent = urgent.clone();
+        move || urgent.show()
+    });
+    toasts.append(&show_urgent);
 
     // 時間 0 は「自分では消えない」。アプリ側で消す。
     // dismiss() はアプリ自身の操作なので on_dismiss を呼ばない。
@@ -205,6 +221,33 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     });
     toasts.append(&show_sticky);
     toasts.append(&hide_sticky);
+    pane.append(&toasts);
+
+    // 出る場所。次に出たときから効く (Linux は下中央のまま)。
+    let positions = [
+        ("Top start", ToastPosition::TopStart),
+        ("Top center", ToastPosition::TopCenter),
+        ("Top end", ToastPosition::TopEnd),
+        ("Bottom start", ToastPosition::BottomStart),
+        ("Bottom center", ToastPosition::BottomCenter),
+        ("Bottom end", ToastPosition::BottomEnd),
+    ];
+    let (position_row, position) = parts::choice(ui, "Position", &positions.map(|(name, _)| name))?;
+    position.set_selected(4);
+    position.on_select({
+        let all = [
+            saved.clone(),
+            deleted.clone(),
+            urgent.clone(),
+            sticky.clone(),
+        ];
+        move |index| {
+            for toast in &all {
+                toast.set_position(positions[index].1);
+            }
+        }
+    });
+    pane.append(&position_row);
     pane.append(&toasts);
     Ok(pane)
 }

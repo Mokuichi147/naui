@@ -21,8 +21,8 @@ use naui_core::{
     MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
     PointerButton, PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode,
     SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle,
-    Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem, WindowPlacement, WindowState,
-    DEFAULT_SIDEBAR_WIDTH,
+    Theme, Time, ToastPosition, ToastPriority, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
 use objc2::rc::{autoreleasepool, Retained};
@@ -864,8 +864,24 @@ fn main() {
             toast_action_notifies_and_dismisses,
         ),
         (
-            "新しいトーストが前のものを黙って置き換える",
-            toast_replaces_the_previous_one,
+            "後から出したトーストは前のものが消えるまで並んで待つ",
+            toast_waits_its_turn,
+        ),
+        (
+            "消えた通知が届くときには次のトーストが出ている",
+            toast_next_one_is_up_before_on_dismiss,
+        ),
+        (
+            "優先度 High のトーストはすぐ出て、前のものを列の先頭へ戻す",
+            toast_high_priority_comes_up_at_once,
+        ),
+        (
+            "トーストが指定した端の位置に出る",
+            toast_positions_place_it_on_each_edge,
+        ),
+        (
+            "閉じた窓に残ったトーストは次のものに場所を譲る",
+            toast_in_a_closed_window_gives_way,
         ),
         (
             "トーストが指定した時間で自分から消える",
@@ -12201,15 +12217,15 @@ fn toast_is_placed_over_the_window(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// Clicking the action button calls `on_action` and `on_dismiss`, and it
-/// disappears.
+/// Clicking an action button calls `on_action` with its index and `on_dismiss`,
+/// and it disappears. The buttons follow `set_actions` in order, even while shown.
 fn toast_action_notifies_and_dismisses(ui: &Ui) -> Result<()> {
     let window = ui.window("トースト", 360.0, 240.0)?;
     window.set_child(&ui.stack(Orientation::Vertical)?);
 
     let toast = ui.toast("削除しました")?;
-    toast.set_action("元に戻す");
-    assert_eq!(toast.action(), "元に戻す");
+    toast.set_actions(&["元に戻す"]);
+    assert_eq!(toast.actions(), ["元に戻す"]);
     // 押されるまでは消えないトーストにしておく。
     toast.set_timeout(0.0);
     assert!(toast.spec().is_persistent());
@@ -12217,30 +12233,55 @@ fn toast_action_notifies_and_dismisses(ui: &Ui) -> Result<()> {
     let seen = Rc::new(RefCell::new(Vec::new()));
     toast.on_action({
         let seen = seen.clone();
-        move || seen.borrow_mut().push("action")
+        move |index| seen.borrow_mut().push(format!("action {index}"))
     });
     toast.on_dismiss({
         let seen = seen.clone();
-        move || seen.borrow_mut().push("dismiss")
+        move || seen.borrow_mut().push("dismiss".to_string())
     });
 
     toast.show();
     let view = toast.native_view().expect("出ている間はビューがあること");
-    let button = toast_button(&view).expect("操作ボタンが並んでいること");
-    assert_eq!(button.title().to_string(), "元に戻す");
-    unsafe { button.performClick(None) };
+    assert_eq!(button_titles(&view), ["元に戻す"]);
+
+    // 出したまま並べ替えても、その場で差し替わる。
+    toast.set_actions(&["元に戻す", "開く"]);
+    assert_eq!(button_titles(&view), ["元に戻す", "開く"]);
+    toast.set_actions::<&str>(&[]);
+    assert!(
+        button_titles(&view).is_empty(),
+        "空の列でボタンが消えること"
+    );
+    toast.set_actions(&["元に戻す", "開く"]);
+    assert_eq!(
+        toast_labels(&view),
+        ["削除しました"],
+        "文字は先頭に残ること"
+    );
+
+    let open = toast_buttons(&view).pop().expect("2 つ目のボタン");
+    unsafe { open.performClick(None) };
 
     assert_eq!(
         *seen.borrow(),
-        ["action", "dismiss"],
-        "押された通知のあとに、消えた通知が届くこと"
+        ["action 1", "dismiss"],
+        "押したボタンの番号が届き、そのあとに消えた通知が届くこと"
     );
     assert!(!toast.is_visible(), "押すと消えること");
+
+    // 出し直すと 1 つ目のボタンも働く。
+    seen.borrow_mut().clear();
+    toast.show();
+    let view = toast.native_view().expect("出し直したビュー");
+    let undo = toast_buttons(&view).remove(0);
+    unsafe { undo.performClick(None) };
+    assert_eq!(*seen.borrow(), ["action 0", "dismiss"]);
     Ok(())
 }
 
-/// A new toast replaces the previous one, and the replaced one does not notify.
-fn toast_replaces_the_previous_one(ui: &Ui) -> Result<()> {
+/// A toast shown while another is up waits its turn, and comes up once the other
+/// is dismissed. Taking a waiting one out skips it, and nothing is notified.
+fn toast_waits_its_turn(ui: &Ui) -> Result<()> {
     let window = ui.window("トースト", 360.0, 240.0)?;
     window.set_child(&ui.stack(Orientation::Vertical)?);
     let content = window
@@ -12248,34 +12289,218 @@ fn toast_replaces_the_previous_one(ui: &Ui) -> Result<()> {
         .contentView()
         .expect("ウィンドウの中身があること");
 
-    let first = ui.toast("1 つめ")?;
-    first.set_timeout(0.0);
     let dismissed = Rc::new(RefCell::new(0));
-    first.on_dismiss({
-        let dismissed = dismissed.clone();
-        move || *dismissed.borrow_mut() += 1
-    });
+    let make = |message: &str| -> Result<_> {
+        let toast = ui.toast(message)?;
+        toast.set_timeout(0.0);
+        toast.on_dismiss({
+            let dismissed = dismissed.clone();
+            move || *dismissed.borrow_mut() += 1
+        });
+        Ok(toast)
+    };
+    let first = make("1 つめ")?;
+    let second = make("2 つめ")?;
+    let third = make("3 つめ")?;
     first.show();
-
-    let second = ui.toast("2 つめ")?;
-    second.set_timeout(0.0);
     second.show();
+    third.show();
 
-    assert!(!first.is_visible(), "前のものは消えること");
-    assert!(second.is_visible());
+    assert!(first.is_visible() && !first.is_queued());
+    assert!(!second.is_visible() && second.is_queued(), "後のものは並ぶ");
+    assert!(second.native_view().is_none(), "並んでいる間はビューが無い");
+    assert_eq!(count_toasts(&content), 1, "同時に出るのは 1 つだけ");
+
+    // 並んでいるものをもう一度出しても、二重には並ばない。
+    second.show();
+    third.dismiss();
+    assert!(!third.is_queued(), "並んでいるものを外せる");
+
+    first.dismiss();
+    assert!(!first.is_visible());
+    assert!(second.is_visible() && !second.is_queued(), "次が出る");
+    assert_eq!(count_toasts(&content), 1);
+    assert_eq!(
+        toast_labels(&second.native_view().expect("出ていること")),
+        ["2 つめ"]
+    );
+
+    second.dismiss();
+    assert!(!third.is_visible(), "外したものは出ない");
+    assert_eq!(count_toasts(&content), 0);
     assert_eq!(
         *dismissed.borrow(),
         0,
         "アプリ自身の操作なので、消えた通知は届かないこと"
     );
-    assert_eq!(
-        count_toasts(&content),
-        1,
-        "同時に出るのは 1 つだけであること"
-    );
+    Ok(())
+}
 
+/// When a toast goes by itself, the next in the queue is already up by the time
+/// `on_dismiss` arrives, and showing another from inside it queues it behind.
+fn toast_next_one_is_up_before_on_dismiss(ui: &Ui) -> Result<()> {
+    let window = ui.window("トースト", 360.0, 240.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+
+    let first = ui.toast("1 つめ")?;
+    first.set_timeout(0.0);
+    first.set_actions(&["閉じる"]);
+    let second = ui.toast("2 つめ")?;
+    second.set_timeout(0.0);
+    let third = ui.toast("3 つめ")?;
+    third.set_timeout(0.0);
+
+    let seen = Rc::new(RefCell::new(None));
+    first.on_dismiss({
+        let (seen, second, third) = (seen.clone(), second.clone(), third.clone());
+        move || {
+            *seen.borrow_mut() = Some(second.is_visible());
+            third.show();
+        }
+    });
+    first.show();
+    second.show();
+
+    let view = first.native_view().expect("出ていること");
+    let close = toast_buttons(&view).remove(0);
+    unsafe { close.performClick(None) };
+
+    assert_eq!(*seen.borrow(), Some(true), "通知の時点で次が出ていること");
+    assert!(second.is_visible());
+    assert!(third.is_queued(), "通知の中で出したものは後ろに並ぶ");
     second.dismiss();
+    assert!(third.is_visible());
+    third.dismiss();
+    Ok(())
+}
+
+/// A `High` toast comes up at once; the one it interrupts goes back to the front of
+/// the queue without being notified, and comes up again afterwards.
+fn toast_high_priority_comes_up_at_once(ui: &Ui) -> Result<()> {
+    let window = ui.window("トースト", 360.0, 240.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("ウィンドウの中身があること");
+
+    let dismissed = Rc::new(RefCell::new(0));
+    let normal = ui.toast("ふつう")?;
+    normal.set_timeout(0.0);
+    normal.on_dismiss({
+        let dismissed = dismissed.clone();
+        move || *dismissed.borrow_mut() += 1
+    });
+    let later = ui.toast("あとで")?;
+    later.set_timeout(0.0);
+    let urgent = ui.toast("急ぎ")?;
+    urgent.set_timeout(0.0);
+    urgent.set_priority(ToastPriority::High);
+    assert_eq!(urgent.priority(), ToastPriority::High);
+
+    normal.show();
+    later.show();
+    urgent.show();
+    assert!(urgent.is_visible(), "並ばずにすぐ出る");
+    assert!(
+        !normal.is_visible() && normal.is_queued(),
+        "前のものは列へ戻る"
+    );
+    assert_eq!(count_toasts(&content), 1);
+    assert_eq!(*dismissed.borrow(), 0, "列へ戻っても通知は届かない");
+
+    urgent.dismiss();
+    assert!(normal.is_visible(), "割り込まれたものが先に戻る");
+    assert!(later.is_queued());
+    normal.dismiss();
+    assert!(later.is_visible());
+    later.dismiss();
     assert_eq!(count_toasts(&content), 0);
+    Ok(())
+}
+
+/// Each position puts the toast against that edge, 24 points in.
+fn toast_positions_place_it_on_each_edge(ui: &Ui) -> Result<()> {
+    let window = ui.window("トースト", 400.0, 300.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("ウィンドウの中身があること");
+    content.setFrameSize(NSSize::new(400.0, 300.0));
+
+    let toast = ui.toast("ここ")?;
+    toast.set_timeout(0.0);
+    for position in ToastPosition::ALL {
+        toast.set_position(position);
+        assert_eq!(toast.position(), position);
+        toast.show();
+        content.layoutSubtreeIfNeeded();
+        let frame = toast.native_view().expect("出ていること").frame();
+        let (min_x, max_x) = (frame.origin.x, frame.origin.x + frame.size.width);
+        let (min_y, max_y) = (frame.origin.y, frame.origin.y + frame.size.height);
+        // contentView は下から上へ数える座標なので、上端は max_y で見る。
+        if position.is_top() {
+            assert!(
+                (max_y - 276.0).abs() < 1.0,
+                "{position:?} 上端から 24: {frame:?}"
+            );
+        } else {
+            assert!(
+                (min_y - 24.0).abs() < 1.0,
+                "{position:?} 下端から 24: {frame:?}"
+            );
+        }
+        match position.align() {
+            Align::Start => assert!((min_x - 24.0).abs() < 1.0, "{position:?}: {frame:?}"),
+            Align::End => assert!((max_x - 376.0).abs() < 1.0, "{position:?}: {frame:?}"),
+            _ => assert!(
+                ((min_x + max_x) / 2.0 - 200.0).abs() < 1.0,
+                "{position:?}: {frame:?}"
+            ),
+        }
+        toast.dismiss();
+    }
+    Ok(())
+}
+
+/// A toast left on screen in a window that has closed does not hold up the queue:
+/// the next one shown takes its place, without notifying.
+fn toast_in_a_closed_window_gives_way(ui: &Ui) -> Result<()> {
+    let old = ui.window("閉じる窓", 360.0, 240.0)?;
+    old.set_child(&ui.stack(Orientation::Vertical)?);
+    old.show();
+    let stuck = ui.toast("閉じた窓のトースト")?;
+    stuck.set_timeout(0.0);
+    let dismissed = Rc::new(RefCell::new(0));
+    stuck.on_dismiss({
+        let dismissed = dismissed.clone();
+        move || *dismissed.borrow_mut() += 1
+    });
+    stuck.show();
+    assert!(stuck.is_visible());
+    old.close();
+
+    let new = ui.window("新しい窓", 360.0, 240.0)?;
+    new.set_child(&ui.stack(Orientation::Vertical)?);
+    new.show();
+    let next = ui.toast("新しい窓のトースト")?;
+    next.set_timeout(0.0);
+    next.show();
+    assert!(next.is_visible(), "並ばずに出る");
+    assert!(
+        !stuck.is_visible() && !stuck.is_queued(),
+        "残ったものは外れる"
+    );
+    assert_eq!(*dismissed.borrow(), 0, "外しても通知は届かない");
+    let view = next.native_view().expect("出ていること");
+    assert!(
+        view.window()
+            .is_some_and(|w| std::ptr::eq(&*w, &*new.native_window())),
+        "新しい窓に出る"
+    );
+    next.dismiss();
+    new.close();
     Ok(())
 }
 
@@ -12339,11 +12564,20 @@ fn toast_labels(view: &NSView) -> Vec<String> {
         .collect()
 }
 
-/// The toast's action button. `None` if there is none.
-fn toast_button(view: &NSView) -> Option<Retained<NSButton>> {
+/// The toast's action buttons, in order.
+fn toast_buttons(view: &NSView) -> Vec<Retained<NSButton>> {
     toast_row(view)
         .iter()
-        .find_map(|item| item.downcast_ref::<NSButton>().map(|b| b.retain()))
+        .filter_map(|item| item.downcast_ref::<NSButton>().map(|b| b.retain()))
+        .collect()
+}
+
+/// The titles of the toast's action buttons, in order.
+fn button_titles(view: &NSView) -> Vec<String> {
+    toast_buttons(view)
+        .iter()
+        .map(|b| b.title().to_string())
+        .collect()
 }
 
 /// The row laying out the text and the button inside the toast.
