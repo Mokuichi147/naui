@@ -9533,37 +9533,86 @@ fn shift_range_scenario(
             "ホイールで窓が動いている: 位置 {start} → {} ポインター {aimed:?}",
             scroll.VerticalOffset().expect("位置")
         );
-        // ホイールのスクロールは少しのあいだ続くので、止まってから押す行を決める。
-        let mut settled = scroll.VerticalOffset().expect("位置");
-        pump_until(Duration::from_secs(3), || {
-            pump_until(Duration::from_millis(300), || false);
-            let now = scroll.VerticalOffset().expect("位置");
-            let still = (now - settled).abs() < 0.5;
-            settled = now;
-            still
-        });
-        let mut pointer = POINT::default();
-        // SAFETY: `pointer` はこの関数の中で生きている。
-        let _ = unsafe { GetCursorPos(&mut pointer) };
-        let under_pointer = |row: &ListViewItem| {
+        // ポインターの下の行と、その行の画面上の位置。
+        let under_pointer = || {
+            use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
             use windows::Foundation::Point as XamlPoint;
             use windows::Win32::Graphics::Gdi::ClientToScreen;
             use windows::Win32::UI::HiDpi::GetDpiForWindow;
-            let top = row
-                .TransformToVisual(None)
-                .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
-                .expect("行の位置");
+            let mut pointer = POINT::default();
+            // SAFETY: `pointer` はこの関数の中で生きている。
+            let _ = unsafe { GetCursorPos(&mut pointer) };
             // SAFETY: HWND は window が閉じるまで有効で、UI スレッドから読んでいる。
             let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
             let mut origin = POINT::default();
             // SAFETY: `origin` はこの関数の中で生きている。
             let _ = unsafe { ClientToScreen(hwnd, &mut origin) };
             let y = (pointer.y - origin.y) as f32 / scale;
-            y >= top.Y && y < top.Y + row.ActualHeight().unwrap_or(0.0) as f32
+            let items = list.list_view().Items().expect("行");
+            (0..items.Size().expect("行の数")).find_map(|slot| {
+                let row = items.GetAt(slot).ok()?.cast::<ListViewItem>().ok()?;
+                let top = row
+                    .TransformToVisual(None)
+                    .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+                    .ok()?
+                    .Y;
+                let bottom = top + row.ActualHeight().ok()? as f32;
+                let index = AutomationProperties::GetPositionInSet(&row).ok()? as usize - 1;
+                (y >= top && y < bottom).then_some((index, top))
+            })
         };
-        let target = (0..ROWS)
-            .find(|&index| built_list_row(list, index).is_some_and(|row| under_pointer(&row)))
-            .expect("ポインターの下の行");
+        // ホイールのスクロールは少しのあいだ続くので、止まってから押す行を決める。止まったかは
+        // 行の位置で見る。`VerticalOffset` はスクロールの途中の値のまま残ることがあり、
+        // 行がもう止まっていても、まだ動いていても当てにならない。
+        let mut settled = under_pointer();
+        pump_until(Duration::from_secs(3), || {
+            pump_until(Duration::from_millis(300), || false);
+            let now = under_pointer();
+            let still = match (now, settled) {
+                (Some((now, at)), Some((before, was))) => now == before && (at - was).abs() < 0.5,
+                _ => false,
+            };
+            settled = now;
+            still
+        });
+        let (target, _) = under_pointer().expect("ポインターの下の行");
+        // 画面に出ている行が受けたフォーカスは、その行に残る。`VerticalOffset` がスクロールの
+        // 途中の値のままでも、行の描かれた位置で見えていると分かる。下の端の行ほど、
+        // 古い位置からは画面の外に見える。
+        let viewport = scroll.ViewportHeight().expect("高さ");
+        let lowest_shown = {
+            use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+            use windows::Foundation::Point as XamlPoint;
+            let items = list.list_view().Items().expect("行");
+            (0..items.Size().expect("行の数"))
+                .filter_map(|slot| {
+                    let row = items.GetAt(slot).ok()?.cast::<ListViewItem>().ok()?;
+                    let top = row
+                        .TransformToVisual(&scroll)
+                        .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+                        .ok()?
+                        .Y as f64;
+                    let bottom = top + row.ActualHeight().ok()?;
+                    let index = AutomationProperties::GetPositionInSet(&row).ok()? as usize - 1;
+                    (top >= 0.0 && bottom <= viewport && index != target).then_some((index, row))
+                })
+                .max_by_key(|(index, _)| *index)
+        };
+        if let Some((shown, row)) = lowest_shown {
+            use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
+            use naui_winui3::Microsoft::UI::Xaml::FocusState;
+            let _ = row
+                .cast::<Control>()
+                .and_then(|row| row.Focus(FocusState::Programmatic));
+            // フォーカスの移り先を直すのは `GotFocus` で、あとから届く。
+            pump_until(Duration::from_millis(500), || false);
+            assert_eq!(
+                focused_list_row(list),
+                Some(shown),
+                "画面に出ている行のフォーカスは動かない (ホイールのあと、位置 {})",
+                scroll.VerticalOffset().expect("位置")
+            );
+        }
         for _ in 0..3 {
             with_modifiers(&[VK_SHIFT], || {
                 send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
