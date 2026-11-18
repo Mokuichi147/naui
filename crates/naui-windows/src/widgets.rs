@@ -842,7 +842,9 @@ pub(crate) fn enter_text_box(native: &TextBox, text: &str) {
         return;
     }
     if let Ok(element) = native.cast::<UIElement>() {
-        let _ = crate::automation::set_value(&element, text);
+        if let Err(error) = crate::automation::set_value(&element, text) {
+            eprintln!("naui-windows: could not type into the TextBox: {error}");
+        }
     }
 }
 
