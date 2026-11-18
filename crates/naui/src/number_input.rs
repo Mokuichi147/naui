@@ -90,4 +90,31 @@ impl NumberInput {
     pub fn on_submit(&self, f: impl FnMut(f64) + 'static) {
         self.0.on_submit(f)
     }
+
+    /// Replaces the text in its field with `text` the way the user does by
+    /// selecting everything and typing over it. Does nothing while disabled.
+    ///
+    /// As with typing, text that reads as a number is taken as the value at once
+    /// (rounded and kept in range only on confirmation), so [`on_change`](Self::on_change)
+    /// is called if the value changes. Other text, such as `"-"` or `"abc"`, stays in
+    /// the field until [`submit`](Self::submit) or leaving the field reverts it.
+    ///
+    /// For tests and automation. It goes through each platform's own path for
+    /// typed text; no key is pressed, so `on_key_down` is not called. See
+    /// [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn enter_text(&self, text: &str) {
+        self.0.enter_text(text)
+    }
+
+    /// Confirms it as Enter does: the text in the field is read into the value
+    /// (or reverted if it is not a number), and [`on_submit`](Self::on_submit) is
+    /// called. Does nothing while disabled.
+    ///
+    /// For tests and automation. No key is pressed, so `on_key_down` is not
+    /// called. See [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn submit(&self) {
+        self.0.submit()
+    }
 }

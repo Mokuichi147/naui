@@ -134,6 +134,8 @@ struct SheetInner {
     parent: RefCell<Option<Retained<NSWindow>>>,
     open: Cell<bool>,
     on_response: ValueHandler<DialogResponse>,
+    /// The answer [`Sheet::respond`] keeps for the next time it opens.
+    pending: Cell<Option<DialogResponse>>,
 }
 
 /// A modal dialog with arbitrary content (a sheet).
@@ -151,7 +153,7 @@ impl Sheet {
                 let weak = weak.clone();
                 move || {
                     if let Some(inner) = weak.upgrade() {
-                        Sheet(inner).respond(DialogResponse::Cancel);
+                        Sheet(inner).finish(DialogResponse::Cancel);
                     }
                 }
             });
@@ -237,6 +239,7 @@ impl Sheet {
                 parent: RefCell::new(None),
                 open: Cell::new(false),
                 on_response: ValueHandler::default(),
+                pending: Cell::new(None),
             }
         });
         let this = Self(inner);
@@ -320,7 +323,7 @@ impl Sheet {
                 let weak = Rc::downgrade(&self.0);
                 move || {
                     if let Some(inner) = weak.upgrade() {
-                        Sheet(inner).respond(role);
+                        Sheet(inner).finish(role);
                     }
                 }
             });
@@ -380,6 +383,15 @@ impl Sheet {
         *self.0.parent.borrow_mut() = Some(parent.clone());
         // 閉じたことは自分で知っているので、完了の通知は受けない。
         parent.beginSheet_completionHandler(&self.0.window, None);
+        if let Some(response) = self.0.pending.take() {
+            // 利用者と同じく、出てから押す。
+            let weak = Rc::downgrade(&self.0);
+            crate::main_thread::on_main_run_loop(move || {
+                if let Some(inner) = weak.upgrade() {
+                    Sheet(inner).respond(response);
+                }
+            });
+        }
     }
 
     /// Closes it. `on_response` is not called. Does nothing if it is not open.
@@ -390,9 +402,33 @@ impl Sheet {
         self.end_sheet();
     }
 
+    /// Answers it the way the user does, by clicking the button for `response`
+    /// (`performClick:`), so `on_response` is called with it (for tests and
+    /// automation). Nothing happens if it has no such button or the button is
+    /// disabled.
+    ///
+    /// If it is not open, the answer is kept and given right after it next opens.
+    pub fn respond(&self, response: DialogResponse) {
+        if !self.0.open.get() {
+            self.0.pending.set(Some(response));
+            return;
+        }
+        let button = self
+            .0
+            .button_views
+            .borrow()
+            .iter()
+            .find(|button| button.role == response)
+            .map(|button| button.native.clone());
+        // 利用者は無効なボタンを押せない。
+        if let Some(button) = button.filter(|button| button.isEnabled()) {
+            unsafe { button.performClick(None) };
+        }
+    }
+
     /// Closes it and notifies `response`, as a click on that button does. Does
     /// nothing if it is not open.
-    fn respond(&self, response: DialogResponse) {
+    fn finish(&self, response: DialogResponse) {
         if !self.0.open.replace(false) {
             return;
         }

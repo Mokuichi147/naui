@@ -781,6 +781,20 @@ impl TextInput {
         });
     }
 
+    /// Replaces the text the way typing does, so `on_change` is called (for tests
+    /// and automation). See [`enter_field_text`].
+    pub fn enter_text(&self, text: &str) {
+        enter_field_text(&self.0.native, text);
+    }
+
+    /// Confirms it as Enter does, so `on_submit` is called (for tests and
+    /// automation). Does nothing while disabled or read-only.
+    pub fn submit(&self) {
+        if self.0.native.isEnabled() {
+            self.0.handlers.submit(&self.text());
+        }
+    }
+
     /// Whether it is read-only. Editable by default.
     ///
     /// While read-only, the text can still be selected and copied, and it still takes
@@ -864,6 +878,20 @@ impl PasswordInput {
     pub fn on_submit(&self, f: impl FnMut(&str) + 'static) {
         self.0.handlers.set_submit(f);
     }
+
+    /// Replaces the text the way typing does, so `on_change` is called (for tests
+    /// and automation). See [`enter_field_text`].
+    pub fn enter_text(&self, text: &str) {
+        enter_field_text(&self.0.native, text);
+    }
+
+    /// Confirms it as Enter does, so `on_submit` is called (for tests and
+    /// automation). Does nothing while disabled.
+    pub fn submit(&self) {
+        if self.0.native.isEnabled() {
+            self.0.handlers.submit(&self.text());
+        }
+    }
 }
 
 // ------------------------------------------------------------- SearchInput
@@ -933,6 +961,43 @@ impl SearchInput {
     /// Called with the current text when the user confirms with Enter.
     pub fn on_search(&self, f: impl FnMut(&str) + 'static) {
         self.0.handlers.set_submit(f);
+    }
+
+    /// Replaces the text the way typing does, so `on_change` is called (for tests
+    /// and automation). See [`enter_field_text`].
+    pub fn enter_text(&self, text: &str) {
+        enter_field_text(&self.0.native, text);
+    }
+
+    /// Confirms it as Enter does, so `on_search` is called (for tests and
+    /// automation). Does nothing while disabled.
+    pub fn search(&self) {
+        if self.0.native.isEnabled() {
+            self.0.handlers.submit(&self.text());
+        }
+    }
+}
+
+/// Replaces a single-line field's text the way typing does, for `enter_text` (tests
+/// and automation): the text is written and AppKit's notification for typed text
+/// (`NSControlTextDidChangeNotification`) is posted for the field, which reaches its
+/// delegate as `controlTextDidChange:`, so `on_change` is called before this
+/// returns. Does nothing while the field is disabled or not editable.
+///
+/// It does not go through the field editor: the field does not take focus, no key
+/// event is delivered, and nothing is completed (`NSComboBox`).
+pub(crate) fn enter_field_text(field: &NSTextField, text: &str) {
+    if !field.isEnabled() || !field.isEditable() {
+        return;
+    }
+    field.setStringValue(&NSString::from_str(text));
+    let center = objc2_foundation::NSNotificationCenter::defaultCenter();
+    // SAFETY: 通知名は AppKit が持つ定数で、object は通知を出すコントロール自身。
+    unsafe {
+        center.postNotificationName_object(
+            objc2_app_kit::NSControlTextDidChangeNotification,
+            Some(field),
+        );
     }
 }
 
@@ -1171,6 +1236,26 @@ impl TextArea {
     /// Also called for newlines. Not called for `set_text`.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.handler.set(f);
+    }
+
+    /// Replaces the text the way typing does, so `on_change` is called before this
+    /// returns (for tests and automation). Does nothing while disabled or
+    /// read-only.
+    ///
+    /// The text goes in with `insertText:replacementRange:` over the whole text, the
+    /// text input path that typed characters take, so `textDidChange:` follows. No
+    /// key event is delivered.
+    pub fn enter_text(&self, text: &str) {
+        let view = &self.0.text_view;
+        if !view.isEditable() {
+            return;
+        }
+        let whole = objc2_foundation::NSRange::new(0, view.string().length());
+        let text = NSString::from_str(text);
+        // SAFETY: 渡すのは NSString で、範囲は今の文字列全体 (UTF-16 の長さ)。
+        unsafe {
+            objc2_app_kit::NSTextInputClient::insertText_replacementRange(&**view, &text, whole)
+        };
     }
 
     /// The inner `NSTextView`. Public as a backend-specific escape hatch.
