@@ -10344,11 +10344,40 @@ fn shift_click_in_margin_scenario(
         }
         send_input(mouse_input(MOUSEEVENTF_WHEEL, (-480_i32) as u32));
     }
-    let mut settled = scroll.VerticalOffset().expect("位置");
+    // ポインターの下の行を、行そのものの位置で求める。
+    // SAFETY: HWND は window が閉じるまで有効で、UI スレッドから読んでいる。
+    let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
+    let mut origin = POINT::default();
+    // SAFETY: `origin` はこの関数の中で生きている。
+    let _ = unsafe { ClientToScreen(hwnd, &mut origin) };
+    let y = (aimed.y - origin.y) as f32 / scale;
+    // ポインターの下の行と、その行の画面上の位置。
+    let placed_under_pointer = || {
+        let items = list.list_view().Items().ok()?;
+        (0..items.Size().ok()?).find_map(|slot| {
+            let row = items.GetAt(slot).ok()?.cast::<ListViewItem>().ok()?;
+            let top = row
+                .TransformToVisual(None)
+                .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+                .ok()?;
+            let bottom = top.Y + row.ActualHeight().ok()? as f32;
+            (y >= top.Y && y < bottom).then(|| {
+                let index = AutomationProperties::GetPositionInSet(&row).expect("位置");
+                (index as usize - 1, top.Y)
+            })
+        })
+    };
+    let row_under_pointer = || placed_under_pointer().map(|(index, _)| index);
+    // 止まったかは行の位置で見る。`VerticalOffset` はホイールのスクロールの途中の値のまま
+    // 残ることがあり、当てにならない。
+    let mut settled = placed_under_pointer();
     pump_until(Duration::from_secs(3), || {
         pump_until(Duration::from_millis(300), || false);
-        let now = scroll.VerticalOffset().expect("位置");
-        let still = (now - settled).abs() < 0.5;
+        let now = placed_under_pointer();
+        let still = match (now, settled) {
+            (Some((now, at)), Some((before, was))) => now == before && (at - was).abs() < 0.5,
+            _ => false,
+        };
         settled = now;
         still
     });
@@ -10358,27 +10387,6 @@ fn shift_click_in_margin_scenario(
         return None;
     }
     assert!(built_list_row(list, 2).is_none(), "起点の行が窓の外にある");
-
-    // ポインターの下の行を、行そのものの位置で求める。
-    // SAFETY: HWND は window が閉じるまで有効で、UI スレッドから読んでいる。
-    let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
-    let mut origin = POINT::default();
-    // SAFETY: `origin` はこの関数の中で生きている。
-    let _ = unsafe { ClientToScreen(hwnd, &mut origin) };
-    let y = (aimed.y - origin.y) as f32 / scale;
-    let row_under_pointer = || {
-        let items = list.list_view().Items().ok()?;
-        (0..items.Size().ok()?).find_map(|slot| {
-            let row = items.GetAt(slot).ok()?.cast::<ListViewItem>().ok()?;
-            let top = row
-                .TransformToVisual(None)
-                .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
-                .ok()?;
-            let bottom = top.Y + row.ActualHeight().ok()? as f32;
-            (y >= top.Y && y < bottom)
-                .then(|| AutomationProperties::GetPositionInSet(&row).expect("位置") as usize - 1)
-        })
-    };
     let target = row_under_pointer().expect("ポインターの下の行");
 
     let range: Vec<usize> = (2..=target).collect();
