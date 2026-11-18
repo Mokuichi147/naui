@@ -9513,26 +9513,6 @@ fn shift_range_scenario(
         };
         let aimed = pointer_at();
         let start = scroll.VerticalOffset().expect("位置");
-        for _ in 0..60 {
-            if !foreground_is_ours() {
-                return None;
-            }
-            if built_list_row(list, 7).is_none() {
-                break;
-            }
-            send_input(mouse_input(MOUSEEVENTF_WHEEL, (-480_i32) as u32));
-        }
-        pump_until(Duration::from_millis(500), || false);
-        // ホイールもこの先のクリックも、ポインターの下へ届く。
-        if pointer_at() != aimed {
-            println!("     (ポインターがほかから動かされたので、確かめずに通す)");
-            return None;
-        }
-        assert!(
-            built_list_row(list, 7).is_none(),
-            "ホイールで窓が動いている: 位置 {start} → {} ポインター {aimed:?}",
-            scroll.VerticalOffset().expect("位置")
-        );
         // ポインターの下の行と、その行の画面上の位置。
         let under_pointer = || {
             use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
@@ -9561,6 +9541,30 @@ fn shift_range_scenario(
                 (y >= top && y < bottom).then_some((index, top))
             })
         };
+        for _ in 0..60 {
+            if !foreground_is_ours() {
+                return None;
+            }
+            if built_list_row(list, 7).is_none() {
+                break;
+            }
+            // 1 回ずつ、行が動いたのを見てから次を送る。届く前に積み上げると、残りが
+            // あとでまとめて流れ、押す行を決めたあとで窓が大きく動くことがある。
+            let before = under_pointer();
+            send_input(mouse_input(MOUSEEVENTF_WHEEL, (-480_i32) as u32));
+            pump_until(Duration::from_secs(1), || under_pointer() != before);
+        }
+        pump_until(Duration::from_millis(500), || false);
+        // ホイールもこの先のクリックも、ポインターの下へ届く。
+        if pointer_at() != aimed {
+            println!("     (ポインターがほかから動かされたので、確かめずに通す)");
+            return None;
+        }
+        assert!(
+            built_list_row(list, 7).is_none(),
+            "ホイールで窓が動いている: 位置 {start} → {} ポインター {aimed:?}",
+            scroll.VerticalOffset().expect("位置")
+        );
         // ホイールのスクロールは少しのあいだ続くので、止まってから押す行を決める。止まったかは
         // 行の位置で見る。`VerticalOffset` はスクロールの途中の値のまま残ることがあり、
         // 行がもう止まっていても、まだ動いていても当てにならない。
@@ -9601,9 +9605,14 @@ fn shift_range_scenario(
         if let Some((shown, row)) = lowest_shown {
             use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
             use naui_winui3::Microsoft::UI::Xaml::FocusState;
-            let _ = row
+            let focused = row
                 .cast::<Control>()
-                .and_then(|row| row.Focus(FocusState::Programmatic));
+                .and_then(|row| row.Focus(FocusState::Programmatic))
+                .unwrap_or(false);
+            if !focused || !foreground_is_ours() {
+                println!("     (行へフォーカスを渡せない環境なので、確かめずに通す)");
+                return None;
+            }
             // フォーカスの移り先を直すのは `GotFocus` で、あとから届く。
             pump_until(Duration::from_millis(500), || false);
             assert_eq!(
