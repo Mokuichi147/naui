@@ -39,8 +39,8 @@ use crate::Slot;
 /// How long [`Dialog::open`] and [`Dialog::respond`] wait before trying again.
 const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
 /// How long [`Dialog::respond`] waits for a clicked button to close the dialog
-/// before clicking it again.
-const RECHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(200);
+/// before closing it with that role itself.
+const RECHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
 /// How many more times [`Dialog::respond`] looks for the button (about a second).
 const PRESS_TRIES: u32 = 50;
 /// How many more times [`Dialog::open`] tries to show it (about 10 seconds).
@@ -359,7 +359,6 @@ impl Dialog {
         // 前の回がまだ閉じきっていない (読み込まれたまま) うちに `ShowAsync` を
         // 呼ぶと、成功を返すのに出てこない。外れるまで待つ。
         let leaving = self.is_loaded();
-        eprintln!("DIAG try_show loaded={leaving} tries={tries}");
         if leaving && tries > 0 {
             self.later(move |this| this.try_show(tries - 1));
             return;
@@ -424,8 +423,9 @@ impl Dialog {
     /// If it is not open, the answer is kept and given once it next opens. The
     /// buttons are part of the `ContentDialog`'s template, which is applied a moment
     /// after it is shown, so the click waits for them. Where the template is still
-    /// missing after about a second (a window nothing draws, as on CI runners), it
-    /// closes the dialog with that role itself.
+    /// missing after about a second, or a click WinUI took leaves it open for half a
+    /// second (seen on CI runners, whose windows nothing draws, with the secondary
+    /// button), it closes the dialog with that role itself.
     pub fn respond(&self, response: DialogResponse) {
         if self.0.open.get() && self.0.shown.get() {
             self.press(response, PRESS_TRIES);
@@ -461,17 +461,13 @@ impl Dialog {
                 .is_ok_and(|button| crate::automation::invoke(&button).is_ok()),
             Err(_) => false,
         };
-        eprintln!(
-            "DIAG press {response:?} pressed={pressed} loaded={} tries={tries}",
-            self.is_loaded()
-        );
         if pressed {
-            // 開き直した直後に押すと、WinUI が受け付けたのに閉じないことがある
-            // (前の回が閉じきる前)。同じ回のまま開いていれば、少し待って押し直す。
+            // WinUI が受け付けたのに閉じないことがある (何も描かれていない窓の
+            // 副ボタン)。同じ回のまま開いていれば、その役割で閉じる。
             let opening = self.0.opening.get();
             self.later_by(RECHECK_INTERVAL, move |this| {
-                if this.0.open.get() && this.0.opening.get() == opening && tries > 0 {
-                    this.press(response, tries - 1);
+                if this.0.open.get() && this.0.opening.get() == opening {
+                    this.close_with(response);
                 }
             });
             return;
