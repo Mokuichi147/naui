@@ -77,8 +77,8 @@ resolver = "2"
 members = ["app", "core", "screens/*", "services/*"]
 
 [workspace.dependencies]
-naui = "0.16"
-naui-app = "0.16"
+naui = "0.17"
+naui-app = "0.17"
 notes-core = { path = "core" }
 ```
 
@@ -97,7 +97,7 @@ naui included:
 
 ```sh
 $ cargo tree -p notes-core
-notes-core v0.16.0 (examples/notes/core)
+notes-core v0.17.0 (examples/notes/core)
 ```
 
 This is what makes it the core:
