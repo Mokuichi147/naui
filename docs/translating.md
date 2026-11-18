@@ -427,5 +427,5 @@ crate. Having written it out, it should not, at least for now:
 
 So the glue stays in the app, and this guide plus `examples/i18n` are the starting
 point to copy from. This is revisited if apps keep needing the same additions,
-for example once naui can tell the native side the app's language (on the
-roadmap), which an app-chosen language would also need to call.
+such as passing an app-chosen language to `Settings::language` at startup (see
+above).
