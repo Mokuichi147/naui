@@ -6,13 +6,16 @@
 //! ```
 
 use naui::{
-    testing, Orientation, Result, Ui, DEFAULT_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_CONTENT_WIDTH,
-    SIDEBAR_MIN_WIDTH,
+    testing, DialogResponse, Orientation, Result, Ui, DEFAULT_SIDEBAR_WIDTH,
+    SIDEBAR_COLLAPSE_CONTENT_WIDTH, SIDEBAR_MIN_WIDTH,
 };
-use signup::{build, FORM_BREAKPOINT, PADDING};
+use signup::{build, CLEARED, FORM_BREAKPOINT, PADDING};
 
 naui::test_cases!(
     create_greets_by_name,
+    typing_shows_the_name,
+    enter_creates_the_account,
+    clearing_asks_first,
     create_asks_for_a_name,
     subscribing_is_mentioned,
     disabled_button_ignores_clicks,
@@ -23,9 +26,58 @@ naui::test_cases!(
 /// Clicking "Create account" greets the name typed in.
 async fn create_greets_by_name(ui: Ui) -> Result<()> {
     let app = build(&ui)?;
-    app.name.set_text("Ada");
+    // Windows types into a field only once its window is shown.
+    app.window.show();
+    app.name.enter_text("Ada");
     app.create.click();
     assert_eq!(app.status.text(), "Welcome, Ada");
+    app.window.close();
+    Ok(())
+}
+
+/// The line below the form follows the name as it is typed (`on_change`).
+async fn typing_shows_the_name(ui: Ui) -> Result<()> {
+    let app = build(&ui)?;
+    app.window.show();
+    app.name.enter_text("Ada");
+    // On Windows the notification comes a moment after typing, so wait for it.
+    testing::wait_until(&ui, || app.preview.text() == "Signing up as Ada").await?;
+    app.name.enter_text("");
+    testing::wait_until(&ui, || app.preview.text().is_empty()).await?;
+    app.window.close();
+    Ok(())
+}
+
+/// Enter in the name field creates the account, as the button does.
+async fn enter_creates_the_account(ui: Ui) -> Result<()> {
+    let app = build(&ui)?;
+    app.window.show();
+    app.name.enter_text("Ada");
+    app.name.submit();
+    assert_eq!(app.status.text(), "Welcome, Ada");
+    app.window.close();
+    Ok(())
+}
+
+/// "Clear" asks first, and clears the form only when the user says so.
+///
+/// The answer is given before the click that opens the dialog: on macOS the click
+/// returns only once the dialog has been answered.
+async fn clearing_asks_first(ui: Ui) -> Result<()> {
+    let app = build(&ui)?;
+    app.window.show();
+    app.name.enter_text("Ada");
+
+    app.confirm_clear.respond(DialogResponse::Cancel);
+    app.clear.click();
+    testing::wait_until(&ui, || !app.confirm_clear.is_open()).await?;
+    assert_eq!(app.name.text(), "Ada", "keeping the form leaves the name");
+    assert_eq!(app.status.text(), "");
+
+    app.confirm_clear.respond(DialogResponse::Primary);
+    app.clear.click();
+    testing::wait_until(&ui, || app.status.text() == CLEARED).await?;
+    assert_eq!(app.name.text(), "");
     app.window.close();
     Ok(())
 }

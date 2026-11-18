@@ -14,7 +14,7 @@ use std::sync::Arc;
 use naui_core::Result;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     AutoSuggestBox, AutoSuggestBoxQuerySubmittedEventArgs, AutoSuggestBoxTextChangedEventArgs,
-    AutoSuggestionBoxTextChangeReason, Control,
+    AutoSuggestionBoxTextChangeReason, Control, TextBox,
 };
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::UIElement;
@@ -31,6 +31,9 @@ use crate::widgets::{impl_widget, Widget};
 const AUTO_SUGGEST_BOX_XAML: &str = r#"<AutoSuggestBox
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     QueryIcon="Find"/>"#;
+
+/// The name of the input field in the `AutoSuggestBox`'s template.
+const TEXT_BOX_PART: &str = "TextBox";
 
 struct SearchInputInner {
     native: AutoSuggestBox,
@@ -159,6 +162,59 @@ impl SearchInput {
     /// glass.
     pub fn on_search(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_search.set(f);
+    }
+
+    /// Whether it takes input (`Control.IsEnabled`).
+    fn is_enabled(&self) -> bool {
+        self.0
+            .native
+            .cast::<Control>()
+            .and_then(|control| control.IsEnabled())
+            .unwrap_or(false)
+    }
+
+    /// Replaces the text the way typing does, so `on_change` is called (for tests
+    /// and automation). Does nothing while disabled.
+    ///
+    /// The text goes into the `TextBox` in the `AutoSuggestBox`'s template through
+    /// UI Automation's Value pattern ([`crate::widgets::enter_text_box`]), so WinUI
+    /// reports it as the user's input (`UserInput`). Before the template has been
+    /// applied (in a window not shown yet), the text is only set.
+    pub fn enter_text(&self, text: &str) {
+        if !self.is_enabled() {
+            return;
+        }
+        let field = self
+            .0
+            .native
+            .GetTemplateChild(&HSTRING::from(TEXT_BOX_PART))
+            .and_then(|part| part.cast::<TextBox>());
+        match field {
+            Ok(field) => crate::widgets::enter_text_box(&field, text),
+            Err(_) => {
+                let _ = self.0.native.SetText(&HSTRING::from(text));
+            }
+        }
+    }
+
+    /// Confirms it as Enter does, so `on_search` is called (for tests and
+    /// automation). Does nothing while disabled.
+    ///
+    /// It goes through UI Automation's Invoke pattern, which the `AutoSuggestBox`
+    /// answers by submitting the query (`QuerySubmitted`). Where that is not
+    /// offered, `on_search` is called directly.
+    pub fn search(&self) {
+        if !self.is_enabled() {
+            return;
+        }
+        let invoked = self
+            .0
+            .native
+            .cast::<UIElement>()
+            .is_ok_and(|element| crate::automation::invoke(&element).is_ok());
+        if !invoked {
+            self.0.on_search.emit(&self.text());
+        }
     }
 }
 

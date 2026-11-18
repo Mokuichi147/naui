@@ -729,18 +729,37 @@ impl TextInput {
             .map_err(|e| to_error("get the TextBox element", e))?;
         let weak = Rc::downgrade(&inner);
         crate::keys::on_enter(&element, move || {
-            let Some(inner) = weak.upgrade() else {
-                return;
-            };
-            // 読み取り専用の間は書き換えられないので、確定もしない。
-            if inner.native.IsReadOnly().unwrap_or(false) {
-                return;
+            if let Some(inner) = weak.upgrade() {
+                TextInput(inner).confirm();
             }
-            let text = inner.native.Text().unwrap_or_default().to_string();
-            inner.on_submit.emit(&text);
         })
         .map_err(|e| to_error("subscribe to Enter on the TextBox", e))?;
         Ok(Self(inner))
+    }
+
+    /// What Enter does: notifies `on_submit`, unless read-only.
+    fn confirm(&self) {
+        // 読み取り専用の間は書き換えられないので、確定もしない。
+        if self.0.native.IsReadOnly().unwrap_or(false) {
+            return;
+        }
+        let text = self.0.native.Text().unwrap_or_default().to_string();
+        self.0.on_submit.emit(&text);
+    }
+
+    /// Replaces the text the way typing does, so `on_change` is called (for tests
+    /// and automation). See [`enter_text_box`].
+    pub fn enter_text(&self, text: &str) {
+        enter_text_box(&self.0.native, text);
+    }
+
+    /// Confirms it as Enter does, so `on_submit` is called (for tests and
+    /// automation). No key event is sent: it runs naui's handling of Enter.
+    /// Does nothing while disabled or read-only.
+    pub fn submit(&self) {
+        if self.0.native.IsEnabled().unwrap_or(false) {
+            self.confirm();
+        }
     }
 
     pub fn text(&self) -> String {
@@ -809,6 +828,26 @@ impl TextInput {
     }
 }
 
+/// Replaces a `TextBox`'s text the way typing does, for `enter_text` (tests and
+/// automation): through UI Automation's Value pattern (`SetValue`), the path
+/// assistive technology types with, so WinUI raises `TextChanged`. Does nothing
+/// while it is disabled or read-only.
+///
+/// WinUI raises `TextChanged` from the event loop, so `on_change` arrives a moment
+/// after this returns. A `TextBox` whose template has not been applied (in a window
+/// not shown yet) has no Value pattern; its text is then set directly.
+pub(crate) fn enter_text_box(native: &TextBox, text: &str) {
+    if !native.IsEnabled().unwrap_or(false) || native.IsReadOnly().unwrap_or(true) {
+        return;
+    }
+    let typed = native
+        .cast::<UIElement>()
+        .is_ok_and(|element| crate::automation::set_value(&element, text).is_ok());
+    if !typed {
+        let _ = native.SetText(&HSTRING::from(text));
+    }
+}
+
 // ----------------------------------------------------------- PasswordInput
 
 struct PasswordInputInner {
@@ -847,12 +886,45 @@ impl PasswordInput {
         let weak = Rc::downgrade(&inner);
         crate::keys::on_enter(&element, move || {
             if let Some(inner) = weak.upgrade() {
-                let text = inner.native.Password().unwrap_or_default().to_string();
-                inner.on_submit.emit(&text);
+                PasswordInput(inner).confirm();
             }
         })
         .map_err(|e| to_error("subscribe to Enter on the PasswordBox", e))?;
         Ok(Self(inner))
+    }
+
+    /// What Enter does: notifies `on_submit`.
+    fn confirm(&self) {
+        let text = self.0.native.Password().unwrap_or_default().to_string();
+        self.0.on_submit.emit(&text);
+    }
+
+    /// Replaces the text the way typing does, so `on_change` is called (for tests
+    /// and automation). Does nothing while disabled.
+    ///
+    /// It goes through UI Automation's Value pattern where the `PasswordBox` offers
+    /// it, and otherwise sets `Password`, which raises the same `PasswordChanged`
+    /// typing does.
+    pub fn enter_text(&self, text: &str) {
+        let native = &self.0.native;
+        if !native.IsEnabled().unwrap_or(false) {
+            return;
+        }
+        let typed = native
+            .cast::<UIElement>()
+            .is_ok_and(|element| crate::automation::set_value(&element, text).is_ok());
+        if !typed {
+            let _ = native.SetPassword(&HSTRING::from(text));
+        }
+    }
+
+    /// Confirms it as Enter does, so `on_submit` is called (for tests and
+    /// automation). No key event is sent: it runs naui's handling of Enter.
+    /// Does nothing while disabled.
+    pub fn submit(&self) {
+        if self.0.native.IsEnabled().unwrap_or(false) {
+            self.confirm();
+        }
     }
 
     /// The text currently entered.
@@ -997,6 +1069,12 @@ impl TextArea {
         if let Ok(token) = self.0.native.TextChanged(&handler) {
             *self.0.token.borrow_mut() = Some(token);
         }
+    }
+
+    /// Replaces the text the way typing does, so `on_change` is called (for tests
+    /// and automation). See [`enter_text_box`].
+    pub fn enter_text(&self, text: &str) {
+        enter_text_box(&self.0.native, text);
     }
 
     /// Whether it is read-only. Editable by default.

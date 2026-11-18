@@ -706,7 +706,255 @@ const CASES: &[Case] = &[
         "PNG 形式と Bitmap の両方があれば PNG 形式を読む",
         clipboard_prefers_the_png_format,
     ),
+    (
+        "enter_text と submit が打鍵と Enter と同じく通知し、無効なら何もしない",
+        typing_notifies_like_the_user,
+    ),
+    (
+        "respond が Dialog と Sheet のボタンを押し、開く前なら開いた直後に押す",
+        respond_answers_like_the_user,
+    ),
 ];
+
+/// How long the typing and answering cases wait for WinUI's notifications.
+const TYPING_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Records every string a text notification passes.
+fn text_recorder() -> (Rc<RefCell<Vec<String>>>, impl FnMut(&str) + 'static) {
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = {
+        let seen = seen.clone();
+        move |text: &str| seen.borrow_mut().push(text.to_string())
+    };
+    (seen, sink)
+}
+
+/// `enter_text` replaces the text through UI Automation's Value pattern, so WinUI
+/// raises `TextChanged` (a moment later), and `submit` / `search` confirm as Enter
+/// does. Neither does anything while disabled or read-only. The fields are in a
+/// shown window, since an unshown `TextBox` has no template and so no Value pattern.
+fn typing_notifies_like_the_user(ui: &Ui) -> Result<()> {
+    let window = ui.window("打ち込み", 480.0, 480.0)?;
+    let column = ui.stack(Orientation::Vertical)?;
+    let field = ui.text_input("前の文字")?;
+    let password = ui.password_input()?;
+    let search = ui.search_input()?;
+    let area = ui.text_area("1 行目")?;
+    let number = ui.number_input(1.0)?;
+    let combo = ui.editable_combo_box()?;
+    column.append(&field);
+    column.append(&password);
+    column.append(&search);
+    column.append(&area);
+    column.append(&number);
+    column.append(&combo);
+    window.set_child(&column);
+
+    // 窓に出す前の欄へ打ったときの様子を記録する (確かめはしない)。
+    let unshown = ui.text_input("")?;
+    let (unshown_changes, sink) = text_recorder();
+    unshown.on_change(sink);
+    unshown.enter_text("まだ出ていない");
+    pump_until(Duration::from_millis(300), || {
+        !unshown_changes.borrow().is_empty()
+    });
+    println!(
+        "     (出す前の欄: text={:?} 通知={:?})",
+        unshown.text(),
+        unshown_changes.borrow()
+    );
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        // テンプレートの中の入力欄が見つかるまで待つ。
+        pump_until(TYPING_TIMEOUT, || {
+            native::<XamlComboBox>(&combo)
+                .GetTemplateChild(&HSTRING::from("EditableText"))
+                .is_ok()
+        });
+
+        let (changes, sink) = text_recorder();
+        field.on_change(sink);
+        let (submits, sink) = text_recorder();
+        field.on_submit(sink);
+        field.enter_text("Ada");
+        assert_eq!(field.text(), "Ada");
+        pump_until(TYPING_TIMEOUT, || !changes.borrow().is_empty());
+        pump_until(Duration::from_millis(200), || false);
+        assert_eq!(
+            *changes.borrow(),
+            ["Ada"],
+            "1 度だけ新しい中身で通知すること"
+        );
+        field.submit();
+        assert_eq!(*submits.borrow(), ["Ada"]);
+        field.set_read_only(true);
+        field.enter_text("Grace");
+        field.submit();
+        assert_eq!(field.text(), "Ada", "読み取り専用の欄には打てない");
+        assert_eq!(submits.borrow().len(), 1, "読み取り専用の欄は確定しない");
+        field.set_read_only(false);
+        field.set_enabled(false);
+        field.enter_text("Grace");
+        field.submit();
+        assert_eq!(field.text(), "Ada", "無効な欄には打てない");
+        assert_eq!(submits.borrow().len(), 1);
+
+        let (changes, sink) = text_recorder();
+        password.on_change(sink);
+        let (submits, sink) = text_recorder();
+        password.on_submit(sink);
+        password.enter_text("secret");
+        pump_until(TYPING_TIMEOUT, || !changes.borrow().is_empty());
+        password.submit();
+        assert_eq!(password.text(), "secret");
+        assert_eq!(changes.borrow().last().map(String::as_str), Some("secret"));
+        assert_eq!(*submits.borrow(), ["secret"]);
+
+        let (changes, sink) = text_recorder();
+        search.on_change(sink);
+        let (searches, sink) = text_recorder();
+        search.on_search(sink);
+        search.enter_text("naui");
+        pump_until(TYPING_TIMEOUT, || !changes.borrow().is_empty());
+        assert_eq!(
+            *changes.borrow(),
+            ["naui"],
+            "利用者の入力として通知すること"
+        );
+        search.search();
+        pump_until(TYPING_TIMEOUT, || !searches.borrow().is_empty());
+        assert_eq!(*searches.borrow(), ["naui"]);
+        search.set_enabled(false);
+        search.enter_text("other");
+        search.search();
+        pump_until(Duration::from_millis(200), || false);
+        assert_eq!(search.text(), "naui");
+        assert_eq!(searches.borrow().len(), 1, "無効な検索欄は確定しない");
+
+        let (changes, sink) = text_recorder();
+        area.on_change(sink);
+        area.enter_text("一\n二");
+        pump_until(TYPING_TIMEOUT, || !changes.borrow().is_empty());
+        assert_eq!(area.text(), "一\n二");
+        assert_eq!(changes.borrow().last().map(String::as_str), Some("一\n二"));
+        area.set_read_only(true);
+        area.enter_text("三");
+        assert_eq!(area.text(), "一\n二", "読み取り専用の欄には打てない");
+
+        number.set_range(Some(0.0), Some(10.0));
+        let values = Rc::new(RefCell::new(Vec::new()));
+        number.on_change({
+            let values = values.clone();
+            move |value| values.borrow_mut().push(value)
+        });
+        let submits = Rc::new(RefCell::new(Vec::new()));
+        number.on_submit({
+            let submits = submits.clone();
+            move |value| submits.borrow_mut().push(value)
+        });
+        number.enter_text("4");
+        pump_until(TYPING_TIMEOUT, || !values.borrow().is_empty());
+        assert_eq!(number.value(), 4.0, "読める数はすぐ値になる");
+        assert_eq!(*values.borrow(), [4.0]);
+        number.submit();
+        assert_eq!(*submits.borrow(), [4.0]);
+        number.enter_text("-");
+        pump_until(Duration::from_millis(200), || false);
+        assert_eq!(values.borrow().len(), 1, "読めない文字は確定まで待つ");
+        number.submit();
+        assert_eq!(number.value(), 4.0, "確定で読めない文字は元へ戻る");
+        assert_eq!(*submits.borrow(), [4.0, 4.0]);
+
+        combo.set_items(&["Apple", "Banana"]);
+        let (changes, sink) = text_recorder();
+        combo.on_change(sink);
+        combo.enter_text("Ap");
+        pump_until(TYPING_TIMEOUT, || !changes.borrow().is_empty());
+        assert_eq!(combo.text(), "Ap", "候補で補わない");
+        assert_eq!(*changes.borrow(), ["Ap"]);
+        combo.set_enabled(false);
+        combo.enter_text("Cherry");
+        pump_until(Duration::from_millis(200), || false);
+        assert_eq!(combo.text(), "Ap", "無効な欄には打てない");
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// `respond` clicks the `ContentDialog`'s button for the role through UI
+/// Automation. Given before it opens, it is kept and given once the template has
+/// the buttons.
+fn respond_answers_like_the_user(ui: &Ui) -> Result<()> {
+    use naui_core::{DialogButtons, DialogResponse};
+
+    let window = ui.window("応答", 480.0, 360.0)?;
+    window.set_child(&ui.label("本体")?);
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+        window.show();
+        let dialog = ui.dialog("消しますか")?;
+        dialog.set_buttons(
+            DialogButtons::new()
+                .primary("消す")
+                .secondary("あとで")
+                .cancel("やめる"),
+        );
+        let responses = Rc::new(RefCell::new(Vec::new()));
+        dialog.on_response({
+            let responses = responses.clone();
+            move |response| responses.borrow_mut().push(response)
+        });
+        for response in [
+            DialogResponse::Primary,
+            DialogResponse::Secondary,
+            DialogResponse::Cancel,
+        ] {
+            dialog.respond(response);
+            dialog.open();
+            pump_until(TYPING_TIMEOUT, || !dialog.is_open());
+            assert!(!dialog.is_open(), "{response:?}: 答えて閉じること");
+        }
+        assert_eq!(
+            *responses.borrow(),
+            [
+                DialogResponse::Primary,
+                DialogResponse::Secondary,
+                DialogResponse::Cancel
+            ]
+        );
+
+        let sheet = ui.sheet("新しいフォルダ")?;
+        sheet.set_child(&ui.text_input("")?);
+        sheet.set_buttons(DialogButtons::new().primary("作成").cancel("キャンセル"));
+        let responses = Rc::new(RefCell::new(Vec::new()));
+        sheet.on_response({
+            let responses = responses.clone();
+            move |response| responses.borrow_mut().push(response)
+        });
+        // 無効なボタンは押せず、開いたまま。ないボタンも同じ。
+        sheet.set_button_enabled(DialogResponse::Primary, false);
+        sheet.respond(DialogResponse::Primary);
+        sheet.open();
+        pump_until(Duration::from_millis(500), || !sheet.is_open());
+        sheet.respond(DialogResponse::Secondary);
+        pump_until(Duration::from_millis(200), || !sheet.is_open());
+        assert!(sheet.is_open(), "無効なボタンとないボタンは押せない");
+        sheet.set_button_enabled(DialogResponse::Primary, true);
+        sheet.respond(DialogResponse::Primary);
+        pump_until(TYPING_TIMEOUT, || !sheet.is_open());
+        assert!(!sheet.is_open());
+        assert_eq!(*responses.borrow(), [DialogResponse::Primary]);
+        Ok(())
+    }));
+    window.close();
+    match outcome {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
 
 fn sheet_configuration_reaches_the_content_dialog(ui: &Ui) -> Result<()> {
     use naui_core::{DialogButtons, DialogResponse};

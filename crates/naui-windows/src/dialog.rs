@@ -36,6 +36,11 @@ use crate::widgets::Widget;
 use crate::window::{owner_xaml_root, set_theme_on_element};
 use crate::Slot;
 
+/// How long [`Dialog::respond`] waits between looking for the button.
+const PRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
+/// How many more times [`Dialog::respond`] looks for the button (about 5 seconds).
+const PRESS_TRIES: u32 = 250;
+
 struct DialogInner {
     native: ContentDialog,
     title: TextBlock,
@@ -51,6 +56,8 @@ struct DialogInner {
     /// Whether it was closed with [`Dialog::close`]. A marker so that the reason for
     /// closing is not notified.
     closed_by_app: Cell<bool>,
+    /// The answer [`Dialog::respond`] keeps for the next time it opens.
+    pending: Cell<Option<DialogResponse>>,
 }
 
 /// A modal dialog (ContentDialog).
@@ -96,6 +103,7 @@ impl Dialog {
             theme: Cell::new(theme),
             open: Cell::new(false),
             closed_by_app: Cell::new(false),
+            pending: Cell::new(None),
         }));
         this.set_title(title);
         this.apply_buttons()?;
@@ -313,6 +321,63 @@ impl Dialog {
         }
         self.0.open.set(true);
         self.0.closed_by_app.set(false);
+        if let Some(response) = self.0.pending.take() {
+            self.press(response, PRESS_TRIES);
+        }
+    }
+
+    /// Answers it the way the user does, by clicking its button for `response`
+    /// through UI Automation's Invoke pattern, so WinUI closes it and `on_response`
+    /// is called with it (for tests and automation). Nothing happens if it has no
+    /// such button or the button is disabled.
+    ///
+    /// If it is not open, the answer is kept and given once it next opens. The
+    /// buttons are part of the `ContentDialog`'s template, which is applied a moment
+    /// after it opens, so the click waits for them.
+    pub fn respond(&self, response: DialogResponse) {
+        if self.0.open.get() {
+            self.press(response, PRESS_TRIES);
+        } else {
+            self.0.pending.set(Some(response));
+        }
+    }
+
+    /// Clicks the button for `response` once the template has it, trying again
+    /// `tries` more times, [`PRESS_INTERVAL`] apart.
+    fn press(&self, response: DialogResponse, tries: u32) {
+        if !self.0.open.get() || self.0.buttons.borrow().resolved().label(response).is_none() {
+            return;
+        }
+        let part = match response {
+            DialogResponse::Primary => "PrimaryButton",
+            DialogResponse::Secondary => "SecondaryButton",
+            DialogResponse::Cancel => "CloseButton",
+        };
+        let button = self
+            .0
+            .native
+            .GetTemplateChild(&HSTRING::from(part))
+            .and_then(|part| part.cast::<UIElement>());
+        match button {
+            // 無効なボタンは WinUI が断る (利用者と同じく押せない)。
+            Ok(button) => {
+                let _ = crate::automation::invoke(&button);
+            }
+            Err(_) if tries > 0 => {
+                let weak = UiThreadCell::new(Rc::downgrade(&self.0));
+                naui_core::MainThread::post_after(
+                    &crate::main_thread::Dispatcher::for_current_thread(),
+                    PRESS_INTERVAL,
+                    Box::new(move || {
+                        let inner = weak.with_mut(|weak| weak.upgrade());
+                        if let Some(inner) = inner {
+                            Dialog(inner).press(response, tries - 1);
+                        }
+                    }),
+                );
+            }
+            Err(_) => {}
+        }
     }
 
     fn show(&self) -> Result<()> {

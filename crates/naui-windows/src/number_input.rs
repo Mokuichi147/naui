@@ -236,6 +236,32 @@ impl NumberInput {
         self.0.submit.set(f);
     }
 
+    /// Replaces the text in the field the way typing does (for tests and
+    /// automation): through UI Automation's Value pattern on the `TextBox` in the
+    /// `NumberBox`'s template ([`crate::widgets::enter_text_box`]). Text that reads
+    /// as a number is taken from its `TextChanged`, so `on_change` arrives a moment
+    /// after this returns. Does nothing while disabled, or before the template has
+    /// been applied (in a window not shown yet).
+    pub fn enter_text(&self, text: &str) {
+        if !self.0.native.IsEnabled().unwrap_or(false) {
+            return;
+        }
+        let field = self.0.field.borrow().clone();
+        if let Some(field) = field {
+            crate::widgets::enter_text_box(&field, text);
+        }
+    }
+
+    /// Confirms it as Enter does: the typed text is read into the value (or
+    /// reverted) and `on_submit` is called (for tests and automation). No key event
+    /// is sent: it runs naui's handling of Enter. Does nothing while disabled.
+    pub fn submit(&self) {
+        if self.0.native.IsEnabled().unwrap_or(false) {
+            self.commit_field();
+            self.0.submit.emit(self.value());
+        }
+    }
+
     /// The corresponding `NumberBox`. Public as a backend-specific escape hatch.
     pub fn native_number_box(&self) -> XamlNumberBox {
         self.0.native.clone()

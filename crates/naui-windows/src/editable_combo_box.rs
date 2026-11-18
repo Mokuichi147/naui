@@ -266,6 +266,22 @@ impl EditableComboBox {
         let _ = self.0.native.SetIsEnabled(enabled);
     }
 
+    /// Replaces the text the way typing does, so `on_change` is called (for tests
+    /// and automation): through UI Automation's Value pattern on the `TextBox` in
+    /// the `ComboBox`'s template ([`crate::widgets::enter_text_box`]), so it
+    /// arrives a moment after this returns. Nothing is completed from the
+    /// suggestions. Does nothing while disabled, or before the template has been
+    /// applied (in a window not shown yet).
+    pub fn enter_text(&self, text: &str) {
+        if !self.0.native.IsEnabled().unwrap_or(false) {
+            return;
+        }
+        let field = self.0.editable.borrow().clone();
+        if let Some(field) = field {
+            crate::widgets::enter_text_box(&field, text);
+        }
+    }
+
     /// Called with the current contents every time the text changes. Setting it again
     /// replaces the previous callback.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
