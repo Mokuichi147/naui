@@ -168,6 +168,10 @@ const CASES: &[Case] = &[
         list_reorder_by_a_real_drag,
     ),
     (
+        "リストの行を Alt + Shift + 上下で並べ替えられる",
+        list_reorder_by_keyboard,
+    ),
+    (
         "組み立てる行のリストも窓を絞ったまま並べ替えられる",
         list_reorder_with_row_builder,
     ),
@@ -7090,6 +7094,87 @@ fn list_reorder_by_a_real_drag(ui: &Ui) -> Result<()> {
             list.selection().is_empty(),
             "選んでいなかったので選択は空のまま"
         );
+        Some(())
+    })
+}
+
+/// Alt + Shift + Up / Down, `ListView`'s own keyboard reordering, moves naui's rows too:
+/// the focused row, with the selection when it is in it, moves one place, the app is
+/// told, and the focus stays on the row. Left to `ListView`, only its `Items` would move.
+fn list_reorder_by_keyboard(ui: &Ui) -> Result<()> {
+    use naui_core::RowMove;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        VK_CONTROL, VK_DOWN, VK_LEFT, VK_MENU, VK_RIGHT, VK_SHIFT, VK_UP,
+    };
+
+    with_shown_list_for_input(ui, 8, |hwnd, list| {
+        let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
+        list.on_reorder({
+            let moves = moves.clone();
+            move |moved| moves.borrow_mut().push(moved.clone())
+        });
+        list.set_reorderable(true);
+        let mut expected: Vec<String> = (0..8).map(|index| format!("行 {index}")).collect();
+        let reorder = [VK_MENU, VK_SHIFT];
+
+        first_click_on_list_row(hwnd, list, 2)?;
+        press_nav_key(&reorder, VK_DOWN)?;
+        pump_until(Duration::from_secs(1), || moves.borrow().len() == 1);
+        assert_eq!(moves.borrow()[..], [RowMove::new([2], 4)], "1 つ下へ");
+        RowMove::new([2], 4).apply(&mut expected);
+        assert_eq!(
+            list_texts(list),
+            expected,
+            "ListView の行も naui の並びと同じ"
+        );
+        assert_eq!(list.selection(), vec![3], "選択は動いた行についていく");
+        assert_eq!(
+            focused_list_row(list),
+            Some(3),
+            "フォーカスは動いた行に残る"
+        );
+
+        // フォーカスが残っているので、続けて動かせる。
+        press_nav_key(&reorder, VK_UP)?;
+        press_nav_key(&reorder, VK_UP)?;
+        pump_until(Duration::from_secs(1), || moves.borrow().len() == 3);
+        assert_eq!(
+            moves.borrow()[1..],
+            [RowMove::new([3], 2), RowMove::new([2], 1)],
+            "1 つずつ上へ"
+        );
+        RowMove::new([3], 2).apply(&mut expected);
+        RowMove::new([2], 1).apply(&mut expected);
+        assert_eq!(list_texts(list), expected);
+        assert_eq!(list.selection(), vec![1]);
+        assert_eq!(focused_list_row(list), Some(1));
+
+        // 選んだ行の上では、ドラッグと同じく選択ごと動く。
+        click_list_row_expecting(hwnd, list, 5, &[VK_CONTROL], &[1, 5], "Ctrl で足す")?;
+        press_nav_key(&reorder, VK_UP)?;
+        pump_until(Duration::from_secs(1), || moves.borrow().len() == 4);
+        assert_eq!(moves.borrow()[3], RowMove::new([1, 5], 4), "選択ごと上へ");
+        RowMove::new([1, 5], 4).apply(&mut expected);
+        assert_eq!(list_texts(list), expected);
+        assert_eq!(list.selection(), vec![3, 4]);
+        assert_eq!(focused_list_row(list), Some(4));
+
+        // 先頭より上へは動かず、`ListView` も行を動かさない。
+        click_list_row_expecting(hwnd, list, 0, &[], &[0], "先頭の行")?;
+        press_nav_key(&reorder, VK_UP)?;
+        pump_until(Duration::from_millis(300), || false);
+        assert_eq!(moves.borrow().len(), 4, "先頭では何も起きない");
+        assert_eq!(list_texts(list), expected);
+
+        // 左右は `ListView` なら並べ替えるが、naui は上下だけ。行は食い違わない。
+        click_list_row_expecting(hwnd, list, 2, &[], &[2], "左右を試す行")?;
+        press_nav_key(&reorder, VK_LEFT)?;
+        press_nav_key(&reorder, VK_RIGHT)?;
+        press_nav_key(&reorder, VK_RIGHT)?;
+        pump_until(Duration::from_millis(300), || false);
+        assert_eq!(moves.borrow().len(), 4, "左右では動かない");
+        assert_eq!(list_texts(list), expected, "ListView の行も動かない");
+        assert_eq!(list.selection(), vec![2]);
         Some(())
     })
 }

@@ -1168,6 +1168,7 @@ since the same rows stay selected.
 | Native mechanism | `ListView`'s `CanReorderItems` | `NSTableView`'s drag and drop | `GtkDragSource` on each row, `GtkDropTarget` on the `GtkListBox` | HTML drag and drop on `draggable` rows |
 | Where the rows will land | The rows open a gap | A line between the rows | A line in the accent color, drawn by naui | A line in the `Highlight` system color, drawn by naui |
 | Scrolling near the edge while dragging | No | Yes | No | As the browser does |
+| Moving rows with the keyboard | Alt + Shift + Up / Down moves the focused row (with the selection when it is in it) one place | No | No | No |
 
 Rows that cannot be selected cannot be dragged, and only rows from the same list
 can be dropped: rows from other lists, other widgets and other apps are refused,
