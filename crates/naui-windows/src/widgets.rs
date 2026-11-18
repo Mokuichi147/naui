@@ -699,6 +699,7 @@ impl Checkbox {
 struct TextInputInner {
     native: TextBox,
     token: RefCell<Option<i64>>,
+    change: ChangeHandler,
     on_submit: TextHandler,
     /// The `on_focus_change` handler.
     focus: crate::focus::Focus,
@@ -720,6 +721,7 @@ impl TextInput {
         let inner = Rc::new(TextInputInner {
             native,
             token: RefCell::new(None),
+            change: ChangeHandler::new(),
             on_submit: TextHandler::new(),
             focus: Default::default(),
         });
@@ -748,9 +750,10 @@ impl TextInput {
     }
 
     /// Replaces the text the way typing does, so `on_change` is called (for tests
-    /// and automation). It goes through UI Automation's Value pattern.
+    /// and automation): through UI Automation's Value pattern, or where the
+    /// `TextBox` has no template yet, by writing the text and notifying right away.
     pub fn enter_text(&self, text: &str) {
-        enter_text_box(&self.0.native, text);
+        enter_text_box(&self.0.native, &self.0.change, text, text);
     }
 
     /// Confirms it as Enter does, so `on_submit` is called (for tests and
@@ -789,20 +792,10 @@ impl TextInput {
 
     /// Called with the current text every time a character is typed.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
-        use naui_winui3::Microsoft::UI::Xaml::Controls::TextChangedEventHandler;
-        if let Some(token) = self.0.token.borrow_mut().take() {
-            let _ = self.0.native.RemoveTextChanged(token);
-        }
-        let state = UiThreadCell::new((self.0.native.clone(), f));
-        let handler = TextChangedEventHandler::new(move |_sender, _args| {
-            state.with_mut(|(native, f)| {
-                let text = native.Text().unwrap_or_default().to_string();
-                f(&text);
-            });
-            Ok(())
-        });
-        if let Ok(token) = self.0.native.TextChanged(&handler) {
-            *self.0.token.borrow_mut() = Some(token);
+        self.0.change.set(f);
+        if self.0.token.borrow().is_none() {
+            let token = subscribe_text_changed(&self.0.native, &self.0.change, |text| text);
+            *self.0.token.borrow_mut() = token;
         }
     }
 
@@ -829,23 +822,99 @@ impl TextInput {
 }
 
 /// Replaces a `TextBox`'s text the way typing does, for `enter_text` (tests and
-/// automation): through UI Automation's Value pattern (`SetValue`), the path
-/// assistive technology types with, so WinUI raises `TextChanged`. Does nothing
-/// while it is disabled or read-only.
+/// automation). Does nothing while it is disabled or read-only.
 ///
-/// WinUI raises `TextChanged` from the event loop, so `on_change` arrives a moment
-/// after this returns. A `TextBox` whose template has not been applied (in a window
-/// not shown yet) has no Value pattern, and nothing is typed, as a user cannot type
-/// into a field that is not on screen.
-pub(crate) fn enter_text_box(native: &TextBox, text: &str) {
-    if !native.IsEnabled().unwrap_or(false) || native.IsReadOnly().unwrap_or(true) {
+/// It goes through UI Automation's Value pattern (`SetValue`), the path assistive
+/// technology types with, so WinUI raises `TextChanged`, which arrives from the
+/// event loop a moment after this returns.
+///
+/// A `TextBox` has the Value pattern only once WinUI has applied its template,
+/// which it does when the window is drawn. Where it has not (a window not shown
+/// yet, or one nothing draws, as on CI runners), the text is written to `Text` and
+/// `change` is notified with `notified` right away, since WinUI raises no
+/// `TextChanged` there either. A `TextChanged` for the same text that might still
+/// follow is not notified again.
+pub(crate) fn enter_text_box(native: &TextBox, change: &ChangeHandler, text: &str, notified: &str) {
+    if !is_typable(native) {
         return;
     }
-    if let Ok(element) = native.cast::<UIElement>() {
-        if let Err(error) = crate::automation::set_value(&element, text) {
-            eprintln!("naui-windows: could not type into the TextBox: {error}");
+    if !type_with_automation(native, text) {
+        let _ = native.SetText(&HSTRING::from(text));
+        change.emit_typed(notified);
+    }
+}
+
+/// Whether a user could type into the `TextBox` (enabled and not read-only).
+pub(crate) fn is_typable(native: &TextBox) -> bool {
+    native.IsEnabled().unwrap_or(false) && !native.IsReadOnly().unwrap_or(true)
+}
+
+/// Types `text` over the `TextBox`'s text through UI Automation's Value pattern.
+/// `false` where it has no such pattern yet (no template applied).
+pub(crate) fn type_with_automation(native: &TextBox, text: &str) -> bool {
+    native
+        .cast::<UIElement>()
+        .is_ok_and(|element| crate::automation::set_value(&element, text).is_ok())
+}
+
+/// The app's `on_change` for a field whose native change event naui subscribes to.
+///
+/// It also remembers the text `enter_text` notified for itself where it could not
+/// go through UI Automation, so that a native event for the same text that may
+/// follow is not notified twice.
+#[derive(Clone)]
+pub(crate) struct ChangeHandler {
+    handler: TextHandler,
+    echo: std::sync::Arc<UiThreadCell<Option<String>>>,
+}
+
+impl ChangeHandler {
+    pub(crate) fn new() -> Self {
+        Self {
+            handler: TextHandler::new(),
+            echo: std::sync::Arc::new(UiThreadCell::new(None)),
         }
     }
+
+    pub(crate) fn set(&self, f: impl FnMut(&str) + 'static) {
+        self.handler.set(f);
+    }
+
+    /// The native control changed: notifies, unless it is the text `enter_text`
+    /// has already notified.
+    pub(crate) fn native_changed(&self, text: &str) {
+        let echo = self.echo.try_with_mut(|echo| echo.take()).flatten();
+        if echo.as_deref() == Some(text) {
+            return;
+        }
+        self.handler.emit(text);
+    }
+
+    /// Notifies text `enter_text` wrote without the native event.
+    pub(crate) fn emit_typed(&self, text: &str) {
+        let _ = self
+            .echo
+            .try_with_mut(|echo| *echo = Some(text.to_string()));
+        self.handler.emit(text);
+    }
+}
+
+/// Subscribes `change` to the `TextBox`'s `TextChanged`, with the text read through
+/// `read` (to unify newlines). The token, or `None` if it could not subscribe.
+fn subscribe_text_changed(
+    native: &TextBox,
+    change: &ChangeHandler,
+    read: fn(String) -> String,
+) -> Option<i64> {
+    use naui_winui3::Microsoft::UI::Xaml::Controls::TextChangedEventHandler;
+    let change = change.clone();
+    let state = UiThreadCell::new(native.clone());
+    let handler = TextChangedEventHandler::new(move |_sender, _args| {
+        let text = state.with_mut(|native| read(native.Text().unwrap_or_default().to_string()));
+        change.native_changed(&text);
+        Ok(())
+    });
+    native.TextChanged(&handler).ok()
 }
 
 // ----------------------------------------------------------- PasswordInput
@@ -853,6 +922,7 @@ pub(crate) fn enter_text_box(native: &TextBox, text: &str) {
 struct PasswordInputInner {
     native: PasswordBox,
     token: RefCell<Option<i64>>,
+    change: ChangeHandler,
     on_submit: TextHandler,
     /// The `on_focus_change` handler.
     focus: crate::focus::Focus,
@@ -876,6 +946,7 @@ impl PasswordInput {
         let inner = Rc::new(PasswordInputInner {
             native,
             token: RefCell::new(None),
+            change: ChangeHandler::new(),
             on_submit: TextHandler::new(),
             focus: Default::default(),
         });
@@ -903,14 +974,19 @@ impl PasswordInput {
     /// and automation). Does nothing while disabled.
     ///
     /// It goes through UI Automation's Value pattern, so WinUI raises
-    /// `PasswordChanged`, and needs the window to be shown (see `enter_text_box`).
+    /// `PasswordChanged`. Where the `PasswordBox` has no template yet, it writes the
+    /// password and notifies right away instead.
     pub fn enter_text(&self, text: &str) {
         let native = &self.0.native;
         if !native.IsEnabled().unwrap_or(false) {
             return;
         }
-        if let Ok(element) = native.cast::<UIElement>() {
-            let _ = crate::automation::set_value(&element, text);
+        let typed = native
+            .cast::<UIElement>()
+            .is_ok_and(|element| crate::automation::set_value(&element, text).is_ok());
+        if !typed {
+            let _ = native.SetPassword(&HSTRING::from(text));
+            self.0.change.emit_typed(text);
         }
     }
 
@@ -955,15 +1031,15 @@ impl PasswordInput {
 
     /// Called with the current text every time a character is typed.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
-        if let Some(token) = self.0.token.borrow_mut().take() {
-            let _ = self.0.native.RemovePasswordChanged(token);
+        self.0.change.set(f);
+        if self.0.token.borrow().is_some() {
+            return;
         }
-        let state = UiThreadCell::new((self.0.native.clone(), f));
+        let change = self.0.change.clone();
+        let native = UiThreadCell::new(self.0.native.clone());
         let handler = RoutedEventHandler::new(move |_sender, _args| {
-            state.with_mut(|(native, f)| {
-                let text = native.Password().unwrap_or_default().to_string();
-                f(&text);
-            });
+            let text = native.with_mut(|native| native.Password().unwrap_or_default().to_string());
+            change.native_changed(&text);
             Ok(())
         });
         if let Ok(token) = self.0.native.PasswordChanged(&handler) {
@@ -982,6 +1058,7 @@ impl PasswordInput {
 struct TextAreaInner {
     native: TextBox,
     token: RefCell<Option<i64>>,
+    change: ChangeHandler,
     /// The `on_focus_change` handler.
     focus: crate::focus::Focus,
 }
@@ -1013,6 +1090,7 @@ impl TextArea {
         Ok(Self(Rc::new(TextAreaInner {
             native,
             token: RefCell::new(None),
+            change: ChangeHandler::new(),
             focus: Default::default(),
         })))
     }
@@ -1050,27 +1128,19 @@ impl TextArea {
     /// Called with the current text every time a character is typed. Also called for
     /// newlines.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
-        use naui_winui3::Microsoft::UI::Xaml::Controls::TextChangedEventHandler;
-        if let Some(token) = self.0.token.borrow_mut().take() {
-            let _ = self.0.native.RemoveTextChanged(token);
-        }
-        let state = UiThreadCell::new((self.0.native.clone(), f));
-        let handler = TextChangedEventHandler::new(move |_sender, _args| {
-            state.with_mut(|(native, f)| {
-                let text = unix_newlines(&native.Text().unwrap_or_default().to_string());
-                f(&text);
-            });
-            Ok(())
-        });
-        if let Ok(token) = self.0.native.TextChanged(&handler) {
-            *self.0.token.borrow_mut() = Some(token);
+        self.0.change.set(f);
+        if self.0.token.borrow().is_none() {
+            let token =
+                subscribe_text_changed(&self.0.native, &self.0.change, |text| unix_newlines(&text));
+            *self.0.token.borrow_mut() = token;
         }
     }
 
     /// Replaces the text the way typing does, so `on_change` is called (for tests
-    /// and automation). It goes through UI Automation's Value pattern.
+    /// and automation): through UI Automation's Value pattern, or where the
+    /// `TextBox` has no template yet, by writing the text and notifying right away.
     pub fn enter_text(&self, text: &str) {
-        enter_text_box(&self.0.native, text);
+        enter_text_box(&self.0.native, &self.0.change, text, &unix_newlines(text));
     }
 
     /// Whether it is read-only. Editable by default.

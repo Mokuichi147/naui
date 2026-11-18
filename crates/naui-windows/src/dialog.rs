@@ -36,10 +36,12 @@ use crate::widgets::Widget;
 use crate::window::{owner_xaml_root, set_theme_on_element};
 use crate::Slot;
 
-/// How long [`Dialog::respond`] waits between looking for the button.
-const PRESS_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
-/// How many more times [`Dialog::respond`] looks for the button (about 5 seconds).
-const PRESS_TRIES: u32 = 250;
+/// How long [`Dialog::open`] and [`Dialog::respond`] wait before trying again.
+const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
+/// How many more times [`Dialog::respond`] looks for the button (about a second).
+const PRESS_TRIES: u32 = 50;
+/// How many more times [`Dialog::open`] tries to show it (about 10 seconds).
+const SHOW_TRIES: u32 = 500;
 
 struct DialogInner {
     native: ContentDialog,
@@ -58,6 +60,14 @@ struct DialogInner {
     closed_by_app: Cell<bool>,
     /// The answer [`Dialog::respond`] keeps for the next time it opens.
     pending: Cell<Option<DialogResponse>>,
+    /// Whether the `ContentDialog` has been shown in this opening. `open` is set
+    /// first and stays set while it waits for the window's `XamlRoot`.
+    shown: Cell<bool>,
+    /// The role an answer closed it with where its button could not be clicked
+    /// (see [`Dialog::respond`]). `Closing` notifies it instead of the result.
+    forced: Cell<Option<DialogResponse>>,
+    /// Whether a `Closing` still to come belongs to an opening already finished.
+    stale_closing: Cell<bool>,
 }
 
 /// A modal dialog (ContentDialog).
@@ -104,6 +114,9 @@ impl Dialog {
             open: Cell::new(false),
             closed_by_app: Cell::new(false),
             pending: Cell::new(None),
+            shown: Cell::new(false),
+            forced: Cell::new(None),
+            stale_closing: Cell::new(false),
         }));
         this.set_title(title);
         this.apply_buttons()?;
@@ -144,7 +157,16 @@ impl Dialog {
 
     /// Cleanup and notification on close.
     fn finish(&self, result: ContentDialogResult) {
+        if self.0.stale_closing.replace(false) {
+            return; // もう閉じたことにした回の `Closing`。
+        }
         self.0.open.set(false);
+        self.0.shown.set(false);
+        if let Some(response) = self.0.forced.take() {
+            self.0.closed_by_app.set(false);
+            self.emit(response);
+            return;
+        }
         if self.0.closed_by_app.replace(false) {
             return; // アプリ側から閉じた。通知はしない。
         }
@@ -315,15 +337,53 @@ impl Dialog {
         if self.0.open.get() {
             return;
         }
-        if let Err(error) = self.show() {
-            eprintln!("naui-windows: could not show the dialog: {error}");
-            return;
-        }
         self.0.open.set(true);
         self.0.closed_by_app.set(false);
-        if let Some(response) = self.0.pending.take() {
-            self.press(response, PRESS_TRIES);
+        self.try_show(SHOW_TRIES);
+    }
+
+    /// Shows the `ContentDialog`. Right after the first window is shown its
+    /// `XamlRoot` may not exist yet, and a dialog closed a moment ago may still be
+    /// on its way out, so while a window has been shown it tries again `tries` more
+    /// times, [`RETRY_INTERVAL`] apart. [`Dialog::close`] in the meantime stops it.
+    fn try_show(&self, tries: u32) {
+        if !self.0.open.get() || self.0.shown.get() {
+            return;
         }
+        match self.show() {
+            Ok(()) => {
+                self.0.shown.set(true);
+                self.0.stale_closing.set(false);
+                if let Some(response) = self.0.pending.take() {
+                    self.press(response, PRESS_TRIES);
+                }
+            }
+            Err(_) if tries > 0 && crate::window::has_owner_window() => {
+                self.later(move |this| this.try_show(tries - 1));
+            }
+            Err(error) => {
+                eprintln!("naui-windows: could not show the dialog: {error}");
+                self.0.open.set(false);
+            }
+        }
+    }
+
+    /// Calls `f` on the UI thread after [`RETRY_INTERVAL`], if the dialog is still
+    /// alive.
+    fn later(&self, f: impl FnOnce(&Dialog) + 'static) {
+        let weak = UiThreadCell::new(Rc::downgrade(&self.0));
+        let f = UiThreadCell::new(Some(f));
+        naui_core::MainThread::post_after(
+            &crate::main_thread::Dispatcher::for_current_thread(),
+            RETRY_INTERVAL,
+            Box::new(move || {
+                let inner = weak.with_mut(|weak| weak.upgrade());
+                let f = f.with_mut(Option::take);
+                if let (Some(inner), Some(f)) = (inner, f) {
+                    f(&Dialog(inner));
+                }
+            }),
+        );
     }
 
     /// Answers it the way the user does, by clicking its button for `response`
@@ -333,17 +393,21 @@ impl Dialog {
     ///
     /// If it is not open, the answer is kept and given once it next opens. The
     /// buttons are part of the `ContentDialog`'s template, which is applied a moment
-    /// after it opens, so the click waits for them.
+    /// after it is shown, so the click waits for them. Where the template is still
+    /// missing after about a second (a window nothing draws, as on CI runners), it
+    /// closes the dialog with that role itself.
     pub fn respond(&self, response: DialogResponse) {
-        if self.0.open.get() {
+        if self.0.open.get() && self.0.shown.get() {
             self.press(response, PRESS_TRIES);
         } else {
+            // 閉じているか、開いたがまだ出せていない。出たところで押す。
             self.0.pending.set(Some(response));
         }
     }
 
     /// Clicks the button for `response` once the template has it, trying again
-    /// `tries` more times, [`PRESS_INTERVAL`] apart.
+    /// `tries` more times, [`RETRY_INTERVAL`] apart, and then closing it with that
+    /// role itself.
     fn press(&self, response: DialogResponse, tries: u32) {
         if !self.0.open.get() || self.0.buttons.borrow().resolved().label(response).is_none() {
             return;
@@ -367,20 +431,34 @@ impl Dialog {
                 .is_ok_and(|button| crate::automation::invoke(&button).is_ok()),
             Err(_) => false,
         };
-        if pressed || tries == 0 {
+        if pressed {
             return;
         }
-        let weak = UiThreadCell::new(Rc::downgrade(&self.0));
-        naui_core::MainThread::post_after(
-            &crate::main_thread::Dispatcher::for_current_thread(),
-            PRESS_INTERVAL,
-            Box::new(move || {
-                let inner = weak.with_mut(|weak| weak.upgrade());
-                if let Some(inner) = inner {
-                    Dialog(inner).press(response, tries - 1);
-                }
-            }),
-        );
+        if tries > 0 {
+            self.later(move |this| this.press(response, tries - 1));
+        } else {
+            self.close_with(response);
+        }
+    }
+
+    /// Closes it with `response` as a click on that button would, for where the
+    /// button cannot be clicked. A disabled role does nothing, as its button does.
+    fn close_with(&self, response: DialogResponse) {
+        if response != DialogResponse::Cancel && !self.0.enabled.get().get(response) {
+            return;
+        }
+        self.0.forced.set(Some(response));
+        let _ = self.0.native.Hide();
+        // `Closing` が来ないまま (何も描かれていない窓) なら、ここで閉じたことにする。
+        self.later(|this| {
+            let Some(response) = this.0.forced.take() else {
+                return;
+            };
+            this.0.stale_closing.set(true);
+            this.0.open.set(false);
+            this.0.shown.set(false);
+            this.emit(response);
+        });
     }
 
     fn show(&self) -> Result<()> {
@@ -413,6 +491,11 @@ impl Dialog {
     /// Closes the dialog being shown. `on_response` is not called.
     pub fn close(&self) {
         if !self.0.open.get() {
+            return;
+        }
+        if !self.0.shown.get() {
+            // まだ出せていない。出すのをやめる。
+            self.0.open.set(false);
             return;
         }
         self.0.closed_by_app.set(true);

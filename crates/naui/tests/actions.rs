@@ -1,4 +1,3 @@
-#![cfg_attr(target_os = "windows", allow(dead_code))]
 //! The testing actions for typing and answering dialogs, run with `naui::testing` on
 //! every platform's real event loop.
 //!
@@ -18,70 +17,12 @@ use std::rc::Rc;
 
 use naui::{testing, DialogButtons, DialogResponse, Orientation, Result, Ui, Window};
 
-#[cfg(not(target_os = "windows"))]
 naui::test_cases!(
-    probe_windows_readiness,
     typing_notifies_like_the_user,
     typing_and_enter_do_nothing_while_disabled,
     respond_answers_a_dialog_opened_by_a_click,
     respond_answers_a_sheet,
 );
-// 一時的: Windows では調べものだけを走らせ、後ろの signup まで進める。
-#[cfg(target_os = "windows")]
-naui::test_cases!(probe_windows_readiness);
-
-/// 一時的な調べもの: 窓を出してから、打ち込みと Dialog が効くまでの時間を記録する。
-async fn probe_windows_readiness(ui: Ui) -> Result<()> {
-    let started = std::time::Instant::now();
-    let window = ui.window("probe", 480.0, 320.0)?;
-    let field = ui.text_input("")?;
-    let changes = Rc::new(RefCell::new(Vec::<String>::new()));
-    field.on_change({
-        let changes = changes.clone();
-        move |text| changes.borrow_mut().push(text.to_string())
-    });
-    window.set_child(&field);
-    window.show();
-    let mut typed_at = None;
-    for attempt in 0..100 {
-        field.enter_text(&format!("t{attempt}"));
-        if field.text() == format!("t{attempt}") {
-            typed_at = Some((attempt, started.elapsed()));
-            break;
-        }
-        ui.tasks().sleep(std::time::Duration::from_millis(50)).await;
-    }
-    ui.tasks()
-        .sleep(std::time::Duration::from_millis(500))
-        .await;
-    println!(
-        "PROBE typed={typed_at:?} changes={:?} size={:?}",
-        changes.borrow(),
-        window.size()
-    );
-    let dialog = ui.dialog("probe")?;
-    let mut opened_at = None;
-    for attempt in 0..100 {
-        dialog.open();
-        if dialog.is_open() {
-            opened_at = Some((attempt, started.elapsed()));
-            break;
-        }
-        ui.tasks().sleep(std::time::Duration::from_millis(50)).await;
-    }
-    println!("PROBE opened={opened_at:?}");
-    if dialog.is_open() {
-        dialog.respond(DialogResponse::Primary);
-        let closed = testing::wait_until(&ui, || !dialog.is_open()).await;
-        println!(
-            "PROBE answered={:?} at {:?}",
-            closed.is_ok(),
-            started.elapsed()
-        );
-    }
-    window.close();
-    Ok(())
-}
 
 /// Records every value a notification passes.
 fn recorder<T: 'static>() -> (Rc<RefCell<Vec<T>>>, impl FnMut(T) + 'static) {
@@ -104,7 +45,8 @@ fn last_is(seen: &Rc<RefCell<Vec<String>>>, text: &str) -> bool {
     seen.borrow().last().map(String::as_str) == Some(text)
 }
 
-/// A shown window. Windows types into a field only once its window is shown.
+/// A shown window. On Windows, UI Automation reaches a field only once its window
+/// is drawn.
 fn shown_window(ui: &Ui, title: &str) -> Result<Window> {
     let window = ui.window(title, 480.0, 520.0)?;
     window.show();

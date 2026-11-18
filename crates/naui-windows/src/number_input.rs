@@ -238,17 +238,23 @@ impl NumberInput {
 
     /// Replaces the text in the field the way typing does (for tests and
     /// automation): through UI Automation's Value pattern on the `TextBox` in the
-    /// `NumberBox`'s template (through UI Automation's Value pattern). Text that reads
-    /// as a number is taken from its `TextChanged`, so `on_change` arrives a moment
-    /// after this returns. Does nothing while disabled, or before the template has
-    /// been applied (in a window not shown yet).
+    /// `NumberBox`'s template. Text that reads as a number is taken from its
+    /// `TextChanged`, so `on_change` arrives a moment after this returns. Does
+    /// nothing while disabled.
+    ///
+    /// Where the template has not been applied (a window not drawn yet), the text is
+    /// read the same way right away instead, so `on_change` is called before this
+    /// returns.
     pub fn enter_text(&self, text: &str) {
         if !self.0.native.IsEnabled().unwrap_or(false) {
             return;
         }
         let field = self.0.field.borrow().clone();
-        if let Some(field) = field {
-            crate::widgets::enter_text_box(&field, text);
+        let typed = field.is_some_and(|field| crate::widgets::type_with_automation(&field, text));
+        if !typed {
+            if let Some(shown) = self.parse_shown(text) {
+                self.accept(shown, false);
+            }
         }
     }
 

@@ -304,11 +304,16 @@ that shape are covered in
   through an IME. `enter_text` replaces the whole text at once, so `on_change` is
   called once with the new text rather than once per character, and an
   `EditableComboBox` completes nothing from its suggestions.
-- On Windows, `on_change` arrives from the event loop a moment after `enter_text`
-  returns (WinUI raises `TextChanged` asynchronously), and the field takes typed
-  text only once its window is shown (an unshown control has no template, and so
-  no UI Automation Value pattern). Show the window first and wait for the effect
-  with `testing::wait_until`.
+- On Windows, `enter_text` and `respond` go through UI Automation, which reaches a
+  control only once WinUI has applied its template, when the window is drawn.
+  `on_change` then arrives from the event loop a moment after `enter_text` returns
+  (WinUI raises `TextChanged` asynchronously); wait for its effect with
+  `testing::wait_until`. Where the template is missing (a window not shown yet, or
+  one nothing draws, as on CI runners), naui writes the text and calls `on_change`
+  itself, and closes a dialog with the role itself when its button has not
+  appeared within a second, without going through UI Automation. Right after the
+  first window is shown, `Dialog::open` and `Sheet::open` wait until WinUI can show
+  them (its `XamlRoot`), for up to 10 seconds.
 - `Dialog::respond` and `Sheet::respond` click a button, so a role with no button,
   or a disabled one, leaves the dialog open; on macOS that leaves `Dialog::open`
   (and the click that opened it) waiting. Give the answer **before** whatever opens

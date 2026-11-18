@@ -3240,9 +3240,9 @@ and typing over it, so `on_change` is called once with the new text, and `submit
 platform's own path for typed text (AppKit's text-change notification,
 `GtkEditable`, UI Automation's Value pattern, the DOM's `input` event), but no key
 is pressed: `on_key_down` is not called and no IME is involved. ([`TextArea`] has
-no `submit`, since Enter types a newline there.) **On Windows the field must be in
-a shown window, and `on_change` arrives a moment after `enter_text` returns**, so
-show the window first and wait for what the notification does:
+no `submit`, since Enter types a newline there.) **On Windows `on_change` can
+arrive a moment after `enter_text` returns** (WinUI raises `TextChanged` from the
+event loop), so show the window first and wait for what the notification does:
 
 ```rust,ignore
 app.window.show();

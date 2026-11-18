@@ -178,19 +178,23 @@ impl SearchInput {
     ///
     /// The text goes into the `TextBox` in the `AutoSuggestBox`'s template through
     /// UI Automation's Value pattern, so WinUI
-    /// reports it as the user's input (`UserInput`). Nothing is typed before the
-    /// template has been applied (in a window not shown yet).
+    /// reports it as the user's input (`UserInput`). Where the template has not been
+    /// applied (a window not drawn yet), the text is written to `Text` and
+    /// `on_change` is notified right away instead (WinUI reports a written `Text` as
+    /// a change from code, which naui does not notify).
     pub fn enter_text(&self, text: &str) {
         if !self.is_enabled() {
             return;
         }
-        let field = self
+        let typed = self
             .0
             .native
             .GetTemplateChild(&HSTRING::from(TEXT_BOX_PART))
-            .and_then(|part| part.cast::<TextBox>());
-        if let Ok(field) = field {
-            crate::widgets::enter_text_box(&field, text);
+            .and_then(|part| part.cast::<TextBox>())
+            .is_ok_and(|field| crate::widgets::type_with_automation(&field, text));
+        if !typed {
+            let _ = self.0.native.SetText(&HSTRING::from(text));
+            self.0.on_change.emit(text);
         }
     }
 
@@ -198,13 +202,19 @@ impl SearchInput {
     /// automation). Does nothing while disabled.
     ///
     /// It goes through UI Automation's Invoke pattern, which the `AutoSuggestBox`
-    /// answers by submitting the query (`QuerySubmitted`).
+    /// answers by submitting the query (`QuerySubmitted`). Where it does not offer
+    /// that pattern, `on_search` is called directly.
     pub fn search(&self) {
         if !self.is_enabled() {
             return;
         }
-        if let Ok(element) = self.0.native.cast::<UIElement>() {
-            let _ = crate::automation::invoke(&element);
+        let invoked = self
+            .0
+            .native
+            .cast::<UIElement>()
+            .is_ok_and(|element| crate::automation::invoke(&element).is_ok());
+        if !invoked {
+            self.0.on_search.emit(&self.text());
         }
     }
 }

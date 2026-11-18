@@ -26,7 +26,7 @@ naui::test_cases!(
 /// Clicking "Create account" greets the name typed in.
 async fn create_greets_by_name(ui: Ui) -> Result<()> {
     let app = build(&ui)?;
-    // Windows types into a field only once its window is shown.
+    // On Windows, UI Automation reaches a field only once its window is drawn.
     app.window.show();
     app.name.enter_text("Ada");
     app.create.click();
