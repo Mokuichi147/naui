@@ -250,8 +250,16 @@ impl NumberInput {
             return;
         }
         let field = self.0.field.borrow().clone();
-        let typed = field.is_some_and(|field| crate::widgets::type_with_automation(&field, text));
+        let typed = field
+            .as_ref()
+            .is_some_and(|field| crate::widgets::type_with_automation(field, text));
         if !typed {
+            // 確定は入力欄の文字を読むので、そこへも書いておく。
+            if let Some(field) = &field {
+                let previous = self.0.silent.replace(true);
+                let _ = field.SetText(&HSTRING::from(text));
+                self.0.silent.set(previous);
+            }
             if let Some(shown) = self.parse_shown(text) {
                 self.accept(shown, false);
             }

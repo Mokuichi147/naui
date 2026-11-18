@@ -157,6 +157,11 @@ impl Dialog {
 
     /// Cleanup and notification on close.
     fn finish(&self, result: ContentDialogResult) {
+        eprintln!(
+            "DIAG dialog Closing: stale={} forced={:?}",
+            self.0.stale_closing.get(),
+            self.0.forced.get()
+        );
         if self.0.stale_closing.replace(false) {
             return; // もう閉じたことにした回の `Closing`。
         }
@@ -352,13 +357,17 @@ impl Dialog {
         }
         match self.show() {
             Ok(()) => {
+                eprintln!("DIAG dialog shown (tries left {tries})");
                 self.0.shown.set(true);
                 self.0.stale_closing.set(false);
                 if let Some(response) = self.0.pending.take() {
                     self.press(response, PRESS_TRIES);
                 }
             }
-            Err(_) if tries > 0 && crate::window::has_owner_window() => {
+            Err(error) if tries > 0 && crate::window::has_owner_window() => {
+                if tries.is_multiple_of(50) {
+                    eprintln!("DIAG dialog not shown yet ({tries}): {error}");
+                }
                 self.later(move |this| this.try_show(tries - 1));
             }
             Err(error) => {
@@ -432,6 +441,7 @@ impl Dialog {
             Err(_) => false,
         };
         if pressed {
+            eprintln!("DIAG dialog pressed {response:?} through UIA");
             return;
         }
         if tries > 0 {
@@ -447,8 +457,13 @@ impl Dialog {
         if response != DialogResponse::Cancel && !self.0.enabled.get().get(response) {
             return;
         }
+        eprintln!("DIAG dialog closing with {response:?} itself");
         self.0.forced.set(Some(response));
-        let _ = self.0.native.Hide();
+        let hidden = self.0.native.Hide();
+        eprintln!(
+            "DIAG dialog hide: {hidden:?}, open after hide: {}",
+            self.0.open.get()
+        );
         // `Closing` が来ないまま (何も描かれていない窓) なら、ここで閉じたことにする。
         self.later(|this| {
             let Some(response) = this.0.forced.take() else {
