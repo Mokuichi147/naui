@@ -24,6 +24,7 @@ that shape are covered in
 | `Sender::send` from `std::thread::spawn` | Possible | Possible | Possible | Not possible (no threads) |
 | Where dragged `List` rows will land | The rows open a gap | A line between the rows | A line in the accent color | A line in the `Highlight` system color |
 | Scrolling while dragging `List` rows near the edge | No | Yes | No | As the browser does |
+| Moving `List` rows with the keyboard | Alt + Shift + Up / Down (`ListView`'s own) | No | No | No |
 | What a dropped file carries (`on_file_drop`) | The absolute path | The absolute path | The absolute path (local files only) | A `blob:` URL, no path |
 | Looks of `ButtonRole` | Only `Primary` (accent) | `Primary` (accent), `Destructive` (red text, macOS 26 and later) | Both (`suggested-action` / `destructive-action`) | Neither (only `data-naui-role` is written) |
 | `AdaptivePanes` switching to one pane | `TwoPaneView` decides, below the breakpoint, with no slack | naui decides, with 8 px of slack | naui decides, with 8 px of slack (slides between the panes) | naui decides, with 8 px of slack |
@@ -232,6 +233,9 @@ that shape are covered in
   (`List::set_reorderable`), not in `Tree` or `Table`. Rows that cannot be selected
   cannot be dragged, and the line or gap showing where the rows will land differs
   by platform (see [the guide](../crates/naui/src/guide.md#rearranging-list-rows)).
+  Only Windows moves rows with the keyboard (Alt + Shift + Up / Down, which
+  `ListView` has by itself); on macOS, Linux and the Web they are moved only by
+  dragging.
 
 ### Window
 

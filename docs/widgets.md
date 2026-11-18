@@ -252,7 +252,10 @@ collected in [Known limitations](known-limitations.md).
   spacers, because `ListView` creates a `ListViewItem` for every row it is given: with
   many rows, only the rows on screen are built, and the spacers carry the height of
   the rest. naui holds the selection, since the `ListView` knows only the rows it has.
-  With `set_reorderable`, `CanReorderItems`, `CanDragItems` and `AllowDrop` are on, and
+  With `set_reorderable`, `CanReorderItems` and `CanDragItems` are on, and `AllowDrop`
+  is on only from `DragItemsStarting` to `DragItemsCompleted`: with it on, `ListView`
+  opens a gap for anything dragged over it, files from Explorer too, though those go
+  to `on_file_drop` (taken at the window's root either way) and never into the list.
   `ListView` moves its own `ListViewItem`s on the drop. naui reads which rows were
   dragged from `DragItemsStarting` (cancelling a drag that holds a row that cannot be
   selected) and where they went from the order of `Items` at `DragItemsCompleted`,

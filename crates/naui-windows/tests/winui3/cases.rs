@@ -6937,7 +6937,8 @@ fn list_drag_rows_moves_rows_and_selection(ui: &Ui) -> Result<()> {
     assert!(list.is_reorderable());
     assert!(native.CanReorderItems().expect("CanReorderItems"));
     assert!(native.CanDragItems().expect("CanDragItems"));
-    assert!(native.AllowDrop().expect("AllowDrop"));
+    // AllowDrop は自分の行を運んでいる間だけ (ファイルのドラッグで行の隙間を開かない)。
+    assert!(!native.AllowDrop().expect("AllowDrop"));
     list.set_selection(&[0, 2]);
     list.drag_rows(&[0, 2], 5);
     assert_eq!(list_texts(&list), ["大阪", "那覇", "福岡", "東京", "札幌"]);
@@ -7093,6 +7094,10 @@ fn list_reorder_by_a_real_drag(ui: &Ui) -> Result<()> {
         assert!(
             list.selection().is_empty(),
             "選んでいなかったので選択は空のまま"
+        );
+        assert!(
+            !native.AllowDrop().expect("AllowDrop"),
+            "ドロップを受けるのは行を運んでいる間だけ"
         );
         Some(())
     })

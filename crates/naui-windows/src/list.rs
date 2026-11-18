@@ -1349,7 +1349,7 @@ impl List {
                     inner.pointer_row.set(Some(index));
                     // 新しい押下より前のドラッグは終わっている。完了が届かずに残った
                     // ドラッグで選択の通知を止めたままにしない。
-                    inner.dragging.take();
+                    List(inner).end_drag();
                 }
             });
             Ok(())
@@ -2181,11 +2181,22 @@ impl List {
         let list_view = &self.0.list_view;
         let _ = list_view.SetCanDragItems(on);
         let _ = list_view.SetCanReorderItems(on);
-        let _ = list_view.SetAllowDrop(on);
+        // `AllowDrop` は自分の行のドラッグの間だけ立てる ([`List::end_drag`])。
         // 途中で切ると `DragItemsCompleted` は来ない。
         if !on {
-            self.0.dragging.take();
+            self.end_drag();
         }
+    }
+
+    /// Ends the list's own row drag: forgets the rows and stops taking drops.
+    ///
+    /// `AllowDrop` is on only from `DragItemsStarting` to here. With it on, `ListView`
+    /// opens a gap for anything dragged over it, files from Explorer too, though they
+    /// go to `on_file_drop` and never into the list. Those are handled by the window's
+    /// root, which takes them whether or not the list allows drops.
+    fn end_drag(&self) -> Option<Vec<usize>> {
+        let _ = self.0.list_view.SetAllowDrop(false);
+        self.0.dragging.take()
     }
 
     /// Follows `ListView`'s own reordering: which rows a drag takes, and where the drop
@@ -2217,6 +2228,8 @@ impl List {
                 match rows {
                     Some(rows) => {
                         list.0.dragging.replace(Some(rows));
+                        // 行を落とせるのは、自分の行を運んでいる間だけ。
+                        let _ = list.0.list_view.SetAllowDrop(true);
                     }
                     None => {
                         let _ = args.SetCancel(true);
@@ -2275,7 +2288,7 @@ impl List {
     /// The drag `ListView` started has ended. If it moved its items, the rows move the
     /// same way.
     fn on_drag_completed(&self, args: Option<&DragItemsCompletedEventArgs>) {
-        let Some(dragged) = self.0.dragging.take() else {
+        let Some(dragged) = self.end_drag() else {
             return;
         };
         let moved = args
