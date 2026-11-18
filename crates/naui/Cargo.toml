@@ -37,3 +37,14 @@ naui-windows.workspace = true
 
 [target.'cfg(all(unix, not(any(target_os = "macos", target_os = "ios", target_os = "android"))))'.dependencies]
 naui-gtk.workspace = true
+
+# テスト用の操作 (打ち込み・ダイアログへの応答) を、naui::testing で各環境の
+# 本物のイベントループの上で確かめる。naui::test_cases! が入口を書くので、
+# Rust 標準のテストハーネスは使わない。
+[[test]]
+name = "actions"
+harness = false
+
+# Web ではケースごとに #[wasm_bindgen_test] をブラウザで走らせる。
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"

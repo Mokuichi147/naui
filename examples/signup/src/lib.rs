@@ -67,7 +67,6 @@ pub fn build(ui: &Ui) -> Result<Signup> {
     form.append(&name);
     form.append(&subscribe);
     form.append(&create);
-    form.append(&clear);
 
     let confirm_clear = ui.dialog("Clear the form?")?;
     confirm_clear.set_message("The name you typed will be lost.");
@@ -78,6 +77,7 @@ pub fn build(ui: &Ui) -> Result<Signup> {
     root.append(&form);
     root.append(&preview);
     root.append(&status);
+    root.append(&clear);
     window.set_child(&root);
 
     let create_account = {
