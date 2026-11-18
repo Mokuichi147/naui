@@ -7495,7 +7495,7 @@ fn list_keeps_the_selection_outside_the_window(ui: &Ui) -> Result<()> {
 /// selected when it is expanded.
 fn tree_multiple_selection_uses_a_list_view(ui: &Ui) -> Result<()> {
     use naui_core::{SelectionMode, TreeItem};
-    use naui_winui3::Microsoft::UI::Xaml::Controls::{FontIcon, ListViewSelectionMode};
+    use naui_winui3::Microsoft::UI::Xaml::Controls::ListViewSelectionMode;
 
     let window = ui.window("ツリーの複数選択", 300.0, 320.0)?;
     let tree = ui.tree()?;
@@ -7570,12 +7570,22 @@ fn tree_multiple_selection_uses_a_list_view(ui: &Ui) -> Result<()> {
                 .and_then(|children| children.GetAt(0))
                 .and_then(|child| child.cast::<XamlButton>())
                 .and_then(|button| button.Content())
-                .and_then(|content| content.cast::<FontIcon>())
-                .and_then(|icon| icon.Glyph())
+                .and_then(|content| content.cast::<TextBlock>())
+                .and_then(|icon| icon.Text())
                 .expect("山形")
                 .to_string()
         };
         assert_eq!(glyph(3), "\u{E70D}", "開いた枝は下向き");
+        // 山形は TreeViewItem の ExpandCollapseChevron と同じ大きさ (字形 8、12 × 12)。
+        let chevron = line(3)
+            .Children()
+            .and_then(|children| children.GetAt(0))
+            .and_then(|child| child.cast::<XamlButton>())
+            .and_then(|button| button.Content())
+            .and_then(|content| content.cast::<TextBlock>())
+            .expect("山形の字");
+        assert_eq!(chevron.FontSize().expect("FontSize"), 8.0);
+        assert_eq!(chevron.Width().expect("Width"), 12.0);
 
         // 枝を閉じても中の選択は覚えていて、開き直すと戻る。通知はしない。
         tree.collapse(&[1]);

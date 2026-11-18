@@ -12,7 +12,7 @@
 //! | --- | --- |
 //! | Rows | A `ListViewItem` per item, built in advance for every item |
 //! | Indentation | The left margin of the row's content (16 per level, as on GTK and the Web) |
-//! | Expand / collapse | A borderless `Button` with the `TreeViewItem` chevrons (`\u{E76C}` / `\u{E70D}`) |
+//! | Expand / collapse | A borderless `Button` holding a copy of `TreeViewItem`'s chevron (`\u{E76C}` / `\u{E70D}`, the same size and place) |
 //! | Selection | The `ListView`'s own Ctrl / Shift handling (`Extended`) |
 //!
 //! Collapsing a branch takes its rows out of the `ListView` (and expanding puts them
@@ -28,8 +28,8 @@ use std::rc::Rc;
 use naui_core::{keeps_hidden_selection, Result, TreeItem};
 use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Button as XamlButton, FontIcon, Grid as XamlGrid, ListView, ListViewItem,
-    SelectionChangedEventHandler,
+    Button as XamlButton, Grid as XamlGrid, ListView, ListViewItem, SelectionChangedEventHandler,
+    TextBlock,
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::KeyEventHandler;
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
@@ -71,17 +71,36 @@ const LIST_XAML: &str = r##"<ListView
 /// The chevron is a borderless `Button`, so pressing it does not select the row (the
 /// button takes the press) and it is not a tab stop of its own, as in `TreeViewItem`.
 /// Leaves keep its space with the button hidden, so their text lines up.
+///
+/// The chevron copies `TreeViewItem`'s `ExpandCollapseChevron` (WinUI's template): a
+/// 12 × 12 `TextBlock` with padding 2 and the glyph at font size 8 (`GlyphSize`), 14
+/// clear on its right. `TreeViewItem` puts it 18 from the row's left and the text 44
+/// from it; the row's own padding is 12 here, so the button pads 6 on the left. The
+/// chevron of `TreeViewItem` is not a button and shows no background of its own, so
+/// the button's background and border stay transparent on hover and press too. As in
+/// `TreeViewItem`, the glyph is hidden from assistive technology (it is a private use
+/// character that would be read out as is).
 const ROW_XAML: &str = r##"<Grid
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Background="Transparent">
     <Grid.ColumnDefinitions>
         <ColumnDefinition Width="Auto"/>
         <ColumnDefinition Width="*"/>
     </Grid.ColumnDefinitions>
-    <Button Width="24" Height="24" MinWidth="0" MinHeight="0" Padding="0" Margin="0,0,4,0"
+    <Button MinWidth="0" MinHeight="0" Padding="6,0,14,0" Margin="0"
         Background="Transparent" BorderThickness="0" IsTabStop="False"
-        VerticalAlignment="Center">
-        <FontIcon FontFamily="{ThemeResource SymbolThemeFontFamily}" FontSize="12"/>
+        VerticalAlignment="Stretch">
+        <Button.Resources>
+            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="Transparent"/>
+            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="Transparent"/>
+            <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="Transparent"/>
+            <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="Transparent"/>
+        </Button.Resources>
+        <TextBlock Width="12" Height="12" Padding="2" FontSize="8"
+            FontFamily="{ThemeResource SymbolThemeFontFamily}"
+            IsTextScaleFactorEnabled="False" VerticalAlignment="Center"
+            IsHitTestVisible="False" AutomationProperties.AccessibilityView="Raw"/>
     </Button>
 </Grid>"##;
 
@@ -90,7 +109,7 @@ pub(super) struct MultiRow {
     path: Vec<usize>,
     item: ListViewItem,
     /// The chevron. `None` for leaves.
-    glyph: Option<FontIcon>,
+    glyph: Option<TextBlock>,
 }
 
 /// The `ListView` that stands in for the `TreeView` during multiple selection.
@@ -303,7 +322,7 @@ impl Tree {
             .map_err(|e| to_error("get the tree row's chevron", e))?;
         let glyph = twisty
             .Content()
-            .and_then(|content| content.cast::<FontIcon>())
+            .and_then(|content| content.cast::<TextBlock>())
             .map_err(|e| to_error("get the tree row's chevron", e))?;
         let glyph = match item.is_leaf() {
             // 葉は山形の場所だけを空けて、文字の左端をそろえる。
@@ -503,7 +522,7 @@ impl Tree {
             for row in &multi.rows {
                 if let Some(glyph) = &row.glyph {
                     let open = expanded.contains(&row.path);
-                    let _ = glyph.SetGlyph(&HSTRING::from(match open {
+                    let _ = glyph.SetText(&HSTRING::from(match open {
                         true => GLYPH_EXPANDED,
                         false => GLYPH_COLLAPSED,
                     }));
