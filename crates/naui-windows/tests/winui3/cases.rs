@@ -9538,7 +9538,7 @@ fn shift_range_scenario(
                     .Y;
                 let bottom = top + row.ActualHeight().ok()? as f32;
                 let index = AutomationProperties::GetPositionInSet(&row).ok()? as usize - 1;
-                (y >= top && y < bottom).then_some((index, top))
+                (y >= top && y < bottom).then_some((index, top, y))
             })
         };
         // 続けて送る (人が勢いよく回すのと同じ)。ただし、行が動かないまま何回も積み上げると、
@@ -9583,13 +9583,26 @@ fn shift_range_scenario(
             pump_until(Duration::from_millis(300), || false);
             let now = under_pointer();
             let still = match (now, settled) {
-                (Some((now, at)), Some((before, was))) => now == before && (at - was).abs() < 0.5,
+                (Some((now, at, _)), Some((before, was, _))) => {
+                    now == before && (at - was).abs() < 0.5
+                }
                 _ => false,
             };
             settled = now;
             still
         });
-        let (target, _) = under_pointer().expect("ポインターの下の行");
+        let (pointed, top, y) = under_pointer().expect("ポインターの下の行");
+        let height = list.row_height() as f32;
+        // ポインターが行の境目 (1 px 以内) にあると、どちらの行に当たるかは XAML の丸め次第。
+        // どちらでもよいことにして、押したあとで当たったほうを押した行とする。
+        let candidates: Vec<usize> = [
+            Some(pointed),
+            (y - top < 1.0).then(|| pointed.checked_sub(1)).flatten(),
+            (top + height - y <= 1.0).then_some(pointed + 1),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
         // 画面に出ている行が受けたフォーカスは、その行に残る。`VerticalOffset` がスクロールの
         // 途中の値のままでも、行の描かれた位置で見えていると分かる。下の端の行ほど、
         // 古い位置からは画面の外に見える。
@@ -9608,7 +9621,8 @@ fn shift_range_scenario(
                         .Y as f64;
                     let bottom = top + row.ActualHeight().ok()?;
                     let index = AutomationProperties::GetPositionInSet(&row).ok()? as usize - 1;
-                    (top >= 0.0 && bottom <= viewport && index != target).then_some((index, row))
+                    (top >= 0.0 && bottom <= viewport && !candidates.contains(&index))
+                        .then_some((index, row))
                 })
                 .max_by_key(|(index, _)| *index)
         };
@@ -9632,15 +9646,19 @@ fn shift_range_scenario(
                 scroll.VerticalOffset().expect("位置")
             );
         }
+        let hit = || {
+            candidates
+                .iter()
+                .copied()
+                .find(|&row| list.selection() == span(7, row))
+        };
         for _ in 0..3 {
             with_modifiers(&[VK_SHIFT], || {
                 send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
                 send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
             });
-            pump_until(Duration::from_secs(1), || {
-                list.selection() == span(7, target)
-            });
-            if list.selection() == span(7, target) {
+            pump_until(Duration::from_secs(1), || hit().is_some());
+            if hit().is_some() {
                 break;
             }
         }
@@ -9648,7 +9666,12 @@ fn shift_range_scenario(
             println!("     (ポインターがほかから動かされたので、確かめずに通す)");
             return None;
         }
-        assert_eq!(list.selection(), span(7, target), "ポインターの下の行まで");
+        let target = hit().unwrap_or(pointed);
+        assert_eq!(
+            list.selection(),
+            span(7, target),
+            "ポインターの下の行まで (候補 {candidates:?})"
+        );
         // 選択は押した時点で変わる。フォーカスはそのあとで届くことがあるので待つ。
         pump_until(Duration::from_secs(1), || {
             focused_list_row(list) == Some(target)
@@ -10363,11 +10386,11 @@ fn shift_click_in_margin_scenario(
             let bottom = top.Y + row.ActualHeight().ok()? as f32;
             (y >= top.Y && y < bottom).then(|| {
                 let index = AutomationProperties::GetPositionInSet(&row).expect("位置");
-                (index as usize - 1, top.Y)
+                (index as usize - 1, top.Y, bottom)
             })
         })
     };
-    let row_under_pointer = || placed_under_pointer().map(|(index, _)| index);
+    let row_under_pointer = || placed_under_pointer().map(|(index, _, _)| index);
     // 止まったかは行の位置で見る。`VerticalOffset` はホイールのスクロールの途中の値のまま
     // 残ることがあり、当てにならない。
     let mut settled = placed_under_pointer();
@@ -10375,7 +10398,7 @@ fn shift_click_in_margin_scenario(
         pump_until(Duration::from_millis(300), || false);
         let now = placed_under_pointer();
         let still = match (now, settled) {
-            (Some((now, at)), Some((before, was))) => now == before && (at - was).abs() < 0.5,
+            (Some((now, at, _)), Some((before, was, _))) => now == before && (at - was).abs() < 0.5,
             _ => false,
         };
         settled = now;
@@ -10387,18 +10410,30 @@ fn shift_click_in_margin_scenario(
         return None;
     }
     assert!(built_list_row(list, 2).is_none(), "起点の行が窓の外にある");
-    let target = row_under_pointer().expect("ポインターの下の行");
-
-    let range: Vec<usize> = (2..=target).collect();
-    click(
-        "余白の Shift クリック",
-        &|| list.selection() == range,
-        &[VK_SHIFT],
-    );
+    let (pointed, top, bottom) = placed_under_pointer().expect("ポインターの下の行");
+    // ポインターが行の境目 (1 px 以内) にあると、どちらの行に当たるかは XAML の丸め次第。
+    // どちらでもよいことにして、押したあとで当たったほうを押した行とする。
+    let candidates: Vec<usize> = [
+        Some(pointed),
+        (y - top < 1.0).then(|| pointed.checked_sub(1)).flatten(),
+        (bottom - y <= 1.0).then_some(pointed + 1),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let hit = || {
+        candidates
+            .iter()
+            .copied()
+            .find(|&row| list.selection() == (2..=row).collect::<Vec<usize>>())
+    };
+    click("余白の Shift クリック", &|| hit().is_some(), &[VK_SHIFT]);
     if moved_elsewhere(pointer_at()) {
         println!("     (ポインターがほかから動かされたので、確かめずに通す)");
         return None;
     }
+    let target = hit().unwrap_or(pointed);
+    let range: Vec<usize> = (2..=target).collect();
     let picked = list.selection();
     assert_eq!(
         (
