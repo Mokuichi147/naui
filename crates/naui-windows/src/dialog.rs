@@ -356,6 +356,14 @@ impl Dialog {
         if !self.0.open.get() || self.0.shown.get() {
             return;
         }
+        // 前の回がまだ閉じきっていない (読み込まれたまま) うちに `ShowAsync` を
+        // 呼ぶと、成功を返すのに出てこない。外れるまで待つ。
+        let leaving = self.is_loaded();
+        eprintln!("DIAG try_show loaded={leaving} tries={tries}");
+        if leaving && tries > 0 {
+            self.later(move |this| this.try_show(tries - 1));
+            return;
+        }
         match self.show() {
             Ok(()) => {
                 self.0.shown.set(true);
@@ -373,6 +381,16 @@ impl Dialog {
                 self.0.open.set(false);
             }
         }
+    }
+
+    /// Whether the `ContentDialog` is still in the visual tree, from this opening or
+    /// one on its way out.
+    fn is_loaded(&self) -> bool {
+        self.0
+            .native
+            .cast::<naui_winui3::Microsoft::UI::Xaml::FrameworkElement>()
+            .and_then(|element| element.IsLoaded())
+            .unwrap_or(false)
     }
 
     /// Calls `f` on the UI thread after [`RETRY_INTERVAL`], if the dialog is still
@@ -443,6 +461,10 @@ impl Dialog {
                 .is_ok_and(|button| crate::automation::invoke(&button).is_ok()),
             Err(_) => false,
         };
+        eprintln!(
+            "DIAG press {response:?} pressed={pressed} loaded={} tries={tries}",
+            self.is_loaded()
+        );
         if pressed {
             // 開き直した直後に押すと、WinUI が受け付けたのに閉じないことがある
             // (前の回が閉じきる前)。同じ回のまま開いていれば、少し待って押し直す。
