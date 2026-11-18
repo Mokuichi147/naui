@@ -7388,6 +7388,220 @@ fn window_key_down_gets_what_the_widget_left() {
     });
 }
 
+// --------------------------------------------- 打ち込みとダイアログへの応答
+
+/// Records every string a text notification passes.
+fn text_recorder() -> (Rc<RefCell<Vec<String>>>, impl FnMut(&str) + 'static) {
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = {
+        let seen = seen.clone();
+        move |text: &str| seen.borrow_mut().push(text.to_string())
+    };
+    (seen, sink)
+}
+
+/// Records every value a notification passes.
+fn value_recorder<T: 'static>() -> (Rc<RefCell<Vec<T>>>, impl FnMut(T) + 'static) {
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = {
+        let seen = seen.clone();
+        move |value: T| seen.borrow_mut().push(value)
+    };
+    (seen, sink)
+}
+
+/// `enter_text` replaces the text and notifies once, as typing does (`input`), and
+/// `submit` / `search` confirm as Enter does. Neither does anything while disabled
+/// or read-only, and both work before the field is placed in the page.
+#[wasm_bindgen_test]
+fn typing_notifies_like_the_user() {
+    with_ui(|ui| {
+        let field = ui.text_input("前の文字")?;
+        let (changes, sink) = text_recorder();
+        field.on_change(sink);
+        let (submits, sink) = text_recorder();
+        field.on_submit(sink);
+        let (keys, mut sink) = text_recorder();
+        field.on_key_down(move |key| {
+            sink(&format!("{:?}", key.key));
+            EventResponse::Continue
+        });
+        field.enter_text("Ada");
+        assert_eq!(field.text(), "Ada");
+        assert_eq!(
+            *changes.borrow(),
+            ["Ada"],
+            "1 度だけ新しい中身で通知すること"
+        );
+        field.submit();
+        assert_eq!(*submits.borrow(), ["Ada"]);
+        assert!(keys.borrow().is_empty(), "キーの通知は出さない");
+        field.set_read_only(true);
+        field.enter_text("Grace");
+        field.submit();
+        assert_eq!(field.text(), "Ada", "読み取り専用の欄には打てない");
+        assert_eq!(submits.borrow().len(), 1, "読み取り専用の欄は確定しない");
+        field.set_read_only(false);
+        field.set_enabled(false);
+        field.enter_text("Grace");
+        field.submit();
+        assert_eq!(field.text(), "Ada", "無効な欄には打てない");
+        assert_eq!(changes.borrow().len(), 1);
+        assert_eq!(submits.borrow().len(), 1);
+
+        let password = ui.password_input()?;
+        let (changes, sink) = text_recorder();
+        password.on_change(sink);
+        let (submits, sink) = text_recorder();
+        password.on_submit(sink);
+        password.enter_text("secret");
+        password.submit();
+        assert_eq!(password.text(), "secret");
+        assert_eq!(*changes.borrow(), ["secret"]);
+        assert_eq!(*submits.borrow(), ["secret"]);
+
+        let search = ui.search_input()?;
+        let (changes, sink) = text_recorder();
+        search.on_change(sink);
+        let (searches, sink) = text_recorder();
+        search.on_search(sink);
+        search.enter_text("naui");
+        search.search();
+        assert_eq!(*changes.borrow(), ["naui"]);
+        assert_eq!(*searches.borrow(), ["naui"]);
+        search.set_enabled(false);
+        search.enter_text("other");
+        search.search();
+        assert_eq!(search.text(), "naui");
+        assert_eq!(searches.borrow().len(), 1, "無効な検索欄は確定しない");
+
+        let area = ui.text_area("1 行目")?;
+        let (changes, sink) = text_recorder();
+        area.on_change(sink);
+        area.enter_text("一\n二");
+        assert_eq!(area.text(), "一\n二");
+        assert_eq!(*changes.borrow(), ["一\n二"]);
+        area.set_read_only(true);
+        area.enter_text("三");
+        assert_eq!(area.text(), "一\n二", "読み取り専用の欄には打てない");
+        area.set_read_only(false);
+        area.set_enabled(false);
+        area.enter_text("三");
+        assert_eq!(area.text(), "一\n二", "無効な欄には打てない");
+        assert_eq!(changes.borrow().len(), 1);
+
+        let number = ui.number_input(1.0)?;
+        number.set_range(Some(0.0), Some(10.0));
+        let (values, sink) = value_recorder::<f64>();
+        number.on_change(sink);
+        let (submits, sink) = value_recorder::<f64>();
+        number.on_submit(sink);
+        number.enter_text("4");
+        assert_eq!(number.value(), 4.0, "読める数はすぐ値になる");
+        assert_eq!(*values.borrow(), [4.0]);
+        number.submit();
+        assert_eq!(*submits.borrow(), [4.0]);
+        number.enter_text("-");
+        assert_eq!(values.borrow().len(), 1, "読めない文字は確定まで待つ");
+        number.submit();
+        assert_eq!(number.value(), 4.0, "確定で読めない文字は元へ戻る");
+        assert_eq!(*submits.borrow(), [4.0, 4.0]);
+        number.set_enabled(false);
+        number.enter_text("7");
+        number.submit();
+        assert_eq!(number.value(), 4.0, "無効な欄には打てない");
+        assert_eq!(submits.borrow().len(), 2);
+
+        let combo = ui.editable_combo_box()?;
+        combo.set_items(&["Apple", "Banana"]);
+        let (changes, sink) = text_recorder();
+        combo.on_change(sink);
+        combo.enter_text("Ap");
+        assert_eq!(combo.text(), "Ap", "候補で補わない");
+        assert_eq!(*changes.borrow(), ["Ap"]);
+        combo.enter_text("Banana");
+        assert_eq!(combo.selected(), Some(1), "候補と同じ文字なら選ばれる");
+        combo.set_enabled(false);
+        combo.enter_text("Cherry");
+        assert_eq!(combo.text(), "Banana", "無効な欄には打てない");
+        assert_eq!(*changes.borrow(), ["Ap", "Banana"]);
+        Ok(())
+    });
+}
+
+/// `respond` clicks the dialog's or sheet's button for the role. Given before it
+/// opens, it is kept and given a moment after it opens.
+#[wasm_bindgen_test]
+async fn respond_answers_like_the_user() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let dialog = ui.dialog("消しますか")?;
+        dialog.set_buttons(
+            DialogButtons::new()
+                .primary("消す")
+                .secondary("あとで")
+                .cancel("やめる"),
+        );
+        let sheet = ui.sheet("新しいフォルダ")?;
+        sheet.set_child(&ui.text_input("")?);
+        sheet.set_buttons(DialogButtons::new().primary("作成").cancel("キャンセル"));
+        let opener = ui.button("消す…")?;
+        opener.on_click({
+            let dialog = dialog.clone();
+            move || dialog.open()
+        });
+        kept = Some((dialog, sheet, opener));
+        Ok(())
+    });
+    let (dialog, sheet, opener) = kept.expect("組み立て");
+    let (responses, sink) = value_recorder::<DialogResponse>();
+    dialog.on_response(sink);
+    for response in [
+        DialogResponse::Primary,
+        DialogResponse::Secondary,
+        DialogResponse::Cancel,
+    ] {
+        dialog.respond(response);
+        opener.click();
+        assert!(dialog.is_open(), "{response:?}: 開いてから答える");
+        wait_millis(50).await;
+        assert!(!dialog.is_open(), "{response:?}: 答えて閉じること");
+    }
+    assert_eq!(
+        *responses.borrow(),
+        [
+            DialogResponse::Primary,
+            DialogResponse::Secondary,
+            DialogResponse::Cancel
+        ]
+    );
+    // 開いている間に答えれば、その場で閉じる。
+    dialog.open();
+    dialog.respond(DialogResponse::Primary);
+    assert!(!dialog.is_open());
+    assert_eq!(responses.borrow().len(), 4);
+
+    let (responses, sink) = value_recorder::<DialogResponse>();
+    sheet.on_response(sink);
+    sheet.respond(DialogResponse::Primary);
+    sheet.open();
+    wait_millis(50).await;
+    assert_eq!(*responses.borrow(), [DialogResponse::Primary]);
+
+    // 無効なボタンは押せず、開いたまま。ないボタンも同じ。
+    sheet.set_button_enabled(DialogResponse::Primary, false);
+    sheet.open();
+    sheet.respond(DialogResponse::Primary);
+    sheet.respond(DialogResponse::Secondary);
+    assert!(sheet.is_open(), "無効なボタンとないボタンは押せない");
+    sheet.respond(DialogResponse::Cancel);
+    assert!(!sheet.is_open());
+    assert_eq!(
+        *responses.borrow(),
+        [DialogResponse::Primary, DialogResponse::Cancel]
+    );
+}
+
 // ------------------------------------------------- アプリ向けの基本機能
 
 /// Waits `millis` (the browser's `setTimeout`).

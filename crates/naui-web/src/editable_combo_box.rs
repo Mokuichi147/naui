@@ -198,6 +198,13 @@ impl EditableComboBox {
         self.0.on_change.set(f);
     }
 
+    /// Replaces the text the way typing does, so `on_change` is called (for tests
+    /// and automation). Nothing is completed from the suggestions. Does nothing
+    /// while disabled. See [`crate::widgets::enter_input_text`].
+    pub fn enter_text(&self, text: &str) {
+        crate::widgets::enter_input_text(&self.0.input, text);
+    }
+
     /// The field's `<input>`. Public as a backend-specific escape hatch.
     pub fn native_input(&self) -> HtmlInputElement {
         self.0.input.clone()

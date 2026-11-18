@@ -94,6 +94,14 @@ impl Sheet {
         self.0.is_open()
     }
 
+    /// Answers it the way the user does, by clicking its `<button>` for `response`,
+    /// so `on_response` is called with it (for tests and automation). Nothing
+    /// happens if it has no such button or the button is disabled. If it is not
+    /// open, the answer is kept and given a moment after it next opens.
+    pub fn respond(&self, response: DialogResponse) {
+        self.0.respond(response)
+    }
+
     /// The `<dialog>` element. A backend-specific escape hatch.
     pub fn native_element(&self) -> Element {
         self.0.native_element()
