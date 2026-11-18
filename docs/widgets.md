@@ -59,7 +59,7 @@ Legend:
 | `ColorPicker` | 🟡 `Button` + `Flyout` + `ColorPicker` | ✅ `NSColorWell` | ✅ `GtkColorDialogButton` | ✅ `<input type="color">` |
 | `List` | ✅ `ListView` | ✅ `NSTableView` + `NSScrollView` | 🟡 `GtkListBox` + `GtkScrolledWindow` | ✅ `<select size>` / 🟡 `<ul role="listbox">` |
 | `Table` | 🟡 `Grid` + `ListView` (rows are `Grid`s) | ✅ `NSTableView` + `NSTableHeaderView` | 🟡 `GtkListBox` + `GtkSizeGroup` | 🟡 `<table role="grid">` |
-| `Tree` | ✅ `TreeView` | ✅ `NSOutlineView` + `NSScrollView` | 🟡 `GtkListBox` + disclosure buttons | 🟡 `<ul role="tree">` |
+| `Tree` | ✅ `TreeView` (🟡 `ListView` for multiple selection) | ✅ `NSOutlineView` + `NSScrollView` | 🟡 `GtkListBox` + disclosure buttons | 🟡 `<ul role="tree">` |
 
 ### Files and media
 
@@ -268,7 +268,14 @@ collected in [Known limitations](known-limitations.md).
   chevron, so unselectable branches can still be expanded and collapsed.
   `TreeView` handles scrolling itself (its inner list lays out only as much as the
   given height, so delegating to an outer `ScrollViewer` would cut it off instead of
-  growing).
+  growing). `TreeView`'s multiple selection is check boxes that also select a
+  branch's descendants (and its parent once all children are), which cannot be
+  turned off, so with `SelectionMode::Multiple` the same frame holds a `ListView`
+  with `Extended` selection instead. Its rows are built in advance for every item,
+  indented 16 px per level, with a borderless `Button` carrying `TreeViewItem`'s
+  chevron glyphs (`\u{E76C}` / `\u{E70D}`); collapsing a branch takes its rows out
+  of the `ListView` and expanding puts them back, and naui keeps the selection of
+  the hidden ones.
 - **`PopupMenu`**: A `MenuFlyout`. Positioning, shadow, rounded corners, light
   dismiss, keyboard operation (arrows and Esc) and wrapping at screen edges all come
   from WinUI. Right-click is delegated to `UIElement.ContextFlyout`, so long press
@@ -403,6 +410,13 @@ collected in [Known limitations](known-limitations.md).
   without a specified width because AppKit's automatic column resizing cannot
   distribute all leftover space when there are fixed-width columns, leaving the
   right side of the table empty.
+- **`Tree`**: An `NSOutlineView` with one column. Multiple selection is
+  `allowsMultipleSelection`. AppKit deselects the rows inside a branch when it is
+  collapsed, so naui holds the selection itself, ignores the change that collapsing
+  causes, and writes it back when the branch is expanded again. Whether a change by
+  the user keeps the hidden ones is read from the modifier keys of the event AppKit
+  is handling (`NSApp.currentEvent`): ⌘ keeps them, ⇧ and plain clicks or keys drop
+  them.
 - **`Popover`**: `NSPopover` with `NSPopoverBehaviorTransient` (closes on a click
   outside or Esc). The content is placed with a 12 pt margin in the view of its
   `contentViewController`, and the popover's size follows that view's constraints,
@@ -544,7 +558,11 @@ collected in [Known limitations](known-limitations.md).
   column widths aligned by a `GtkSizeGroup` per column. Sortable headers are `flat`
   `GtkButton`s, and the direction is shown by an arrow added to the header text.
 - **`Tree`**: Instead of `GtkTreeExpander` (only for `GtkListView`), it is built
-  from `GtkListBox` rows and disclosure buttons.
+  from `GtkListBox` rows and disclosure buttons. Rows inside collapsed branches are
+  only made invisible, so they keep their selection; with `SelectionMode::Multiple`
+  the `GtkListBox` selects with Ctrl / Shift as for `List`, and rows that were not
+  selected before are taken out of what Ctrl + A or a Shift range reaches into a
+  collapsed branch.
 - **`Window` state**: On X11, the window manager sometimes does not restore a window
   with `unminimize` alone, so restoring from minimized also asks for it to be brought
   to the front with `present`. Minimizing requested before showing is applied after
@@ -623,6 +641,11 @@ collected in [Known limitations](known-limitations.md).
   Space). Column widths are decided by `<col>` in a `<colgroup>` and
   `table-layout: fixed`. Sortable headers are `<button>`s inside `<th>`, and the
   direction is shown with `aria-sort` and an arrow.
+- **`Tree`**: `<ul role="tree">` with `<li role="treeitem">` items, following
+  WAI-ARIA's tree view pattern (↑ / ↓ move, → expands or moves to the first child,
+  ← collapses or moves to the parent). Multiple selection sets
+  `aria-multiselectable` and takes clicks with ⌘ / Ctrl / Shift, Shift + arrows,
+  Ctrl + arrows with Space, and Ctrl + A, as the composed `List` does.
 - **`Dialog` and `Sheet`**: The same `<dialog>`; a sheet leaves the body text
   empty and has a minimum width of 320 px (`SHEET_MIN_WIDTH`, but no wider than the
   viewport allows). Enter in a text field (an `<input>` other than check boxes,

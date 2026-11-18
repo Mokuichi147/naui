@@ -141,12 +141,20 @@ native counterparts for.
       Check first how each platform can deliver them as a user's action would,
       and whether a nested run loop, such as macOS's modal `Dialog::open`, can be
       answered from a test.
-- [ ] **Multiple selection in `Tree`** (`set_selection_mode` with
-      `SelectionMode`, as `List` has). `Tree` has single selection only.
-      `NSOutlineView`, `GtkListBox` (which `Tree` is built from on GTK) and WinUI's
-      `TreeView` have a multiple selection mode, and the Web's tree is naui's own
-      with `aria-multiselectable`. Whether a selected branch also selects its
-      children differs between them, and is decided first.
+- [x] **Multiple selection in `Tree`** (`set_selection_mode` with
+      `SelectionMode`, as `List` has). Added `set_selection_mode`,
+      `selection_mode`, `selection`, `set_selection` and `select_many`; `selected`
+      and `on_select` keep passing one path (the first selected item). As in
+      `List`, items are picked with ⌘ / Ctrl and Shift, and **selecting a branch
+      does not select its children**: that is how `NSOutlineView` and `GtkListBox`
+      behave, while WinUI's `TreeView` offers only check boxes that also select a
+      branch's descendants (and its parent once all children are). So on Windows a
+      tree with multiple selection is laid out in a `ListView` with `Extended`
+      selection, with `TreeViewItem`'s chevrons and indentation; the Web's tree
+      sets `aria-multiselectable`. Selected items inside a collapsed branch stay
+      selected while hidden on every platform (macOS used to drop them with single
+      selection too), and the next choice keeps them or drops them by the same
+      rule as rows off screen in a long `List`.
 - [ ] **Modifier keys in `Canvas`'s pointer notifications.** `PointerEvent`
       tells buttons apart but not ⇧, Ctrl, ⌥ / Alt or ⌘, so a drawing app cannot
       tell a click from a ⇧-click. `KeyEvent` already carries them as

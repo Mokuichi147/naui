@@ -267,8 +267,9 @@ impl Tree {
     /// without notifying.
     ///
     /// Multiple selection lays the tree out in a `ListView` with Ctrl / Shift
-    /// selection instead of the `TreeView` (see [`multi`]); switching back shows the
-    /// `TreeView` again.
+    /// selection instead of the `TreeView` ([`Tree::native_list_view`]), because the
+    /// `TreeView`'s own multiple selection also selects a branch's descendants.
+    /// Switching back shows the `TreeView` again.
     pub fn set_selection_mode(&self, mode: SelectionMode) {
         let was_multi = self.is_multi();
         self.0.mode.set(mode);
