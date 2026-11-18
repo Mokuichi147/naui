@@ -5,7 +5,7 @@ use naui_core::{ToastPosition, ToastPriority, ToastSpec};
 ///
 /// It is not a widget, so it does not go into containers (the same as `Dialog`).
 ///
-/// **One toast is on screen at a time; the others wait their turn** (the same as
+/// **One toast is on screen at a time; the others wait their turn** (modelled on
 /// `AdwToastOverlay`). [`show`](Self::show) puts it at the back of the queue, or
 /// on screen at once with [`ToastPriority::High`].
 #[derive(Clone)]
@@ -126,7 +126,8 @@ impl Toast {
     ///
     /// Showing it again while it is on screen puts it up afresh (the time starts
     /// over); while it waits, it keeps its place. If there is no window to show it in
-    /// when its turn comes, it is dropped.
+    /// when its turn comes, it is dropped. A toast left on screen in a window that
+    /// has since been closed is taken down first, without `on_dismiss`.
     ///
     /// To replace the toast on screen instead, [`dismiss`](Self::dismiss) it first.
     #[inline]

@@ -2953,8 +2953,8 @@ the remaining three platforms naui builds the same shape. Notifications sent to 
 OS notification center are a separate mechanism that leaves the app, so they are
 not covered.
 
-**One toast is on screen at a time, and the others wait their turn**, the way
-`AdwToastOverlay` queues them. [`Toast::show`] puts a toast at the back of the
+**One toast is on screen at a time, and the others wait their turn**, modelled on
+how `AdwToastOverlay` queues them. [`Toast::show`] puts a toast at the back of the
 queue; with [`ToastPriority::High`] it comes up at once instead, and the one it
 interrupts goes back to the front of the queue. Its time starts when it comes up.
 [`Toast::is_visible`] tells whether it is on screen and [`Toast::is_queued`]

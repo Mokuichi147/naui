@@ -309,14 +309,16 @@ enum Step<T> {
 /// go of the queue**, so a backend may look at the queue (or show another toast)
 /// from inside them.
 ///
-/// The order follows `AdwToastOverlay`:
+/// The order is modelled on `AdwToastOverlay`'s, with one difference noted below:
 ///
 /// - With nothing on screen, a shown toast comes up at once.
 /// - A [`Normal`](ToastPriority::Normal) toast otherwise waits at the back.
 /// - A [`High`](ToastPriority::High) toast comes up at once, and the one on screen
 ///   goes back to the front of the queue.
 /// - Showing the toast on screen again puts it up afresh (its time starts over).
-///   Showing a waiting one again leaves it where it is, unless it is `High`.
+///   Showing a waiting one again leaves it where it is, unless it is `High`
+///   (`AdwToastOverlay` moves it forward instead; here the order the app showed
+///   them in is kept).
 /// - Removing the one on screen brings up the next; removing a waiting one only
 ///   takes it out of the queue.
 #[derive(Debug)]

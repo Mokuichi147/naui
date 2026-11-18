@@ -125,8 +125,8 @@ native counterparts for.
 
 - [x] **Relax the limits on toasts** (queueing, more than one action, position).
       `Toast::show` now waits its turn in a queue, with `ToastPriority::High` to
-      come up at once and put the current one back at the front, in the order
-      `AdwToastOverlay` uses; `is_queued` tells a waiting toast. The queue is one
+      come up at once and put the current one back at the front, modelled on
+      `AdwToastOverlay`'s order; `is_queued` tells a waiting toast. The queue is one
       `ToastQueue` in naui-core shared by all four backends, since
       `AdwToastOverlay` keeps one per window and has no signal for a waiting toast
       coming up. `set_actions` takes a list of labels and `on_action` the index

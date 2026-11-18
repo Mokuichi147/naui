@@ -720,6 +720,10 @@ const CASES: &[Case] = &[
         "トーストの位置が InfoBar の揃えになる",
         toast_positions_become_the_alignment,
     ),
+    (
+        "閉じた窓に残ったトーストは次のものに場所を譲る",
+        toast_in_a_closed_window_gives_way,
+    ),
 ];
 
 fn sheet_configuration_reaches_the_content_dialog(ui: &Ui) -> Result<()> {
@@ -12218,5 +12222,39 @@ fn toast_positions_become_the_alignment(ui: &Ui) -> Result<()> {
         toast.dismiss();
     }
     window.close();
+    Ok(())
+}
+
+/// A toast left on screen in a window closed with `Window::close` does not hold up
+/// the queue: the next one shown takes its place, without notifying.
+fn toast_in_a_closed_window_gives_way(ui: &Ui) -> Result<()> {
+    let old = ui.window("閉じる窓", 360.0, 240.0)?;
+    old.set_child(&ui.stack(Orientation::Vertical)?);
+    old.show();
+    let stuck = ui.toast("閉じた窓のトースト")?;
+    stuck.set_timeout(0.0);
+    let dismissed = Rc::new(Cell::new(0));
+    stuck.on_dismiss({
+        let dismissed = dismissed.clone();
+        move || dismissed.set(dismissed.get() + 1)
+    });
+    stuck.show();
+    assert!(stuck.is_visible());
+    old.close();
+
+    let new = ui.window("新しい窓", 360.0, 240.0)?;
+    new.set_child(&ui.stack(Orientation::Vertical)?);
+    new.show();
+    let next = ui.toast("新しい窓のトースト")?;
+    next.set_timeout(0.0);
+    next.show();
+    assert!(next.is_visible(), "並ばずに出る");
+    assert!(
+        !stuck.is_visible() && !stuck.is_queued(),
+        "残ったものは外れる"
+    );
+    assert_eq!(dismissed.get(), 0, "外しても通知は届かない");
+    next.dismiss();
+    new.close();
     Ok(())
 }

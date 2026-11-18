@@ -375,9 +375,6 @@ that shape are covered in
   receives touchpad gestures itself, and they do not become wheel notifications
   (mouse wheels do arrive).
 - `Dialog`, `Sheet` and `Toast` cannot be shown before `window.show()`.
-- A `Toast` that never disappears by itself (timeout 0) left on screen in a window
-  that has since closed keeps its place at the front of the queue until the app
-  dismisses it. On the other platforms the next `show()` takes it down.
 - `Sheet` keeps the width `ContentDialog` allows, between 320 and 548 px
   (`ContentDialogMinWidth` / `ContentDialogMaxWidth`), so wider content is squeezed.
 - `MenuBar` shortcuts are picked up from the window's `KeyDown`, so a key that the

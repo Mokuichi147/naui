@@ -14,9 +14,10 @@
 //! `AdwToastOverlay` queues toasts itself, but one queue per window, and it has no
 //! signal for "a waiting toast came up", so `is_visible()` could not be answered
 //! from it. The order is therefore kept by [`naui_core::ToastQueue`], shared with
-//! the other backends (and in the same order as `AdwToastOverlay`'s: `High` comes
-//! up at once and puts the current one back at the front), and only the toast whose
-//! turn it is is added to the overlay.
+//! the other backends (modelled on `AdwToastOverlay`'s order: `High` comes up at
+//! once and puts the current one back at the front; unlike the overlay, showing a
+//! waiting toast again does not move it forward), and only the toast whose turn it
+//! is is added to the overlay.
 //!
 //! ## Differences from other platforms
 //!

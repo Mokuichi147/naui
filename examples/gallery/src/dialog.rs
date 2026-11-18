@@ -248,6 +248,5 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         }
     });
     pane.append(&position_row);
-    pane.append(&toasts);
     Ok(pane)
 }

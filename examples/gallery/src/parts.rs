@@ -25,7 +25,7 @@ use std::rc::Rc;
 
 use naui::{
     Align, Grid, GridCell, Label, Orientation, Padding, RadioGroup, Result, Sizing, Stack,
-    TextColor, TextStyle, Toast, Toggle, Track, Ui, Widget,
+    TextColor, TextStyle, Toast, ToastPriority, Toggle, Track, Ui, Widget,
 };
 
 /// 区分 1 つ分の画面の土台。
@@ -173,13 +173,16 @@ impl Form {
 /// 操作の結果を知らせるトースト。ギャラリー全体で 1 つを使い回す。
 ///
 /// トーストは 1 つずつ順に出るので、知らせごとに作ると古い知らせが列に溜まる。
-/// 1 つを使い回し、最新の文字だけを出す。
+/// 1 つを使い回し、最新の文字だけを出す。操作の結果はすぐ見せたいので優先度は
+/// High にし、消えないトースト (Sticky) が出ていても後ろに並ばないようにする。
 #[derive(Clone)]
 pub(crate) struct Notice(Toast);
 
 impl Notice {
     pub(crate) fn new(ui: &Ui) -> Result<Self> {
-        Ok(Self(ui.toast("")?))
+        let toast = ui.toast("")?;
+        toast.set_priority(ToastPriority::High);
+        Ok(Self(toast))
     }
 
     /// `text` を知らせる。

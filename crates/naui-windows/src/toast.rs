@@ -90,6 +90,8 @@ struct ToastInner {
     on_action: Handler<usize>,
     on_dismiss: Handler<()>,
     visible: Cell<bool>,
+    /// Whether the window it is on screen in has been closed ([`window_closing`]).
+    stranded: Cell<bool>,
 }
 
 impl ToastSlot for ToastInner {
@@ -110,6 +112,7 @@ impl ToastSlot for ToastInner {
             return false;
         }
         *this.layer.borrow_mut() = Some(layer);
+        this.stranded.set(false);
         let _ = this.native.SetIsOpen(true);
         this.visible.set(true);
         toast.start_timer();
@@ -137,6 +140,10 @@ impl ToastSlot for ToastInner {
         if children.IndexOf(&element, &mut index).unwrap_or(false) {
             let _ = children.RemoveAt(index);
         }
+    }
+
+    fn is_stranded(this: &Rc<Self>) -> bool {
+        this.stranded.get()
     }
 }
 
@@ -167,6 +174,7 @@ impl Toast {
             on_action: RefCell::new(None),
             on_dismiss: RefCell::new(None),
             visible: Cell::new(false),
+            stranded: Cell::new(false),
         }));
         Ok(this)
     }
@@ -448,4 +456,20 @@ fn build_surface() -> Result<InfoBar> {
         })
         .map_err(|e| to_error("set the toast alignment", e))?;
     Ok(native)
+}
+
+/// Called when the window whose content layer is `layer` is closed with
+/// `Window::close`. A toast on screen there is marked, so that the next `show()`
+/// takes it down instead of waiting behind it (a toast that never disappears by
+/// itself would wait for good).
+///
+/// Closing a window from its close button winds the whole app down, so only
+/// `Window::close` needs this.
+pub(crate) fn window_closing(layer: &Grid) {
+    let Some(shown) = QUEUE.with(|q| q.borrow().shown()) else {
+        return;
+    };
+    if shown.layer.borrow().as_ref() == Some(layer) {
+        shown.stranded.set(true);
+    }
 }

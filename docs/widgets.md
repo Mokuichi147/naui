@@ -564,8 +564,9 @@ collected in [Known limitations](known-limitations.md).
 
 - **`Toast`**: `AdwToast` on the window's `AdwToastOverlay`. The overlay keeps a
   queue per window but has no signal for "a waiting toast came up", so the order is
-  kept by naui's `ToastQueue` (in the same order as the overlay's: `High` comes up
-  at once and puts the current one back at the front), and only the toast whose
+  kept by naui's `ToastQueue` (modelled on the overlay's: `High` comes up at once
+  and puts the current one back at the front, but showing a waiting toast again
+  does not move it forward), and only the toast whose
   turn it is is added. One action is `AdwToast`'s own button; it has room for only
   one, so two or more are laid out after the text in a custom title
   (`adw_toast_set_custom_title`) instead. The overlay always places toasts at the
