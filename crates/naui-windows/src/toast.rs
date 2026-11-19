@@ -49,6 +49,18 @@ use crate::window::owner_content_layer;
 const TOAST_MARGIN: f64 = 24.0;
 /// The spacing between action buttons in a row.
 const BUTTON_SPACING: f64 = 8.0;
+/// The space after the row of action buttons, on the end side and below.
+///
+/// `InfoBar` gives `Content` no padding of its own there: with the close button (×)
+/// hidden, its column is empty, so the row would touch the end edge and the bottom
+/// edge. The same 16 px as the start side (the icon's margin) keeps the buttons
+/// inside the surface. A right-to-left `FlowDirection` mirrors it.
+const ROW_MARGIN: Thickness = Thickness {
+    Left: 0.0,
+    Top: 0.0,
+    Right: 16.0,
+    Bottom: 16.0,
+};
 
 /// The overlaid `InfoBar`, with an opaque background.
 ///
@@ -165,6 +177,7 @@ impl Toast {
         let row = StackPanel::new().map_err(|e| to_error("create the toast button row", e))?;
         row.SetOrientation(XamlOrientation::Horizontal)
             .and_then(|()| row.SetSpacing(BUTTON_SPACING))
+            .and_then(|()| row.SetMargin(ROW_MARGIN))
             .map_err(|e| to_error("set the toast button row", e))?;
 
         let this = Self(Rc::new(ToastInner {
