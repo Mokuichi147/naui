@@ -301,6 +301,14 @@ const CASES: &[Case] = &[
         table_tab_focuses_a_row_on_screen,
     ),
     (
+        "トーストが消えるとフォーカスは操作ボタンへ入る前の場所へ戻る",
+        toast_puts_focus_back_where_it_came_from,
+    ),
+    (
+        "トーストの操作ボタンを Tab と Enter で押すとフォーカスが元の場所へ戻る",
+        toast_action_by_keys_puts_focus_back,
+    ),
+    (
         "表の行を組み立てる関数の中の refresh は組み立てをやり直す",
         table_refresh_inside_the_builder_starts_over,
     ),
@@ -650,6 +658,10 @@ const CASES: &[Case] = &[
     (
         "表の行は全行の中の位置と全行数を支援技術へ伝える",
         table_rows_report_their_place_among_all_rows,
+    ),
+    (
+        "リスト・木・表の行は中の文字を読み上げ名として支援技術へ伝える",
+        rows_are_named_after_their_text,
     ),
     (
         "行の多い表は、窓が動いてもフォーカスのある行を保つ",
@@ -3307,6 +3319,201 @@ fn toast_overlays_the_content_below_the_menu_bar(ui: &Ui) -> Result<Deferred> {
 
     // 確かめることはもう無い。ウィンドウは `Ui` が持ち、アプリの終了で畳まれる。
     Ok(Box::new(|| Ok(())))
+}
+
+/// The toast's action button, found in its visual tree by its label. `None` until the
+/// `InfoBar`'s template is applied.
+fn toast_action_button(toast: &naui_windows::Toast, label: &str) -> Option<XamlButton> {
+    use naui_winui3::Microsoft::UI::Xaml::DependencyObject;
+    use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
+
+    fn find(object: &DependencyObject, label: &str) -> Option<XamlButton> {
+        if let Ok(button) = object.cast::<XamlButton>() {
+            let text = button
+                .Content()
+                .and_then(|content| content.cast::<TextBlock>())
+                .and_then(|text| text.Text());
+            if text.is_ok_and(|text| text == label) {
+                return Some(button);
+            }
+        }
+        let count = VisualTreeHelper::GetChildrenCount(object).unwrap_or(0);
+        (0..count)
+            .filter_map(|index| VisualTreeHelper::GetChild(object, index).ok())
+            .find_map(|child| find(&child, label))
+    }
+    find(&toast.native_element().cast().ok()?, label)
+}
+
+/// A window with two buttons, where focus is to go back to the second: WinUI's own pick,
+/// once the focused element leaves the tree, is the first.
+fn with_toast_focus_window(
+    ui: &Ui,
+    title: &str,
+    scenario: impl FnOnce(&naui_windows::Window, &naui_windows::Button, &naui_windows::Button),
+) -> Result<()> {
+    let window = ui.window(title, 360.0, 240.0)?;
+    let stack = ui.stack(Orientation::Vertical)?;
+    let first = ui.button("先頭")?;
+    let origin = ui.button("元の場所")?;
+    stack.append(&first);
+    stack.append(&origin);
+    window.set_child(&stack);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        scenario(&window, &first, &origin);
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// When a toast goes away with focus on its action button — time running out, `dismiss`,
+/// or a `High` toast putting it back in the queue — focus goes back to the element it came from, in the
+/// same `FocusState`, not to the first element of the window.
+fn toast_puts_focus_back_where_it_came_from(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
+    use naui_winui3::Microsoft::UI::Xaml::FocusState;
+
+    with_toast_focus_window(
+        ui,
+        "トーストのフォーカス",
+        |_window, first, origin| {
+            let state = |widget: &dyn Widget| {
+                native::<Control>(widget)
+                    .FocusState()
+                    .unwrap_or(FocusState::Unfocused)
+            };
+            for way in ["時間切れ", "dismiss", "High に譲る"] {
+                pump_until(FOCUS_TIMEOUT, || {
+                    native::<XamlButton>(origin)
+                        .Focus(FocusState::Keyboard)
+                        .unwrap_or(false)
+                });
+                let toast = ui.toast("消しました").expect("トースト");
+                toast.set_actions(&["元に戻す"]);
+                toast.set_timeout(if way == "時間切れ" { 0.8 } else { 0.0 });
+                toast.show();
+                let mut action = None;
+                pump_until(FOCUS_TIMEOUT, || {
+                    action = toast_action_button(&toast, "元に戻す");
+                    action
+                        .as_ref()
+                        .is_some_and(|b| b.Focus(FocusState::Keyboard).unwrap_or(false))
+                });
+                let on_action = action
+                    .as_ref()
+                    .and_then(|b| b.FocusState().ok())
+                    .is_some_and(|s| s == FocusState::Keyboard);
+                if !on_action {
+                    println!(
+                        "     (操作ボタンがフォーカスを受けられない環境なので、確かめずに通す)"
+                    );
+                    toast.dismiss();
+                    return;
+                }
+                // 元の場所の LostFocus は遅れて届くので、届くまで回す。
+                pump_until(Duration::from_millis(300), || false);
+                assert!(toast.is_visible(), "{way}: 消す前はトーストが出ていること");
+
+                let replacement = ui.toast("別の知らせ").expect("トースト");
+                replacement.set_timeout(0.0);
+                replacement.set_priority(naui_core::ToastPriority::High);
+                match way {
+                    "時間切れ" => pump_until(Duration::from_secs(5), || !toast.is_visible()),
+                    "dismiss" => toast.dismiss(),
+                    _ => replacement.show(),
+                }
+                assert!(!toast.is_visible(), "{way}: トーストが消えていること");
+                // WinUI が外した要素のフォーカスを後から動かしても分かるよう、少し回す。
+                pump_until(Duration::from_millis(300), || false);
+                assert_eq!(
+                    state(origin),
+                    FocusState::Keyboard,
+                    "{way}: 元の場所へキーボードのフォーカスが戻ること"
+                );
+                assert_eq!(
+                    state(first),
+                    FocusState::Unfocused,
+                    "{way}: 窓の先頭へは飛ばないこと"
+                );
+                // High に譲ったものは列の先頭で待っているので、先に列から外す。
+                toast.dismiss();
+                replacement.dismiss();
+            }
+        },
+    )
+}
+
+/// The case the bug was found with: Tab from the last button into the toast's action
+/// button and press Enter. `on_action` runs and focus goes back to that button.
+fn toast_action_by_keys_puts_focus_back(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
+    use naui_winui3::Microsoft::UI::Xaml::FocusState;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_RETURN, VK_TAB};
+
+    with_toast_focus_window(
+        ui,
+        "トーストをキーで押す",
+        |window, first, origin| {
+            let state = |widget: &dyn Widget| {
+                native::<Control>(widget)
+                    .FocusState()
+                    .unwrap_or(FocusState::Unfocused)
+            };
+            if bring_to_front(window).is_none() {
+                return;
+            }
+            let toast = ui.toast("消しました").expect("トースト");
+            toast.set_actions(&["元に戻す"]);
+            toast.set_timeout(0.0);
+            let acted = Rc::new(Cell::new(false));
+            toast.on_action({
+                let acted = acted.clone();
+                move |index| acted.set(index == 0)
+            });
+            pump_until(FOCUS_TIMEOUT, || {
+                native::<XamlButton>(origin)
+                    .Focus(FocusState::Keyboard)
+                    .unwrap_or(false)
+            });
+            toast.show();
+            pump_until(FOCUS_TIMEOUT, || {
+                toast_action_button(&toast, "元に戻す").is_some()
+            });
+            let outcome = (|| {
+                press_nav_key(&[], VK_TAB)?;
+                let on_action = toast_action_button(&toast, "元に戻す")
+                    .and_then(|b| b.FocusState().ok())
+                    .is_some_and(|s| s != FocusState::Unfocused);
+                if !on_action {
+                    println!("     (Tab で操作ボタンへ入らない環境なので、確かめずに通す)");
+                    return None;
+                }
+                press_nav_key(&[], VK_RETURN)?;
+                Some(())
+            })();
+            if outcome.is_none() {
+                toast.dismiss();
+                return;
+            }
+            pump_until(Duration::from_millis(300), || false);
+            assert!(acted.get(), "Enter で on_action が届くこと");
+            assert!(!toast.is_visible(), "押すとトーストが消えること");
+            assert_eq!(
+                state(origin),
+                FocusState::Keyboard,
+                "Tab で入る前のボタンへキーボードのフォーカスが戻ること"
+            );
+            assert_eq!(
+                state(first),
+                FocusState::Unfocused,
+                "窓の先頭へは飛ばないこと"
+            );
+        },
+    )
 }
 
 fn window_lifecycle(ui: &Ui) -> Result<Deferred> {
@@ -6190,6 +6397,111 @@ fn scroll_notifies_only_moves(ui: &Ui) -> Result<()> {
         settle();
         assert_eq!(*seen.borrow(), vec![55.0, 50.0]);
         assert_eq!(scroll.metrics().y, 50.0);
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// A row is read by its text: the text in it, in order, joined with spaces, as the other
+/// backends get from the platform naming a row from its content.
+///
+/// Unnamed, a `List` / `Table` row (`ListViewItem`) is read as nothing and a `Tree` row
+/// (`TreeViewItem`) as "Microsoft.UI.Xaml.Controls.TreeViewNode". A control in a row
+/// gives its own name (an unlabeled check box gives none), and a `Tree`'s rows, which
+/// WinUI makes and reuses, follow new items.
+fn rows_are_named_after_their_text(ui: &Ui) -> Result<()> {
+    use naui_core::{ListItem, TableColumn, TableRow, TreeItem};
+    use naui_windows::ListRow;
+    use naui_winui3::Microsoft::UI::Xaml::Controls::{TreeView, TreeViewNode};
+    use windows_collections::IVector;
+
+    fn name_of(row: &impl Interface) -> String {
+        automation::accessible_name(&row.cast::<UIElement>().expect("UIElement"))
+    }
+    let names_within = |list: ListView| -> Vec<String> {
+        let items = list.Items().expect("行");
+        (0..items.Size().expect("行の数"))
+            .map(|slot| name_of(&items.GetAt(slot).expect("行")))
+            .collect()
+    };
+    // 木の行 (`TreeViewItem`) は WinUI が作るので、開いている節からたどって引く。
+    // 作り直した前の行は使い回しを待って画面の木に残るので、画面の木からは数えない。
+    fn tree_rows(tree: &TreeView, nodes: &IVector<TreeViewNode>, names: &mut Vec<String>) {
+        for node in nodes {
+            let Ok(row) = tree.ContainerFromNode(&node) else {
+                continue;
+            };
+            names.push(name_of(&row));
+            if node.IsExpanded().unwrap_or(false) {
+                tree_rows(tree, &node.Children().expect("子"), names);
+            }
+        }
+    }
+
+    let window = ui.window("行の読み上げ名", 360.0, 520.0)?;
+    let column = ui.stack(Orientation::Vertical)?;
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("受信箱").detail("未読 3 件"),
+        ListItem::new("ごみ箱"),
+    ]);
+    column.append(&list);
+    let widgets = ui.list()?;
+    let row = ui.stack(Orientation::Horizontal)?;
+    row.append(&ui.checkbox("")?);
+    row.append(&ui.label("Wi-Fi")?);
+    row.append(&ui.button("設定…")?);
+    widgets.set_rows(&[ListRow::new(&row)]);
+    column.append(&widgets);
+    let tree = ui.tree()?;
+    tree.set_items(&[TreeItem::new("src")
+        .expanded(true)
+        .child(TreeItem::new("main.rs").detail("入口"))]);
+    column.append(&tree);
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["都市", "人口"]));
+    table.set_rows(&TableRow::list([["東京", "13,960,000"]]));
+    column.append(&table);
+    window.set_child(&column);
+
+    let list_names = || names_within(list.native_list_view());
+    let widget_names = || names_within(widgets.native_list_view());
+    let tree_names = || {
+        let view = tree.native_tree_view();
+        let mut names = Vec::new();
+        tree_rows(&view, &view.RootNodes().expect("根"), &mut names);
+        names
+    };
+    let table_names = || names_within(table.native_list_view());
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        // 名前は行が画面に載ったところ (`Loaded`) で付くので、付くまで回す。
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            list_names() == ["受信箱 未読 3 件", "ごみ箱"]
+                && widget_names() == ["Wi-Fi 設定…"]
+                && tree_names() == ["src", "main.rs 入口"]
+                && table_names() == ["東京 13,960,000"]
+        });
+        assert_eq!(
+            list_names(),
+            ["受信箱 未読 3 件", "ごみ箱"],
+            "文字だけのリストの行"
+        );
+        assert_eq!(
+            widget_names(),
+            ["Wi-Fi 設定…"],
+            "ウィジェットを並べたリストの行"
+        );
+        assert_eq!(tree_names(), ["src", "main.rs 入口"], "木の行");
+        assert_eq!(table_names(), ["東京 13,960,000"], "表の行");
+
+        // 作り直した木の行は、新しい項目の名前になる。
+        tree.set_items(&[TreeItem::new("docs").detail("説明")]);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || tree_names() == ["docs 説明"]);
+        assert_eq!(tree_names(), ["docs 説明"], "作り直した木の行");
     }));
     window.close();
     if let Err(panic) = outcome {

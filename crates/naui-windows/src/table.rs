@@ -56,8 +56,8 @@ use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
 use crate::list::{
-    hold_unselectable_press, item_padding, new_row_item, report_row_position, text_block,
-    transparent_grid, ActivationHandler, RowMotion, SelectionHandler,
+    hold_unselectable_press, item_padding, name_row_on_load, new_row_item, report_row_position,
+    text_block, transparent_grid, ActivationHandler, RowMotion, SelectionHandler,
 };
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
@@ -1598,6 +1598,7 @@ impl Table {
             }
         }
         let content = row_grid(selectable)?;
+        name_row_on_load(&content);
         // スクロールのあとポインターを動かさずに押すと、`PointerEntered` は来ない。
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let pressed = PointerEventHandler::new(move |_, _| {

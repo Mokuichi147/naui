@@ -40,6 +40,7 @@ use naui_winui3::Microsoft::UI::Xaml::{
 use windows::Foundation::TimeSpan;
 use windows_core::{Interface, HSTRING};
 
+use crate::focus_return::FocusReturn;
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 use crate::window::owner_content_layer;
@@ -92,6 +93,9 @@ struct ToastInner {
     visible: Cell<bool>,
     /// Whether the window it is on screen in has been closed ([`window_closing`]).
     stranded: Cell<bool>,
+    /// Puts focus back where it came from if it is inside when the toast goes away.
+    /// Held only while shown.
+    focus_return: RefCell<Option<FocusReturn>>,
 }
 
 impl ToastSlot for ToastInner {
@@ -111,6 +115,7 @@ impl ToastSlot for ToastInner {
         {
             return false;
         }
+        *this.focus_return.borrow_mut() = FocusReturn::watch(&element, &layer);
         *this.layer.borrow_mut() = Some(layer);
         this.stranded.set(false);
         let _ = this.native.SetIsOpen(true);
@@ -119,26 +124,24 @@ impl ToastSlot for ToastInner {
         true
     }
 
+    /// If focus is inside (its action button, reached with Tab), it goes back to where
+    /// it came from instead of WinUI's pick, the top of the window.
     fn withdraw(this: &Rc<Self>) {
+        // 閉じても外しても WinUI がフォーカスを動かすので、その前に見ておく。
+        let focus = this
+            .focus_return
+            .borrow_mut()
+            .take()
+            .and_then(FocusReturn::release);
         if let Some(timer) = this.timer.borrow_mut().take() {
             let _ = timer.Stop();
         }
         this.visible.set(false);
         let _ = this.native.SetIsOpen(false);
-        let Ok(element) = this.native.cast::<UIElement>() else {
-            return;
-        };
-        // 重ねた先から外す。出したあとにウィンドウが変わっても、
-        // 足した側の入れ物から確実に取れるように覚えておく。
-        let Some(layer) = this.layer.borrow_mut().take() else {
-            return;
-        };
-        let Ok(children) = layer.Children() else {
-            return;
-        };
-        let mut index = 0;
-        if children.IndexOf(&element, &mut index).unwrap_or(false) {
-            let _ = children.RemoveAt(index);
+        let layer = this.layer.borrow_mut().take();
+        remove_from(this, layer.as_ref());
+        if let Some(focus) = focus {
+            focus.restore(layer.as_ref());
         }
     }
 
@@ -175,6 +178,7 @@ impl Toast {
             on_dismiss: RefCell::new(None),
             visible: Cell::new(false),
             stranded: Cell::new(false),
+            focus_return: RefCell::new(None),
         }));
         Ok(this)
     }
@@ -415,6 +419,25 @@ impl Toast {
             emit(&self.0.on_action, index);
         }
         emit(&self.0.on_dismiss, ());
+    }
+}
+
+/// Takes the overlaid element off `layer`.
+fn remove_from(this: &ToastInner, layer: Option<&Grid>) {
+    let Ok(element) = this.native.cast::<UIElement>() else {
+        return;
+    };
+    // 重ねた先から外す。出したあとにウィンドウが変わっても、
+    // 足した側の入れ物から確実に取れるように覚えておく。
+    let Some(layer) = layer else {
+        return;
+    };
+    let Ok(children) = layer.Children() else {
+        return;
+    };
+    let mut index = 0;
+    if children.IndexOf(&element, &mut index).unwrap_or(false) {
+        let _ = children.RemoveAt(index);
     }
 }
 

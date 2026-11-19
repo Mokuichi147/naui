@@ -211,6 +211,12 @@ that shape are covered in
   instead. Toasts are meant for one or two short actions: the buttons are laid out
   in a single row (on Windows, a row below the text when there are two or more),
   which does not wrap.
+- When a `Toast` disappears while one of its action buttons has focus (reached with
+  Tab), only Windows puts focus back on the element it came from. naui does nothing
+  about it elsewhere: on macOS the removed view's window itself becomes the first
+  responder, on the Web focus falls to `<body>` (the button is hidden with
+  `display: none`), and on Linux it goes wherever GTK moves it when
+  `AdwToastOverlay` removes the toast.
 - `Canvas` draws single lines of text only (no wrapping or rich text), gradients
   fill shapes but do not stroke lines, and gradients are linear or radial. A radial
   gradient spreads from its center, with no separate focal point, and there are no

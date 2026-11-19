@@ -295,6 +295,11 @@ collected in [Known limitations](known-limitations.md).
   shown (`IsClosable` is turned off). It disappears in three ways — timeout, an
   action button and `dismiss` — because the other three platforms have no × either.
   The queue is naui's (`ToastQueue`, shared by the four backends).
+  When it disappears with focus on one of its action buttons (reached with Tab),
+  WinUI would move focus to the first element of the window, so naui puts it back
+  on the element it came from (the one that last lost focus outside the toast,
+  watched with `LostFocus` on the window root while the toast is shown). This also
+  happens when a `High` toast puts it back in the queue.
 - **`Canvas`**: a `SpriteVisual` showing a `CompositionDrawingSurface` is placed
   over a `Grid` with `ElementCompositionPreview::SetElementChildVisual`, and the
   `on_draw` commands are replayed onto it with Direct2D (text with DirectWrite).
