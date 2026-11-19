@@ -31,6 +31,7 @@ use naui_winui3::Microsoft::UI::Xaml::{
 use windows::Foundation::TimeSpan;
 use windows_core::{Interface, HSTRING};
 
+use crate::focus_return::FocusReturn;
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 use crate::window::owner_content_layer;
@@ -74,6 +75,9 @@ struct ToastInner {
     on_action: RefCell<Option<Box<dyn FnMut()>>>,
     on_dismiss: RefCell<Option<Box<dyn FnMut()>>>,
     visible: Cell<bool>,
+    /// Puts focus back where it came from if it is inside when the toast goes away.
+    /// Held only while shown.
+    focus_return: RefCell<Option<FocusReturn>>,
 }
 
 /// A transient notification (an overlaid `InfoBar`).
@@ -99,6 +103,7 @@ impl Toast {
             on_action: RefCell::new(None),
             on_dismiss: RefCell::new(None),
             visible: Cell::new(false),
+            focus_return: RefCell::new(None),
         }));
         this.install_action_handler()?;
         Ok(this)
@@ -216,6 +221,7 @@ impl Toast {
         {
             return;
         }
+        *self.0.focus_return.borrow_mut() = FocusReturn::watch(&element, &layer);
         *self.0.layer.borrow_mut() = Some(layer);
         let _ = self.0.native.SetIsOpen(true);
         self.0.visible.set(true);
@@ -294,18 +300,37 @@ impl Toast {
     }
 
     /// Removes the overlaid element and stops the timer. No notification.
+    ///
+    /// If focus is inside (its action button, reached with Tab), it goes back to where
+    /// it came from instead of WinUI's pick, the top of the window.
     fn take_down(&self) {
+        // 閉じても外しても WinUI がフォーカスを動かすので、その前に見ておく。
+        let focus = self
+            .0
+            .focus_return
+            .borrow_mut()
+            .take()
+            .and_then(FocusReturn::release);
         if let Some(timer) = self.0.timer.borrow_mut().take() {
             let _ = timer.Stop();
         }
         self.0.visible.set(false);
         let _ = self.0.native.SetIsOpen(false);
+        let layer = self.0.layer.borrow_mut().take();
+        self.remove_from(layer.as_ref());
+        if let Some(focus) = focus {
+            focus.restore(layer.as_ref());
+        }
+    }
+
+    /// Takes the overlaid element off `layer`.
+    fn remove_from(&self, layer: Option<&Grid>) {
         let Ok(element) = self.0.native.cast::<UIElement>() else {
             return;
         };
         // 重ねた先から外す。出したあとにウィンドウが変わっても、
         // 足した側の入れ物から確実に取れるように覚えておく。
-        let Some(layer) = self.0.layer.borrow_mut().take() else {
+        let Some(layer) = layer else {
             return;
         };
         let Ok(children) = layer.Children() else {

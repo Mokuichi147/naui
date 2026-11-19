@@ -300,6 +300,14 @@ const CASES: &[Case] = &[
         table_tab_focuses_a_row_on_screen,
     ),
     (
+        "トーストが消えるとフォーカスは操作ボタンへ入る前の場所へ戻る",
+        toast_puts_focus_back_where_it_came_from,
+    ),
+    (
+        "トーストの操作ボタンを Tab と Enter で押すとフォーカスが元の場所へ戻る",
+        toast_action_by_keys_puts_focus_back,
+    ),
+    (
         "表の行を組み立てる関数の中の refresh は組み立てをやり直す",
         table_refresh_inside_the_builder_starts_over,
     ),
@@ -3293,6 +3301,198 @@ fn toast_overlays_the_content_below_the_menu_bar(ui: &Ui) -> Result<Deferred> {
 
     // 確かめることはもう無い。ウィンドウは `Ui` が持ち、アプリの終了で畳まれる。
     Ok(Box::new(|| Ok(())))
+}
+
+/// The toast's action button, found in its visual tree by its label. `None` until the
+/// `InfoBar`'s template is applied.
+fn toast_action_button(toast: &naui_windows::Toast, label: &str) -> Option<XamlButton> {
+    use naui_winui3::Microsoft::UI::Xaml::DependencyObject;
+    use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
+
+    fn find(object: &DependencyObject, label: &str) -> Option<XamlButton> {
+        if let Ok(button) = object.cast::<XamlButton>() {
+            let text = button
+                .Content()
+                .and_then(|content| content.cast::<TextBlock>())
+                .and_then(|text| text.Text());
+            if text.is_ok_and(|text| text == label) {
+                return Some(button);
+            }
+        }
+        let count = VisualTreeHelper::GetChildrenCount(object).unwrap_or(0);
+        (0..count)
+            .filter_map(|index| VisualTreeHelper::GetChild(object, index).ok())
+            .find_map(|child| find(&child, label))
+    }
+    find(&toast.native_element().cast().ok()?, label)
+}
+
+/// A window with two buttons, where focus is to go back to the second: WinUI's own pick,
+/// once the focused element leaves the tree, is the first.
+fn with_toast_focus_window(
+    ui: &Ui,
+    title: &str,
+    scenario: impl FnOnce(&naui_windows::Window, &naui_windows::Button, &naui_windows::Button),
+) -> Result<()> {
+    let window = ui.window(title, 360.0, 240.0)?;
+    let stack = ui.stack(Orientation::Vertical)?;
+    let first = ui.button("先頭")?;
+    let origin = ui.button("元の場所")?;
+    stack.append(&first);
+    stack.append(&origin);
+    window.set_child(&stack);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        scenario(&window, &first, &origin);
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// When a toast goes away with focus on its action button — time running out, `dismiss`,
+/// or another toast replacing it — focus goes back to the element it came from, in the
+/// same `FocusState`, not to the first element of the window.
+fn toast_puts_focus_back_where_it_came_from(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
+    use naui_winui3::Microsoft::UI::Xaml::FocusState;
+
+    with_toast_focus_window(
+        ui,
+        "トーストのフォーカス",
+        |_window, first, origin| {
+            let state = |widget: &dyn Widget| {
+                native::<Control>(widget)
+                    .FocusState()
+                    .unwrap_or(FocusState::Unfocused)
+            };
+            for way in ["時間切れ", "dismiss", "置き換え"] {
+                pump_until(FOCUS_TIMEOUT, || {
+                    native::<XamlButton>(origin)
+                        .Focus(FocusState::Keyboard)
+                        .unwrap_or(false)
+                });
+                let toast = ui.toast("消しました").expect("トースト");
+                toast.set_action("元に戻す");
+                toast.set_timeout(if way == "時間切れ" { 0.8 } else { 0.0 });
+                toast.show();
+                let mut action = None;
+                pump_until(FOCUS_TIMEOUT, || {
+                    action = toast_action_button(&toast, "元に戻す");
+                    action
+                        .as_ref()
+                        .is_some_and(|b| b.Focus(FocusState::Keyboard).unwrap_or(false))
+                });
+                let on_action = action
+                    .as_ref()
+                    .and_then(|b| b.FocusState().ok())
+                    .is_some_and(|s| s == FocusState::Keyboard);
+                if !on_action {
+                    println!(
+                        "     (操作ボタンがフォーカスを受けられない環境なので、確かめずに通す)"
+                    );
+                    toast.dismiss();
+                    return;
+                }
+                // 元の場所の LostFocus は遅れて届くので、届くまで回す。
+                pump_until(Duration::from_millis(300), || false);
+                assert!(toast.is_visible(), "{way}: 消す前はトーストが出ていること");
+
+                let replacement = ui.toast("別の知らせ").expect("トースト");
+                replacement.set_timeout(0.0);
+                match way {
+                    "時間切れ" => pump_until(Duration::from_secs(5), || !toast.is_visible()),
+                    "dismiss" => toast.dismiss(),
+                    _ => replacement.show(),
+                }
+                assert!(!toast.is_visible(), "{way}: トーストが消えていること");
+                // WinUI が外した要素のフォーカスを後から動かしても分かるよう、少し回す。
+                pump_until(Duration::from_millis(300), || false);
+                assert_eq!(
+                    state(origin),
+                    FocusState::Keyboard,
+                    "{way}: 元の場所へキーボードのフォーカスが戻ること"
+                );
+                assert_eq!(
+                    state(first),
+                    FocusState::Unfocused,
+                    "{way}: 窓の先頭へは飛ばないこと"
+                );
+                replacement.dismiss();
+            }
+        },
+    )
+}
+
+/// The case the bug was found with: Tab from the last button into the toast's action
+/// button and press Enter. `on_action` runs and focus goes back to that button.
+fn toast_action_by_keys_puts_focus_back(ui: &Ui) -> Result<()> {
+    use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
+    use naui_winui3::Microsoft::UI::Xaml::FocusState;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_RETURN, VK_TAB};
+
+    with_toast_focus_window(
+        ui,
+        "トーストをキーで押す",
+        |window, first, origin| {
+            let state = |widget: &dyn Widget| {
+                native::<Control>(widget)
+                    .FocusState()
+                    .unwrap_or(FocusState::Unfocused)
+            };
+            if bring_to_front(window).is_none() {
+                return;
+            }
+            let toast = ui.toast("消しました").expect("トースト");
+            toast.set_action("元に戻す");
+            toast.set_timeout(0.0);
+            let acted = Rc::new(Cell::new(false));
+            toast.on_action({
+                let acted = acted.clone();
+                move || acted.set(true)
+            });
+            pump_until(FOCUS_TIMEOUT, || {
+                native::<XamlButton>(origin)
+                    .Focus(FocusState::Keyboard)
+                    .unwrap_or(false)
+            });
+            toast.show();
+            pump_until(FOCUS_TIMEOUT, || {
+                toast_action_button(&toast, "元に戻す").is_some()
+            });
+            let outcome = (|| {
+                press_nav_key(&[], VK_TAB)?;
+                let on_action = toast_action_button(&toast, "元に戻す")
+                    .and_then(|b| b.FocusState().ok())
+                    .is_some_and(|s| s != FocusState::Unfocused);
+                if !on_action {
+                    println!("     (Tab で操作ボタンへ入らない環境なので、確かめずに通す)");
+                    return None;
+                }
+                press_nav_key(&[], VK_RETURN)?;
+                Some(())
+            })();
+            if outcome.is_none() {
+                toast.dismiss();
+                return;
+            }
+            pump_until(Duration::from_millis(300), || false);
+            assert!(acted.get(), "Enter で on_action が届くこと");
+            assert!(!toast.is_visible(), "押すとトーストが消えること");
+            assert_eq!(
+                state(origin),
+                FocusState::Keyboard,
+                "Tab で入る前のボタンへキーボードのフォーカスが戻ること"
+            );
+            assert_eq!(
+                state(first),
+                FocusState::Unfocused,
+                "窓の先頭へは飛ばないこと"
+            );
+        },
+    )
 }
 
 fn window_lifecycle(ui: &Ui) -> Result<Deferred> {
