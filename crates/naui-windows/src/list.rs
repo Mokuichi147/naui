@@ -44,7 +44,7 @@ use naui_core::{
 };
 use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Border, Control, Grid as XamlGrid, ListView, ListViewItem, ListViewSelectionMode,
+    Border, Control, Grid as XamlGrid, IconElement, ListView, ListViewItem, ListViewSelectionMode,
     ScrollBarVisibility, ScrollMode, ScrollViewer, ScrollViewerViewChangedEventArgs,
     SelectionChangedEventHandler, StackPanel, TextBlock,
 };
@@ -56,6 +56,7 @@ use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
 use naui_winui3::Microsoft::UI::Xaml::{
     DependencyObject, FocusState, FrameworkElement, RoutedEventHandler, Thickness, UIElement,
+    Visibility,
 };
 use windows::Foundation::{Point as XamlPoint, PropertyValue, TypedEventHandler};
 use windows::System::VirtualKey;
@@ -246,6 +247,86 @@ pub(crate) fn report_row_position(row: &ListViewItem, index: usize, count: usize
     let _ =
         AutomationProperties::SetPositionInSet(row, i32::try_from(index + 1).unwrap_or(i32::MAX));
     let _ = AutomationProperties::SetSizeOfSet(row, i32::try_from(count).unwrap_or(i32::MAX));
+}
+
+/// Names the row holding `content` after the text in it, each time `content` enters the
+/// window.
+///
+/// Without a name, assistive technology reads a `ListViewItem` as nothing, and WinUI's
+/// `TreeViewItem` as the type name of its `TreeViewNode`. The other backends leave a row
+/// unnamed and let the platform name it from its content (the web's `role="option"` /
+/// `"treeitem"` / `"row"`), so this gives it the same: the text in the row, in order,
+/// joined with spaces (see [`text_within`]).
+///
+/// It is done on `Loaded` rather than when building, for two reasons: a `Tree`'s rows are
+/// made by WinUI, so the row is found by walking up from the content (the nearest
+/// `ListViewItem`; `TreeViewItem` derives from it), and they are reused for other nodes,
+/// so the content arriving is what decides the name. The text is read as it is then; a
+/// row whose widgets change their text afterwards keeps the old name until rebuilt.
+pub(crate) fn name_row_on_load<T: Interface>(content: &T) {
+    let Ok(content) = content.cast::<FrameworkElement>() else {
+        return;
+    };
+    let loaded = RoutedEventHandler::new(|sender, _| {
+        let Some(content) = sender
+            .as_ref()
+            .and_then(|s| s.cast::<DependencyObject>().ok())
+        else {
+            return Ok(());
+        };
+        let mut current = VisualTreeHelper::GetParent(&content).ok();
+        while let Some(element) = current {
+            if let Ok(row) = element.cast::<ListViewItem>() {
+                let _ = AutomationProperties::SetName(&row, &HSTRING::from(text_within(&content)));
+                break;
+            }
+            current = VisualTreeHelper::GetParent(&element).ok();
+        }
+        Ok(())
+    });
+    let _ = content.Loaded(&loaded);
+}
+
+/// The text in `root`, in order, joined with spaces: what a screen reader would read
+/// from the content.
+///
+/// A `TextBlock` gives its text. A control (a button, a check box…) gives its own
+/// accessible name and is not looked into, so the parts of its template (the "On" /
+/// "Off" of a switch) stay out. Icons are glyphs, not words, so they are skipped, and so
+/// is anything collapsed.
+pub(crate) fn text_within(root: &DependencyObject) -> String {
+    let mut parts = Vec::new();
+    collect_text(root, &mut parts);
+    parts.join(" ")
+}
+
+fn collect_text(element: &DependencyObject, parts: &mut Vec<String>) {
+    let Ok(ui) = element.cast::<UIElement>() else {
+        return;
+    };
+    if ui.Visibility() == Ok(Visibility::Collapsed) || element.cast::<IconElement>().is_ok() {
+        return;
+    }
+    let text = if let Ok(block) = element.cast::<TextBlock>() {
+        block.Text().map(|text| text.to_string()).ok()
+    } else if element.cast::<Control>().is_ok() {
+        crate::automation::accessible_name(&ui).ok()
+    } else {
+        let count = VisualTreeHelper::GetChildrenCount(element).unwrap_or(0);
+        for index in 0..count {
+            if let Ok(child) = VisualTreeHelper::GetChild(element, index) {
+                collect_text(&child, parts);
+            }
+        }
+        return;
+    };
+    if let Some(text) = text
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        parts.push(text.to_owned());
+    }
 }
 
 /// Creates one row container. Falls back to a plain `ListViewItem` if the XAML cannot
@@ -1293,6 +1374,7 @@ impl List {
             None => {}
         }
         let host = row_host(row)?;
+        name_row_on_load(&host);
         // 取り込んだウィジェットを、捨てる入れ物に残さない。
         let in_row = |result: windows_core::Result<()>| {
             result.map_err(|error| {

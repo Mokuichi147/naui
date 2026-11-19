@@ -651,6 +651,10 @@ const CASES: &[Case] = &[
         table_rows_report_their_place_among_all_rows,
     ),
     (
+        "リスト・木・表の行は中の文字を読み上げ名として支援技術へ伝える",
+        rows_are_named_after_their_text,
+    ),
+    (
         "行の多い表は、窓が動いてもフォーカスのある行を保つ",
         table_keeps_the_focused_row_across_rebuilds,
     ),
@@ -6172,6 +6176,111 @@ fn scroll_notifies_only_moves(ui: &Ui) -> Result<()> {
         settle();
         assert_eq!(*seen.borrow(), vec![55.0, 50.0]);
         assert_eq!(scroll.metrics().y, 50.0);
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// A row is read by its text: the text in it, in order, joined with spaces, as the other
+/// backends get from the platform naming a row from its content.
+///
+/// Unnamed, a `List` / `Table` row (`ListViewItem`) is read as nothing and a `Tree` row
+/// (`TreeViewItem`) as "Microsoft.UI.Xaml.Controls.TreeViewNode". A control in a row
+/// gives its own name (an unlabeled check box gives none), and a `Tree`'s rows, which
+/// WinUI makes and reuses, follow new items.
+fn rows_are_named_after_their_text(ui: &Ui) -> Result<()> {
+    use naui_core::{ListItem, TableColumn, TableRow, TreeItem};
+    use naui_windows::ListRow;
+    use naui_winui3::Microsoft::UI::Xaml::Controls::{TreeView, TreeViewNode};
+    use windows_collections::IVector;
+
+    fn name_of(row: &impl Interface) -> String {
+        automation::accessible_name(&row.cast::<UIElement>().expect("UIElement"))
+    }
+    let names_within = |list: ListView| -> Vec<String> {
+        let items = list.Items().expect("行");
+        (0..items.Size().expect("行の数"))
+            .map(|slot| name_of(&items.GetAt(slot).expect("行")))
+            .collect()
+    };
+    // 木の行 (`TreeViewItem`) は WinUI が作るので、開いている節からたどって引く。
+    // 作り直した前の行は使い回しを待って画面の木に残るので、画面の木からは数えない。
+    fn tree_rows(tree: &TreeView, nodes: &IVector<TreeViewNode>, names: &mut Vec<String>) {
+        for node in nodes {
+            let Ok(row) = tree.ContainerFromNode(&node) else {
+                continue;
+            };
+            names.push(name_of(&row));
+            if node.IsExpanded().unwrap_or(false) {
+                tree_rows(tree, &node.Children().expect("子"), names);
+            }
+        }
+    }
+
+    let window = ui.window("行の読み上げ名", 360.0, 520.0)?;
+    let column = ui.stack(Orientation::Vertical)?;
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("受信箱").detail("未読 3 件"),
+        ListItem::new("ごみ箱"),
+    ]);
+    column.append(&list);
+    let widgets = ui.list()?;
+    let row = ui.stack(Orientation::Horizontal)?;
+    row.append(&ui.checkbox("")?);
+    row.append(&ui.label("Wi-Fi")?);
+    row.append(&ui.button("設定…")?);
+    widgets.set_rows(&[ListRow::new(&row)]);
+    column.append(&widgets);
+    let tree = ui.tree()?;
+    tree.set_items(&[TreeItem::new("src")
+        .expanded(true)
+        .child(TreeItem::new("main.rs").detail("入口"))]);
+    column.append(&tree);
+    let table = ui.table()?;
+    table.set_columns(&TableColumn::list(["都市", "人口"]));
+    table.set_rows(&TableRow::list([["東京", "13,960,000"]]));
+    column.append(&table);
+    window.set_child(&column);
+
+    let list_names = || names_within(list.native_list_view());
+    let widget_names = || names_within(widgets.native_list_view());
+    let tree_names = || {
+        let view = tree.native_tree_view();
+        let mut names = Vec::new();
+        tree_rows(&view, &view.RootNodes().expect("根"), &mut names);
+        names
+    };
+    let table_names = || names_within(table.native_list_view());
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        // 名前は行が画面に載ったところ (`Loaded`) で付くので、付くまで回す。
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            list_names() == ["受信箱 未読 3 件", "ごみ箱"]
+                && widget_names() == ["Wi-Fi 設定…"]
+                && tree_names() == ["src", "main.rs 入口"]
+                && table_names() == ["東京 13,960,000"]
+        });
+        assert_eq!(
+            list_names(),
+            ["受信箱 未読 3 件", "ごみ箱"],
+            "文字だけのリストの行"
+        );
+        assert_eq!(
+            widget_names(),
+            ["Wi-Fi 設定…"],
+            "ウィジェットを並べたリストの行"
+        );
+        assert_eq!(tree_names(), ["src", "main.rs 入口"], "木の行");
+        assert_eq!(table_names(), ["東京 13,960,000"], "表の行");
+
+        // 作り直した木の行は、新しい項目の名前になる。
+        tree.set_items(&[TreeItem::new("docs").detail("説明")]);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || tree_names() == ["docs 説明"]);
+        assert_eq!(tree_names(), ["docs 説明"], "作り直した木の行");
     }));
     window.close();
     if let Err(panic) = outcome {
