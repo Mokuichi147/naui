@@ -206,6 +206,12 @@ that shape are covered in
 - Only one `Toast` is shown at a time too, and a newly shown one replaces the
   previous one (`AdwToastOverlay`'s queueing is aligned to this behavior). There is
   one action button, and the position is fixed at the bottom center.
+- When a `Toast` disappears while its action button has focus (reached with Tab),
+  only Windows puts focus back on the element it came from. naui does nothing about
+  it elsewhere: on macOS the removed view's window itself becomes the first
+  responder, on the Web focus falls to `<body>` (the button is hidden with
+  `display: none`), and on Linux it goes wherever GTK moves it when
+  `AdwToastOverlay` removes the toast.
 - `Canvas` draws single lines of text only (no wrapping or rich text), gradients
   fill shapes but do not stroke lines, and gradients are linear or radial. A radial
   gradient spreads from its center, with no separate focal point, and there are no
