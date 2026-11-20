@@ -1431,7 +1431,7 @@ impl List {
                     inner.pointer_row.set(Some(index));
                     // 新しい押下より前のドラッグは終わっている。完了が届かずに残った
                     // ドラッグで選択の通知を止めたままにしない。
-                    inner.dragging.take();
+                    List(inner).end_drag();
                 }
             });
             Ok(())
@@ -1992,6 +1992,50 @@ impl List {
             .KeyDown(&keyed)
             .map_err(|e| to_error("subscribe to row key presses", e))?;
 
+        // Alt + Shift + 上下は `ListView` 自身の並べ替えの操作。任せると `Items` だけが
+        // 動いて naui の行と食い違うので、naui の並べ替えとして行う。`ListViewItem` が
+        // `KeyDown` より先に受けるので、`PreviewKeyDown` で取る。
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let previewed = KeyEventHandler::new(move |sender, args| {
+            let Some(args) = args.as_ref() else {
+                return Ok(());
+            };
+            let on_row = match (args.OriginalSource(), sender.as_ref()) {
+                (Ok(source), Some(sender)) => &source == sender,
+                _ => false,
+            };
+            // 左右も `ListView` は並べ替えに使う。naui では上下だけにして、左右は止める。
+            let step = match args.Key().unwrap_or(VirtualKey::None) {
+                VirtualKey::Up => Some(-1),
+                VirtualKey::Down => Some(1),
+                VirtualKey::Left | VirtualKey::Right => None,
+                _ => return Ok(()),
+            };
+            let modifiers = crate::keys::modifiers();
+            if !on_row || !modifiers.alt || !modifiers.shift || modifiers.control || modifiers.meta
+            {
+                return Ok(());
+            }
+            let handled = state
+                .try_with_mut(|weak| {
+                    weak.upgrade().is_some_and(|inner| {
+                        let list = List(inner);
+                        match step {
+                            Some(step) => list.move_rows_by_key(index, step),
+                            None => list.is_reorderable(),
+                        }
+                    })
+                })
+                .unwrap_or(false);
+            if handled {
+                let _ = args.SetHandled(true);
+            }
+            Ok(())
+        });
+        native
+            .PreviewKeyDown(&previewed)
+            .map_err(|e| to_error("subscribe to row key presses", e))?;
+
         // Shift クリックの先の行は `SelectionChanged` では分からない。行の余白の押下は
         // `ListViewItem` が止めるので、ポインターが乗った行も覚えておく。
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
@@ -2177,6 +2221,9 @@ impl List {
     /// that cannot be selected cannot be dragged. Drops from other widgets and other
     /// apps are refused. The list does not scroll by itself while the pointer is near
     /// its edge.
+    ///
+    /// Alt + Shift + Up / Down, `ListView`'s own keyboard reordering, moves the focused
+    /// row, with the selection when it is in it, one place the same way.
     pub fn set_reorderable(&self, reorderable: bool) {
         self.0.reorderable.set(reorderable);
         self.apply_reorderable();
@@ -2216,11 +2263,22 @@ impl List {
         let list_view = &self.0.list_view;
         let _ = list_view.SetCanDragItems(on);
         let _ = list_view.SetCanReorderItems(on);
-        let _ = list_view.SetAllowDrop(on);
+        // `AllowDrop` は自分の行のドラッグの間だけ立てる ([`List::end_drag`])。
         // 途中で切ると `DragItemsCompleted` は来ない。
         if !on {
-            self.0.dragging.take();
+            self.end_drag();
         }
+    }
+
+    /// Ends the list's own row drag: forgets the rows and stops taking drops.
+    ///
+    /// `AllowDrop` is on only from `DragItemsStarting` to here. With it on, `ListView`
+    /// opens a gap for anything dragged over it, files from Explorer too, though they
+    /// go to `on_file_drop` and never into the list. Those are handled by the window's
+    /// root, which takes them whether or not the list allows drops.
+    fn end_drag(&self) -> Option<Vec<usize>> {
+        let _ = self.0.list_view.SetAllowDrop(false);
+        self.0.dragging.take()
     }
 
     /// Follows `ListView`'s own reordering: which rows a drag takes, and where the drop
@@ -2252,6 +2310,8 @@ impl List {
                 match rows {
                     Some(rows) => {
                         list.0.dragging.replace(Some(rows));
+                        // 行を落とせるのは、自分の行を運んでいる間だけ。
+                        let _ = list.0.list_view.SetAllowDrop(true);
                     }
                     None => {
                         let _ = args.SetCancel(true);
@@ -2310,7 +2370,7 @@ impl List {
     /// The drag `ListView` started has ended. If it moved its items, the rows move the
     /// same way.
     fn on_drag_completed(&self, args: Option<&DragItemsCompletedEventArgs>) {
-        let Some(dragged) = self.0.dragging.take() else {
+        let Some(dragged) = self.end_drag() else {
             return;
         };
         let moved = args
@@ -2365,6 +2425,53 @@ impl List {
                     .map(|offset| start + offset)
             })
             .collect()
+    }
+
+    /// Alt + Shift + Up or Down on the focused row `focused`: moves it one place, with
+    /// the rest of the selection when it is selected (as a drag takes them), notifies,
+    /// and keeps the focus on it. `false` unless the list is reorderable.
+    ///
+    /// `ListView` does this itself with `CanReorderItems`, but only to its `Items`,
+    /// without `DragItemsStarting` or `DragItemsCompleted`, so naui's rows would not
+    /// follow.
+    fn move_rows_by_key(&self, focused: usize, step: isize) -> bool {
+        if !self.is_reorderable() {
+            return false;
+        }
+        let selection = self.selection();
+        let rows: Vec<usize> = if selection.contains(&focused) {
+            selection
+        } else {
+            vec![focused]
+        };
+        let rows: Vec<usize> = rows
+            .into_iter()
+            .filter(|&row| self.is_selectable(row))
+            .collect();
+        let Ok(position) = rows.binary_search(&focused) else {
+            return true;
+        };
+        // 運ぶ行は、フォーカスのある行が 1 つ上 (下) へ移るように並べて置く。続いた
+        // 行ならその塊が 1 つずれ、離れた行はフォーカスのある行の所へ集まる。
+        let len = self.len();
+        let Some(landed) = focused
+            .checked_add_signed(step)
+            .filter(|&landed| landed >= position && landed - position + rows.len() <= len)
+        else {
+            return true;
+        };
+        // 運ぶ行の塊の前に来る、動かない行の数から、元の並びの隙間を求める。
+        let to = (0..len)
+            .filter(|row| rows.binary_search(row).is_err())
+            .nth(landed - position)
+            .unwrap_or(len);
+        if RowMove::new(rows.iter().copied(), to).within(len).is_none() {
+            return true;
+        }
+        self.drop_rows(&rows, to);
+        self.scroll_to_row(landed);
+        self.focus_built_row(landed, FocusState::Keyboard);
+        true
     }
 
     /// Moves the rows the user dropped, and notifies.

@@ -219,6 +219,9 @@ impl List {
     /// Where the rows will land is shown by the platform: a line between the rows on
     /// macOS, a gap opening between them on Windows, and a thin line in the accent
     /// color on Linux and the Web.
+    ///
+    /// On Windows, Alt + Shift + Up / Down also moves the focused row, with the
+    /// selection when it is in it, one place (`ListView`'s own keyboard reordering).
     #[inline]
     pub fn set_reorderable(&self, reorderable: bool) {
         self.0.set_reorderable(reorderable)

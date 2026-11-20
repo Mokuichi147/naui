@@ -252,13 +252,19 @@ collected in [Known limitations](known-limitations.md).
   spacers, because `ListView` creates a `ListViewItem` for every row it is given: with
   many rows, only the rows on screen are built, and the spacers carry the height of
   the rest. naui holds the selection, since the `ListView` knows only the rows it has.
-  With `set_reorderable`, `CanReorderItems`, `CanDragItems` and `AllowDrop` are on, and
+  With `set_reorderable`, `CanReorderItems` and `CanDragItems` are on, and `AllowDrop`
+  is on only from `DragItemsStarting` to `DragItemsCompleted`: with it on, `ListView`
+  opens a gap for anything dragged over it, files from Explorer too, though those go
+  to `on_file_drop` (taken at the window's root either way) and never into the list.
   `ListView` moves its own `ListViewItem`s on the drop. naui reads which rows were
   dragged from `DragItemsStarting` (cancelling a drag that holds a row that cannot be
   selected) and where they went from the order of `Items` at `DragItemsCompleted`,
   then moves its rows the same way and builds them again. `ListView` scrolls by itself
   near its edge only through its own `ScrollViewer`, which naui turns off for the
-  outer one, so it does not scroll while dragging.
+  outer one, so it does not scroll while dragging. `ListView` also reorders with
+  Alt + Shift + the arrow keys, moving only its `Items`, so naui takes Alt + Shift +
+  Up / Down in the row's `PreviewKeyDown` and moves the focused row (with the
+  selection when it is in it) one place itself, and stops Alt + Shift + Left / Right.
 - **`Table`**: WinUI 3 has no `DataGrid` (it belongs to the Community Toolkit), so
   the table is built with `ListView` rows made of `Grid`s, and the header is put in
   a separate `Grid` with the same column definitions to align widths. Only the row
