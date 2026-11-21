@@ -708,5 +708,10 @@ pub(crate) fn apply_theme(document: &Document, theme: Theme) -> Result<()> {
     };
     root.style()
         .set_property("color-scheme", value)
-        .map_err(|e| to_error("set color-scheme", e))
+        .map_err(|e| to_error("set color-scheme", e))?;
+    // `prefers-color-scheme` は変わらないので、描画面へは自前のイベントで知らせる。
+    if let Ok(event) = web_sys::Event::new(canvas::THEME_CHANGE_EVENT) {
+        let _ = document.dispatch_event(&event);
+    }
+    Ok(())
 }

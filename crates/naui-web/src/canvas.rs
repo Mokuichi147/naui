@@ -18,6 +18,15 @@
 //! ratio. Redraw requests (`redraw`) are batched into `requestAnimationFrame` and
 //! not drawn on the spot (the same rule as the other three platforms).
 //!
+//! Color roles are read with `getComputedStyle` on the `<canvas>`: body text is the
+//! color it inherits (`CanvasText` unless the page sets one), and the other roles
+//! are the same CSS colors a `Label` uses (`GrayText`, `AccentColor` and naui's
+//! `light-dark()` values), set on the element for a moment and read back. Light or
+//! dark follows the element's `color-scheme` (naui writes it on `html` as the
+//! theme); where it allows both, `prefers-color-scheme` decides. A change of either
+//! redraws: the media query's `change`, and an event naui fires on the document
+//! when the theme is set.
+//!
 //! The button is identified by `PointerEvent.button`. Browsers report presses and
 //! releases of second and later buttons (pressing right while holding left, for
 //! example) through `pointermove` rather than `pointerdown` / `pointerup` (a
@@ -41,7 +50,7 @@ use std::rc::{Rc, Weak};
 use naui_core::{
     Align, Bitmap, BitmapData, Color, DrawCommand, EventResponse, Gradient, GradientShape,
     Modifiers, Paint, Painter, Path, PathSegment, Point, PointerButton, PointerEvent, PointerPhase,
-    Rect, Result, WheelHandler, WHEEL_STEP,
+    Rect, Result, TextColor, WheelHandler, WHEEL_STEP,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{Clamped, JsCast, JsValue};
@@ -52,6 +61,14 @@ use web_sys::{
 
 use crate::to_error;
 use crate::widgets::{create, impl_widget, Listener, ValueHandler, Widget};
+
+/// The event naui fires on the document when the theme is set, so that surfaces
+/// draw again in the new appearance.
+pub(crate) const THEME_CHANGE_EVENT: &str = "naui-themechange";
+
+/// The media query whose answer decides light or dark where `color-scheme` allows
+/// both.
+const DARK_QUERY: &str = "(prefers-color-scheme: dark)";
 
 /// The slot for the closure that decides what to draw. Taken out while it is being
 /// called.
@@ -226,6 +243,27 @@ impl Canvas {
         listeners.push(Listener::attach_event(target, "contextmenu", |event| {
             event.prevent_default();
         })?);
+
+        // 明暗が変わったら描き直す。OS の設定はメディアクエリ、アプリが決めた
+        // テーマは `apply_theme` が文書へ送るイベントで分かる。
+        let window = web_sys::window();
+        let media = window
+            .as_ref()
+            .and_then(|window| window.match_media(DARK_QUERY).ok().flatten());
+        let document = self.0.canvas.owner_document();
+        let sources: [Option<&web_sys::EventTarget>; 2] = [
+            media.as_ref().map(|list| list.as_ref()),
+            document.as_ref().map(|document| document.as_ref()),
+        ];
+        for (source, event) in sources.into_iter().zip(["change", THEME_CHANGE_EVENT]) {
+            let Some(source) = source else { continue };
+            let weak = Rc::downgrade(&self.0);
+            listeners.push(Listener::attach(source, event, move || {
+                if let Some(inner) = weak.upgrade() {
+                    inner.schedule();
+                }
+            })?);
+        }
         *self.0._listeners.borrow_mut() = listeners;
         Ok(())
     }
@@ -382,6 +420,32 @@ impl CanvasInner {
         *self.ratio_watch.borrow_mut() = listener.ok().map(|listener| (ratio, listener));
     }
 
+    /// Whether the surface is shown dark: its `color-scheme` (inherited from `html`,
+    /// where naui writes the theme) when that names only one, otherwise the answer of
+    /// `prefers-color-scheme`.
+    fn is_dark(&self) -> bool {
+        let Some(window) = web_sys::window() else {
+            return false;
+        };
+        let scheme = window
+            .get_computed_style(&self.canvas)
+            .ok()
+            .flatten()
+            .and_then(|style| style.get_property_value("color-scheme").ok())
+            .unwrap_or_default();
+        let words: Vec<&str> = scheme.split_whitespace().collect();
+        match (words.contains(&"light"), words.contains(&"dark")) {
+            (false, true) => true,
+            (true, true) => window
+                .match_media(DARK_QUERY)
+                .ok()
+                .flatten()
+                .is_some_and(|list| list.matches()),
+            // `normal` (どちらも名指ししない) はブラウザの既定の明るい側で描かれる。
+            _ => false,
+        }
+    }
+
     /// Sets the backing pixel count to the CSS size × the ratio, then calls `on_draw`
     /// and draws.
     fn paint(self: &Rc<Self>) {
@@ -401,13 +465,16 @@ impl CanvasInner {
         }
 
         let measured = self.context.clone();
-        let mut painter = Painter::with_text_measure(width, height, move |text, size| {
+        let painter = Painter::with_text_measure(width, height, move |text, size| {
             measured.set_font(&font(size));
             measured
                 .measure_text(text)
                 .map(|metrics| metrics.width())
                 .unwrap_or(0.0)
         });
+        let colored = self.canvas.clone();
+        let mut painter =
+            painter.with_role_colors(self.is_dark(), move |role| role_color(&colored, role));
         let Some(mut draw) = self.draw.borrow_mut().take() else {
             return;
         };
@@ -434,6 +501,58 @@ impl Drop for CanvasInner {
     }
 }
 
+/// The color and opacity of `role` on `canvas`, read with `getComputedStyle`.
+///
+/// Body text is the color the element inherits. The other roles are given the CSS
+/// color a `Label` uses for a moment; a browser without that color (`AccentColor` in
+/// some) ignores it, leaving the inherited color, as it does for a `Label`.
+fn role_color(canvas: &HtmlCanvasElement, role: TextColor) -> (Color, f64) {
+    let fallback = (Color::BLACK, 1.0);
+    let Some(window) = web_sys::window() else {
+        return fallback;
+    };
+    let style = canvas.style();
+    let css = role.css_color();
+    let before = style.get_property_value("color").unwrap_or_default();
+    if let Some(css) = css {
+        let _ = style.set_property("color", css);
+    }
+    let computed = window
+        .get_computed_style(canvas)
+        .ok()
+        .flatten()
+        .and_then(|computed| computed.get_property_value("color").ok());
+    if css.is_some() {
+        let _ = if before.is_empty() {
+            style.remove_property("color").map(drop)
+        } else {
+            style.set_property("color", &before)
+        };
+    }
+    computed.as_deref().and_then(parse_rgb).unwrap_or(fallback)
+}
+
+/// Reads a computed color, which browsers give as `rgb(r, g, b)` or
+/// `rgba(r, g, b, a)` (with commas, or spaces and a slash).
+fn parse_rgb(text: &str) -> Option<(Color, f64)> {
+    let inner = text
+        .trim()
+        .strip_prefix("rgba(")
+        .or_else(|| text.trim().strip_prefix("rgb("))?
+        .strip_suffix(')')?;
+    let values: Vec<f64> = inner
+        .split(|c: char| c == ',' || c == '/' || c.is_whitespace())
+        .filter(|part| !part.is_empty())
+        .map(|part| part.parse().ok())
+        .collect::<Option<_>>()?;
+    let channel = |value: f64| value.round().clamp(0.0, 255.0) as u8;
+    match values[..] {
+        [r, g, b] => Some((Color::rgb(channel(r), channel(g), channel(b)), 1.0)),
+        [r, g, b, a] => Some((Color::rgb(channel(r), channel(g), channel(b)), a)),
+        _ => None,
+    }
+}
+
 /// Draws the commands recorded in the [`Painter`] into the 2D context.
 ///
 /// The context keeps its state from one draw to the next, so the whole replay sits
@@ -454,6 +573,8 @@ fn replay(inner: &Rc<CanvasInner>, commands: &[DrawCommand]) {
                 context.set_global_alpha(*opacity);
                 match paint {
                     Paint::Color(color) => context.set_fill_style_str(&color.to_hex()),
+                    // `Painter` は役割を色にしてから記録する。
+                    Paint::Role(_) => {}
                     Paint::Gradient(gradient) => {
                         context.set_fill_style_canvas_gradient(&canvas_gradient(context, gradient))
                     }

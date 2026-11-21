@@ -911,6 +911,110 @@ async fn canvas_draws_the_broader_vocabulary() {
     );
 }
 
+/// Color roles are read from the element's computed style at each draw, and
+/// setting the theme draws the surface again on the next frame without `redraw`.
+/// The left half is filled with the text color's role and the right half with a
+/// fixed red.
+#[wasm_bindgen_test]
+async fn canvas_follows_light_and_dark() {
+    type Seen = (bool, (Color, f64), (Color, f64));
+    let seen: Rc<RefCell<Vec<Seen>>> = Rc::new(RefCell::new(Vec::new()));
+    let mut kept = None;
+    with_ui(|ui| {
+        ui.set_theme(Theme::Light)?;
+        let canvas = ui.canvas()?;
+        canvas.set_sizing(
+            Sizing::new()
+                .width(Length::Fixed(60.0))
+                .height(Length::Fixed(40.0)),
+        );
+        canvas.on_draw({
+            let seen = seen.clone();
+            move |painter| {
+                seen.borrow_mut().push((
+                    painter.is_dark(),
+                    painter.role_color(TextColor::Default),
+                    painter.role_color(TextColor::Secondary),
+                ));
+                painter.fill_rect(Rect::new(0.0, 0.0, 30.0, 40.0), TextColor::Default);
+                painter.fill_rect(Rect::new(30.0, 0.0, 30.0, 40.0), Color::rgb(0xff, 0, 0));
+            }
+        });
+        let mounted = Mounted::new(&canvas);
+        kept = Some((ui.clone(), canvas, mounted));
+        Ok(())
+    });
+    let (ui, canvas, _mounted) = kept.expect("描画面");
+    canvas.draw_for_test();
+
+    let native = canvas.native_canvas();
+    let ratio = web_sys::window().expect("window").device_pixel_ratio();
+    let context: CanvasRenderingContext2d = native
+        .get_context("2d")
+        .expect("2D コンテキスト")
+        .expect("2D コンテキスト")
+        .unchecked_into();
+    let read = |x: f64, y: f64| -> (u8, u8, u8, u8) {
+        let data = context
+            .get_image_data((x * ratio).floor(), (y * ratio).floor(), 1.0, 1.0)
+            .expect("画素の読み出し")
+            .data();
+        (data[0], data[1], data[2], data[3])
+    };
+    let brightness = |c: Color| u32::from(c.r) + u32::from(c.g) + u32::from(c.b);
+    let sum = |(r, g, b, _): (u8, u8, u8, u8)| u32::from(r) + u32::from(g) + u32::from(b);
+
+    let light = *seen.borrow().last().expect("描くときに呼ばれること");
+    assert!(!light.0, "明るいテーマでは is_dark が偽");
+    assert!(
+        brightness(light.1 .0) < 150,
+        "明るいテーマの文字色は暗い: {light:?}"
+    );
+    assert_ne!(light.2, light.1, "副次の文字色は本文と違う: {light:?}");
+    let left = read(15.0, 20.0);
+    assert!(
+        sum(left) < 150 && left.3 > 128,
+        "明るいテーマでは役割の色が暗く塗られる: {left:?}"
+    );
+    let drawn = seen.borrow().len();
+
+    // テーマを決めるだけで (redraw を呼ばずに) 次のフレームで描き直される。
+    ui.set_theme(Theme::Dark).expect("テーマ");
+    frames_until(|| seen.borrow().len() > drawn).await;
+    let dark = seen.borrow().last().copied();
+    let (left, right) = (read(15.0, 20.0), read(45.0, 20.0));
+    // ページの見た目をテスト前へ戻す。システムに従うテーマでは
+    // `prefers-color-scheme` の答えで決まる。
+    let drawn_dark = seen.borrow().len();
+    ui.set_theme(Theme::System).expect("テーマ");
+    frames_until(|| seen.borrow().len() > drawn_dark).await;
+    let system = seen.borrow().last().map(|seen| seen.0);
+    let prefers_dark = web_sys::window()
+        .and_then(|window| window.match_media("(prefers-color-scheme: dark)").ok())
+        .flatten()
+        .is_some_and(|list| list.matches());
+    assert_eq!(
+        system,
+        Some(prefers_dark),
+        "システムに従うテーマではメディアクエリの答えに従う"
+    );
+    assert!(
+        seen.borrow().len() > drawn,
+        "テーマが変わると描き直されること"
+    );
+    let dark = dark.unwrap();
+    assert!(dark.0, "暗いテーマでは is_dark が真");
+    assert!(
+        brightness(dark.1 .0) > 600,
+        "暗いテーマの文字色は明るい: {dark:?}"
+    );
+    assert!(
+        sum(left) > 600,
+        "暗いテーマでは役割の色が明るく塗られる: {left:?}"
+    );
+    assert_eq!(right, (255, 0, 0, 255), "固定の色はテーマで変わらない");
+}
+
 /// Pointer presses, moves and releases arrive with positions relative to the
 /// surface's top left.
 #[wasm_bindgen_test]
