@@ -149,6 +149,33 @@ macro_rules! impl_sizing {
 
 pub(crate) use {impl_sizing, impl_widget};
 
+/// Replaces an editable's text the way typing over a selection does, for
+/// `enter_text` (tests and automation). Does nothing while it is insensitive or not
+/// editable.
+///
+/// The text is deleted and inserted through `GtkEditable` (`delete_text` and
+/// `insert_text`, the same signals typed text goes through, so a numeric
+/// `GtkSpinButton` still filters it). Typing over a selection emits `changed` twice,
+/// for the emptied text and the new one, so `handler` (the app's `changed`) is
+/// blocked while deleting: `on_change` is called once with the new text, as on the
+/// other platforms. No key event is delivered.
+pub(crate) fn enter_editable_text(
+    editable: &(impl IsA<gtk::Editable> + IsA<gtk::Widget> + IsA<glib::Object>),
+    handler: &RefCell<Option<glib::SignalHandlerId>>,
+    text: &str,
+) {
+    if !editable.is_sensitive() || !editable.is_editable() {
+        return;
+    }
+    if text.is_empty() {
+        editable.delete_text(0, -1);
+    } else {
+        without_signal(editable, handler, || editable.delete_text(0, -1));
+        let mut position = 0;
+        editable.insert_text(text, &mut position);
+    }
+}
+
 /// Rewrites a value with the signal blocked.
 ///
 /// GTK4 emits `changed` even when a value is changed from code, but in naui
@@ -660,6 +687,21 @@ impl TextInput {
         self.0.on_change.set(f);
     }
 
+    /// Replaces the text the way typing does, so `on_change` is called once with it
+    /// (for tests and automation). It goes through `GtkEditable`, with `changed`
+    /// emitted once for the new text.
+    pub fn enter_text(&self, text: &str) {
+        enter_editable_text(&self.0.native, &self.0.handler, text);
+    }
+
+    /// Confirms it as Enter does (the `activate` signal), so `on_submit` is called
+    /// (for tests and automation). Does nothing while insensitive or read-only.
+    pub fn submit(&self) {
+        if self.0.native.is_sensitive() {
+            self.0.native.emit_activate();
+        }
+    }
+
     /// Called with the current contents when the user confirms with Enter (the
     /// `activate` signal).
     ///
@@ -771,6 +813,21 @@ impl PasswordInput {
     pub fn on_submit(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_submit.set(f);
     }
+
+    /// Replaces the text the way typing does, so `on_change` is called once with it
+    /// (for tests and automation). It goes through `GtkEditable`, with `changed`
+    /// emitted once for the new text.
+    pub fn enter_text(&self, text: &str) {
+        enter_editable_text(&self.0.native, &self.0.handler, text);
+    }
+
+    /// Confirms it as Enter does (the `activate` signal), so `on_submit` is called
+    /// (for tests and automation). Does nothing while insensitive.
+    pub fn submit(&self) {
+        if self.0.native.is_sensitive() {
+            self.0.native.emit_by_name::<()>("activate", &[]);
+        }
+    }
 }
 
 // ------------------------------------------------------------- SearchInput
@@ -861,6 +918,21 @@ impl SearchInput {
     /// Called with the current contents when the user confirms with Enter.
     pub fn on_search(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_search.set(f);
+    }
+
+    /// Replaces the text the way typing does, so `on_change` is called once with it
+    /// (for tests and automation). It goes through `GtkEditable`, with `changed`
+    /// emitted once for the new text.
+    pub fn enter_text(&self, text: &str) {
+        enter_editable_text(&self.0.native, &self.0.handler, text);
+    }
+
+    /// Confirms it as Enter does (the `activate` signal), so `on_search` is called
+    /// (for tests and automation). Does nothing while insensitive.
+    pub fn search(&self) {
+        if self.0.native.is_sensitive() {
+            self.0.native.emit_by_name::<()>("activate", &[]);
+        }
     }
 }
 
@@ -971,6 +1043,32 @@ impl TextArea {
     /// Called with the current contents every time the user types.
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_change.set(f);
+    }
+
+    /// Replaces the text the way typing does, so `on_change` is called once with
+    /// it (for tests and automation). Does nothing while insensitive or read-only.
+    ///
+    /// The buffer's text is deleted and inserted as one user action, the same
+    /// edits typing over a selection makes. That emits `changed` for the emptied
+    /// text too, so the app's handler is blocked while deleting, as in
+    /// `enter_editable_text`. No key event is delivered.
+    pub fn enter_text(&self, text: &str) {
+        let native = &self.0.native;
+        if !native.is_sensitive() || !native.is_editable() {
+            return;
+        }
+        let buffer = native.buffer();
+        buffer.begin_user_action();
+        let (mut start, mut end) = buffer.bounds();
+        if text.is_empty() {
+            buffer.delete(&mut start, &mut end);
+        } else {
+            without_signal(&buffer, &self.0.handler, || {
+                buffer.delete(&mut start, &mut end);
+            });
+            buffer.insert(&mut start, text);
+        }
+        buffer.end_user_action();
     }
 
     /// Whether it is read-only. Editable by default.

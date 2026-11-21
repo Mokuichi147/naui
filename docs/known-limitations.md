@@ -321,12 +321,38 @@ that shape are covered in
 
 ### Testing apps
 
-- Not every user action has a method that acts like it. **Typing into text
-  fields** (`set_text` and `set_value` do not call `on_change`), answering a
-  `Dialog` or `Sheet` with its buttons, a `Toast`'s action button, the window's
-  close button (`on_close_request`), pointer events on a `Canvas`, choosing files
-  and dropping them have none yet. Test the code behind them directly, or put the
-  value in with the method that does not notify before the click that reads it.
+- Not every user action has a method that acts like it. A `Toast`'s action
+  button, the window's close button (`on_close_request`), pointer events on a
+  `Canvas`, choosing files and dropping them have none yet. Test the code behind
+  them directly.
+- `enter_text`, `submit` and `search` press no key: `on_key_down` is not called,
+  so an `on_key_down` that stops Enter does not stop `submit`, and nothing goes
+  through an IME. `enter_text` replaces the whole text at once, so `on_change` is
+  called once with the new text rather than once per character, and an
+  `EditableComboBox` completes nothing from its suggestions.
+- On Windows, `enter_text` does not go through UI Automation: WinUI gives the
+  app's own process no Value pattern for a text field, even once the window is
+  drawn (UI Automation clients in other processes, such as Narrator, do get one).
+  naui writes the text and calls `on_change` itself before `enter_text` returns,
+  the same whether or not the window has been drawn. `search` and `respond` click
+  through UI Automation's Invoke pattern, so their notifications arrive a moment
+  later; wait for their effect with `testing::wait_until`. `search` calls
+  `on_search` itself where the Invoke pattern is not offered. A dialog's buttons
+  are in its template, which WinUI applies only once the dialog is drawn, so
+  where they are missing (a window nothing draws, as on CI runners) `respond`
+  closes the dialog with the role itself when its button has not appeared (or,
+  after the dialog opens again, been loaded again) within a second or a click on
+  it leaves the dialog open. Right after the first window is shown, `Dialog::open` and
+  `Sheet::open` wait until WinUI can show them (its `XamlRoot`), for up to 10
+  seconds.
+- `Dialog::respond` and `Sheet::respond` click a button, so a role with no button,
+  or a disabled one, leaves the dialog open; on macOS that leaves `Dialog::open`
+  (and the click that opened it) waiting. Give the answer **before** whatever opens
+  the dialog: on macOS `Dialog::open` returns only once the dialog is answered. On
+  the other platforms the answer arrives a moment after the dialog opens. An
+  answer given while it is closed waits for the next `open` that shows it, so one
+  given to a dialog that then could not open (no window shown yet, for example)
+  answers it later.
 - `Link::click` calls `on_click` without opening `href`, unlike a user's click.
 - The tests need a test target with `harness = false` (`naui::test_cases!` writes
   its `main`): macOS and Linux touch the UI only from the main thread, and WinUI 3
@@ -490,7 +516,11 @@ that shape are covered in
 - On Linux, SVG is read by librsvg's gdk-pixbuf loader (`librsvg2-common` on
   Debian and Ubuntu), which desktops install with GTK.
 - `Expander` has no expand/collapse animation.
-- `Dialog::open` and `PopupMenu::open_at` do not return until closed.
+- `Dialog::open` and `PopupMenu::open_at` do not return until closed. While a
+  `Dialog` opened from inside a `Tasks` task or a timer is shown, other tasks and
+  timers wait until it closes: they run on the main dispatch queue, which does not
+  run again until the work that opened the dialog returns. One opened from a
+  click or another notification does not hold them up.
 - A `Toast` appears in the frontmost window (or the most recently created window
   when none has been decided yet).
 - Attaching a `Toolbar` hides the window's title text (the macOS convention). The
@@ -541,6 +571,10 @@ that shape are covered in
   does not switch it.
 - `EditableComboBox` does not narrow options by typed text (pressing the arrow shows
   all options).
+- `NumberInput` (`GtkSpinButton`) does not let characters other than digits, a sign
+  and a decimal point be typed, and confirming text it cannot read as a number
+  (an empty field, or `-` alone) sets the value to 0 instead of reverting it as
+  the other platforms do.
 - `Spinner` is `AdwSpinner`, which arrived in libadwaita 1.6. With libadwaita 1.5 it
   falls back to `GtkSpinner`, which has the same default size and 64 × 64 drawing
   limit but the older look.

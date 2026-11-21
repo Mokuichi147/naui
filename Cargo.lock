@@ -750,6 +750,7 @@ dependencies = [
  "naui-macos",
  "naui-web",
  "naui-windows",
+ "wasm-bindgen-test",
 ]
 
 [[package]]

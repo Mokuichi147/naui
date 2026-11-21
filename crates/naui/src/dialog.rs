@@ -70,4 +70,20 @@ impl Dialog {
     pub fn is_open(&self) -> bool {
         self.0.is_open()
     }
+
+    /// Answers it the way the user does, by clicking its button for `response`, so
+    /// [`on_response`](Self::on_response) is called with it. Nothing happens if
+    /// it has no button for `response`.
+    ///
+    /// If it is not open, the answer is kept and given right after it next opens.
+    /// Call it **before** whatever opens it: on macOS [`Dialog::open`] does not return
+    /// until the dialog closes, so a click that opens one returns only once it has
+    /// been answered. On the other platforms the answer arrives a moment after it
+    /// opens; wait for its effect with [`testing::wait_until`](crate::testing::wait_until).
+    ///
+    /// For tests and automation. See [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn respond(&self, response: DialogResponse) {
+        self.0.respond(response)
+    }
 }

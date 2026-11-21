@@ -87,9 +87,7 @@ impl NumberInput {
             let weak = Rc::downgrade(&this.0);
             move |_| {
                 if let Some(inner) = weak.upgrade() {
-                    let this = NumberInput(inner);
-                    this.native_changed(true);
-                    this.0.on_submit.emit(this.value());
+                    NumberInput(inner).confirm();
                 }
             }
         });
@@ -170,6 +168,29 @@ impl NumberInput {
     /// IME is composing.
     pub fn on_submit(&self, f: impl FnMut(f64) + 'static) {
         self.0.on_submit.set(f);
+    }
+
+    /// Replaces the field's text the way typing does (for tests and automation).
+    /// See `enter_input_text`: the browser keeps only a valid
+    /// number in the field, and one is taken as the value at once, so `on_change`
+    /// is called if the value changes. Does nothing while disabled.
+    pub fn enter_text(&self, text: &str) {
+        crate::widgets::enter_input_text(&self.0.input, text);
+    }
+
+    /// Confirms it as Enter does: the typed text is read into the value (or
+    /// reverted) and `on_submit` is called (for tests and automation). No key event
+    /// is dispatched. Does nothing while disabled.
+    pub fn submit(&self) {
+        if !self.0.input.disabled() {
+            self.confirm();
+        }
+    }
+
+    /// What Enter does: confirms the field's text as the value, then notifies.
+    fn confirm(&self) {
+        self.native_changed(true);
+        self.0.on_submit.emit(self.value());
     }
 
     /// The corresponding `<input>`. Public as a backend-specific escape hatch.

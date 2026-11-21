@@ -151,14 +151,19 @@ native counterparts for.
       no mark for a gap between rows, so naui draws a line there (the accent color
       on GTK, the `Highlight` system color on the Web). `Tree` on GTK is built from
       `GtkListBox`, so dragging in `Tree` is left out.
-- [ ] **Typing and answering dialogs in tests.** Since v0.17.0, `click`,
-      `select`, `activate`, `pick` and `drag_to` work on all four platforms with
-      `naui::testing`, but typing into text fields so that `on_change` is called,
-      and answering a `Dialog` or `Sheet` with its buttons, have no method that
-      acts like them (see [Known limitations](known-limitations.md#testing-apps)).
-      Check first how each platform can deliver them as a user's action would,
-      and whether a nested run loop, such as macOS's modal `Dialog::open`, can be
-      answered from a test.
+- [x] **Typing and answering dialogs in tests.** `enter_text` on `TextInput`,
+      `PasswordInput`, `SearchInput`, `TextArea`, `NumberInput` and
+      `EditableComboBox` replaces the text as typing over it does, so `on_change`
+      is called; `submit` (`search` on `SearchInput`) confirms as Enter does; and
+      `respond` on `Dialog` and `Sheet` clicks the button for a role. Each goes
+      through the platform's own path: AppKit's text-change notification and
+      `performClick:`, `GtkEditable` and the `clicked` / `activate` signals, UI
+      Automation's Value and Invoke patterns, and the DOM's `input` event and
+      `click()`. No key is pressed, so `on_key_down` is not called. macOS's modal
+      `Dialog::open` is answered from inside its modal loop: an answer given
+      before the dialog opens is kept and clicked from a run-loop block (the main
+      queue does not run there when the dialog was opened from a `Tasks` poll),
+      so a test answers first and then clicks whatever opens the dialog.
 - [x] **Multiple selection in `Tree`** (`set_selection_mode` with
       `SelectionMode`, as `List` has). Added `set_selection_mode`,
       `selection_mode`, `selection`, `set_selection` and `select_many`; `selected`

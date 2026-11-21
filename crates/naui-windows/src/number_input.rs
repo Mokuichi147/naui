@@ -236,6 +236,40 @@ impl NumberInput {
         self.0.submit.set(f);
     }
 
+    /// Replaces the text in the field the way typing does (for tests and
+    /// automation). Text that reads as a number is taken as typed text is, so
+    /// `on_change` is called before this returns. Does nothing while disabled.
+    ///
+    /// It writes the text into the `TextBox` in the `NumberBox`'s template (where
+    /// the template has been applied) and reads it right away, the same on every
+    /// window. It does not go through UI Automation: the `TextBox`'s peer hands out
+    /// no Value pattern inside the process.
+    pub fn enter_text(&self, text: &str) {
+        if !self.0.native.IsEnabled().unwrap_or(false) {
+            return;
+        }
+        // 確定は入力欄の文字を読むので、そこへも書いておく。
+        let field = self.0.field.borrow().clone();
+        if let Some(field) = field {
+            let previous = self.0.silent.replace(true);
+            let _ = field.SetText(&HSTRING::from(text));
+            self.0.silent.set(previous);
+        }
+        if let Some(shown) = self.parse_shown(text) {
+            self.accept(shown, false);
+        }
+    }
+
+    /// Confirms it as Enter does: the typed text is read into the value (or
+    /// reverted) and `on_submit` is called (for tests and automation). No key event
+    /// is sent: it runs naui's handling of Enter. Does nothing while disabled.
+    pub fn submit(&self) {
+        if self.0.native.IsEnabled().unwrap_or(false) {
+            self.commit_field();
+            self.0.submit.emit(self.value());
+        }
+    }
+
     /// The corresponding `NumberBox`. Public as a backend-specific escape hatch.
     pub fn native_number_box(&self) -> XamlNumberBox {
         self.0.native.clone()
