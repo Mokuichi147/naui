@@ -1212,6 +1212,11 @@ impl Window {
             self.0.menu_key_installed.set(false);
             self.install_menu_shortcuts();
             // `on_key_down` の受け口と `on_focus_change` の見張りも新しい根へ付ける。
+            if let Some(layer) = self.0.content_layer.borrow().as_ref() {
+                if let Ok(layer) = layer.cast::<UIElement>() {
+                    crate::file_drop::register_root(&layer, &self.0.on_file_drop);
+                }
+            }
             if let Some(root) = self.0.theme_root.borrow().as_ref() {
                 let _ = crate::keys::install(root, self.0.key_down.clone());
                 let _ = crate::focus::install(root);
@@ -1311,7 +1316,11 @@ impl Window {
         };
         self.take_content_head();
         if let Some(element) = self.host_content(&child) {
-            let _ = children.InsertAt(0, &element);
+            if children.InsertAt(0, &element).is_ok() && element != child {
+                // サイドバーの `NavigationView` も置いた場所を覚える。描かれる前の窓
+                // では、`drop_files` が右区画の中からここを通って窓までたどる。
+                crate::layout::note_place(&element, crate::layout::Place::panel(&layer));
+            }
         }
         self.note_child_place();
     }

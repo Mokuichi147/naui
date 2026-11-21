@@ -122,8 +122,11 @@ pub(crate) fn release_handlers() {
     drop(ROOTS.with(Registry::take));
 }
 
-/// Remembers that `root` belongs to the window whose handler is `window`.
-fn register_root(root: &UIElement, window: &Rc<FileDropHandler>) {
+/// Remembers that `root` belongs to the window whose handler is `window`. Besides
+/// the window's XAML root, the layer holding its content is registered, so that a
+/// walk through naui's own record of places (which ends there) still finds the
+/// window.
+pub(crate) fn register_root(root: &UIElement, window: &Rc<FileDropHandler>) {
     ROOTS.with(|roots| {
         let mut roots = roots.borrow_mut();
         roots.retain(|(weak, handler)| {
@@ -230,14 +233,25 @@ fn route(
     window.filter(|window| window.is_set())
 }
 
-/// `object`'s parent: the visual one, or else the logical one.
+/// `object`'s parent: the visual one, or else the logical one, or else the
+/// container naui put it in. A window nothing has drawn yet (as on CI runners)
+/// reports neither of the first two, so `drop_files` walks up through naui's own
+/// record there.
 fn parent(object: &DependencyObject) -> Option<DependencyObject> {
-    VisualTreeHelper::GetParent(object).ok().or_else(|| {
-        object
-            .cast::<FrameworkElement>()
-            .and_then(|element| element.Parent())
-            .ok()
-    })
+    VisualTreeHelper::GetParent(object)
+        .ok()
+        .or_else(|| {
+            object
+                .cast::<FrameworkElement>()
+                .and_then(|element| element.Parent())
+                .ok()
+        })
+        .or_else(|| {
+            object
+                .cast::<UIElement>()
+                .ok()
+                .and_then(|element| crate::layout::placed_in(&element))
+        })
 }
 
 /// The pointer's position in `root`'s coordinates (DIPs), read from the cursor.

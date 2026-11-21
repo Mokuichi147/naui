@@ -12240,7 +12240,8 @@ fn ui_check_url_like_the_user() {
         ] {
             assert!(ui.check_url(url).is_ok(), "読める: {url:?}");
         }
-        for url in ["http://[", "https://exa mple.com/"] {
+        // ホストの空白は、WebKit は断るが Chrome は読めてしまう。どこでも断るものだけ。
+        for url in ["http://[", "https://[::1"] {
             assert!(ui.check_url(url).is_err(), "読めない: {url:?}");
         }
         Ok(())
