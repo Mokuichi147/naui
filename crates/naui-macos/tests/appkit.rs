@@ -1833,7 +1833,10 @@ fn canvas_follows_light_and_dark(ui: &Ui) -> Result<()> {
     view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
     let light = *seen.borrow().last().expect("描くときに呼ばれること");
     assert!(!light.0, "明るい外観では is_dark が偽");
-    assert!(brightness(light.1 .0) < 150, "明るい外観の文字色は暗い: {light:?}");
+    assert!(
+        brightness(light.1 .0) < 150,
+        "明るい外観の文字色は暗い: {light:?}"
+    );
     assert!(
         light.2 .1 < light.1 .1,
         "副次の文字色は本文より薄い (アルファが落ちていない): {light:?}"
@@ -1851,11 +1854,20 @@ fn canvas_follows_light_and_dark(ui: &Ui) -> Result<()> {
         view.displayIfNeeded();
         seen.borrow().len() > drawn
     });
-    assert!(seen.borrow().len() > drawn, "外観が変わると描き直されること");
+    assert!(
+        seen.borrow().len() > drawn,
+        "外観が変わると描き直されること"
+    );
     let dark = *seen.borrow().last().unwrap();
     assert!(dark.0, "暗い外観では is_dark が真");
-    assert!(brightness(dark.1 .0) > 600, "暗い外観の文字色は明るい: {dark:?}");
-    assert!(dark.2 .1 < dark.1 .1, "暗い外観でも副次の文字色は薄い: {dark:?}");
+    assert!(
+        brightness(dark.1 .0) > 600,
+        "暗い外観の文字色は明るい: {dark:?}"
+    );
+    assert!(
+        dark.2 .1 < dark.1 .1,
+        "暗い外観でも副次の文字色は薄い: {dark:?}"
+    );
     view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
     let (left, _) = read(15.0, 20.0);
     assert!(

@@ -2138,7 +2138,12 @@ mod tests {
         let path = Path::new().rect(Rect::new(0.0, 0.0, 10.0, 10.0));
         painter.fill_path(&path, TextColor::Secondary);
         painter.stroke_path(&path, TextColor::Secondary, 1.0);
-        painter.line(Point::new(0.0, 0.0), Point::new(1.0, 1.0), Color::BLACK, 1.0);
+        painter.line(
+            Point::new(0.0, 0.0),
+            Point::new(1.0, 1.0),
+            Color::BLACK,
+            1.0,
+        );
         painter.text("a", Point::new(0.0, 0.0), 10.0, TextColor::Accent);
         let opacities: Vec<_> = painter
             .commands()
@@ -2160,7 +2165,10 @@ mod tests {
         assert_eq!(opacities, [0.25, 0.25, 0.5, 0.5]);
         // 同じ役割は 1 回の描画で 1 回しか聞かない。
         assert_eq!(asked.get(), 2);
-        assert_eq!(painter.role_color(TextColor::Accent), (Color::rgb(1, 2, 3), 1.0));
+        assert_eq!(
+            painter.role_color(TextColor::Accent),
+            (Color::rgb(1, 2, 3), 1.0)
+        );
     }
 
     #[test]
