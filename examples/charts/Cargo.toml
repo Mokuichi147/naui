@@ -1,0 +1,21 @@
+[package]
+name = "charts"
+description = "Line, bar and scatter charts drawn with naui-charts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+default-run = "charts"
+
+# Web でもブラウザから読み込めるよう、ライブラリとしても作る (web/build.sh)。
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "charts"
+path = "src/main.rs"
+
+[dependencies]
+naui.workspace = true
+naui-charts.workspace = true

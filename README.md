@@ -128,7 +128,7 @@ python3 -m http.server 8080
 | Basics & input | `Label`, `Button`, `Checkbox`, `Toggle`, `TextInput`, `TextArea`, `PasswordInput`, `SearchInput`, `NumberInput`, `Slider`, `ProgressBar`, `Spinner` |
 | Data selection | `ComboBox`, `EditableComboBox`, `RadioGroup`, `DatePicker`, `TimePicker`, `ColorPicker`, `List`, `Table`, `Tree` |
 | Files & media | `FilePicker`, `FileSaver`, `Image`, `Video`, `Audio` |
-| Drawing | `Canvas` |
+| Drawing | `Canvas` (line, bar and scatter charts on it: [naui-charts](crates/naui-charts)) |
 | Overlays | `PopupMenu`, `Popover`, `Dialog`, `Sheet`, `Toast` |
 | Navigation | `Tabs`, `Navbar`, `Dock`, `Menu`, `Breadcrumbs`, `Pagination`, `Link` |
 
@@ -149,6 +149,7 @@ The guides below are currently written in Japanese.
 - [Structuring large apps](docs/large-apps.md): splitting an app into crates by feature so that a change rebuilds only what it touches ([`examples/notes`](examples/notes))
 - [Development](docs/development.md): verification, crate layout, tests, CI, releases
 - [naui-app](crates/naui-app): an optional Model–View–Update structure for larger apps ([`examples/todo`](examples/todo), components in [`examples/checklist`](examples/checklist), asynchronous work in [`examples/search`](examples/search))
+- [naui-charts](crates/naui-charts): line, bar and scatter charts drawn on `Canvas`, readable in light and dark ([`examples/charts`](examples/charts))
 - [Roadmap](docs/roadmap.md): missing features and priorities
 - [API reference (docs.rs)](https://docs.rs/naui)
 
