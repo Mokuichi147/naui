@@ -13,6 +13,9 @@
 //! The registry holds widgets by weak reference, and removes the handler from the
 //! table when the widget (window) is freed. Leaving it in the table would keep the
 //! handler and the state it captures alive forever.
+//!
+//! The same watch also keeps the focused widget alive a little past losing focus,
+//! to work around a GTK bug ([`hold_focus_widget`]).
 
 use std::cell::RefCell;
 use std::rc::{Rc, Weak};
@@ -138,6 +141,32 @@ pub(crate) fn install(window: &impl IsA<gtk::Window>) {
     });
     window.as_ref().connect_focus_widget_notify(move |window| {
         owner.move_to(owner_of(GtkWindowExt::focus(window)))
+    });
+    hold_focus_widget(window.as_ref());
+}
+
+/// Holds the window's focused widget, and lets go of it only once the main loop is
+/// idle after the focus has moved on.
+///
+/// Works around a GTK bug (seen in 4.22, still in its main branch).
+/// `gtk_label_grab_focus` reads the previous focus without taking a reference, chains
+/// up (which is where the window drops its reference to the previous focus), and then
+/// asks `gtk_widget_is_ancestor` about it. When the window's reference was the last
+/// one, that reads a freed widget and logs `gtk_widget_is_ancestor: assertion
+/// 'GTK_IS_WIDGET (widget)' failed`. This happens when the focused widget is taken
+/// out of the window and nothing else holds it, such as the × of an `AdwToast`
+/// closed with the keyboard: after the next paint GTK moves the focus to the first
+/// widget that takes it, and a label with a link (`Breadcrumbs`, `Label` with links)
+/// is one.
+///
+/// Dropping our reference has to wait until GTK has returned from moving the focus,
+/// since `focus-widget` is notified while the label's `grab_focus` is still running.
+fn hold_focus_widget(window: &gtk::Window) {
+    let held = RefCell::new(GtkWindowExt::focus(window));
+    window.connect_focus_widget_notify(move |window| {
+        if let Some(previous) = held.replace(GtkWindowExt::focus(window)) {
+            glib::idle_add_local_once(move || drop(previous));
+        }
     });
 }
 

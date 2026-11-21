@@ -1062,6 +1062,10 @@ fn main() {
             toast_in_a_closed_window_gives_way,
         ),
         (
+            "トーストのボタンをキーで押しても、GTK が解放済みのフォーカスを読まず、フォーカスが窓の中身へ移る",
+            toast_closed_from_the_keyboard_leaves_no_freed_focus,
+        ),
+        (
             "外さずに別の親へ入れた子は断られ、どちらのコンテナの操作でも動かない",
             moved_child_is_refused_and_left_alone,
         ),
@@ -9962,24 +9966,6 @@ fn toast_events_reach_the_closures(ui: &Ui) -> Result<()> {
     open.emit_clicked();
     assert_eq!(seen.borrow().as_slice(), ["action 1", "dismiss"]);
     assert!(!toast.is_visible());
-
-    // フォーカスのあるボタンを押したときは、窓のフォーカスを外してから消す (本来の
-    // ボタンと同じ)。題ごと外れたボタンをフォーカスが指したままだと、フォーカスを
-    // 移す GTK が警告を出す。
-    seen.borrow_mut().clear();
-    toast.show();
-    let native = toast.native_toast().expect("もう一度出した AdwToast");
-    let open = native
-        .custom_title()
-        .and_then(|title| title.last_child())
-        .and_downcast::<gtk::Button>()
-        .expect("2 つ目の操作のボタン");
-    spin_until(std::time::Duration::from_secs(2), || open.is_mapped());
-    assert!(open.grab_focus(), "題の中のボタンにフォーカスを置けること");
-    let root = open.root().expect("窓に載っていること");
-    open.emit_clicked();
-    assert_eq!(seen.borrow().as_slice(), ["action 1", "dismiss"]);
-    assert_eq!(root.focus(), None, "押したボタンからフォーカスが外れること");
     window.close();
     Ok(())
 }
@@ -10103,6 +10089,98 @@ fn toast_in_a_closed_window_gives_way(ui: &Ui) -> Result<()> {
     assert_eq!(dismissed.get(), 0, "外しても通知は届かない");
     next.dismiss();
     new.close();
+    Ok(())
+}
+
+/// Closing a toast with the keyboard from one of its buttons leaves GTK nothing freed
+/// to read, and the focus moves on into the window.
+///
+/// Once the toast is gone, only the window still holds the pressed button, as its
+/// focus: the × belongs to libadwaita, and the buttons naui lays out in the title
+/// for two or more actions are held by nothing else. GTK then moves the focus to the
+/// first widget that takes it, and when that is a label with a link (the breadcrumbs
+/// here), `gtk_label_grab_focus` used to read the button after the window had let
+/// go of it, logging a `gtk_widget_is_ancestor` critical.
+fn toast_closed_from_the_keyboard_leaves_no_freed_focus(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 320.0, 200.0)?;
+    let content = ui.stack(Orientation::Vertical)?;
+    let crumbs = ui.breadcrumbs()?;
+    crumbs.set_items(&NavItem::list(["ホーム", "ここ"]));
+    content.append(&crumbs);
+    window.set_child(&content);
+    window.show();
+    let overlay = window.native_toast_overlay();
+    tick(&overlay);
+
+    fn close_button(widget: &gtk::Widget) -> Option<gtk::Button> {
+        children(widget).into_iter().find_map(|child| {
+            match child.clone().downcast::<gtk::Button>() {
+                Ok(button) if button.icon_name().as_deref() == Some("window-close-symbolic") => {
+                    Some(button)
+                }
+                _ => close_button(&child),
+            }
+        })
+    }
+    fn title_button(toast: &naui_gtk::Toast) -> Option<gtk::Button> {
+        toast
+            .native_toast()?
+            .custom_title()?
+            .last_child()
+            .and_downcast::<gtk::Button>()
+    }
+
+    /// Finds the button to press in the toast on screen.
+    type Pick = fn(&adw::ToastOverlay, &naui_gtk::Toast) -> Option<gtk::Button>;
+    let cases: [(&str, &[&str], Pick); 2] = [
+        ("×", &["元に戻す"], |overlay, _| {
+            close_button(overlay.upcast_ref())
+        }),
+        (
+            "題の中の操作ボタン",
+            &["元に戻す", "開く"],
+            |_, toast| title_button(toast),
+        ),
+    ];
+    for (what, actions, button) in cases {
+        let toast = ui.toast("削除しました")?;
+        toast.set_actions(actions);
+        toast.set_timeout(0.0);
+        toast.show();
+        tick(&overlay);
+
+        let pressed = button(&overlay, &toast).unwrap_or_else(|| panic!("{what}"));
+        spin_until(std::time::Duration::from_secs(2), || pressed.is_mapped());
+        assert!(pressed.grab_focus(), "{what}: フォーカスを移せること");
+        let freed = pressed.downgrade();
+
+        let ((), log) = watch_log(move || {
+            // Enter を押したときと同じ通知。トーストが消え、描いたあとで GTK が
+            // フォーカスを窓の先頭へ移す。
+            pressed.emit_by_name::<()>("activate", &[]);
+            drop(pressed);
+            spin_until(std::time::Duration::from_secs(2), || {
+                freed.upgrade().is_none()
+            });
+        });
+
+        assert!(!toast.is_visible(), "{what}: トーストが消えること");
+        let focus = GtkWindowExt::focus(&window.native_window());
+        assert!(
+            focus.is_some_and(|focus| focus.is_ancestor(&overlay)),
+            "{what}: フォーカスが窓の中身へ移ること"
+        );
+        let criticals: Vec<_> = log
+            .iter()
+            .filter(|entry| entry.level == glib::LogLevel::Critical)
+            .map(|entry| format!("{}: {}", entry.domain, entry.message))
+            .collect();
+        assert!(
+            criticals.is_empty(),
+            "{what}: GTK が critical を出した {criticals:?}"
+        );
+    }
+    window.close();
     Ok(())
 }
 
