@@ -100,7 +100,7 @@ pub use expander::Expander;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
 pub use group::{Group, Separator};
-pub use layout::{Grid, Scroll, Spacer};
+pub use layout::{Flow, Grid, Scroll, Spacer};
 pub use list::{List, ListRow};
 pub use media_widgets::{Audio, Image, Video};
 pub use menu_bar::MenuBar;

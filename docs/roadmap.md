@@ -151,11 +151,17 @@ need investigating first but are not heavy.
       do not draw outside their bounds and text width measurement for laying out
       axis labels, was released in v0.17.0, and Windows's `Canvas` keeps up with
       charts of many points since v0.15.0.
-- [ ] *(adaptive)* **`Flow`** (a container that wraps its children onto new lines).
+- [x] *(adaptive)* **`Flow`** (a container that wraps its children onto new lines).
       `GtkFlowBox` and CSS `flex-wrap` exist, but WinUI only has
       `VariableSizedWrapGrid` with fixed-size cells (`WrapPanel` is in the
       Community Toolkit), and AppKit has nothing besides `NSCollectionView`'s flow
-      layout. Which platforms need naui to lay it out itself is investigated first.
+      layout. Only the Web wraps natively (`flex-wrap`): `GtkFlowBox` lines its
+      children up in columns and wraps each in a focusable, selectable child, and
+      `AdwWrapBox` needs libadwaita 1.7. So macOS, Linux and Windows break the
+      lines with naui-core's `FlowLayout`, inside the toolkit's own layout pass
+      (`NSView::layout`, a `GtkWidget`'s height-for-width measuring, a derived
+      `Panel`'s `MeasureOverride` / `ArrangeOverride`), with no callback through
+      the app.
 - [ ] *(adaptive)* **Narrow navigation rail.** Windows is covered by `Sidebar`'s
       automatic collapsing (`LeftCompact`). Whether the same collapsing covers
       macOS, GTK and the Web is checked first; if it does, nothing new is needed.

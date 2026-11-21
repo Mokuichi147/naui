@@ -33,6 +33,7 @@ that shape are covered in
 | Images written to the clipboard (`set_image`) | PNG (and a bitmap without transparency for apps that read no PNG), kept after the app quits | PNG and TIFF, kept after the app quits | Offered by the app while it runs (unless a clipboard manager keeps it) | `image/png` only, inside a user action (Firefox 127 and later) |
 | Where a `Toast` appears (`ToastPosition`) | Any of the six | Any of the six | Always the bottom center | Any of the six |
 | Where a `Toast`'s second and later action buttons go | A row below the text | Next to the first, after the text | Next to the first, after the text | Next to the first, after the text |
+| A `Flow` child wider than the flow | Keeps its width and is cut off, unless it has `Fill` on the width | Keeps its width and is cut off, unless it has `Fill` on the width | Narrowed to the flow, down to its minimum | Narrowed to the flow, down to its `min-content` width |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
 
 ## Common
@@ -115,6 +116,14 @@ that shape are covered in
 
 - `SplitView` has only two panes and one divider. To split into three or more,
   nest them. There is no setting to collapse a pane (hide it at width 0).
+- `Flow` lays its children out in rows only: there is no vertical flow that wraps
+  into columns, which would need a height to wrap in. Each line is packed on its
+  own, so children are not lined up in columns (use a `Grid` for that), and
+  `set_align(Align::Fill)` is the same as `Start`: only `Fill` on a child's width
+  widens it to fill its line. On Windows and macOS a child is measured once at its
+  natural width, so one wider than the flow is not narrowed (its text does not
+  wrap) unless it has `Fill` on the width; Linux narrows it to its minimum and the
+  Web to its `min-content` width.
 - `AdaptivePanes` has two panes, a list and its detail, and the list's width is
   fixed: the user cannot drag the boundary (`TwoPaneView` and
   `AdwNavigationSplitView` have no divider to drag). For three panes, attach a

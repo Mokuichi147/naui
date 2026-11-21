@@ -19,6 +19,7 @@ Legend:
 | `Window` | ✅ `Microsoft.UI.Xaml.Window` | ✅ `NSWindow` | ✅ `AdwApplicationWindow` | 🔴 `<div>` + `document.title` |
 | `Stack` | 🟡 `Grid` (a track per child) | ✅ `NSStackView` | ✅ `GtkBox` | 🟡 `<div>` + CSS Flexbox |
 | `Grid` | ✅ `Grid` | ✅ `NSGridView` | 🔴 naui's own container, laid out like `GtkGrid` | 🟡 `<div>` + CSS Grid |
+| `Flow` | 🔴 A `Panel` derived by naui (`MeasureOverride` / `ArrangeOverride`) | 🔴 naui's own `NSView` (`NauiFlowView`) | 🔴 naui's own container (`NauiFlow`) | ✅ `<div>` + CSS Flexbox (`flex-wrap`) |
 | `Scroll` | ✅ `ScrollViewer` | ✅ `NSScrollView` | ✅ `GtkScrolledWindow` | 🟡 `<div>` + `overflow` |
 | `Spacer` | 🟡 An empty `Grid` | 🟡 An empty `NSView` | 🟡 An empty `GtkBox` | 🟡 `<div>` + `flex-grow` |
 | `Separator` | 🔴 `Border` (one edge, `DividerStrokeColorDefaultBrush`) | ✅ `NSBox` (`NSBoxSeparator`) | ✅ `GtkSeparator` | ✅ `<hr>` |
@@ -121,6 +122,15 @@ collected in [Known limitations](known-limitations.md).
   `RowSpacing` falls between tracks, so an empty track would still leave a gap on
   each side. The tracks are redone when a child is added, removed, shown or hidden,
   or given a new `Sizing`.
+- **`Flow`**: WinUI 3 has no panel that wraps children of different widths
+  (`VariableSizedWrapGrid` gives every child the same cell, and `WrapPanel` is in
+  the Windows Community Toolkit), so naui derives one: a `Panel` composed (COM
+  aggregation, as the `Application` is) with a Rust object implementing
+  `IFrameworkElementOverrides`. `MeasureOverride` measures each child with no limit
+  on the width, breaks the lines with naui-core's `FlowLayout` and measures again,
+  at its width, a child that `Fill` widened; `ArrangeOverride` places them. WinUI
+  mirrors the arrangement itself in a right-to-left layout. `Panel` has no
+  `Padding`, so the padding is kept by the panel's own measuring.
 - **`Separator` / `Group`**: WinUI 3 has neither a standalone separator nor a
   group box (`MenuFlyoutSeparator` and `AppBarSeparator` work only inside menus and
   command bars). A separator is a `Border` that draws only one 1 px edge in
@@ -350,6 +360,19 @@ collected in [Known limitations](known-limitations.md).
 
 ### macOS construction
 
+- **`Flow`**: AppKit has no view that wraps arbitrary views (`NSCollectionView`'s
+  flow layout lays out items it creates itself), so naui uses its own flipped
+  `NSView` (`NauiFlowView`) and breaks the lines with naui-core's `FlowLayout` in
+  its `layout`, the way `NSTextField` wraps text: its intrinsic height is the
+  height of the lines at its current width, and when a layout pass changes that
+  height the view invalidates its intrinsic size and AppKit solves again in the
+  same pass. Its intrinsic width is all children on one line, held by a
+  compression resistance of 250 (below a window's 500), so it wraps instead of
+  widening the window, and a constraint at 750 keeps it at least as wide as its
+  widest child. The children keep their own `Sizing` constraints and are measured
+  with `fittingSize`; the flow sets their frames
+  (`translatesAutoresizingMaskIntoConstraints`), so their positions are not
+  constraints.
 - **`Grid`**: The height of `Auto` rows and the share received by `Fill` children
   are calculated by naui. `NSGridView` decides row and column sizes from content,
   but **where leftover space goes is not defined**, and with hugging priorities
@@ -481,6 +504,15 @@ collected in [Known limitations](known-limitations.md).
 
 ### Linux construction
 
+- **`Flow`**: Not a `GtkFlowBox` but naui's own container (`NauiFlow`).
+  `GtkFlowBox` lines its children up in columns (the widest child of a column sets
+  its width, at most seven per line by default) and puts each child in a
+  focusable, selectable `GtkFlowBoxChild`; `AdwWrapBox`, which wraps like CSS
+  `flex-wrap`, needs libadwaita 1.7. The container asks for height-for-width,
+  breaks the lines with naui-core's `FlowLayout` while measuring and allocating,
+  measures each child's height at the width it gets, and mirrors the lines in
+  right-to-left text. GTK4 places each child inside its rectangle (`halign` /
+  `valign` on its `SizeBin`).
 - **`Grid`**: Not a `GtkGrid` but naui's own container (`NauiGrid`). `GtkGrid`
   gives each column its natural width and splits what is left **evenly** among the
   growing columns, so `Track::Fill` weights could not work, and two `Fill` columns
@@ -615,6 +647,11 @@ collected in [Known limitations](known-limitations.md).
 
 ### Web construction
 
+- **`Flow`**: A Flexbox row with `flex-wrap: wrap`, so the browser breaks the
+  lines. The children are set up as in a horizontal `Stack` (`flex-grow` for
+  `Fill` on the width, `align-self: stretch` for `Fill` on the height, which
+  stretches to the line), `gap` holds both spacings and `justify-content` the
+  alignment.
 - **`Separator` / `Group`**: `<hr>` and `<fieldset>` + `<legend>`, so they are
   reported as a separator and as a group named by its heading. Only the browser's
   dated defaults (an inset double line, a grooved border, margins, and

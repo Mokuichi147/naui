@@ -499,6 +499,14 @@ const CASES: &[Case] = &[
         grid_follows_a_changed_maximum_width,
     ),
     (
+        "Flow は幅が尽きたら次の行へ折り返し、高さが幅に従う",
+        flow_wraps_onto_new_lines,
+    ),
+    (
+        "Flow の子を足し、差し込み、外し、ほかの入れ物にいる子は断る",
+        flow_inserts_and_removes_children,
+    ),
+    (
         "スタックの主軸の Fill と Spacer が余りを受け取り、隠した子は間を空けない",
         stack_hands_leftover_space_to_fill_and_spacer,
     ),
@@ -3961,6 +3969,148 @@ fn short_labels_drop_the_minimum_width(ui: &Ui) -> Result<()> {
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
+    Ok(())
+}
+
+fn fixed_box(ui: &Ui, width: f64, height: f64) -> Result<naui_windows::Stack> {
+    let child = ui.stack(Orientation::Vertical)?;
+    child.set_sizing(Sizing::fixed(width, height));
+    Ok(child)
+}
+
+/// Children go on a line while they fit and wrap onto the next one otherwise. The
+/// panel's height is the height of the lines at its width, decided in WinUI's own
+/// layout pass (`MeasureOverride` / `ArrangeOverride`). A `Fill` child takes the
+/// room left in its line and stretches to the line's height; the alignment places a
+/// line without one.
+fn flow_wraps_onto_new_lines(ui: &Ui) -> Result<()> {
+    let window = ui.window("折り返し", 600.0, 400.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    root.set_sizing(Sizing::fill());
+    root.set_align(Align::Start);
+    let flow = ui.flow()?;
+    flow.set_spacing(10.0, 5.0);
+    flow.set_sizing(Sizing::fixed(250.0, 0.0).height(naui_core::Length::Auto));
+    let boxes: Vec<naui_windows::Stack> = (0..3)
+        .map(|_| fixed_box(ui, 100.0, 20.0))
+        .collect::<Result<_>>()?;
+    for child in &boxes {
+        flow.append(child);
+    }
+    root.append(&flow);
+    window.set_child(&root);
+    window.show();
+
+    let panel = native::<FrameworkElement>(&flow);
+    let laid_out = || panel.ActualHeight().unwrap_or(0.0) > 0.0;
+    pump_until(SCROLL_LAYOUT_TIMEOUT, laid_out);
+    let position = |widget: &dyn Widget| -> (f64, f64, f64, f64) {
+        let element = native::<FrameworkElement>(widget);
+        let origin = element
+            .TransformToVisual(&panel)
+            .and_then(|transform| {
+                transform.TransformPoint(windows::Foundation::Point { X: 0.0, Y: 0.0 })
+            })
+            .expect("Flow から見た位置");
+        (
+            f64::from(origin.X).round(),
+            f64::from(origin.Y).round(),
+            element.ActualWidth().unwrap_or(f64::NAN).round(),
+            element.ActualHeight().unwrap_or(f64::NAN).round(),
+        )
+    };
+    let settle = |expected_height: f64| {
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            (panel.ActualHeight().unwrap_or(0.0) - expected_height).abs() < 0.5
+        });
+    };
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        if !laid_out() {
+            println!("     (実寸が付かない環境なので、大きさと位置は確かめずに通す)");
+            return;
+        }
+        assert_eq!(panel.ActualHeight().unwrap_or(f64::NAN), 45.0, "2 行");
+        assert_eq!(position(&boxes[0]), (0.0, 0.0, 100.0, 20.0));
+        assert_eq!(position(&boxes[1]), (110.0, 0.0, 100.0, 20.0));
+        assert_eq!(position(&boxes[2]), (0.0, 25.0, 100.0, 20.0));
+
+        // 幅が変われば行も変わる。
+        flow.set_sizing(Sizing::fixed(400.0, 0.0).height(naui_core::Length::Auto));
+        settle(20.0);
+        assert_eq!(panel.ActualHeight().unwrap_or(f64::NAN), 20.0, "1 行");
+        assert_eq!(position(&boxes[2]), (220.0, 0.0, 100.0, 20.0));
+
+        // 揃えは行の残りに置く。Fill の幅の子があればその子が受け取る。
+        flow.set_align(Align::End);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || position(&boxes[0]).0 > 0.0);
+        assert_eq!(position(&boxes[0]).0, 80.0, "右寄せ");
+        boxes[1].set_sizing(
+            Sizing::fixed(0.0, 0.0)
+                .width(naui_core::Length::Fill)
+                .height(naui_core::Length::Fill),
+        );
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || position(&boxes[0]).0 < 0.5);
+        assert_eq!(
+            position(&boxes[0]).0,
+            0.0,
+            "Fill の子があれば揃えは効かない"
+        );
+        assert_eq!(
+            position(&boxes[1]),
+            (110.0, 0.0, 180.0, 20.0),
+            "Fill の子が行の残りと行の高さを受け取る"
+        );
+
+        // 隠した子は場所も間隔も取らない。
+        flow.set_align(Align::Start);
+        boxes[1].set_visible(false);
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || position(&boxes[2]).0 < 111.0);
+        assert_eq!(position(&boxes[2]).0, 110.0);
+    }));
+
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+fn flow_inserts_and_removes_children(ui: &Ui) -> Result<()> {
+    let flow = ui.flow()?;
+    let first = ui.label("一")?;
+    let second = ui.label("二")?;
+    let third = ui.label("三")?;
+    flow.append(&first);
+    flow.append(&third);
+    flow.insert(1, &second);
+    assert_eq!(flow.len(), 3);
+    let panel = native::<naui_winui3::Microsoft::UI::Xaml::Controls::Panel>(&flow);
+    let texts = || -> Vec<String> {
+        let children = panel.Children().expect("Children");
+        (0..children.Size().unwrap_or(0))
+            .filter_map(|index| children.GetAt(index).ok())
+            .filter_map(|child| child.cast::<TextBlock>().ok())
+            .map(|text| text.Text().unwrap_or_default().to_string())
+            .collect()
+    };
+    assert_eq!(texts(), ["一", "二", "三"]);
+    // ほかの入れ物 (これ自身も) にいる子は断る。
+    flow.append(&first);
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&first);
+    assert_eq!((flow.len(), stack.len()), (3, 0));
+    flow.remove(0);
+    assert_eq!(texts(), ["二", "三"]);
+    flow.remove(5);
+    assert_eq!(flow.len(), 2);
+    flow.clear();
+    assert!(flow.is_empty());
+    assert!(texts().is_empty());
+    // 外した子はほかへ入れられる。
+    stack.append(&first);
+    stack.append(&second);
+    assert_eq!(stack.len(), 2);
     Ok(())
 }
 
