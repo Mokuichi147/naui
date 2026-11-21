@@ -1246,17 +1246,19 @@ fn typing_notifies_like_the_user(ui: &Ui) -> Result<()> {
     assert_eq!(*values.borrow(), [4.0]);
     number.submit();
     assert_eq!(*submits.borrow(), [4.0]);
-    // 数として読めない文字は値にならない (`GtkSpinButton` は数字以外を打たせない)。
-    // 確定すると元へ戻るはずだが、GTK の既定の更新方針では 0 になるので、
-    // ここでは確定まではしない。
+    // 数として読めない文字は値にならず、確定すると元の値へ戻る
+    // (`GtkSpinButton` は数字以外を打たせない)。
     number.enter_text("-");
     assert_eq!(values.borrow().len(), 1, "読めない文字は値にならない");
-    number.enter_text("4");
+    number.submit();
+    assert_eq!(number.value(), 4.0, "読めない文字は確定しても値を変えない");
+    assert_eq!(*values.borrow(), [4.0], "戻すときは通知しない");
+    assert_eq!(*submits.borrow(), [4.0, 4.0]);
     number.set_enabled(false);
     number.enter_text("7");
     number.submit();
     assert_eq!(number.value(), 4.0, "無効な欄には打てない");
-    assert_eq!(submits.borrow().len(), 1);
+    assert_eq!(submits.borrow().len(), 2);
 
     let combo = ui.editable_combo_box()?;
     combo.set_items(&["Apple", "Banana"]);
@@ -2837,6 +2839,33 @@ fn number_input_commits_before_submitting(ui: &Ui) -> Result<()> {
     text.emit_activate();
     assert_eq!(log.borrow()[2..], ["変更:100", "確定:100"]);
     assert_eq!(native.text().as_str(), "100");
+
+    // 数として読めない文字は、確定すると元の値と表示へ戻す (0 にしない)。
+    // 範囲の下限が 0 以上でも、`-` だけは打てる。
+    number.set_range(Some(0.0), Some(100.0));
+    for unreadable in ["", "-"] {
+        native.set_text(unreadable);
+        text.emit_activate();
+        assert_eq!(number.value(), 100.0, "{unreadable:?} は値を変えない");
+        assert_eq!(native.text().as_str(), "100", "{unreadable:?} は表示を戻す");
+    }
+    assert_eq!(log.borrow()[4..], ["確定:100", "確定:100"]);
+
+    // 打っている途中で読めた数は、GTK の値より先に naui の値になっている。
+    // 戻す先はその値 (GTK がまだ持っている前の値ではない)。
+    native.set_text("12");
+    native.set_text("");
+    text.emit_activate();
+    assert_eq!(number.value(), 12.0);
+    assert_eq!(native.text().as_str(), "12");
+    assert_eq!(log.borrow()[6..], ["変更:12", "確定:12"]);
+
+    // 欄を離れたときの確定 (`gtk_spin_button_update`) も同じく戻す。
+    native.set_text("-");
+    native.update();
+    assert_eq!(number.value(), 12.0);
+    assert_eq!(native.text().as_str(), "12");
+    assert_eq!(log.borrow().len(), 8, "Enter でなければ確定も知らせない");
     Ok(())
 }
 

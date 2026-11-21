@@ -572,9 +572,7 @@ that shape are covered in
 - `EditableComboBox` does not narrow options by typed text (pressing the arrow shows
   all options).
 - `NumberInput` (`GtkSpinButton`) does not let characters other than digits, a sign
-  and a decimal point be typed, and confirming text it cannot read as a number
-  (an empty field, or `-` alone) sets the value to 0 instead of reverting it as
-  the other platforms do.
+  and a decimal point be typed.
 - `Spinner` is `AdwSpinner`, which arrived in libadwaita 1.6. With libadwaita 1.5 it
   falls back to `GtkSpinner`, which has the same default size and 64 × 64 drawing
   limit but the older look.
