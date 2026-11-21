@@ -67,6 +67,9 @@ Microsoft.UI.Xaml.Controls.ContentDialogResult
 Microsoft.UI.Xaml.Controls.Control
 Microsoft.UI.Xaml.Controls.DatePicker
 Microsoft.UI.Xaml.Controls.DatePickerValueChangedEventArgs
+Microsoft.UI.Xaml.Controls.DragItemsCompletedEventArgs
+Microsoft.UI.Xaml.Controls.DragItemsStartingEventArgs
+Microsoft.UI.Xaml.Controls.DragItemsStartingEventHandler
 Microsoft.UI.Xaml.Controls.Expander
 Microsoft.UI.Xaml.Controls.ExpanderCollapsedEventArgs
 Microsoft.UI.Xaml.Controls.ExpanderExpandingEventArgs

@@ -25,7 +25,7 @@ use std::rc::Rc;
 
 use naui::{
     Align, Grid, GridCell, Label, Orientation, Padding, RadioGroup, Result, Sizing, Stack,
-    TextColor, TextStyle, Toast, Toggle, Track, Ui, Widget,
+    TextColor, TextStyle, Toast, ToastPriority, Toggle, Track, Ui, Widget,
 };
 
 /// 区分 1 つ分の画面の土台。
@@ -172,23 +172,27 @@ impl Form {
 
 /// 操作の結果を知らせるトースト。ギャラリー全体で 1 つを使い回す。
 ///
-/// トーストは同時に 1 つしか出ないので、知らせごとに作る必要は無い。
+/// トーストは 1 つずつ順に出るので、知らせごとに作ると古い知らせが列に溜まる。
+/// 1 つを使い回し、最新の文字だけを出す。操作の結果はすぐ見せたいので優先度は
+/// High にし、消えないトースト (Sticky) が出ていても後ろに並ばないようにする。
 #[derive(Clone)]
 pub(crate) struct Notice(Toast);
 
 impl Notice {
     pub(crate) fn new(ui: &Ui) -> Result<Self> {
-        Ok(Self(ui.toast("")?))
+        let toast = ui.toast("")?;
+        toast.set_priority(ToastPriority::High);
+        Ok(Self(toast))
     }
 
     /// `text` を知らせる。
     ///
-    /// 出ている間は文字だけを書き換える。スライダーを動かしている間や
+    /// 出ている間や並んでいる間は文字だけを書き換える。スライダーを動かしている間や
     /// 文字を打っている間のように通知が続けて届くと、出し直すたびに
     /// 消えては現れるのを繰り返してしまうため。
     pub(crate) fn show(&self, text: &str) {
         self.0.set_message(text);
-        if !self.0.is_visible() {
+        if !self.0.is_visible() && !self.0.is_queued() {
             self.0.show();
         }
     }

@@ -1,6 +1,6 @@
 use crate::sys;
 use crate::Widget;
-use naui_core::{ListItem, Point, Result, SelectionMode};
+use naui_core::{ListItem, Point, Result, RowMove, SelectionMode};
 
 /// A list of selectable rows. It scrolls by itself.
 ///
@@ -203,6 +203,80 @@ impl List {
     #[inline]
     pub fn on_context_menu(&self, f: impl FnMut(usize, Point) + 'static) {
         self.0.on_context_menu(f)
+    }
+
+    /// Lets the user rearrange the rows by dragging them within this list. Off by
+    /// default.
+    ///
+    /// The user drags a row, or the whole selection when the row pressed is selected,
+    /// and drops it between two other rows. naui moves the rows itself, the selection
+    /// stays on the rows it was on, and [`List::on_reorder`] tells the app what moved
+    /// so it can move its own data the same way. Rows that cannot be selected
+    /// ([`ListItem::enabled`] `false`, [`ListRow::selectable`] `false`) cannot be
+    /// dragged, but rows can be dropped next to them. Drops from other widgets and
+    /// other apps are refused.
+    ///
+    /// Where the rows will land is shown by the platform: a line between the rows on
+    /// macOS, a gap opening between them on Windows, and a thin line in the accent
+    /// color on Linux and the Web.
+    ///
+    /// On Windows, Alt + Shift + Up / Down also moves the focused row, with the
+    /// selection when it is in it, one place (`ListView`'s own keyboard reordering).
+    #[inline]
+    pub fn set_reorderable(&self, reorderable: bool) {
+        self.0.set_reorderable(reorderable)
+    }
+
+    #[inline]
+    pub fn is_reorderable(&self) -> bool {
+        self.0.is_reorderable()
+    }
+
+    /// Called after the user moved rows by dragging them ([`List::set_reorderable`]).
+    ///
+    /// The rows have already moved on screen and the selection has followed them, so
+    /// indices the app kept from earlier notifications point elsewhere now; map them
+    /// with [`RowMove::new_index`]. On selection [`List::on_select`] is not called,
+    /// since the same rows stay selected.
+    ///
+    /// Move the app's own data the same way inside it, with [`RowMove::apply`]. For rows
+    /// passed to [`List::set_row_builder`] this is required: the rows on screen are
+    /// built again from the app's data once this returns.
+    ///
+    /// ```no_run
+    /// # use naui::{List, ListItem};
+    /// # use std::cell::RefCell;
+    /// # use std::rc::Rc;
+    /// # fn wire(list: &List, cities: Rc<RefCell<Vec<String>>>) {
+    /// list.set_reorderable(true);
+    /// list.on_reorder(move |moved| moved.apply(&mut cities.borrow_mut()));
+    /// # }
+    /// ```
+    #[inline]
+    pub fn on_reorder(&self, f: impl FnMut(&RowMove) + 'static) {
+        self.0.on_reorder(f)
+    }
+
+    /// Moves `rows` into the gap `to` through the same path as the user's drag and
+    /// drop (notifies [`List::on_reorder`]).
+    ///
+    /// `to` counts the rows before the move, as in [`RowMove`]. As with the user's drag,
+    /// it does nothing unless the list is [reorderable](List::set_reorderable), rows that
+    /// cannot be selected are left where they are, and nothing is notified when no row
+    /// changes place.
+    #[inline]
+    pub fn drag_rows(&self, rows: &[usize], to: usize) {
+        self.0.drag_rows(rows, to)
+    }
+
+    /// Moves rows without notifying. The selection stays on the rows it was on.
+    ///
+    /// For rows passed to [`List::set_row_builder`], move the app's data first: the rows
+    /// on screen are built again from it. Rows past the end are left out. It works
+    /// whether or not the list is [reorderable](List::set_reorderable).
+    #[inline]
+    pub fn move_rows(&self, moved: &RowMove) {
+        self.0.move_rows(moved)
     }
 }
 
