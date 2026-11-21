@@ -231,8 +231,10 @@ that shape are covered in
 - Gradient stops that differ in both color and opacity blend slightly differently
   between platforms (some interpolate premultiplied colors, some not). Stops of one
   color fading out look the same everywhere.
-- `Canvas` pointer notifications distinguish buttons but not modifier keys (⇧,
-  Ctrl, and so on). Trackpad pinches do not arrive as zooming (on the Web,
+- `Canvas` pointer notifications carry the modifier keys held at the time of each
+  event (`PointerEvent::modifiers`), not those held when the drag began. On macOS
+  a Ctrl-click on a `Canvas` arrives as the primary button with `control` set, not
+  as a secondary click. Trackpad pinches do not arrive as zooming (on the Web,
   Chromium-based browsers and Firefox deliver them to `on_wheel` as wheel events
   with Ctrl). The amount per wheel notch is normalized to `WHEEL_STEP`, but when a
   browser on the Web passes pixels, the browser's amount is kept.

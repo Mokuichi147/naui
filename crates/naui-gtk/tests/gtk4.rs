@@ -1758,6 +1758,13 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
         ],
         "{seen:?}"
     );
+    // 修飾キーは処理中のイベントの状態から読む。シグナルを直接起こしたときは
+    // イベントが無いので空 (GTK4 ではアプリがイベントを作れず、押した状態は
+    // ここからは送れない。状態の読み替えは単体テストで見る)。
+    assert!(
+        seen.iter().all(|e| e.modifiers.is_empty()),
+        "イベントが無ければ修飾キーは空: {seen:?}"
+    );
     Ok(())
 }
 
@@ -1837,6 +1844,10 @@ fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
                 -2.0 * step
             ),
         ]
+    );
+    assert!(
+        seen.iter().all(|e| e.modifiers.is_empty()),
+        "イベントが無ければ修飾キーは空: {seen:?}"
     );
     assert!(
         pointer

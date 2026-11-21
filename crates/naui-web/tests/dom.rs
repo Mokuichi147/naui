@@ -25,8 +25,8 @@ use std::rc::Rc;
 use naui_core::{
     Align, Bitmap, ButtonRole, Color, DialogButtons, DialogResponse, EventResponse, Gradient,
     GridCell, Key, KeyEvent, LayoutDirection, Length, ListItem, MenuItem, MenuShortcut, MenuSpec,
-    NavItem, Orientation, Padding, Pane, Point, PointerButton, PointerPhase, PopupItem, Rect,
-    Result, RichText, ScrollMetrics, SelectionMode, SidebarItem, SidebarSection, Sizing,
+    Modifiers, NavItem, Orientation, Padding, Pane, Point, PointerButton, PointerPhase, PopupItem,
+    Rect, Result, RichText, ScrollMetrics, SelectionMode, SidebarItem, SidebarSection, Sizing,
     TableColumn, TableRow, TextColor, TextRun, TextStyle, Theme, ToastPosition, ToastPriority,
     ToolbarIcon, ToolbarItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
     ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
@@ -932,18 +932,26 @@ fn canvas_reports_pointer_events() {
         let element = canvas.native_element();
         let rect = element.get_bounding_client_rect();
         // `button` は変わったボタン (動きだけなら -1)、`buttons` はいま押している組。
+        let send_with =
+            |kind: &str, x: f64, y: f64, button: i16, buttons: u16, modifiers: Modifiers| {
+                let init = PointerEventInit::new();
+                init.set_bubbles(true);
+                init.set_cancelable(true);
+                init.set_client_x((rect.left() + x) as i32);
+                init.set_client_y((rect.top() + y) as i32);
+                init.set_pointer_id(1);
+                init.set_button(button);
+                init.set_buttons(buttons);
+                init.set_shift_key(modifiers.shift);
+                init.set_ctrl_key(modifiers.control);
+                init.set_alt_key(modifiers.alt);
+                init.set_meta_key(modifiers.meta);
+                let event = PointerEvent::new_with_event_init_dict(kind, &init)
+                    .expect("ポインターイベントの生成");
+                element.dispatch_event(&event).expect("イベントの配送");
+            };
         let send = |kind: &str, x: f64, y: f64, button: i16, buttons: u16| {
-            let init = PointerEventInit::new();
-            init.set_bubbles(true);
-            init.set_cancelable(true);
-            init.set_client_x((rect.left() + x) as i32);
-            init.set_client_y((rect.top() + y) as i32);
-            init.set_pointer_id(1);
-            init.set_button(button);
-            init.set_buttons(buttons);
-            let event = PointerEvent::new_with_event_init_dict(kind, &init)
-                .expect("ポインターイベントの生成");
-            element.dispatch_event(&event).expect("イベントの配送");
+            send_with(kind, x, y, button, buttons, Modifiers::default())
         };
         send("pointerdown", 30.0, 20.0, 0, 1);
         send("pointermove", 50.0, 40.0, -1, 1);
@@ -991,6 +999,85 @@ fn canvas_reports_pointer_events() {
                 (PointerPhase::Up, Some(PointerButton::Primary)),
             ]
         );
+        assert!(
+            seen.borrow().iter().all(|e| e.modifiers.is_empty()),
+            "修飾キーを押していなければ空: {:?}",
+            seen.borrow()
+        );
+
+        // 修飾キーは押下・移動・解放のどれにも、その時点の状態で付く。
+        // `pointermove` から読み替えた押下と解放にも付く。
+        seen.borrow_mut().clear();
+        let mods = |shift, control, alt, meta| Modifiers {
+            shift,
+            control,
+            alt,
+            meta,
+        };
+        send_with(
+            "pointermove",
+            5.0,
+            5.0,
+            -1,
+            0,
+            mods(false, false, true, false),
+        );
+        send_with(
+            "pointerdown",
+            30.0,
+            20.0,
+            0,
+            1,
+            mods(true, false, false, false),
+        );
+        send_with(
+            "pointermove",
+            40.0,
+            30.0,
+            -1,
+            1,
+            mods(true, true, false, false),
+        );
+        send_with(
+            "pointermove",
+            40.0,
+            30.0,
+            1,
+            1 | 4,
+            mods(false, false, false, true),
+        );
+        send_with(
+            "pointermove",
+            40.0,
+            30.0,
+            1,
+            1,
+            mods(false, true, false, false),
+        );
+        send_with("pointerup", 40.0, 30.0, 0, 0, mods(true, true, true, true));
+        let events: Vec<_> = seen
+            .borrow()
+            .iter()
+            .map(|e| (e.phase, e.modifiers))
+            .collect();
+        assert_eq!(
+            events,
+            vec![
+                (PointerPhase::Move, mods(false, false, true, false)),
+                (PointerPhase::Down, mods(true, false, false, false)),
+                (PointerPhase::Move, mods(true, true, false, false)),
+                (PointerPhase::Down, mods(false, false, false, true)),
+                (PointerPhase::Up, mods(false, true, false, false)),
+                (PointerPhase::Up, mods(true, true, true, true)),
+            ]
+        );
+        // Web では Ctrl も ⌘ も主の修飾キーに数える (キー入力と同じ)。
+        let primary: Vec<_> = seen
+            .borrow()
+            .iter()
+            .map(|e| e.modifiers.primary())
+            .collect();
+        assert_eq!(primary, vec![false, false, true, true, true, true]);
 
         // 右クリックでブラウザのコンテキストメニューを出さない。
         let init = web_sys::MouseEventInit::new();
@@ -1035,7 +1122,7 @@ fn canvas_reports_wheel() {
 
         let element = canvas.native_element();
         let rect = element.get_bounding_client_rect();
-        let send = |x: f64, y: f64, dx: f64, dy: f64, mode: u32| {
+        let send_with = |x: f64, y: f64, dx: f64, dy: f64, mode: u32, modifiers: Modifiers| {
             let init = WheelEventInit::new();
             init.set_bubbles(true);
             init.set_cancelable(true);
@@ -1044,9 +1131,16 @@ fn canvas_reports_wheel() {
             init.set_delta_x(dx);
             init.set_delta_y(dy);
             init.set_delta_mode(mode);
+            init.set_shift_key(modifiers.shift);
+            init.set_ctrl_key(modifiers.control);
+            init.set_alt_key(modifiers.alt);
+            init.set_meta_key(modifiers.meta);
             let event = WheelEvent::new_with_event_init_dict("wheel", &init).expect("wheel の生成");
             element.dispatch_event(&event).expect("イベントの配送");
             event.default_prevented()
+        };
+        let send = |x: f64, y: f64, dx: f64, dy: f64, mode: u32| {
+            send_with(x, y, dx, dy, mode, Modifiers::default())
         };
 
         // ピクセルはそのまま。Continue ならページのスクロールを止めない。
@@ -1058,9 +1152,27 @@ fn canvas_reports_wheel() {
             "Handled ならページのスクロールを止めること"
         );
         assert!(send(30.0, 20.0, 1.0, 0.0, WheelEvent::DOM_DELTA_PAGE));
+        // Ctrl を押しながらのホイール (トラックパッドのピンチもこの形で届く) は
+        // 修飾キー付きで届く。
+        let control = Modifiers {
+            control: true,
+            ..Modifiers::default()
+        };
+        assert!(send_with(
+            30.0,
+            20.0,
+            0.0,
+            4.0,
+            WheelEvent::DOM_DELTA_PIXEL,
+            control
+        ));
 
         let seen = seen.borrow();
-        assert_eq!(seen.len(), 3);
+        assert_eq!(seen.len(), 4);
+        assert!(seen[..3].iter().all(|e| e.modifiers.is_empty()), "{seen:?}");
+        assert_eq!(seen[3].modifiers, control);
+        assert!(seen[3].modifiers.primary());
+        let seen = &seen[..3];
         assert!(seen
             .iter()
             .all(|e| e.phase == PointerPhase::Wheel && e.button.is_none()));

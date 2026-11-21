@@ -18,7 +18,7 @@ use std::time::{Duration, Instant};
 use naui_core::{
     Align, Bitmap, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
     EventResponse, FileFilter, FilePickerMode, Fit, Gradient, GridCell, Length, ListItem, MenuItem,
-    MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
+    MenuShortcut, MenuSpec, Modifiers, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
     PointerButton, PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode,
     SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle,
     Theme, Time, ToastPosition, ToastPriority, ToolbarIcon, ToolbarItem, Track, TreeItem,
@@ -1697,7 +1697,7 @@ fn canvas_draws_the_broader_vocabulary(ui: &Ui) -> Result<()> {
 /// Mouse presses, drags and releases arrive converted from window coordinates to
 /// surface coordinates.
 fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
-    use objc2_core_graphics::{CGEvent, CGEventType, CGMouseButton};
+    use objc2_core_graphics::{CGEvent, CGEventFlags, CGEventType, CGMouseButton};
 
     let canvas = ui.canvas()?;
     canvas.set_sizing(
@@ -1719,12 +1719,12 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
     let native_window = window.native_window();
 
     // 面の (30, 20) をウィンドウ座標へ直して、本物の NSEvent を作る。
-    let send = |kind: NSEventType, x: f64, y: f64| {
+    let send_with = |kind: NSEventType, x: f64, y: f64, flags: NSEventModifierFlags| {
         let point = view.convertPoint_toView(NSPoint::new(x, y), None);
         let event = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
             kind,
             point,
-            NSEventModifierFlags::empty(),
+            flags,
             0.0,
             native_window.windowNumber(),
             None,
@@ -1740,9 +1740,12 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
             NSEventType::RightMouseDown => view.rightMouseDown(&event),
             NSEventType::RightMouseUp => view.rightMouseUp(&event),
             NSEventType::OtherMouseDown => view.otherMouseDown(&event),
+            NSEventType::MouseMoved => view.mouseMoved(&event),
             _ => view.otherMouseUp(&event),
         }
     };
+    let send =
+        |kind: NSEventType, x: f64, y: f64| send_with(kind, x, y, NSEventModifierFlags::empty());
     send(NSEventType::LeftMouseDown, 30.0, 20.0);
     send(NSEventType::LeftMouseDragged, 50.0, 40.0);
     send(NSEventType::LeftMouseUp, 50.0, 40.0);
@@ -1783,11 +1786,13 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
 
     // 左右以外は `otherMouseDown:` へまとめて届くので、ボタンの番号で見分ける。
     // `mouseEventWithType` では番号を決められないので CGEvent から作る
-    // (位置はスクリーン座標になるので、ここでは見ない)。
+    // (位置はスクリーン座標になるので、ここでは見ない)。修飾キーは本物の
+    // キーボードの状態を拾わないよう、空と明示する。
     let other = |kind: CGEventType, number: u32| {
         let cg =
             CGEvent::new_mouse_event(None, kind, NSPoint::new(0.0, 0.0), CGMouseButton(number))
                 .expect("マウスの CGEvent");
+        CGEvent::set_flags(Some(&cg), CGEventFlags::empty());
         let event = NSEvent::eventWithCGEvent(&cg).expect("マウスの NSEvent");
         if kind == CGEventType::OtherMouseDown {
             view.otherMouseDown(&event);
@@ -1813,6 +1818,93 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
             (PointerPhase::Down, Some(PointerButton::Forward)),
         ],
         "右・中・側面のボタンも見分けて届くこと"
+    );
+    assert!(
+        seen.borrow().iter().all(|e| e.modifiers.is_empty()),
+        "修飾キーを押していなければ空: {:?}",
+        seen.borrow()
+    );
+
+    // 修飾キーは押下・移動・解放のどれにも、その時点の状態で付く。
+    seen.borrow_mut().clear();
+    let shift = NSEventModifierFlags::Shift;
+    send_with(
+        NSEventType::MouseMoved,
+        5.0,
+        5.0,
+        NSEventModifierFlags::Option,
+    );
+    send_with(NSEventType::LeftMouseDown, 30.0, 20.0, shift);
+    send_with(
+        NSEventType::LeftMouseDragged,
+        40.0,
+        30.0,
+        shift | NSEventModifierFlags::Command,
+    );
+    send_with(
+        NSEventType::LeftMouseUp,
+        40.0,
+        30.0,
+        NSEventModifierFlags::Control,
+    );
+    send_with(
+        NSEventType::RightMouseDown,
+        10.0,
+        10.0,
+        NSEventModifierFlags::Command,
+    );
+    send_with(
+        NSEventType::RightMouseUp,
+        10.0,
+        10.0,
+        // Caps Lock や関数キーの印は修飾キーに数えない。
+        NSEventModifierFlags::CapsLock | NSEventModifierFlags::Function,
+    );
+    let mods = |shift, control, alt, meta| Modifiers {
+        shift,
+        control,
+        alt,
+        meta,
+    };
+    let events: Vec<_> = seen
+        .borrow()
+        .iter()
+        .map(|e| (e.phase, e.modifiers))
+        .collect();
+    assert_eq!(
+        events,
+        vec![
+            (PointerPhase::Move, mods(false, false, true, false)),
+            (PointerPhase::Down, mods(true, false, false, false)),
+            (PointerPhase::Move, mods(true, false, false, true)),
+            (PointerPhase::Up, mods(false, true, false, false)),
+            (PointerPhase::Down, mods(false, false, false, true)),
+            (PointerPhase::Up, Modifiers::default()),
+        ],
+        "修飾キーが相ごとに届くこと"
+    );
+    assert!(seen.borrow()[4].modifiers.primary(), "⌘ は主の修飾キー");
+
+    // `otherMouseDown:` へ届くボタンも同じ。
+    seen.borrow_mut().clear();
+    let cg = CGEvent::new_mouse_event(
+        None,
+        CGEventType::OtherMouseDown,
+        NSPoint::new(0.0, 0.0),
+        CGMouseButton(2),
+    )
+    .expect("マウスの CGEvent");
+    CGEvent::set_flags(
+        Some(&cg),
+        CGEventFlags::MaskShift | CGEventFlags::MaskAlternate,
+    );
+    view.otherMouseDown(&NSEvent::eventWithCGEvent(&cg).expect("マウスの NSEvent"));
+    assert_eq!(
+        seen.borrow()
+            .iter()
+            .map(|e| (e.button, e.modifiers))
+            .collect::<Vec<_>>(),
+        vec![(Some(PointerButton::Middle), mods(true, false, true, false))]
     );
     window.close();
     Ok(())
@@ -1846,7 +1938,7 @@ define_class!(
 /// depends on the environment (it moved locally but not on the CI runner), so
 /// whether it was passed on is observed with a recording responder.
 fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
-    use objc2_core_graphics::{CGEvent, CGScrollEventUnit};
+    use objc2_core_graphics::{CGEvent, CGEventFlags, CGScrollEventUnit};
 
     let canvas = ui.canvas()?;
     canvas.set_sizing(
@@ -1879,12 +1971,14 @@ fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
 
     // 本物のホイールの NSEvent は CGEvent からしか作れない。正の量は上へ
     // (中身が下へ動く向き) なので、負の量で下へ読み進める。
-    let wheel = |unit: CGScrollEventUnit, amount: i32| {
+    let wheel_with = |unit: CGScrollEventUnit, amount: i32, flags: CGEventFlags| {
         let cg = CGEvent::new_scroll_wheel_event2(None, unit, 1, amount, 0, 0)
             .expect("ホイールの CGEvent");
+        CGEvent::set_flags(Some(&cg), flags);
         let event = NSEvent::eventWithCGEvent(&cg).expect("ホイールの NSEvent");
         view.scrollWheel(&event);
     };
+    let wheel = |unit, amount| wheel_with(unit, amount, CGEventFlags::empty());
 
     // 細かく測れる量 (ピクセル) はそのまま、向きは「下へ読み進めると正」。
     wheel(CGScrollEventUnit::Pixel, -30);
@@ -1893,6 +1987,7 @@ fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].phase, PointerPhase::Wheel);
         assert_eq!(seen[0].button, None);
+        assert!(seen[0].modifiers.is_empty(), "{:?}", seen[0]);
         assert_eq!(
             (seen[0].wheel_x, seen[0].wheel_y),
             (0.0, 30.0),
@@ -1924,6 +2019,28 @@ fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
         1,
         "Handled なら次のレスポンダーへは回さないこと"
     );
+
+    // ⌘ を押しながらのホイール (拡大縮小によく使う) は修飾キー付きで届く。
+    wheel_with(
+        CGScrollEventUnit::Line,
+        -1,
+        CGEventFlags::MaskCommand | CGEventFlags::MaskControl,
+    );
+    {
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 3);
+        assert_eq!(
+            seen[2].modifiers,
+            Modifiers {
+                control: true,
+                meta: true,
+                ..Modifiers::default()
+            },
+            "{:?}",
+            seen[2]
+        );
+        assert!(seen[2].modifiers.primary());
+    }
 
     unsafe { view.setNextResponder(original.as_deref()) };
     window.close();
