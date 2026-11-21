@@ -10129,7 +10129,7 @@ fn toast_closed_from_the_keyboard_leaves_no_freed_focus(ui: &Ui) -> Result<()> {
     tick(&overlay);
 
     let toast = ui.toast("削除しました")?;
-    toast.set_action("元に戻す");
+    toast.set_actions(&["元に戻す"]);
     toast.set_timeout(0.0);
     toast.show();
     tick(&overlay);
