@@ -28,20 +28,22 @@ use std::rc::Rc;
 
 use dispatch2::{DispatchQueue, MainThreadBound};
 use naui_core::{
-    Align, ListItem, Orientation, Point, Result, RowSource, SelectionMode, Sizing, TextColor,
-    TextStyle,
+    Align, ListItem, Orientation, Point, Result, RowMove, RowSource, SelectionMode, Sizing,
+    TextColor, TextStyle,
 };
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
 use objc2_app_kit::{
-    NSColor, NSControlTextEditingDelegate, NSEvent, NSEventModifierFlags, NSLayoutConstraint,
-    NSMenu, NSScrollView, NSTableCellView, NSTableColumn, NSTableColumnResizingOptions,
-    NSTableView, NSTableViewColumnAutoresizingStyle, NSTableViewDataSource, NSTableViewDelegate,
-    NSTableViewStyle, NSTextField, NSView, NSViewNoIntrinsicMetric,
+    NSColor, NSControlTextEditingDelegate, NSDragOperation, NSDraggingInfo, NSDraggingSession,
+    NSEvent, NSEventModifierFlags, NSLayoutConstraint, NSMenu, NSPasteboardItem, NSPasteboardType,
+    NSPasteboardWriting, NSScrollView, NSTableCellView, NSTableColumn,
+    NSTableColumnResizingOptions, NSTableView, NSTableViewColumnAutoresizingStyle,
+    NSTableViewDataSource, NSTableViewDelegate, NSTableViewDropOperation, NSTableViewStyle,
+    NSTextField, NSView, NSViewNoIntrinsicMetric,
 };
 use objc2_foundation::{
-    NSArray, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSSize, NSString,
+    NSArray, NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSPoint, NSSize, NSString,
 };
 
 use crate::row_cell::{CellOwner, WidgetCell};
@@ -307,6 +309,21 @@ impl ListRows {
         self.claimed.borrow_mut().clear();
     }
 
+    /// Moves the rows, along with what was built for them.
+    fn move_rows(&self, moved: &RowMove) {
+        self.source.move_rows(moved);
+        let built = std::mem::take(&mut *self.built.borrow_mut());
+        *self.built.borrow_mut() = built
+            .into_iter()
+            .map(|(index, row)| (moved.new_index(index), row))
+            .collect();
+        let claimed = std::mem::take(&mut *self.claimed.borrow_mut());
+        *self.claimed.borrow_mut() = claimed
+            .into_iter()
+            .map(|index| moved.new_index(index))
+            .collect();
+    }
+
     /// Forgets a row that left the screen, so built rows do not pile up without limit.
     fn forget_row(&self, index: usize) {
         self.built.borrow_mut().remove(&index);
@@ -505,6 +522,23 @@ struct SourceState {
     silent: Rc<Cell<bool>>,
     /// The row height decided by the app ([`List::set_row_height`]).
     fixed_row_height: Rc<Cell<Option<f64>>>,
+    /// Whether the user can drag rows ([`List::set_reorderable`]).
+    reorderable: Cell<bool>,
+    /// The rows being dragged out of this list, from the start of the drag to its end.
+    ///
+    /// This is what a drag carries within the app: the pasteboard gets only a marker of
+    /// the type [`ROW_DRAG_TYPE`], and a drop is taken only when its source is this
+    /// table and these rows are set.
+    dragging: RefCell<Option<Vec<usize>>>,
+    /// The list, for moving the rows when they are dropped. Set right after it is made.
+    list: RefCell<std::rc::Weak<ListInner>>,
+}
+
+/// The pasteboard type that marks rows dragged within a naui `List`.
+const ROW_DRAG_TYPE: &str = "dev.naui.list-rows";
+
+fn row_drag_type() -> Retained<NSPasteboardType> {
+    NSString::from_str(ROW_DRAG_TYPE)
 }
 
 define_class!(
@@ -520,6 +554,67 @@ define_class!(
         #[unsafe(method(numberOfRowsInTableView:))]
         fn number_of_rows(&self, _table_view: &NSTableView) -> NSInteger {
             self.ivars().rows.len() as NSInteger
+        }
+
+        /// What a row puts on the pasteboard when dragged: only a marker. Rows that
+        /// cannot be selected answer `nil`, so they cannot be dragged.
+        #[unsafe(method_id(tableView:pasteboardWriterForRow:))]
+        fn pasteboard_writer_for_row(
+            &self,
+            _table_view: &NSTableView,
+            row: NSInteger,
+        ) -> Option<Retained<ProtocolObject<dyn NSPasteboardWriting>>> {
+            self.writer_for_row(row)
+        }
+
+        #[unsafe(method(tableView:draggingSession:willBeginAtPoint:forRowIndexes:))]
+        fn dragging_will_begin(
+            &self,
+            _table_view: &NSTableView,
+            _session: Option<&NSDraggingSession>,
+            _screen_point: NSPoint,
+            row_indexes: &NSIndexSet,
+        ) {
+            let rows = indices_of(row_indexes, self.ivars().rows.len());
+            self.ivars().dragging.replace(Some(rows));
+        }
+
+        #[unsafe(method(tableView:draggingSession:endedAtPoint:operation:))]
+        fn dragging_ended(
+            &self,
+            _table_view: &NSTableView,
+            _session: Option<&NSDraggingSession>,
+            _screen_point: NSPoint,
+            _operation: NSDragOperation,
+        ) {
+            self.ivars().dragging.take();
+        }
+
+        /// Takes only this table's own rows, and always between two rows.
+        #[unsafe(method(tableView:validateDrop:proposedRow:proposedDropOperation:))]
+        fn validate_drop(
+            &self,
+            table_view: &NSTableView,
+            info: &ProtocolObject<dyn NSDraggingInfo>,
+            row: NSInteger,
+            _operation: NSTableViewDropOperation,
+        ) -> NSDragOperation {
+            if self.dragged_rows(table_view, info).is_none() {
+                return NSDragOperation::None;
+            }
+            table_view.setDropRow_dropOperation(row, NSTableViewDropOperation::Above);
+            NSDragOperation::Move
+        }
+
+        #[unsafe(method(tableView:acceptDrop:row:dropOperation:))]
+        fn accept_drop(
+            &self,
+            table_view: &NSTableView,
+            info: &ProtocolObject<dyn NSDraggingInfo>,
+            row: NSInteger,
+            _operation: NSTableViewDropOperation,
+        ) -> bool {
+            self.accept_rows(table_view, info, row)
         }
     }
 
@@ -765,6 +860,62 @@ fn custom_cell_view(
 }
 
 impl ListSource {
+    fn writer_for_row(
+        &self,
+        row: NSInteger,
+    ) -> Option<Retained<ProtocolObject<dyn NSPasteboardWriting>>> {
+        let state = self.ivars();
+        if !state.reorderable.get() {
+            return None;
+        }
+        let row = usize::try_from(row)
+            .ok()
+            .filter(|&row| state.rows.is_selectable(row))?;
+        let item = NSPasteboardItem::new();
+        item.setString_forType(&NSString::from_str(&row.to_string()), &row_drag_type());
+        Some(ProtocolObject::from_retained(item))
+    }
+
+    /// Moves the dropped rows into the gap above `row`.
+    fn accept_rows(
+        &self,
+        table_view: &NSTableView,
+        info: &ProtocolObject<dyn NSDraggingInfo>,
+        row: NSInteger,
+    ) -> bool {
+        let (Some(rows), Ok(to)) = (self.dragged_rows(table_view, info), usize::try_from(row))
+        else {
+            return false;
+        };
+        let list = self.ivars().list.borrow().upgrade();
+        match list {
+            Some(inner) => {
+                List(inner).drop_rows(&rows, to);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// The rows a drag carries, if it is a drag of this table's own rows that can be
+    /// dropped here.
+    fn dragged_rows(
+        &self,
+        table_view: &NSTableView,
+        info: &ProtocolObject<dyn NSDraggingInfo>,
+    ) -> Option<Vec<usize>> {
+        let state = self.ivars();
+        if !state.reorderable.get() {
+            return None;
+        }
+        let source = info.draggingSource()?;
+        let table: &AnyObject = table_view.as_ref();
+        if !std::ptr::eq(&*source, table) {
+            return None;
+        }
+        state.dragging.borrow().clone()
+    }
+
     fn new(mtm: MainThreadMarker, state: SourceState) -> Retained<Self> {
         let this = Self::alloc(mtm).set_ivars(state);
         unsafe { msg_send![super(this), init] }
@@ -772,6 +923,17 @@ impl ListSource {
 }
 
 /// Reads the table's selection as an ascending sequence.
+/// The indices in `set` below `len`, in ascending order.
+fn indices_of(set: &NSIndexSet, len: usize) -> Vec<usize> {
+    let mut indices = Vec::new();
+    let mut index = set.firstIndex();
+    while index != objc2_foundation::NSNotFound as usize && index < len {
+        indices.push(index);
+        index = set.indexGreaterThanIndex(index);
+    }
+    indices
+}
+
 pub(crate) fn selected_indices(table: &NSTableView, len: usize) -> Vec<usize> {
     let indexes = table.selectedRowIndexes();
     let mut picked = Vec::with_capacity(indexes.count());
@@ -873,8 +1035,10 @@ struct ListInner {
     /// The selection to apply once the table has reloaded, while a reload is waiting for
     /// a row build to finish ([`List::reload_after_build`]).
     pending_selection: RefCell<Option<Vec<usize>>>,
+    /// The handler told about rows the user moved ([`List::on_reorder`]).
+    reorder: ValueHandler<RowMove>,
     /// Delegates and data sources are weak references, so they are held.
-    _source: Retained<ListSource>,
+    source: Retained<ListSource>,
 }
 
 /// A vertical list of selectable rows (NSTableView).
@@ -940,6 +1104,9 @@ impl List {
                 handler: handler.clone(),
                 silent: silent.clone(),
                 fixed_row_height: fixed_row_height.clone(),
+                reorderable: Cell::new(false),
+                dragging: RefCell::new(None),
+                list: RefCell::new(std::rc::Weak::new()),
             },
         );
         unsafe {
@@ -966,7 +1133,11 @@ impl List {
         let document: &NSView = &table;
         scroll.setDocumentView(Some(document));
 
-        Self(Rc::new(ListInner {
+        // ほかのアプリへは出さない (同じアプリの中の並べ替えだけ)。
+        table.setDraggingSourceOperationMask_forLocal(NSDragOperation::None, false);
+        table.setDraggingSourceOperationMask_forLocal(NSDragOperation::Move, true);
+
+        let inner = Rc::new(ListInner {
             scroll,
             table,
             rows,
@@ -976,8 +1147,11 @@ impl List {
             handler,
             silent,
             pending_selection: RefCell::new(None),
-            _source: source,
-        }))
+            reorder: ValueHandler::default(),
+            source,
+        });
+        inner.source.ivars().list.replace(Rc::downgrade(&inner));
+        Self(inner)
     }
 
     /// Rebuilds the rows. Indices change meaning, so the selection is cleared.
@@ -1275,6 +1449,99 @@ impl List {
             .ivars()
             .context_menu
             .set(move |(index, point)| f(index, point));
+    }
+
+    /// Lets the user rearrange the rows by dragging them within this list. Off by
+    /// default.
+    ///
+    /// This is `NSTableView`'s own drag and drop: the user drags a row, or the selection
+    /// when the row pressed is selected, AppKit draws the line where the rows will land
+    /// and scrolls while the pointer is near an edge, and naui moves the rows when they
+    /// are dropped ([`List::on_reorder`]). Rows that cannot be selected cannot be
+    /// dragged. Drops from other widgets and other apps are refused, and the rows
+    /// cannot be dragged out of the app.
+    pub fn set_reorderable(&self, reorderable: bool) {
+        self.0.source.ivars().reorderable.set(reorderable);
+        if reorderable {
+            let types = NSArray::from_retained_slice(&[row_drag_type()]);
+            self.0.table.registerForDraggedTypes(&types);
+        } else {
+            self.0.table.unregisterDraggedTypes();
+        }
+    }
+
+    pub fn is_reorderable(&self) -> bool {
+        self.0.source.ivars().reorderable.get()
+    }
+
+    /// Called after the user moved rows by dragging them ([`List::set_reorderable`]).
+    ///
+    /// The rows have already moved and the selection has followed them ([`List::on_select`]
+    /// is not called). Move the app's data the same way with [`RowMove::apply`]; for
+    /// rows from [`List::set_row_builder`], rows built later read it.
+    pub fn on_reorder(&self, mut f: impl FnMut(&RowMove) + 'static) {
+        self.0.reorder.set(move |moved: RowMove| f(&moved));
+    }
+
+    /// Moves `rows` into the gap `to` through the same path as the user's drop
+    /// (notifies). Does nothing unless the list is reorderable; rows that cannot be
+    /// selected stay where they are.
+    pub fn drag_rows(&self, rows: &[usize], to: usize) {
+        if self.is_reorderable() {
+            self.drop_rows(rows, to);
+        }
+    }
+
+    /// Moves rows without notifying. The selection stays on the rows it was on.
+    pub fn move_rows(&self, moved: &RowMove) {
+        self.apply_move(moved);
+    }
+
+    /// Moves the rows the user dropped, and notifies.
+    fn drop_rows(&self, rows: &[usize], to: usize) {
+        let rows = rows
+            .iter()
+            .copied()
+            .filter(|&row| self.0.rows.is_selectable(row));
+        if let Some(moved) = self.apply_move(&RowMove::new(rows, to)) {
+            self.0.reorder.emit(moved);
+        }
+    }
+
+    /// Moves the rows on screen and the selection with them. `None` if nothing moved.
+    fn apply_move(&self, moved: &RowMove) -> Option<RowMove> {
+        let moved = moved.within(self.len())?;
+        let picked = moved.new_indices(&self.selection());
+        self.0.rows.move_rows(&moved);
+        // 行を組み立てている最中には動かせない。あとで読み直す。
+        if self.0.rows.is_building() {
+            self.0.rows.source.invalidate();
+            self.reload_after_build();
+            self.without_notifying(|this| this.apply_selection(&picked));
+            return Some(moved);
+        }
+        self.without_notifying(|this| {
+            this.show_move(&moved);
+            this.apply_selection(&picked);
+            this.0.scroll.invalidate_document_size();
+        });
+        Some(moved)
+    }
+
+    /// Moves the row views the way `moved` says, so AppKit animates them into place.
+    /// Very many moved rows reload instead.
+    fn show_move(&self, moved: &RowMove) {
+        const MOVE_LIMIT: usize = 1000;
+        if moved.rows.len() > MOVE_LIMIT {
+            self.0.table.reloadData();
+            return;
+        }
+        let table = &self.0.table;
+        table.beginUpdates();
+        for (from, to) in moved.steps() {
+            table.moveRowAtIndex_toIndex(from as NSInteger, to as NSInteger);
+        }
+        table.endUpdates();
     }
 
     /// The inner `NSTableView`. Public as a backend-specific escape hatch.

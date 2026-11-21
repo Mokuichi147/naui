@@ -30,15 +30,15 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui_core::{
-    keeps_row_window, list_row_window, Align, ListItem, Orientation, Point, Result, RowSource,
-    RowWindow, SelectionMode, Sizing, TextColor, TextStyle, ROW_WINDOW_OVERSCAN,
+    keeps_row_window, list_row_window, Align, ListItem, Orientation, Point, Result, RowMove,
+    RowSource, RowWindow, SelectionMode, Sizing, TextColor, TextStyle, ROW_WINDOW_OVERSCAN,
     ROW_WINDOW_THRESHOLD,
 };
 use wasm_bindgen::prelude::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use web_sys::{
-    Document, Element, Event, HtmlElement, HtmlOptionElement, HtmlSelectElement, KeyboardEvent,
-    MouseEvent, ResizeObserver,
+    Document, DragEvent, Element, Event, HtmlElement, HtmlOptionElement, HtmlSelectElement,
+    KeyboardEvent, MouseEvent, ResizeObserver,
 };
 
 use crate::widgets::{create, impl_widget, Label, Listener, Stack, ValueHandler, Widget};
@@ -359,7 +359,22 @@ struct ListInner {
     _row_listeners: RefCell<Vec<Listener>>,
     /// `on_file_drop`.
     file_drop: crate::file_drop::FileDrop,
+    /// Whether the user can drag rows ([`List::set_reorderable`]).
+    reorderable: Cell<bool>,
+    /// The rows being dragged out of this list, from `dragstart` to the drop.
+    ///
+    /// This is what a drag carries within the page; the `DataTransfer` gets only
+    /// [`ROW_DRAG_TYPE`] with this list's id.
+    dragging: RefCell<Option<Vec<usize>>>,
+    /// The row showing where a drop would land, and whether the line is at its bottom.
+    drop_marker: RefCell<Option<(HtmlElement, bool)>>,
+    /// The handler told about rows the user moved ([`List::on_reorder`]).
+    reorder: ValueHandler<RowMove>,
 }
+
+/// The `DataTransfer` type that marks rows dragged within a naui `List`. Its data is
+/// the id of the list they come from.
+const ROW_DRAG_TYPE: &str = "application/x-naui-list-rows";
 
 impl Drop for ListInner {
     fn drop(&mut self) {
@@ -419,6 +434,10 @@ impl List {
             context_menu: ValueHandler::default(),
             _row_listeners: RefCell::new(Vec::new()),
             file_drop: Default::default(),
+            reorderable: Cell::new(false),
+            dragging: RefCell::new(None),
+            drop_marker: RefCell::new(None),
+            reorder: ValueHandler::default(),
         }));
         this.build_select()?;
         this.listen_row_events()?;
@@ -564,6 +583,109 @@ impl List {
             self.update_window();
         } else {
             self.rebuild();
+        }
+    }
+
+    /// Lets the user rearrange the rows by dragging them within this list. Off by
+    /// default.
+    ///
+    /// This is HTML drag and drop: the rows become `draggable`, the user drags a row, or
+    /// the selection when the row pressed is selected, a line in the system's highlight
+    /// color shows where the rows will land, and naui moves the rows when they are
+    /// dropped ([`List::on_reorder`]). Rows that cannot be selected cannot be dragged.
+    /// Drops from other widgets, other lists and other pages are refused. A list of
+    /// text-only rows becomes a `<ul role="listbox">` while it is reorderable, since an
+    /// `<option>` cannot be dragged.
+    pub fn set_reorderable(&self, reorderable: bool) {
+        if self.0.reorderable.replace(reorderable) == reorderable {
+            return;
+        }
+        // 選択も残す。行の意味は変わらない。
+        let picked = self.selection();
+        self.rebuild_body();
+        self.write_selection(&picked);
+        self.update_window();
+    }
+
+    pub fn is_reorderable(&self) -> bool {
+        self.0.reorderable.get()
+    }
+
+    /// Called after the user moved rows by dragging them ([`List::set_reorderable`]).
+    ///
+    /// The selection has followed the rows ([`List::on_select`] is not called). Move the
+    /// app's data the same way with [`RowMove::apply`]; the rows on screen are built
+    /// again once this returns, and for rows from [`List::set_row_builder`] they read
+    /// it.
+    pub fn on_reorder(&self, mut f: impl FnMut(&RowMove) + 'static) {
+        self.0.reorder.set(move |moved: RowMove| f(&moved));
+    }
+
+    /// Moves `rows` into the gap `to` through the same path as the user's drop
+    /// (notifies). Does nothing unless the list is reorderable; rows that cannot be
+    /// selected stay where they are.
+    pub fn drag_rows(&self, rows: &[usize], to: usize) {
+        if self.is_reorderable() {
+            self.drop_rows(rows, to);
+        }
+    }
+
+    /// Moves rows without notifying. The selection stays on the rows it was on.
+    pub fn move_rows(&self, moved: &RowMove) {
+        self.apply_move(moved, false);
+    }
+
+    /// Moves the rows the user dropped, and notifies.
+    fn drop_rows(&self, rows: &[usize], to: usize) {
+        let rows = rows.iter().copied().filter(|&row| self.is_selectable(row));
+        self.apply_move(&RowMove::new(rows, to), true);
+    }
+
+    /// Moves the rows and the selection with them, notifies if asked, and builds the
+    /// rows on screen again.
+    ///
+    /// The app moves its data in the notification, and rows from a builder read it, so
+    /// the rows are built only after it. If the app replaced the rows in it, they are
+    /// built already.
+    fn apply_move(&self, moved: &RowMove, notify: bool) {
+        let Some(moved) = moved.within(self.len()) else {
+            return;
+        };
+        self.0.rows.move_rows(&moved);
+        let claimed: std::collections::HashSet<usize> = self
+            .0
+            .claimed
+            .borrow()
+            .iter()
+            .map(|&index| moved.new_index(index))
+            .collect();
+        *self.0.claimed.borrow_mut() = claimed;
+        let picked = moved.new_indices(&self.selection());
+        *self.0.selected.borrow_mut() = picked;
+        let remap = |cell: &Cell<Option<usize>>| cell.set(cell.get().map(|i| moved.new_index(i)));
+        remap(&self.0.active);
+        remap(&self.0.anchor);
+        let generation = self.0.rows.generation();
+        if notify {
+            self.0.reorder.emit(moved);
+        }
+        if self.0.rows.generation() != generation {
+            return;
+        }
+        // 行を組み立てる関数の中から呼ばれたら、組み立てている側が最初からやり直す。
+        if self.0.rebuilding.get() {
+            self.0.rows.invalidate();
+            return;
+        }
+        // `<select>` (並べ替えを許していないときだけ) は中身ごと作り直す。
+        let is_listbox = matches!(&*self.0.body.borrow(), Body::Listbox { .. });
+        if is_listbox {
+            let _ = self.build_window();
+            self.sync_active_descendant();
+        } else {
+            let picked = self.selection();
+            self.rebuild_body();
+            self.write_selection(&picked);
         }
     }
 
@@ -912,6 +1034,9 @@ impl List {
             return Ok((option, None));
         }
 
+        if self.0.reorderable.get() && row.selectable {
+            option.set_draggable(true);
+        }
         let selectable = row.selectable;
         let listener = Listener::attach_event(option.as_ref(), "click", {
             let weak = Rc::downgrade(&self.0);
@@ -1007,7 +1132,9 @@ impl List {
         self.0.realized.borrow_mut().clear();
         // `<option>` はテキストしか持てず、作った分だけ重くなり、高さも指定できない。
         // そのどれにも当たらないときだけブラウザ標準の `<select>` を使い続ける。
+        // `<option>` はドラッグできないので、並べ替えるリストも組み立てる。
         let plain = !self.0.rows.is_built()
+            && !self.0.reorderable.get()
             && self.len() <= ROW_WINDOW_THRESHOLD
             && self.0.fixed_row_height.get().is_none()
             && !self.0.rows.any_stored(|row| !row.fits_an_option());
@@ -1375,8 +1502,189 @@ impl List {
                 }
             }
         })?);
+        self.listen_drag_events(root, &mut listeners)?;
         *self.0._row_listeners.borrow_mut() = listeners;
         Ok(())
+    }
+
+    /// Receives drags of rows on the outer frame: `dragstart` from a row, `dragover`
+    /// and `drop` anywhere over the list, `dragleave` and `dragend` to clear up.
+    fn listen_drag_events(
+        &self,
+        root: &web_sys::EventTarget,
+        listeners: &mut Vec<Listener>,
+    ) -> Result<()> {
+        let weak = Rc::downgrade(&self.0);
+        let with_list = move |f: fn(&List, &DragEvent)| {
+            let weak = weak.clone();
+            move |event: Event| {
+                let (Some(inner), Some(event)) = (weak.upgrade(), event.dyn_ref::<DragEvent>())
+                else {
+                    return;
+                };
+                f(&List(inner), event);
+            }
+        };
+        listeners.push(Listener::attach_event(
+            root,
+            "dragstart",
+            with_list(List::on_drag_start),
+        )?);
+        listeners.push(Listener::attach_event(
+            root,
+            "dragover",
+            with_list(List::on_drag_over),
+        )?);
+        listeners.push(Listener::attach_event(
+            root,
+            "dragleave",
+            with_list(|list, event| {
+                // 枠の中の要素から要素へ移るときにも来るので、枠の外へ出たときだけ消す。
+                let inside = event
+                    .related_target()
+                    .and_then(|node| node.dyn_into::<web_sys::Node>().ok())
+                    .is_some_and(|node| list.0.root.contains(Some(&node)));
+                if !inside {
+                    list.show_drop_marker(None);
+                }
+            }),
+        )?);
+        listeners.push(Listener::attach_event(
+            root,
+            "drop",
+            with_list(List::on_drop),
+        )?);
+        listeners.push(Listener::attach_event(
+            root,
+            "dragend",
+            with_list(|list, _| {
+                list.show_drop_marker(None);
+                list.0.dragging.take();
+            }),
+        )?);
+        Ok(())
+    }
+
+    /// A row starts being dragged: it takes the selection when the row is in it.
+    fn on_drag_start(&self, event: &DragEvent) {
+        let Some((index, row)) = self.row_of_event(event) else {
+            return;
+        };
+        if !self.0.reorderable.get() || !self.is_selectable(index) {
+            return;
+        }
+        // 行の中のコントロール (入力欄の文字など) から始まったドラッグは、そのもの。
+        if control_was_targeted(&row, event) {
+            return;
+        }
+        let Some(data) = event.data_transfer() else {
+            return;
+        };
+        let selection = self.selection();
+        let rows = match selection.contains(&index) {
+            true => selection
+                .into_iter()
+                .filter(|&row| self.is_selectable(row))
+                .collect(),
+            false => vec![index],
+        };
+        let _ = data.set_data(ROW_DRAG_TYPE, &self.0.id.to_string());
+        data.set_effect_allowed("move");
+        self.0.dragging.replace(Some(rows));
+    }
+
+    /// Whether the drag is one of this list's own rows, which it can take.
+    fn takes_drag(&self, event: &DragEvent) -> bool {
+        self.0.reorderable.get()
+            && self.0.dragging.borrow().is_some()
+            && event
+                .data_transfer()
+                .is_some_and(|data| data.types().includes(&JsValue::from_str(ROW_DRAG_TYPE), 0))
+    }
+
+    fn on_drag_over(&self, event: &DragEvent) {
+        if !self.takes_drag(event) {
+            self.show_drop_marker(None);
+            return;
+        }
+        // 既定の動きを止めると、ここへ落とせるという返事になる。
+        event.prevent_default();
+        if let Some(data) = event.data_transfer() {
+            data.set_drop_effect("move");
+        }
+        self.show_drop_marker(Some(self.drop_gap(f64::from(event.client_y()))));
+    }
+
+    fn on_drop(&self, event: &DragEvent) {
+        self.show_drop_marker(None);
+        if !self.takes_drag(event) {
+            return;
+        }
+        event.prevent_default();
+        let own = event
+            .data_transfer()
+            .and_then(|data| data.get_data(ROW_DRAG_TYPE).ok())
+            .is_some_and(|id| id == self.0.id.to_string());
+        let rows = self.0.dragging.take();
+        if let Some(rows) = rows.filter(|_| own) {
+            let gap = self.drop_gap(f64::from(event.client_y()));
+            self.drop_rows(&rows, gap);
+        }
+    }
+
+    /// The gap a drop at `client_y` lands in: above the first built row whose middle is
+    /// below the pointer, or below the last one.
+    fn drop_gap(&self, client_y: f64) -> usize {
+        let start = self.0.window.get().start;
+        let body = self.0.body.borrow();
+        let Body::Listbox { options, .. } = &*body else {
+            return start;
+        };
+        let below = options
+            .iter()
+            .position(|row| {
+                let rect = row.get_bounding_client_rect();
+                client_y < rect.top() + rect.height() / 2.0
+            })
+            .unwrap_or(options.len());
+        start + below
+    }
+
+    /// Draws the line where a drop into `gap` lands: at the top of the row below it, or
+    /// at the bottom of the last row.
+    ///
+    /// No DOM element marks a gap between rows, so this is drawn here, as a line in the
+    /// system's highlight color (the text color of the selection on a selected row,
+    /// whose background is that color already).
+    fn show_drop_marker(&self, gap: Option<usize>) {
+        let marker = gap.and_then(|gap| {
+            let body = self.0.body.borrow();
+            let Body::Listbox { options, .. } = &*body else {
+                return None;
+            };
+            let offset = gap.checked_sub(self.0.window.get().start)?;
+            match options.get(offset) {
+                Some(row) => Some((row.clone(), false)),
+                None => options.last().map(|row| (row.clone(), true)),
+            }
+        });
+        let previous = self.0.drop_marker.replace(marker.clone());
+        if previous == marker {
+            return;
+        }
+        if let Some((row, _)) = previous {
+            style(&row, "box-shadow", "");
+        }
+        if let Some((row, at_bottom)) = marker {
+            let selected = row.get_attribute("aria-selected").as_deref() == Some("true");
+            let color = if selected {
+                "HighlightText"
+            } else {
+                "Highlight"
+            };
+            let offset = if at_bottom { "-2px" } else { "2px" };
+            style(&row, "box-shadow", &format!("inset 0 {offset} {color}"));
+        }
     }
 
     /// The row the event was aimed at, and that row's element. `None` for rows that

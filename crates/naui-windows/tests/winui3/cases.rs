@@ -161,6 +161,22 @@ const CASES: &[Case] = &[
         list_accepts_row_activate_and_context_menu,
     ),
     (
+        "リストの行をドラッグで並べ替えると選択がついてくる",
+        list_drag_rows_moves_rows_and_selection,
+    ),
+    (
+        "リストの行を実際のマウスのドラッグで並べ替えられる",
+        list_reorder_by_a_real_drag,
+    ),
+    (
+        "リストの行を Alt + Shift + 上下で並べ替えられる",
+        list_reorder_by_keyboard,
+    ),
+    (
+        "組み立てる行のリストも窓を絞ったまま並べ替えられる",
+        list_reorder_with_row_builder,
+    ),
+    (
         "行の多いリストが見えている行だけを組み立てる",
         list_builds_only_the_rows_it_needs,
     ),
@@ -7189,6 +7205,354 @@ fn list_accepts_row_activate_and_context_menu(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// The first text inside a XAML element, looking through panels, borders and content
+/// controls.
+fn first_text(element: &windows_core::IInspectable) -> Option<String> {
+    use naui_winui3::Microsoft::UI::Xaml::Controls::{ContentControl, Panel};
+
+    if let Ok(text) = element.cast::<TextBlock>() {
+        return text.Text().ok().map(|text| text.to_string());
+    }
+    if let Ok(content) = element.cast::<ContentControl>() {
+        return first_text(&content.Content().ok()?);
+    }
+    if let Ok(border) = element.cast::<Border>() {
+        return first_text(&border.Child().ok()?.cast().ok()?);
+    }
+    let children = element.cast::<Panel>().ok()?.Children().ok()?;
+    (0..children.Size().ok()?).find_map(|i| first_text(&children.GetAt(i).ok()?.cast().ok()?))
+}
+
+/// The text of each row the `ListView` has now.
+fn list_texts(list: &naui_windows::List) -> Vec<String> {
+    let items = list.native_list_view().Items().expect("Items");
+    (0..items.Size().expect("Size"))
+        .map(|slot| first_text(&items.GetAt(slot).expect("行")).unwrap_or_default())
+        .collect()
+}
+
+/// `drag_rows` moves the rows like the user's drop: the rows and the selection move,
+/// `on_reorder` is told, `on_select` is not. Reordering is `ListView`'s own.
+fn list_drag_rows_moves_rows_and_selection(ui: &Ui) -> Result<()> {
+    use naui_core::{ListItem, RowMove, SelectionMode};
+
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("東京"),
+        ListItem::new("大阪"),
+        ListItem::new("札幌"),
+        ListItem::new("那覇").enabled(false),
+        ListItem::new("福岡"),
+    ]);
+    list.set_selection_mode(SelectionMode::Multiple);
+    let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
+    list.on_reorder({
+        let moves = moves.clone();
+        move |moved| moves.borrow_mut().push(moved.clone())
+    });
+    let selections = Rc::new(Cell::new(0));
+    list.on_select({
+        let selections = selections.clone();
+        move |_| selections.set(selections.get() + 1)
+    });
+    let native = list.native_list_view();
+
+    // 並べ替えを許すまでは、ドラッグは何もしない。
+    assert!(!list.is_reorderable());
+    assert!(!native.CanReorderItems().expect("CanReorderItems"));
+    list.drag_rows(&[0], 3);
+    assert!(moves.borrow().is_empty());
+
+    list.set_reorderable(true);
+    assert!(list.is_reorderable());
+    assert!(native.CanReorderItems().expect("CanReorderItems"));
+    assert!(native.CanDragItems().expect("CanDragItems"));
+    // AllowDrop は自分の行を運んでいる間だけ (ファイルのドラッグで行の隙間を開かない)。
+    assert!(!native.AllowDrop().expect("AllowDrop"));
+    list.set_selection(&[0, 2]);
+    list.drag_rows(&[0, 2], 5);
+    assert_eq!(list_texts(&list), ["大阪", "那覇", "福岡", "東京", "札幌"]);
+    assert_eq!(*moves.borrow(), vec![RowMove::new([0, 2], 5)]);
+    assert_eq!(list.selection(), vec![3, 4], "選択は動いた行についていく");
+    let items = native.Items().expect("Items");
+    let shown: Vec<bool> = (0..items.Size().expect("Size"))
+        .map(|slot| {
+            items
+                .GetAt(slot)
+                .and_then(|row| row.cast::<ListViewItem>())
+                .and_then(|row| row.IsSelected())
+                .expect("IsSelected")
+        })
+        .collect();
+    assert_eq!(
+        shown,
+        [false, false, false, true, true],
+        "ListView の選択も動いた行に付く"
+    );
+    assert_eq!(
+        selections.get(),
+        0,
+        "選ばれている行は同じなので on_select は来ない"
+    );
+
+    // 選べない行はつかめない。ほかの行といっしょでも、その行だけ残る。
+    list.drag_rows(&[1], 0);
+    assert_eq!(moves.borrow().len(), 1, "選べない行だけなら何も起きない");
+    list.drag_rows(&[1, 4], 0);
+    assert_eq!(list_texts(&list), ["札幌", "大阪", "那覇", "福岡", "東京"]);
+    assert_eq!(moves.borrow()[1], RowMove::new([4], 0));
+    assert_eq!(list.selection(), vec![0, 4]);
+
+    // 自分の場所へ落としても通知しない。
+    list.drag_rows(&[1], 2);
+    assert_eq!(moves.borrow().len(), 2);
+
+    // move_rows は通知せず、並べ替えを許していなくても動かす。
+    list.set_reorderable(false);
+    assert!(!native.CanReorderItems().expect("CanReorderItems"));
+    assert!(!native.CanDragItems().expect("CanDragItems"));
+    list.move_rows(&RowMove::new([0], 5));
+    assert_eq!(list_texts(&list), ["大阪", "那覇", "福岡", "東京", "札幌"]);
+    assert_eq!(list.selection(), vec![3, 4]);
+    assert_eq!(moves.borrow().len(), 2);
+    assert_eq!(selections.get(), 0);
+    Ok(())
+}
+
+/// A row dragged with the real mouse goes through `ListView`'s own reordering:
+/// `DragItemsStarting` takes the row, the drop moves the `ListViewItem`s, and
+/// `DragItemsCompleted` moves naui's rows the same way and tells the app.
+fn list_reorder_by_a_real_drag(ui: &Ui) -> Result<()> {
+    use naui_core::RowMove;
+    use naui_winui3::Microsoft::UI::Xaml::Controls::{
+        DragItemsCompletedEventArgs, DragItemsStartingEventHandler, ListViewBase,
+    };
+    use std::sync::Mutex;
+    use windows::Foundation::TypedEventHandler;
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP};
+    use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
+
+    with_shown_list_for_input(ui, 8, |hwnd, list| {
+        let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
+        list.on_reorder({
+            let moves = moves.clone();
+            move |moved| moves.borrow_mut().push(moved.clone())
+        });
+        list.set_reorderable(true);
+        // `ListView` のドラッグの出来事も見ておく (落ちたときにどこで止まったか分かる)。
+        let events: Arc<Mutex<Vec<String>>> = Arc::default();
+        let native = list.native_list_view();
+        let starting = DragItemsStartingEventHandler::new({
+            let events = events.clone();
+            move |_, args| {
+                if let Some(args) = args.as_ref() {
+                    let count = args.Items().and_then(|items| items.Size()).unwrap_or(0);
+                    let cancel = args.Cancel().unwrap_or(false);
+                    events
+                        .lock()
+                        .unwrap()
+                        .push(format!("starting items={count} cancel={cancel}"));
+                }
+                Ok(())
+            }
+        });
+        native
+            .DragItemsStarting(&starting)
+            .expect("DragItemsStarting");
+        let completed = TypedEventHandler::new({
+            let events = events.clone();
+            move |_: windows_core::Ref<'_, ListViewBase>,
+                  args: windows_core::Ref<'_, DragItemsCompletedEventArgs>| {
+                let result = args.as_ref().and_then(|args| args.DropResult().ok());
+                events.lock().unwrap().push(format!("completed {result:?}"));
+                Ok(())
+            }
+        });
+        native
+            .DragItemsCompleted(&completed)
+            .expect("DragItemsCompleted");
+
+        // 動かす前に、つかむ所と落とす所を決めておく (ドラッグの間は行がずれる)。
+        let from = row_screen_point(hwnd, list, 0, 40.0, 0.5)?;
+        let to = row_screen_point(hwnd, list, 3, 40.0, 0.8)?;
+        // SAFETY: 引数は値だけ。
+        let _ = unsafe { SetCursorPos(from.x, from.y) };
+        pump_until(Duration::from_millis(150), || false);
+        send_input(mouse_move_to(from));
+        send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
+        // 本物のマウスの移動として少しずつ運ぶ。初めの数歩でドラッグが始まる。
+        const STEPS: i32 = 16;
+        for step in 1..=STEPS {
+            let at = POINT {
+                x: from.x + (to.x - from.x) * step / STEPS,
+                y: from.y + (to.y - from.y) * step / STEPS,
+            };
+            send_input(mouse_move_to(at));
+        }
+        pump_until(Duration::from_millis(300), || false);
+        send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
+        pump_until(Duration::from_secs(3), || !moves.borrow().is_empty());
+        let events = events.lock().unwrap().clone();
+        println!("     (本物のマウスでドラッグした: {events:?})");
+        // ほかの実際の入力のケースと同じく、入力が届かない環境では確かめずに通す。
+        // ドラッグが始まったのに並べ替わらないときは落とす。
+        if moves.borrow().is_empty() && !events.iter().any(|event| event.starts_with("starting")) {
+            println!("     (ドラッグが始まらない環境なので、確かめずに通す)");
+            return None;
+        }
+        let moves = moves.borrow();
+        assert_eq!(
+            moves.len(),
+            1,
+            "ドロップで 1 回だけ並べ替わる: {moves:?} / ListView の出来事 {events:?} / 行 {:?}",
+            list_texts(list)
+        );
+        assert_eq!(moves[0].rows, vec![0], "つかんだ行だけが動く");
+        assert!(
+            (3..=5).contains(&moves[0].to),
+            "下の行の間へ入る: {:?}",
+            moves[0]
+        );
+        let mut expected: Vec<String> = (0..8).map(|index| format!("行 {index}")).collect();
+        moves[0].apply(&mut expected);
+        assert_eq!(
+            list_texts(list),
+            expected,
+            "ListView の行も naui の並びと同じ"
+        );
+        assert!(
+            list.selection().is_empty(),
+            "選んでいなかったので選択は空のまま"
+        );
+        assert!(
+            !native.AllowDrop().expect("AllowDrop"),
+            "ドロップを受けるのは行を運んでいる間だけ"
+        );
+        Some(())
+    })
+}
+
+/// Alt + Shift + Up / Down, `ListView`'s own keyboard reordering, moves naui's rows too:
+/// the focused row, with the selection when it is in it, moves one place, the app is
+/// told, and the focus stays on the row. Left to `ListView`, only its `Items` would move.
+fn list_reorder_by_keyboard(ui: &Ui) -> Result<()> {
+    use naui_core::RowMove;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        VK_CONTROL, VK_DOWN, VK_LEFT, VK_MENU, VK_RIGHT, VK_SHIFT, VK_UP,
+    };
+
+    with_shown_list_for_input(ui, 8, |hwnd, list| {
+        let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
+        list.on_reorder({
+            let moves = moves.clone();
+            move |moved| moves.borrow_mut().push(moved.clone())
+        });
+        list.set_reorderable(true);
+        let mut expected: Vec<String> = (0..8).map(|index| format!("行 {index}")).collect();
+        let reorder = [VK_MENU, VK_SHIFT];
+
+        first_click_on_list_row(hwnd, list, 2)?;
+        press_nav_key(&reorder, VK_DOWN)?;
+        pump_until(Duration::from_secs(1), || moves.borrow().len() == 1);
+        assert_eq!(moves.borrow()[..], [RowMove::new([2], 4)], "1 つ下へ");
+        RowMove::new([2], 4).apply(&mut expected);
+        assert_eq!(
+            list_texts(list),
+            expected,
+            "ListView の行も naui の並びと同じ"
+        );
+        assert_eq!(list.selection(), vec![3], "選択は動いた行についていく");
+        assert_eq!(
+            focused_list_row(list),
+            Some(3),
+            "フォーカスは動いた行に残る"
+        );
+
+        // フォーカスが残っているので、続けて動かせる。
+        press_nav_key(&reorder, VK_UP)?;
+        press_nav_key(&reorder, VK_UP)?;
+        pump_until(Duration::from_secs(1), || moves.borrow().len() == 3);
+        assert_eq!(
+            moves.borrow()[1..],
+            [RowMove::new([3], 2), RowMove::new([2], 1)],
+            "1 つずつ上へ"
+        );
+        RowMove::new([3], 2).apply(&mut expected);
+        RowMove::new([2], 1).apply(&mut expected);
+        assert_eq!(list_texts(list), expected);
+        assert_eq!(list.selection(), vec![1]);
+        assert_eq!(focused_list_row(list), Some(1));
+
+        // 選んだ行の上では、ドラッグと同じく選択ごと動く。
+        click_list_row_expecting(hwnd, list, 5, &[VK_CONTROL], &[1, 5], "Ctrl で足す")?;
+        press_nav_key(&reorder, VK_UP)?;
+        pump_until(Duration::from_secs(1), || moves.borrow().len() == 4);
+        assert_eq!(moves.borrow()[3], RowMove::new([1, 5], 4), "選択ごと上へ");
+        RowMove::new([1, 5], 4).apply(&mut expected);
+        assert_eq!(list_texts(list), expected);
+        assert_eq!(list.selection(), vec![3, 4]);
+        assert_eq!(focused_list_row(list), Some(4));
+
+        // 先頭より上へは動かず、`ListView` も行を動かさない。
+        click_list_row_expecting(hwnd, list, 0, &[], &[0], "先頭の行")?;
+        press_nav_key(&reorder, VK_UP)?;
+        pump_until(Duration::from_millis(300), || false);
+        assert_eq!(moves.borrow().len(), 4, "先頭では何も起きない");
+        assert_eq!(list_texts(list), expected);
+
+        // 左右は `ListView` なら並べ替えるが、naui は上下だけ。行は食い違わない。
+        click_list_row_expecting(hwnd, list, 2, &[], &[2], "左右を試す行")?;
+        press_nav_key(&reorder, VK_LEFT)?;
+        press_nav_key(&reorder, VK_RIGHT)?;
+        press_nav_key(&reorder, VK_RIGHT)?;
+        pump_until(Duration::from_millis(300), || false);
+        assert_eq!(moves.borrow().len(), 4, "左右では動かない");
+        assert_eq!(list_texts(list), expected, "ListView の行も動かない");
+        assert_eq!(list.selection(), vec![2]);
+        Some(())
+    })
+}
+
+/// Rows from a builder move too, with only the rows on screen built: the app moves its
+/// data in `on_reorder`, and the rows built afterwards read it.
+fn list_reorder_with_row_builder(ui: &Ui) -> Result<()> {
+    use naui_windows::ListRow;
+
+    const ROWS: usize = 1000;
+    let data: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(
+        (0..ROWS).map(|index| format!("行 {index}")).collect(),
+    ));
+    let list = ui.list()?;
+    list.set_sizing(Sizing::fixed(240.0, 200.0));
+    list.set_row_builder(ROWS, {
+        let data = data.clone();
+        let ui = ui.clone();
+        move |index| Ok(ListRow::new(&ui.label(&data.borrow()[index])?))
+    });
+    list.on_reorder({
+        let data = data.clone();
+        move |moved| moved.apply(&mut data.borrow_mut())
+    });
+    list.set_reorderable(true);
+    assert!(
+        list_texts(&list).len() < ROWS,
+        "画面に出ている行だけを組み立てる"
+    );
+    list.set_selected(0);
+    list.drag_rows(&[0], 2);
+    assert_eq!(data.borrow()[..3], ["行 1", "行 0", "行 2"]);
+    assert_eq!(list_texts(&list)[..3], ["行 1", "行 0", "行 2"]);
+    assert_eq!(list.selection(), vec![1], "選択は動いた行についていく");
+
+    // 窓の外へ動かしても、選択は覚えている。
+    list.drag_rows(&[1], ROWS);
+    assert_eq!(data.borrow()[ROWS - 1], "行 0");
+    assert_eq!(list.selection(), vec![ROWS - 1]);
+    assert_eq!(list_texts(&list)[..2], ["行 1", "行 2"]);
+    Ok(())
+}
+
 /// Even before the list has a size, it builds only a foothold, not every row, and the
 /// function is asked only for those rows.
 fn list_builds_only_the_rows_it_needs(ui: &Ui) -> Result<()> {
@@ -9389,13 +9753,40 @@ fn aim_at_row_point(
     index: usize,
     x: f32,
 ) -> Option<()> {
+    aim_at_row_spot(hwnd, list, index, x, 0.5)
+}
+
+/// [`aim_at_row_point`], at a fraction of the row's height from its top.
+fn aim_at_row_spot(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+    index: usize,
+    x: f32,
+    fraction: f32,
+) -> Option<()> {
+    use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
+
+    let point = row_screen_point(hwnd, list, index, x, fraction)?;
+    // SAFETY: 引数は値だけ。
+    let _ = unsafe { SetCursorPos(point.x, point.y) };
+    pump_until(Duration::from_millis(150), || false);
+    Some(())
+}
+
+/// Where a spot of a row on screen is, in screen pixels. `None` if it is not in this
+/// process's window. A row out of view fails the case.
+fn row_screen_point(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+    index: usize,
+    x: f32,
+    fraction: f32,
+) -> Option<windows::Win32::Foundation::POINT> {
     use windows::Foundation::Point as XamlPoint;
     use windows::Win32::Foundation::POINT;
     use windows::Win32::Graphics::Gdi::ClientToScreen;
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowThreadProcessId, SetCursorPos, WindowFromPoint,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, WindowFromPoint};
 
     let row = built_list_row(list, index).unwrap_or_else(|| {
         let first = list.list_view().Items().ok().and_then(|items| items.GetAt(0).ok());
@@ -9403,7 +9794,7 @@ fn aim_at_row_point(
         panic!("{index} 行目が組み立てられていない: 先頭 {first:?} 位置 {:?}", list.scroller().VerticalOffset())
     });
     let scroll = list.scroller();
-    let middle = (row.ActualHeight().expect("行の高さ") / 2.0) as f32;
+    let middle = row.ActualHeight().expect("行の高さ") as f32 * fraction;
     let row_at = || {
         row.TransformToVisual(None)
             .and_then(|to| to.TransformPoint(XamlPoint { X: x, Y: middle }))
@@ -9442,10 +9833,38 @@ fn aim_at_row_point(
         println!("     (押す位置がテストのウィンドウの上に無いので、押さずに通す)");
         return None;
     }
+    Some(point)
+}
+
+/// A move of the pointer to a point on the primary screen, for [`send_input`].
+///
+/// Unlike `SetCursorPos`, it arrives as mouse input, which a drag needs to start and
+/// follow the pointer.
+fn mouse_move_to(
+    point: windows::Win32::Foundation::POINT,
+) -> windows::Win32::UI::Input::KeyboardAndMouse::INPUT {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_MOVE, MOUSEINPUT,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+
     // SAFETY: 引数は値だけ。
-    let _ = unsafe { SetCursorPos(point.x, point.y) };
-    pump_until(Duration::from_millis(150), || false);
-    Some(())
+    let (width, height) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
+    // 絶対座標は画面を 0〜65535 に引き伸ばした値で渡す。
+    let normalize = |at: i32, size: i32| ((at * 65536 + size / 2) / size.max(1)).clamp(0, 65535);
+    INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx: normalize(point.x, width),
+                dy: normalize(point.y, height),
+                mouseData: 0,
+                dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
 }
 
 /// Clicks a row to start a case. The first click after coming to the front can be lost, so

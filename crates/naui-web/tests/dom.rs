@@ -8446,6 +8446,291 @@ fn mounted_list(ui: &Ui) -> Result<(naui_web::List, Mounted)> {
     Ok((list, mounted))
 }
 
+/// The text of each built row of a list.
+fn list_texts(list: &dyn Widget) -> Vec<String> {
+    list_rows(list)
+        .iter()
+        .map(|row| row.text_content().unwrap_or_default())
+        .collect()
+}
+
+/// `drag_rows` moves the rows like the user's drop: the rows and the selection move,
+/// `on_reorder` is told, `on_select` is not. A reorderable list is composed, since an
+/// `<option>` cannot be dragged.
+#[wasm_bindgen_test]
+fn list_drag_rows_moves_rows_and_selection() {
+    with_ui(|ui| {
+        use naui_core::RowMove;
+
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_items(&[
+            ListItem::new("東京"),
+            ListItem::new("大阪"),
+            ListItem::new("札幌"),
+            ListItem::new("那覇").enabled(false),
+            ListItem::new("福岡"),
+        ]);
+        list.set_selection_mode(SelectionMode::Multiple);
+        let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
+        list.on_reorder({
+            let moves = moves.clone();
+            move |moved| moves.borrow_mut().push(moved.clone())
+        });
+        let selections = Rc::new(Cell::new(0));
+        list.on_select({
+            let selections = selections.clone();
+            move |_| selections.set(selections.get() + 1)
+        });
+
+        // 並べ替えを許すまでは、ドラッグは何もしない。
+        assert!(!list.is_reorderable());
+        assert!(list.native_select().is_some(), "文字だけの行は <select>");
+        list.drag_rows(&[0], 3);
+        assert!(moves.borrow().is_empty());
+
+        list.set_selection(&[0, 2]);
+        list.set_reorderable(true);
+        assert!(list.is_reorderable());
+        assert!(
+            list.native_select().is_none(),
+            "並べ替えるリストは組み立てる"
+        );
+        assert_eq!(list.selection(), vec![0, 2], "組み立て直しても選択は残る");
+        list.drag_rows(&[0, 2], 5);
+        assert_eq!(list_texts(&list), ["大阪", "那覇", "福岡", "東京", "札幌"]);
+        assert_eq!(*moves.borrow(), vec![RowMove::new([0, 2], 5)]);
+        assert_eq!(list.selection(), vec![3, 4], "選択は動いた行についていく");
+        let marked: Vec<bool> = list_rows(&list)
+            .iter()
+            .map(|row| row.get_attribute("aria-selected").as_deref() == Some("true"))
+            .collect();
+        assert_eq!(marked, [false, false, false, true, true]);
+        assert_eq!(
+            selections.get(),
+            0,
+            "選ばれている行は同じなので on_select は来ない"
+        );
+
+        // 選べない行はつかめない。ほかの行といっしょでも、その行だけ残る。
+        list.drag_rows(&[1], 0);
+        assert_eq!(moves.borrow().len(), 1, "選べない行だけなら何も起きない");
+        list.drag_rows(&[1, 4], 0);
+        assert_eq!(list_texts(&list), ["札幌", "大阪", "那覇", "福岡", "東京"]);
+        assert_eq!(moves.borrow()[1], RowMove::new([4], 0));
+        assert_eq!(list.selection(), vec![0, 4]);
+
+        // 自分の場所へ落としても通知しない。
+        list.drag_rows(&[1], 2);
+        assert_eq!(moves.borrow().len(), 2);
+
+        // move_rows は通知せず、並べ替えを許していなくても動かす。
+        list.set_reorderable(false);
+        assert!(
+            list.native_select().is_some(),
+            "許さなくなれば <select> に戻る"
+        );
+        list.move_rows(&RowMove::new([0], 5));
+        assert_eq!(list.selection(), vec![3, 4]);
+        let select = list.native_select().expect("<select>");
+        let options = select.options();
+        let texts: Vec<String> = (0..options.length())
+            .filter_map(|i| options.get_with_index(i))
+            .map(|option| option.text_content().unwrap_or_default())
+            .collect();
+        assert_eq!(texts, ["大阪", "那覇", "福岡", "東京", "札幌"]);
+        assert_eq!(moves.borrow().len(), 2);
+        assert_eq!(selections.get(), 0);
+        Ok(())
+    });
+}
+
+/// A new `DataTransfer`, shared by the events of one synthesized drag.
+fn new_data_transfer() -> JsValue {
+    js_sys::Function::new_no_args("return new DataTransfer();")
+        .call0(&JsValue::NULL)
+        .expect("DataTransfer の生成")
+}
+
+/// Fires a drag event carrying `data` at `client_y`. **The return value is whether
+/// the default action was prevented**, which for `dragover` means the drop is taken.
+fn fire_row_drag(target: &EventTarget, kind: &str, data: &JsValue, client_y: f64) -> bool {
+    let make = js_sys::Function::new_with_args(
+        "kind, data, y",
+        "return new DragEvent(kind, { dataTransfer: data, bubbles: true, cancelable: true, clientY: y });",
+    );
+    let event: web_sys::Event = make
+        .call3(
+            &JsValue::NULL,
+            &JsValue::from_str(kind),
+            data,
+            &JsValue::from_f64(client_y),
+        )
+        .expect("ドラッグのイベントの生成")
+        .unchecked_into();
+    !target.dispatch_event(&event).expect("イベントの配送")
+}
+
+/// A drag of rows goes through HTML drag and drop: selectable rows are `draggable`,
+/// `dragstart` marks the drag, `dragover` takes only this list's own rows and draws
+/// the line where they land, and `drop` moves them.
+#[wasm_bindgen_test]
+fn list_reorder_goes_through_html_drag_and_drop() {
+    with_ui(|ui| {
+        use naui_core::RowMove;
+
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_items(&[
+            ListItem::new("札幌"),
+            ListItem::new("仙台"),
+            ListItem::new("東京"),
+            ListItem::new("大阪").enabled(false),
+        ]);
+        let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
+        list.on_reorder({
+            let moves = moves.clone();
+            move |moved| moves.borrow_mut().push(moved.clone())
+        });
+        list.set_reorderable(true);
+        let row = |index: usize| list_rows(&list)[index].clone();
+        assert!(row(0).draggable(), "選べる行はつかめる");
+        assert!(!row(3).draggable(), "選べない行はつかめない");
+        let middle = |index: usize| {
+            let rect = row(index).get_bounding_client_rect();
+            (rect.top(), rect.top() + rect.height() / 2.0, rect.bottom())
+        };
+
+        // 行から始まったのではないドラッグ (よそから持ち込んだ文字) は受けない。
+        let foreign = new_data_transfer();
+        let (_, center, _) = middle(1);
+        assert!(!fire_row_drag(&row(1), "dragover", &foreign, center));
+
+        // 3 行目をつかみ、2 行目の上半分へ: 2 行目の前へ入り、線は 2 行目の上に出る。
+        let data = new_data_transfer();
+        fire_row_drag(&row(2), "dragstart", &data, middle(2).1);
+        let types: js_sys::Array = js_sys::Reflect::get(&data, &JsValue::from_str("types"))
+            .expect("types")
+            .unchecked_into();
+        assert!(
+            types.includes(&JsValue::from_str("application/x-naui-list-rows"), 0),
+            "行のドラッグの印が付く"
+        );
+        let (top, center, bottom) = middle(1);
+        let upper = (top + center) / 2.0;
+        assert!(
+            fire_row_drag(&row(1), "dragover", &data, upper),
+            "自分の行は受ける"
+        );
+        assert!(
+            row(1)
+                .style()
+                .get_property_value("box-shadow")
+                .unwrap_or_default()
+                .contains("inset"),
+            "線は入る先の行の上に出る"
+        );
+        // 最後の行の下半分では、最後の行の下に出る。
+        let shadow = |index: usize| {
+            row(index)
+                .style()
+                .get_property_value("box-shadow")
+                .unwrap_or_default()
+        };
+        let (_, center, last_bottom) = middle(3);
+        assert!(fire_row_drag(
+            &row(3),
+            "dragover",
+            &data,
+            (center + last_bottom) / 2.0
+        ));
+        assert!(shadow(1).is_empty(), "前の線は消える");
+        assert!(shadow(3).contains("-2px"), "{}", shadow(3));
+        let _ = bottom;
+
+        assert!(fire_row_drag(&row(1), "drop", &data, upper));
+        assert_eq!(list_texts(&list), ["札幌", "東京", "仙台", "大阪"]);
+        assert_eq!(*moves.borrow(), vec![RowMove::new([2], 1)]);
+        assert!(
+            list_rows(&list).iter().all(|row| row
+                .style()
+                .get_property_value("box-shadow")
+                .unwrap_or_default()
+                .is_empty()),
+            "落としたら線は消える"
+        );
+        assert!(
+            !fire_row_drag(&row(1), "dragover", &data, upper),
+            "落としたあとは同じドラッグをもう受けない"
+        );
+
+        // ほかのリストの行は受けない。
+        let other = ui.list()?;
+        other.set_items(&ListItem::list(["よそ"]));
+        other.set_reorderable(true);
+        let _other_mounted = Mounted::new(&other);
+        let elsewhere = new_data_transfer();
+        fire_row_drag(&list_rows(&other)[0], "dragstart", &elsewhere, 0.0);
+        assert!(!fire_row_drag(&row(1), "dragover", &elsewhere, upper));
+        assert!(!fire_row_drag(&row(1), "drop", &elsewhere, upper));
+        assert_eq!(moves.borrow().len(), 1);
+
+        // 選ばれている行をつかむと、選択ごと動く。
+        list.set_selection_mode(SelectionMode::Multiple);
+        list.set_selection(&[0, 1]);
+        let data = new_data_transfer();
+        fire_row_drag(&row(1), "dragstart", &data, middle(1).1);
+        let (_, center, last_bottom) = middle(3);
+        assert!(fire_row_drag(
+            &row(3),
+            "drop",
+            &data,
+            (center + last_bottom) / 2.0
+        ));
+        assert_eq!(list_texts(&list), ["仙台", "大阪", "札幌", "東京"]);
+        assert_eq!(moves.borrow()[1], RowMove::new([0, 1], 4));
+        assert_eq!(list.selection(), vec![2, 3]);
+        Ok(())
+    });
+}
+
+/// Rows from a builder move too, with only the rows on screen built: the app moves its
+/// data in `on_reorder`, and the rows built afterwards read it.
+#[wasm_bindgen_test]
+fn list_reorder_with_row_builder() {
+    with_ui(|ui| {
+        const ROWS: usize = 1000;
+        let data: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(
+            (0..ROWS).map(|index| format!("行 {index}")).collect(),
+        ));
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_row_builder(ROWS, {
+            let data = data.clone();
+            let ui = ui.clone();
+            move |index| Ok(ListRow::new(&ui.label(&data.borrow()[index])?))
+        });
+        list.on_reorder({
+            let data = data.clone();
+            move |moved| moved.apply(&mut data.borrow_mut())
+        });
+        list.set_reorderable(true);
+        assert!(
+            list_rows(&list).len() < ROWS,
+            "画面に出ている行だけを組み立てる"
+        );
+        list.set_selected(0);
+        list.drag_rows(&[0], 2);
+        assert_eq!(data.borrow()[..3], ["行 1", "行 0", "行 2"]);
+        assert_eq!(list_texts(&list)[..3], ["行 1", "行 0", "行 2"]);
+        assert_eq!(list.selection(), vec![1], "選択は動いた行についていく");
+
+        // 窓の外へ動かしても、選択は覚えている。
+        list.drag_rows(&[1], ROWS);
+        assert_eq!(data.borrow()[ROWS - 1], "行 0");
+        assert_eq!(list.selection(), vec![ROWS - 1]);
+        assert_eq!(list_texts(&list)[..2], ["行 1", "行 2"]);
+        Ok(())
+    });
+}
+
 /// A `<select>` has no place for spacers and makes every `<option>`, so a list with more
 /// rows than the threshold is composed. At or below it, the standard control stays.
 #[wasm_bindgen_test]

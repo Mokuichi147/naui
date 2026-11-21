@@ -25,8 +25,8 @@ use gtk::prelude::*;
 use gtk::{gdk, glib, graphene};
 use naui_core::{
     keeps_row_window, list_row_window, merge_hidden_selection, Align, ListItem, Orientation, Point,
-    Result, RowSource, RowWindow, SelectionGesture, SelectionMode, Sizing, TextColor, TextStyle,
-    ROW_WINDOW_OVERSCAN,
+    Result, RowMove, RowSource, RowWindow, SelectionGesture, SelectionMode, Sizing, TextColor,
+    TextStyle, ROW_WINDOW_OVERSCAN,
 };
 
 use crate::bin::{Placement, SizeBin};
@@ -203,7 +203,33 @@ struct ListInner {
     /// [`List::refresh`]) whose widgets were claimed. Building such a row again, when it
     /// scrolls back into view, does not claim its widget again.
     claimed: RefCell<HashSet<usize>>,
+    /// Whether the user can drag rows ([`List::set_reorderable`]).
+    reorderable: Cell<bool>,
+    /// The rows being dragged out of this list, from the start of the drag to the drop.
+    ///
+    /// This is what a drag carries within the app; the drag's own value
+    /// ([`RowDrag`]) only says which list it came from.
+    dragging: RefCell<Option<Vec<usize>>>,
+    /// The row showing where a drop would land, and the class drawing the line.
+    drop_marker: RefCell<Option<(gtk::ListBoxRow, &'static str)>>,
+    /// The handler told about rows the user moved ([`List::on_reorder`]).
+    reorder: Notifier<RowMove>,
 }
+
+/// The value a drag of rows carries: which list the rows come from. The rows
+/// themselves stay in that list ([`ListInner::dragging`]).
+///
+/// It is a boxed type that exists only in this process, so drags from other apps
+/// never carry it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, glib::Boxed)]
+#[boxed_type(name = "NauiListRowDrag")]
+pub(crate) struct RowDrag {
+    list: usize,
+}
+
+/// The classes that draw where dropped rows would land (see [`install_drop_style`]).
+const DROP_BEFORE: &str = "naui-drop-before";
+const DROP_AFTER: &str = "naui-drop-after";
 
 /// A list of selectable rows. It scrolls by itself.
 ///
@@ -261,7 +287,14 @@ impl List {
             handler: RefCell::new(None),
             row_activate: Notifier::default(),
             context_menu: Notifier::default(),
+            reorderable: Cell::new(false),
+            dragging: RefCell::new(None),
+            drop_marker: RefCell::new(None),
+            reorder: Notifier::default(),
         });
+        inner
+            .native
+            .add_controller(drop_target(Rc::downgrade(&inner)));
         // 選択の通知は常時つないでおき、プログラムから変えるときだけ止める。
         let id = {
             let weak = Rc::downgrade(&inner);
@@ -660,6 +693,137 @@ impl List {
         self.0
             .context_menu
             .set(move |(index, point)| f(index, point));
+    }
+
+    /// Lets the user rearrange the rows by dragging them within this list. Off by
+    /// default.
+    ///
+    /// Each row is a `GtkDragSource` and the `GtkListBox` a `GtkDropTarget`. The user
+    /// drags a row, or the selection when the row pressed is selected, a line in the
+    /// accent color shows where the rows will land, and naui moves the rows when they
+    /// are dropped ([`List::on_reorder`]). Rows that cannot be selected cannot be
+    /// dragged. Drops from other widgets and other apps are refused. The list does not
+    /// scroll by itself while the pointer is near its edge.
+    pub fn set_reorderable(&self, reorderable: bool) {
+        self.0.reorderable.set(reorderable);
+        if reorderable {
+            install_drop_style(&self.0.native);
+        }
+    }
+
+    pub fn is_reorderable(&self) -> bool {
+        self.0.reorderable.get()
+    }
+
+    /// Called after the user moved rows by dragging them ([`List::set_reorderable`]).
+    ///
+    /// The selection has followed the rows ([`List::on_select`] is not called). Move the
+    /// app's data the same way with [`RowMove::apply`]; the rows on screen are built
+    /// again once this returns, and for rows from [`List::set_row_builder`] they read
+    /// it.
+    pub fn on_reorder(&self, mut f: impl FnMut(&RowMove) + 'static) {
+        self.0.reorder.set(move |moved: RowMove| f(&moved));
+    }
+
+    /// Moves `rows` into the gap `to` through the same path as the user's drop
+    /// (notifies). Does nothing unless the list is reorderable; rows that cannot be
+    /// selected stay where they are.
+    pub fn drag_rows(&self, rows: &[usize], to: usize) {
+        if self.is_reorderable() {
+            self.drop_rows(rows, to);
+        }
+    }
+
+    /// Moves rows without notifying. The selection stays on the rows it was on.
+    pub fn move_rows(&self, moved: &RowMove) {
+        self.apply_move(moved, false);
+    }
+
+    /// Moves the rows the user dropped, and notifies.
+    fn drop_rows(&self, rows: &[usize], to: usize) {
+        let rows = rows.iter().copied().filter(|&row| self.is_selectable(row));
+        self.apply_move(&RowMove::new(rows, to), true);
+    }
+
+    /// Moves the rows and the selection with them, notifies if asked, and builds the
+    /// rows on screen again.
+    ///
+    /// The app moves its data in the notification, and rows from a builder read it, so
+    /// the rows are built only after it. If the app replaced the rows in it, they are
+    /// built already.
+    fn apply_move(&self, moved: &RowMove, notify: bool) {
+        let Some(moved) = moved.within(self.len()) else {
+            return;
+        };
+        self.0.rows.move_rows(&moved);
+        let claimed: HashSet<usize> = self
+            .0
+            .claimed
+            .borrow()
+            .iter()
+            .map(|&index| moved.new_index(index))
+            .collect();
+        *self.0.claimed.borrow_mut() = claimed;
+        let picked = moved.new_indices(&self.selection());
+        *self.0.selected.borrow_mut() = picked;
+        self.0
+            .anchor
+            .set(self.0.anchor.get().map(|index| moved.new_index(index)));
+        let generation = self.0.rows.generation();
+        if notify {
+            self.0.reorder.emit(moved);
+        }
+        if self.0.rows.generation() != generation {
+            return;
+        }
+        // 行を組み立てる関数の中から呼ばれたら、組み立てている側が最初からやり直す。
+        if self.0.rebuilding.get() {
+            self.0.rows.invalidate();
+            return;
+        }
+        self.build_window();
+    }
+
+    /// The gap a drop at `y` (in the `GtkListBox`'s coordinates) lands in: above the row
+    /// under the pointer when in its upper half, below it otherwise.
+    fn drop_gap(&self, y: f64) -> usize {
+        let start = self.0.built_start.get();
+        let built = self.0.realized.borrow().len();
+        let Some(row) = self.0.native.row_at_y(y as i32) else {
+            return if y < 0.0 { start } else { start + built };
+        };
+        let offset = usize::try_from(row.index()).unwrap_or(0);
+        let below = row
+            .compute_bounds(&self.0.native)
+            .is_some_and(|bounds| y >= f64::from(bounds.y() + bounds.height() / 2.0));
+        start + offset + usize::from(below)
+    }
+
+    /// Draws the line where a drop into `gap` lands: at the top of the row below it, or
+    /// at the bottom of the last row.
+    fn show_drop_marker(&self, gap: Option<usize>) {
+        let marker = gap.and_then(|gap| {
+            let start = self.0.built_start.get();
+            let built = self.0.realized.borrow().len();
+            let offset = gap.checked_sub(start)?;
+            match offset < built {
+                true => Some((self.0.native.row_at_index(offset as i32)?, DROP_BEFORE)),
+                false => Some((
+                    self.0.native.row_at_index(built.checked_sub(1)? as i32)?,
+                    DROP_AFTER,
+                )),
+            }
+        });
+        let previous = self.0.drop_marker.replace(marker.clone());
+        if previous == marker {
+            return;
+        }
+        if let Some((row, class)) = previous {
+            row.remove_css_class(class);
+        }
+        if let Some((row, class)) = marker {
+            row.add_css_class(class);
+        }
     }
 
     // ------------------------------------------------------- 行を絞る窓
@@ -1235,8 +1399,131 @@ fn build_row(item: &ListRow, list: Weak<ListInner>, owner: Owner) -> gtk::ListBo
         row.set_sensitive(false);
     }
     row.add_controller(row_double_click_controller(list.clone()));
-    row.add_controller(row_context_menu_controller(list));
+    row.add_controller(row_context_menu_controller(list.clone()));
+    row.add_controller(row_drag_source(list));
     row
+}
+
+/// The drag source of a row. It starts a drag only while the list is reorderable and
+/// the row can be selected; the drag takes the selection when the row is in it.
+fn row_drag_source(list: Weak<ListInner>) -> gtk::DragSource {
+    let source = gtk::DragSource::new();
+    source.set_actions(gdk::DragAction::MOVE);
+    source.connect_prepare({
+        let list = list.clone();
+        move |source, _, _| {
+            let inner = list.upgrade()?;
+            let row = source.widget().and_downcast::<gtk::ListBoxRow>()?;
+            let index = inner.built_start.get() + usize::try_from(row.index()).ok()?;
+            let list = List(inner);
+            if !list.is_reorderable() || !list.is_selectable(index) {
+                return None;
+            }
+            let selection = list.selection();
+            let rows = match selection.contains(&index) {
+                true => selection
+                    .into_iter()
+                    .filter(|&row| list.is_selectable(row))
+                    .collect(),
+                false => vec![index],
+            };
+            list.0.dragging.replace(Some(rows));
+            let value = RowDrag {
+                list: Rc::as_ptr(&list.0) as usize,
+            };
+            Some(gdk::ContentProvider::for_value(&value.to_value()))
+        }
+    });
+    // つかんだ行の見た目をそのままドラッグの絵にする。
+    source.connect_drag_begin(|source, _| {
+        if let Some(row) = source.widget() {
+            let paintable = gtk::WidgetPaintable::new(Some(&row));
+            source.set_icon(Some(&paintable), 0, 0);
+        }
+    });
+    source.connect_drag_end(move |_, _, _| {
+        if let Some(inner) = list.upgrade() {
+            inner.dragging.take();
+        }
+    });
+    source
+}
+
+/// The drop target on the `GtkListBox`. It takes only drags of this list's own rows.
+fn drop_target(list: Weak<ListInner>) -> gtk::DropTarget {
+    let target = gtk::DropTarget::new(RowDrag::static_type(), gdk::DragAction::MOVE);
+    target.connect_motion({
+        let list = list.clone();
+        move |_, _, y| {
+            let Some(inner) = list.upgrade() else {
+                return gdk::DragAction::empty();
+            };
+            let list = List(inner);
+            if !list.is_reorderable() || list.0.dragging.borrow().is_none() {
+                list.show_drop_marker(None);
+                return gdk::DragAction::empty();
+            }
+            list.show_drop_marker(Some(list.drop_gap(y)));
+            gdk::DragAction::MOVE
+        }
+    });
+    target.connect_leave({
+        let list = list.clone();
+        move |_| {
+            if let Some(inner) = list.upgrade() {
+                List(inner).show_drop_marker(None);
+            }
+        }
+    });
+    target.connect_drop(move |_, value, _, y| {
+        let Some(inner) = list.upgrade() else {
+            return false;
+        };
+        let list = List(inner);
+        list.show_drop_marker(None);
+        let own = value
+            .get::<RowDrag>()
+            .is_ok_and(|drag| drag.list == Rc::as_ptr(&list.0) as usize);
+        let rows = list.0.dragging.take();
+        match rows.filter(|_| own && list.is_reorderable()) {
+            Some(rows) => {
+                let gap = list.drop_gap(y);
+                list.drop_rows(&rows, gap);
+                true
+            }
+            None => false,
+        }
+    });
+    target
+}
+
+/// Adds the style of the line showing where dropped rows land, once per display.
+///
+/// `GtkListBox` has nothing that marks a gap between rows (`drag_highlight_row` frames
+/// a whole row, which reads as dropping onto it), so naui draws only that line, in
+/// libadwaita's accent color.
+fn install_drop_style(widget: &impl IsA<gtk::Widget>) {
+    const CSS: &str = "\
+        row.naui-drop-before { box-shadow: inset 0 2px @accent_bg_color; }\
+        row.naui-drop-after { box-shadow: inset 0 -2px @accent_bg_color; }";
+    thread_local! {
+        static INSTALLED: RefCell<Vec<gdk::Display>> = const { RefCell::new(Vec::new()) };
+    }
+    let display = widget.as_ref().display();
+    INSTALLED.with(|installed| {
+        let mut installed = installed.borrow_mut();
+        if installed.contains(&display) {
+            return;
+        }
+        let provider = gtk::CssProvider::new();
+        provider.load_from_data(CSS);
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+        installed.push(display);
+    });
 }
 
 /// Puts a row's content in the row, filling its width.
