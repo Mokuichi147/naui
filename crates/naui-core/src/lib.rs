@@ -59,8 +59,8 @@ mod window;
 pub use bitmap::{Bitmap, BitmapData};
 pub use button::ButtonRole;
 pub use canvas::{
-    DrawCommand, Gradient, GradientShape, GradientStop, Paint, Painter, Path, PathSegment, Point,
-    PointerButton, PointerEvent, PointerPhase, Rect, Transform, WheelHandler, WHEEL_STEP,
+    DrawCommand, Gradient, GradientShape, GradientStop, Ink, Paint, Painter, Path, PathSegment,
+    Point, PointerButton, PointerEvent, PointerPhase, Rect, Transform, WheelHandler, WHEEL_STEP,
 };
 pub use channel::{ChannelCloser, Sender};
 pub use color::Color;

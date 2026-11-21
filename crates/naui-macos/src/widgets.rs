@@ -458,7 +458,7 @@ fn preferred_font(style: TextStyle) -> Retained<NSFont> {
 }
 
 /// The AppKit color for the role.
-fn label_color(color: TextColor) -> Retained<NSColor> {
+pub(crate) fn label_color(color: TextColor) -> Retained<NSColor> {
     match color {
         TextColor::Default => NSColor::labelColor(),
         TextColor::Secondary => NSColor::secondaryLabelColor(),
