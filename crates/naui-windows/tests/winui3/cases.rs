@@ -10262,6 +10262,39 @@ fn shift_range_scenario(
         };
         let aimed = pointer_at();
         let start = scroll.VerticalOffset().expect("位置");
+        // ポインターの下の行と、その行の画面上の位置。
+        let under_pointer = || {
+            use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+            use windows::Foundation::Point as XamlPoint;
+            use windows::Win32::Graphics::Gdi::ClientToScreen;
+            use windows::Win32::UI::HiDpi::GetDpiForWindow;
+            let mut pointer = POINT::default();
+            // SAFETY: `pointer` はこの関数の中で生きている。
+            let _ = unsafe { GetCursorPos(&mut pointer) };
+            // SAFETY: HWND は window が閉じるまで有効で、UI スレッドから読んでいる。
+            let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
+            let mut origin = POINT::default();
+            // SAFETY: `origin` はこの関数の中で生きている。
+            let _ = unsafe { ClientToScreen(hwnd, &mut origin) };
+            let y = (pointer.y - origin.y) as f32 / scale;
+            let items = list.list_view().Items().expect("行");
+            (0..items.Size().expect("行の数")).find_map(|slot| {
+                let row = items.GetAt(slot).ok()?.cast::<ListViewItem>().ok()?;
+                let top = row
+                    .TransformToVisual(None)
+                    .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+                    .ok()?
+                    .Y;
+                let bottom = top + row.ActualHeight().ok()? as f32;
+                let index = AutomationProperties::GetPositionInSet(&row).ok()? as usize - 1;
+                (y >= top && y < bottom).then_some((index, top, y))
+            })
+        };
+        // 続けて送る (人が勢いよく回すのと同じ)。ただし、行が動かないまま何回も積み上げると、
+        // 残りが数秒あとにまとめて流れ、押す行を決めたあとで窓が大きく動くことがある。
+        // 見た目が動かないうちに送るのは 3 回までにする。
+        let mut last_seen = under_pointer();
+        let mut unseen = 0;
         for _ in 0..60 {
             if !foreground_is_ours() {
                 return None;
@@ -10269,7 +10302,16 @@ fn shift_range_scenario(
             if built_list_row(list, 7).is_none() {
                 break;
             }
+            if unseen >= 3 {
+                pump_until(Duration::from_secs(2), || under_pointer() != last_seen);
+            }
+            let now = under_pointer();
+            if now != last_seen {
+                last_seen = now;
+                unseen = 0;
+            }
             send_input(mouse_input(MOUSEEVENTF_WHEEL, (-480_i32) as u32));
+            unseen += 1;
         }
         pump_until(Duration::from_millis(500), || false);
         // ホイールもこの先のクリックも、ポインターの下へ届く。
@@ -10282,46 +10324,90 @@ fn shift_range_scenario(
             "ホイールで窓が動いている: 位置 {start} → {} ポインター {aimed:?}",
             scroll.VerticalOffset().expect("位置")
         );
-        // ホイールのスクロールは少しのあいだ続くので、止まってから押す行を決める。
-        let mut settled = scroll.VerticalOffset().expect("位置");
+        // ホイールのスクロールは少しのあいだ続くので、止まってから押す行を決める。止まったかは
+        // 行の位置で見る。`VerticalOffset` はスクロールの途中の値のまま残ることがあり、
+        // 行がもう止まっていても、まだ動いていても当てにならない。
+        let mut settled = under_pointer();
         pump_until(Duration::from_secs(3), || {
             pump_until(Duration::from_millis(300), || false);
-            let now = scroll.VerticalOffset().expect("位置");
-            let still = (now - settled).abs() < 0.5;
+            let now = under_pointer();
+            let still = match (now, settled) {
+                (Some((now, at, _)), Some((before, was, _))) => {
+                    now == before && (at - was).abs() < 0.5
+                }
+                _ => false,
+            };
             settled = now;
             still
         });
-        let mut pointer = POINT::default();
-        // SAFETY: `pointer` はこの関数の中で生きている。
-        let _ = unsafe { GetCursorPos(&mut pointer) };
-        let under_pointer = |row: &ListViewItem| {
+        let (pointed, top, y) = under_pointer().expect("ポインターの下の行");
+        let height = list.row_height() as f32;
+        // ポインターが行の境目 (1 px 以内) にあると、どちらの行に当たるかは XAML の丸め次第。
+        // どちらでもよいことにして、押したあとで当たったほうを押した行とする。
+        let candidates: Vec<usize> = [
+            Some(pointed),
+            (y - top < 1.0).then(|| pointed.checked_sub(1)).flatten(),
+            (top + height - y <= 1.0).then_some(pointed + 1),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        // 画面に出ている行が受けたフォーカスは、その行に残る。`VerticalOffset` がスクロールの
+        // 途中の値のままでも、行の描かれた位置で見えていると分かる。下の端の行ほど、
+        // 古い位置からは画面の外に見える。
+        let viewport = scroll.ViewportHeight().expect("高さ");
+        let lowest_shown = {
+            use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
             use windows::Foundation::Point as XamlPoint;
-            use windows::Win32::Graphics::Gdi::ClientToScreen;
-            use windows::Win32::UI::HiDpi::GetDpiForWindow;
-            let top = row
-                .TransformToVisual(None)
-                .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
-                .expect("行の位置");
-            // SAFETY: HWND は window が閉じるまで有効で、UI スレッドから読んでいる。
-            let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
-            let mut origin = POINT::default();
-            // SAFETY: `origin` はこの関数の中で生きている。
-            let _ = unsafe { ClientToScreen(hwnd, &mut origin) };
-            let y = (pointer.y - origin.y) as f32 / scale;
-            y >= top.Y && y < top.Y + row.ActualHeight().unwrap_or(0.0) as f32
+            let items = list.list_view().Items().expect("行");
+            (0..items.Size().expect("行の数"))
+                .filter_map(|slot| {
+                    let row = items.GetAt(slot).ok()?.cast::<ListViewItem>().ok()?;
+                    let top = row
+                        .TransformToVisual(&scroll)
+                        .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+                        .ok()?
+                        .Y as f64;
+                    let bottom = top + row.ActualHeight().ok()?;
+                    let index = AutomationProperties::GetPositionInSet(&row).ok()? as usize - 1;
+                    (top >= 0.0 && bottom <= viewport && !candidates.contains(&index))
+                        .then_some((index, row))
+                })
+                .max_by_key(|(index, _)| *index)
         };
-        let target = (0..ROWS)
-            .find(|&index| built_list_row(list, index).is_some_and(|row| under_pointer(&row)))
-            .expect("ポインターの下の行");
+        if let Some((shown, row)) = lowest_shown {
+            use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
+            use naui_winui3::Microsoft::UI::Xaml::FocusState;
+            let focused = row
+                .cast::<Control>()
+                .and_then(|row| row.Focus(FocusState::Programmatic))
+                .unwrap_or(false);
+            if !focused || !foreground_is_ours() {
+                println!("     (行へフォーカスを渡せない環境なので、確かめずに通す)");
+                return None;
+            }
+            // フォーカスの移り先を直すのは `GotFocus` で、あとから届く。
+            pump_until(Duration::from_millis(500), || false);
+            assert_eq!(
+                focused_list_row(list),
+                Some(shown),
+                "画面に出ている行のフォーカスは動かない (ホイールのあと、位置 {})",
+                scroll.VerticalOffset().expect("位置")
+            );
+        }
+        let hit = || {
+            candidates
+                .iter()
+                .copied()
+                .find(|&row| list.selection() == span(7, row))
+        };
         for _ in 0..3 {
             with_modifiers(&[VK_SHIFT], || {
                 send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
                 send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
             });
-            pump_until(Duration::from_secs(1), || {
-                list.selection() == span(7, target)
-            });
-            if list.selection() == span(7, target) {
+            pump_until(Duration::from_secs(1), || hit().is_some());
+            if hit().is_some() {
                 break;
             }
         }
@@ -10329,7 +10415,12 @@ fn shift_range_scenario(
             println!("     (ポインターがほかから動かされたので、確かめずに通す)");
             return None;
         }
-        assert_eq!(list.selection(), span(7, target), "ポインターの下の行まで");
+        let target = hit().unwrap_or(pointed);
+        assert_eq!(
+            list.selection(),
+            span(7, target),
+            "ポインターの下の行まで (候補 {candidates:?})"
+        );
         // 選択は押した時点で変わる。フォーカスはそのあとで届くことがあるので待つ。
         pump_until(Duration::from_secs(1), || {
             focused_list_row(list) == Some(target)
@@ -11025,11 +11116,40 @@ fn shift_click_in_margin_scenario(
         }
         send_input(mouse_input(MOUSEEVENTF_WHEEL, (-480_i32) as u32));
     }
-    let mut settled = scroll.VerticalOffset().expect("位置");
+    // ポインターの下の行を、行そのものの位置で求める。
+    // SAFETY: HWND は window が閉じるまで有効で、UI スレッドから読んでいる。
+    let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
+    let mut origin = POINT::default();
+    // SAFETY: `origin` はこの関数の中で生きている。
+    let _ = unsafe { ClientToScreen(hwnd, &mut origin) };
+    let y = (aimed.y - origin.y) as f32 / scale;
+    // ポインターの下の行と、その行の画面上の位置。
+    let placed_under_pointer = || {
+        let items = list.list_view().Items().ok()?;
+        (0..items.Size().ok()?).find_map(|slot| {
+            let row = items.GetAt(slot).ok()?.cast::<ListViewItem>().ok()?;
+            let top = row
+                .TransformToVisual(None)
+                .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+                .ok()?;
+            let bottom = top.Y + row.ActualHeight().ok()? as f32;
+            (y >= top.Y && y < bottom).then(|| {
+                let index = AutomationProperties::GetPositionInSet(&row).expect("位置");
+                (index as usize - 1, top.Y, bottom)
+            })
+        })
+    };
+    let row_under_pointer = || placed_under_pointer().map(|(index, _, _)| index);
+    // 止まったかは行の位置で見る。`VerticalOffset` はホイールのスクロールの途中の値のまま
+    // 残ることがあり、当てにならない。
+    let mut settled = placed_under_pointer();
     pump_until(Duration::from_secs(3), || {
         pump_until(Duration::from_millis(300), || false);
-        let now = scroll.VerticalOffset().expect("位置");
-        let still = (now - settled).abs() < 0.5;
+        let now = placed_under_pointer();
+        let still = match (now, settled) {
+            (Some((now, at, _)), Some((before, was, _))) => now == before && (at - was).abs() < 0.5,
+            _ => false,
+        };
         settled = now;
         still
     });
@@ -11039,39 +11159,30 @@ fn shift_click_in_margin_scenario(
         return None;
     }
     assert!(built_list_row(list, 2).is_none(), "起点の行が窓の外にある");
-
-    // ポインターの下の行を、行そのものの位置で求める。
-    // SAFETY: HWND は window が閉じるまで有効で、UI スレッドから読んでいる。
-    let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
-    let mut origin = POINT::default();
-    // SAFETY: `origin` はこの関数の中で生きている。
-    let _ = unsafe { ClientToScreen(hwnd, &mut origin) };
-    let y = (aimed.y - origin.y) as f32 / scale;
-    let row_under_pointer = || {
-        let items = list.list_view().Items().ok()?;
-        (0..items.Size().ok()?).find_map(|slot| {
-            let row = items.GetAt(slot).ok()?.cast::<ListViewItem>().ok()?;
-            let top = row
-                .TransformToVisual(None)
-                .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
-                .ok()?;
-            let bottom = top.Y + row.ActualHeight().ok()? as f32;
-            (y >= top.Y && y < bottom)
-                .then(|| AutomationProperties::GetPositionInSet(&row).expect("位置") as usize - 1)
-        })
+    let (pointed, top, bottom) = placed_under_pointer().expect("ポインターの下の行");
+    // ポインターが行の境目 (1 px 以内) にあると、どちらの行に当たるかは XAML の丸め次第。
+    // どちらでもよいことにして、押したあとで当たったほうを押した行とする。
+    let candidates: Vec<usize> = [
+        Some(pointed),
+        (y - top < 1.0).then(|| pointed.checked_sub(1)).flatten(),
+        (bottom - y <= 1.0).then_some(pointed + 1),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let hit = || {
+        candidates
+            .iter()
+            .copied()
+            .find(|&row| list.selection() == (2..=row).collect::<Vec<usize>>())
     };
-    let target = row_under_pointer().expect("ポインターの下の行");
-
-    let range: Vec<usize> = (2..=target).collect();
-    click(
-        "余白の Shift クリック",
-        &|| list.selection() == range,
-        &[VK_SHIFT],
-    );
+    click("余白の Shift クリック", &|| hit().is_some(), &[VK_SHIFT]);
     if moved_elsewhere(pointer_at()) {
         println!("     (ポインターがほかから動かされたので、確かめずに通す)");
         return None;
     }
+    let target = hit().unwrap_or(pointed);
+    let range: Vec<usize> = (2..=target).collect();
     let picked = list.selection();
     assert_eq!(
         (

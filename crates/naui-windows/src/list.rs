@@ -1693,7 +1693,38 @@ impl List {
         } else {
             return;
         };
+        // ホイールのあと、`VerticalOffset` はアニメーションの途中の値のまま残ることがある
+        // (CI では数秒)。行はもう止まった位置に描かれていて、クリックもそこへ当たるので、
+        // 押したばかりの行を画面の外と取り違える。行そのものが見えているなら動かさない。
+        if self.row_is_drawn_on_screen(index, viewport) {
+            return;
+        }
         self.focus_nearest(target, index, state, false);
+    }
+
+    /// Whether built row `index` is drawn over the visible part of the list, going by where
+    /// the row itself is placed rather than by `VerticalOffset`.
+    ///
+    /// After the wheel, `VerticalOffset` can stay at a point the scrolling passed through
+    /// while the rows are already drawn, and hit by clicks, where it stopped. `false` for
+    /// a row not built.
+    fn row_is_drawn_on_screen(&self, index: usize, viewport: f64) -> bool {
+        let row = index
+            .checked_sub(self.0.built_start.get())
+            .and_then(|offset| self.0.native_rows.borrow().get(offset).cloned());
+        let Some(row) = row else {
+            return false;
+        };
+        let height = row.ActualHeight().unwrap_or(0.0);
+        let top = row
+            .TransformToVisual(&self.0.scroll)
+            .and_then(|transform| transform.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }));
+        match top {
+            Ok(top) => {
+                height > 0.0 && f64::from(top.Y) + height > 0.0 && f64::from(top.Y) < viewport
+            }
+            Err(_) => false,
+        }
     }
 
     /// The row holding the keyboard focus itself, and how it got it.
@@ -1719,7 +1750,10 @@ impl List {
         let (top, bottom) = self.row_span(index);
         let view_top = self.0.scroll.VerticalOffset().unwrap_or(0.0);
         let viewport = self.0.scroll.ViewportHeight().unwrap_or(0.0);
-        if bottom < view_top || top > view_top + viewport {
+        // 位置が遅れているだけで行が見えているなら、戻す (`keep_focus_on_screen`)。
+        if (bottom < view_top || top > view_top + viewport)
+            && !self.row_is_drawn_on_screen(index, viewport)
+        {
             return;
         }
         if let Some(row) = self.0.native_rows.borrow().get(index - start) {
