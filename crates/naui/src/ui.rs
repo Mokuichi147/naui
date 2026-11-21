@@ -442,8 +442,17 @@ impl Ui {
     ///
     /// GTK4 opens it asynchronously (`GtkUriLauncher`), so what this returns is only
     /// whether it could be read as a URL.
+    ///
+    /// **Inside a test case run by [`test_cases!`](crate::test_cases) nothing is
+    /// opened**: the URL is read as here, and a readable one is recorded for
+    /// [`testing::opened_urls`](crate::testing::opened_urls) instead.
     #[inline]
     pub fn open_url(&self, url: &str) -> Result<()> {
+        if crate::testing::recording_urls() {
+            self.0.check_url(url)?;
+            crate::testing::record_url(url);
+            return Ok(());
+        }
         self.0.open_url(url)
     }
 

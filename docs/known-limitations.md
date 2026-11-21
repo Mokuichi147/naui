@@ -321,10 +321,27 @@ that shape are covered in
 
 ### Testing apps
 
-- Not every user action has a method that acts like it. A `Toast`'s action
-  button, the window's close button (`on_close_request`), pointer events on a
-  `Canvas`, choosing files and dropping them have none yet. Test the code behind
-  them directly.
+- Not every user action has a method that acts like it (pressing keys for
+  `on_key_down`, for example). The native file dialogs themselves cannot be
+  answered: `FilePicker::choose` and `FileSaver::choose` stand in for clicking the button
+  and choosing in the dialog, without showing it, so a test that clicks the
+  button instead shows the real dialog and waits for a person to answer it (on
+  macOS `open` does not return until then). They do not check the picker's mode
+  or filters.
+- `Canvas::send_pointer` and `send_wheel` make no native event: the event goes to
+  `on_pointer` or `on_wheel` as given, so an outer scroll view does not scroll on
+  `Continue`, and a right-click opens no context menu.
+- `Window::request_close` does nothing on the Web, where `on_close_request` is
+  never called. On macOS it goes through `performClose:`, as ⌘W does, so AppKit
+  plays the alert sound when `on_close_request` keeps the window open.
+- `drop_files` on the Web dispatches a real `drop` event with an empty file per
+  entry, so the files arrive named after the entries, with `blob:` URLs and no
+  paths, as dropped files do there. `FilePicker::choose` on the Web goes through
+  the file input the same way. `FileSaver::choose` on the Web writes nothing and
+  starts no download; `on_save` gets an entry with the name only.
+- Inside a test case `Ui::open_url` opens nothing and records the URL for
+  `testing::opened_urls` instead. Links the user clicks inside a `Label` are not
+  recorded (no method clicks them).
 - `enter_text`, `submit` and `search` press no key: `on_key_down` is not called,
   so an `on_key_down` that stops Enter does not stop `submit`, and nothing goes
   through an IME. `enter_text` replaces the whole text at once, so `on_change` is

@@ -3317,7 +3317,11 @@ that notify **like the user's own action**, and checks what the app did:
 | [`NumberInput`] | `enter_text`, `submit` | `set_value` |
 | [`EditableComboBox`] | `enter_text` (and `select`) | `set_text` |
 | [`Dialog`], [`Sheet`] | `respond` | `close` |
-| [`Window`] | [`testing::resize`] | |
+| [`Toast`] | `click_action` | `dismiss` |
+| [`Canvas`] | `send_pointer`, `send_wheel` | |
+| [`FilePicker`], [`FileSaver`] | `choose` | |
+| Every widget | `drop_files` | |
+| [`Window`] | `request_close`, `drop_files`, [`testing::resize`] | `close` |
 
 `click` goes through each platform's own path for a click (`performClick` on
 macOS, the `clicked` / `activate` signals on Linux, UI Automation's Invoke and
@@ -3361,6 +3365,51 @@ testing::wait_until(&ui, || app.status.text() == "The form is cleared").await?;
 
 A role without a button, or with a disabled one, clicks nothing and leaves the
 dialog open (on macOS, with the click that opened a `Dialog` still waiting).
+
+[`Toast::click_action`] clicks one of a toast's action buttons while it is on
+screen, so `on_action` and then `on_dismiss` are called. [`Window::request_close`]
+acts like the window's close button: `on_close_request` is asked, and the window
+closes unless it answers [`CloseResponse::KeepOpen`]. On the Web, where a window
+inside the page has no close button, it does nothing. Both can take effect a
+moment later on Windows, so wait for them with [`testing::wait_until`]:
+
+```rust,ignore
+app.editor.enter_text("unsaved");
+app.window.request_close();
+testing::settle(&ui).await;
+assert!(app.window.is_visible(), "asked to save first");
+```
+
+[`Canvas::send_pointer`] and [`Canvas::send_wheel`] hand a [`PointerEvent`] to
+`on_pointer` and `on_wheel` exactly as given, so a drag is a `Down`, some `Move`s
+and an `Up`. No native event is made: GTK and WinUI cannot synthesize one, and
+handing the app the event it would receive is the same on every platform.
+
+The file dialogs cannot be answered from a test, so [`FilePicker::choose`] and
+[`FileSaver::choose`] stand in for clicking the button and choosing in the dialog;
+the dialog is not shown. `FilePicker::choose` makes the files the selection and
+calls `on_select` (an empty list is a cancelled dialog). `FileSaver::choose`
+writes the contents to the chosen path and calls `on_save` or `on_error`; on the
+Web nothing is written and no download starts. `drop_files` drops files from the
+OS onto a widget or a window, and the drop goes where a real one would: to the
+widget's `on_file_drop`, the nearest enclosing widget's, or the window's. On the
+Web the files arrive as the browser delivers them, named after the entries given,
+with `blob:` URLs and no paths, so compare names:
+
+```rust,ignore
+app.photo.drop_files(&[FileEntry::from_path("/tmp/photo.png")]);
+testing::wait_until(&ui, || app.caption.text() == "photo.png").await?;
+```
+
+Inside a test case [`Ui::open_url`] opens nothing. It reads the URL as it does
+when opening and records it, and [`testing::opened_urls`] returns what the case
+has asked to open, so a test checks what the app hands the OS without a browser
+opening:
+
+```rust,ignore
+app.help.click();
+assert_eq!(testing::opened_urls(&ui), ["https://example.com/help"]);
+```
 
 ### Setting up the tests
 

@@ -306,6 +306,25 @@ impl Canvas {
         (bounds.size.width, bounds.size.height)
     }
 
+    /// Delivers `event` to `on_pointer` as given (a `Wheel` one to `on_wheel`). For
+    /// tests and automation.
+    ///
+    /// No `NSEvent` is made: AppKit's synthesized mouse events lose the button
+    /// number, and the view's position in its window would have to be known.
+    pub fn send_pointer(&self, event: PointerEvent) {
+        if event.phase == PointerPhase::Wheel {
+            self.send_wheel(event);
+        } else {
+            self.0.view.ivars().pointer.emit(event);
+        }
+    }
+
+    /// Delivers `event` to `on_wheel` and returns its answer (`Continue` without
+    /// one). Nothing scrolls on `Continue`. For tests and automation.
+    pub fn send_wheel(&self, event: PointerEvent) -> EventResponse {
+        self.0.view.ivars().wheel.emit(event)
+    }
+
     /// Draws on the spot. **For automated tests only.**
     ///
     /// Real apps do not use it, because AppKit decides when to draw.

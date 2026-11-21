@@ -129,6 +129,15 @@ macro_rules! impl_interaction {
                 crate::file_drop::set_handler(&<$t as Widget>::native_view(self), f);
             }
 
+            /// Drops `files` onto this widget, handing them to whoever a real drop
+            /// here would reach: this widget's `on_file_drop`, the nearest enclosing
+            /// widget's, or the window's. The same search as a drop from Finder,
+            /// started from this widget's view instead of the point under the
+            /// pointer. For tests and automation.
+            pub fn drop_files(&self, files: &[naui_core::FileEntry]) {
+                crate::file_drop::drop_onto_view(&<$t as Widget>::native_view(self), files);
+            }
+
             /// Creates a weak reference. Capture it when touching this widget from its own
             /// notification closures (capturing a `clone()` creates a cycle and it is never
             /// freed).

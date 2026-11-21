@@ -71,4 +71,22 @@ impl FileSaver {
     pub fn open(&self) {
         self.0.open()
     }
+
+    /// Saves as if the user had clicked the button and chosen `destination` in the
+    /// dialog, without showing it. Natively the contents are written to
+    /// `destination`'s path, and [`on_save`](Self::on_save) is called with it (or
+    /// [`on_error`](Self::on_error) if writing fails or it has no path). Does
+    /// nothing while disabled.
+    ///
+    /// **On the Web nothing is written**: a page cannot write to a path, and a test
+    /// should not start a download. `on_save` is called with an entry carrying only
+    /// `destination`'s name, as after a download.
+    ///
+    /// For tests and automation. Call it instead of clicking the button: a click
+    /// shows the real dialog, which a test cannot answer. See
+    /// [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn choose(&self, destination: &FileEntry) {
+        self.0.choose(destination)
+    }
 }

@@ -153,4 +153,16 @@ impl Toast {
     pub fn is_queued(&self) -> bool {
         self.0.is_queued()
     }
+
+    /// Clicks its action button at `index` (in [`actions`](Self::actions)) the way
+    /// the user does, so [`on_action`](Self::on_action) is called with `index` and
+    /// the toast disappears, calling [`on_dismiss`](Self::on_dismiss). Nothing
+    /// happens unless it is on screen ([`is_visible`](Self::is_visible)) and has a
+    /// button at `index`.
+    ///
+    /// For tests and automation. See [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn click_action(&self, index: usize) {
+        self.0.click_action(index)
+    }
 }

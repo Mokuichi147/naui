@@ -58,4 +58,32 @@ impl Canvas {
     pub fn size(&self) -> (f64, f64) {
         self.0.size()
     }
+
+    /// Delivers `event` as if the user had pressed, moved or released the pointer:
+    /// [`on_pointer`](Self::on_pointer) is called with it as given. An event whose
+    /// phase is [`Wheel`](naui_core::PointerPhase::Wheel) goes to
+    /// [`on_wheel`](Self::on_wheel) instead, as with [`send_wheel`](Self::send_wheel).
+    ///
+    /// Build it with [`PointerEvent::new`] and its `button` and `modifiers`. Positions
+    /// are logical pixels from the surface's top left, as `on_pointer` receives them;
+    /// nothing checks that they are inside the surface.
+    ///
+    /// For tests and automation. No native event is made, so nothing else sees it
+    /// (no outer view, no context menu). See
+    /// [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn send_pointer(&self, event: PointerEvent) {
+        self.0.send_pointer(event)
+    }
+
+    /// Delivers `event` as if the user had turned the wheel:
+    /// [`on_wheel`](Self::on_wheel) is called with it, and its answer is returned
+    /// (`Continue` without `on_wheel`). Build it with [`PointerEvent::wheel`].
+    ///
+    /// For tests and automation. No native event is made, so nothing scrolls when
+    /// the answer is `Continue`. See [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn send_wheel(&self, event: PointerEvent) -> EventResponse {
+        self.0.send_wheel(event)
+    }
 }
