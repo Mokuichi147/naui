@@ -110,12 +110,11 @@ impl ChartView {
             chart: Rc::new(chart),
             layout: None,
         }));
+        // 描画の閉包が状態を強く持つ。ChartView を手放しても、Canvas が窓にある
+        // 限り描き続けるため (状態は Canvas を持たないので循環しない)。
         canvas.on_draw({
-            let state = Rc::downgrade(&state);
+            let state = state.clone();
             move |painter: &mut Painter| {
-                let Some(state) = state.upgrade() else {
-                    return;
-                };
                 // 描いている間は借用を持たない (書式の関数から update されてもよいように)。
                 let chart = state.borrow().chart.clone();
                 let layout = chart.draw(painter);

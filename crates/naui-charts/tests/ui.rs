@@ -7,13 +7,17 @@
 //! cargo test -p naui-charts --test ui --target wasm32-unknown-unknown  # the Web, in a browser
 //! ```
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui::{testing, Color, DrawCommand, Paint, Result, Sizing, Theme, Ui};
 use naui_charts::{series_color, Axis, Chart, ChartView, Series};
 
-naui::test_cases!(chart_view_draws_and_redraws, chart_follows_light_and_dark);
+naui::test_cases!(
+    chart_view_draws_and_redraws,
+    a_dropped_view_keeps_drawing,
+    chart_follows_light_and_dark
+);
 
 fn sales() -> Chart {
     Chart::new()
@@ -67,11 +71,34 @@ async fn chart_view_draws_and_redraws(ui: Ui) -> Result<()> {
     Ok(())
 }
 
+/// A `ChartView` let go of once its `Canvas` is in the window still draws: the
+/// `Canvas` keeps what it draws.
+async fn a_dropped_view_keeps_drawing(ui: Ui) -> Result<()> {
+    let window = ui.window("chart dropped", 480.0, 320.0)?;
+    // y の目盛りを書くたびに数える (描かれたことの印)。
+    let labels = Rc::new(Cell::new(0));
+    let chart = sales().y_axis(Axis::new().format({
+        let labels = labels.clone();
+        move |value| {
+            labels.set(labels.get() + 1);
+            format!("{value}")
+        }
+    }));
+    let view = ChartView::new(&ui, chart)?;
+    window.set_child(view.root());
+    drop(view);
+    window.show();
+    testing::wait_until(&ui, || labels.get() > 0).await?;
+    window.close();
+    Ok(())
+}
+
 /// What one draw on the real surface used.
 #[derive(Debug, Clone, PartialEq)]
 struct Drawn {
     dark: bool,
-    text: Vec<Color>,
+    /// The color of the legend's text (`TextColor::Default`).
+    legend_text: Option<Color>,
     fills: Vec<Color>,
     widest_label: f64,
 }
@@ -87,11 +114,13 @@ async fn chart_follows_light_and_dark(ui: Ui) -> Result<()> {
         let drawn = drawn.clone();
         move |painter| {
             sales().draw(painter);
-            let mut text = Vec::new();
+            let mut legend_text = None;
             let mut fills = Vec::new();
             for command in painter.commands() {
                 match command {
-                    DrawCommand::Text { color, .. } if !text.contains(color) => text.push(*color),
+                    DrawCommand::Text { text, color, .. } if text == "2025" => {
+                        legend_text = Some(*color)
+                    }
                     DrawCommand::Fill {
                         paint: Paint::Color(color),
                         ..
@@ -101,7 +130,7 @@ async fn chart_follows_light_and_dark(ui: Ui) -> Result<()> {
             }
             *drawn.borrow_mut() = Some(Drawn {
                 dark: painter.is_dark(),
-                text,
+                legend_text,
                 fills,
                 widest_label: painter.text_width("160", 11.0),
             });
@@ -129,9 +158,16 @@ async fn chart_follows_light_and_dark(ui: Ui) -> Result<()> {
     assert!(dark.fills.contains(&series_color(0, true)), "{dark:?}");
     assert!(!dark.fills.contains(&series_color(0, false)), "{dark:?}");
     // 文字色は環境が外観に合わせて解決する: 明るい外観では暗く、暗い外観では明るい。
-    let luminance = |c: &Color| 0.2126 * c.r as f64 + 0.7152 * c.g as f64 + 0.0722 * c.b as f64;
-    assert!(light.text.iter().all(|c| luminance(c) < 128.0), "{light:?}");
-    assert!(dark.text.iter().all(|c| luminance(c) > 128.0), "{dark:?}");
+    // 副次の色 (Web の GrayText など) は中ほどの灰色のことがあるので、本文の色で見る。
+    let luminance = |c: Color| 0.2126 * c.r as f64 + 0.7152 * c.g as f64 + 0.0722 * c.b as f64;
+    assert!(
+        light.legend_text.is_some_and(|c| luminance(c) < 128.0),
+        "{light:?}"
+    );
+    assert!(
+        dark.legend_text.is_some_and(|c| luminance(c) > 128.0),
+        "{dark:?}"
+    );
     window.close();
     Ok(())
 }
