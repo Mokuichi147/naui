@@ -156,9 +156,13 @@ need investigating first but are not heavy.
       `VariableSizedWrapGrid` with fixed-size cells (`WrapPanel` is in the
       Community Toolkit), and AppKit has nothing besides `NSCollectionView`'s flow
       layout. Which platforms need naui to lay it out itself is investigated first.
-- [ ] *(adaptive)* **Narrow navigation rail.** Windows is covered by `Sidebar`'s
+- [x] *(adaptive)* **Narrow navigation rail.** Windows is covered by `Sidebar`'s
       automatic collapsing (`LeftCompact`). Whether the same collapsing covers
       macOS, GTK and the Web is checked first; if it does, nothing new is needed.
+      It does: only WinUI's `NavigationView` has a strip of icons. AppKit's
+      sidebar item and libadwaita's split views (and `AdwSidebar` up to 1.9) hide
+      the whole pane, and the Web follows macOS, so no new API is added. The
+      difference is written in `Sidebar`'s documentation and the known limitations.
 
 ## v0.20.0
 

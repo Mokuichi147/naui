@@ -370,6 +370,11 @@ that shape are covered in
   collapses on macOS only below `SIDEBAR_MIN_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH`
   (it first narrows to its minimum width), and elsewhere below its own width plus
   `SIDEBAR_COLLAPSE_CONTENT_WIDTH`.
+- A collapsed `Sidebar` becomes a strip of icons (a navigation rail) only on
+  Windows, where items without an icon show nothing. AppKit and libadwaita have
+  no such state, so macOS, Linux and the Web hide the whole pane. Opening it
+  while narrow lays it over the content on Windows, widens the window on macOS,
+  and narrows the content on Linux and the Web.
 
 ## Windows
 
