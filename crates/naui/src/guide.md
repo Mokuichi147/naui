@@ -3375,9 +3375,12 @@ single action is taken down by libadwaita a moment after its button is clicked,
 so wait for the notifications with [`testing::wait_until`]:
 
 ```rust,ignore
+app.delete.click();
+app.undo_toast.click_action(0);
+testing::wait_until(&ui, || app.list.len() == 3).await?;
+
 app.editor.enter_text("unsaved");
 app.window.request_close();
-testing::settle(&ui).await;
 assert!(app.window.is_visible(), "asked to save first");
 ```
 
