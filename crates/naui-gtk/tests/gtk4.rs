@@ -9298,6 +9298,24 @@ fn toast_events_reach_the_closures(ui: &Ui) -> Result<()> {
     open.emit_clicked();
     assert_eq!(seen.borrow().as_slice(), ["action 1", "dismiss"]);
     assert!(!toast.is_visible());
+
+    // フォーカスのあるボタンを押したときは、窓のフォーカスを外してから消す (本来の
+    // ボタンと同じ)。題ごと外れたボタンをフォーカスが指したままだと、フォーカスを
+    // 移す GTK が警告を出す。
+    seen.borrow_mut().clear();
+    toast.show();
+    let native = toast.native_toast().expect("もう一度出した AdwToast");
+    let open = native
+        .custom_title()
+        .and_then(|title| title.last_child())
+        .and_downcast::<gtk::Button>()
+        .expect("2 つ目の操作のボタン");
+    spin_until(std::time::Duration::from_secs(2), || open.is_mapped());
+    assert!(open.grab_focus(), "題の中のボタンにフォーカスを置けること");
+    let root = open.root().expect("窓に載っていること");
+    open.emit_clicked();
+    assert_eq!(seen.borrow().as_slice(), ["action 1", "dismiss"]);
+    assert_eq!(root.focus(), None, "押したボタンからフォーカスが外れること");
     window.close();
     Ok(())
 }
