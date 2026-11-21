@@ -178,6 +178,14 @@ impl EditableComboBox {
         self.0.on_change.set(f);
     }
 
+    /// Replaces the text the way typing does, so `on_change` is called if the text
+    /// changes (for tests and automation). Does nothing while disabled. Nothing is
+    /// completed from the suggestions. It goes through AppKit's notification for typed
+    /// text (`NSControlTextDidChangeNotification`), without the field editor.
+    pub fn enter_text(&self, text: &str) {
+        crate::widgets::enter_field_text(&self.0.native, text);
+    }
+
     /// The real AppKit control. Public as a backend-specific escape hatch.
     pub fn native_combo_box(&self) -> Retained<NSComboBox> {
         self.0.native.clone()

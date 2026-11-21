@@ -198,6 +198,24 @@ impl NumberInput {
         self.0.submit.set(f);
     }
 
+    /// Replaces the field's text the way typing does (for tests and automation).
+    /// Text that reads as a number is taken at once, so `on_change` is called if the
+    /// value changes; other text waits for confirmation, as typing does. Does
+    /// nothing while disabled.
+    pub fn enter_text(&self, text: &str) {
+        crate::widgets::enter_field_text(&self.0.field, text);
+    }
+
+    /// Confirms it as Enter does: the typed text is read into the value (or
+    /// reverted if it is not a number) and `on_submit` is called (for tests and
+    /// automation). Does nothing while disabled.
+    pub fn submit(&self) {
+        if self.0.field.isEnabled() {
+            let text = self.0.field.stringValue().to_string();
+            self.0.field_handlers.submit(&text);
+        }
+    }
+
     /// The field for typing digits. Public as a backend-specific escape hatch.
     pub fn native_field(&self) -> Retained<NSTextField> {
         self.0.field.clone()

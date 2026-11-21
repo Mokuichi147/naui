@@ -186,6 +186,32 @@ impl NumberInput {
         self.0.on_submit.set(f);
     }
 
+    /// Replaces the field's text the way typing does (for tests and automation).
+    /// Text that reads as a number is taken at once, so `on_change` is called if the
+    /// value changes. `GtkSpinButton` is numeric, so it drops other characters as it
+    /// does when they are typed. Does nothing while insensitive. See
+    /// `enter_editable_text`.
+    pub fn enter_text(&self, text: &str) {
+        crate::widgets::enter_editable_text(&self.0.native, &self.0.text_handler, text);
+    }
+
+    /// Confirms it as Enter does (`activate` on the inner `GtkText`): the typed
+    /// text is read into the value (or reverted) and `on_submit` is called (for
+    /// tests and automation). Does nothing while insensitive.
+    pub fn submit(&self) {
+        if !self.0.native.is_sensitive() {
+            return;
+        }
+        if let Some(text) = self
+            .0
+            .native
+            .delegate()
+            .and_then(|text| text.downcast::<gtk::Text>().ok())
+        {
+            text.emit_activate();
+        }
+    }
+
     /// The real GTK4 control. Public as a backend-specific escape hatch.
     pub fn native_spin_button(&self) -> gtk::SpinButton {
         self.0.native.clone()

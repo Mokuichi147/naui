@@ -64,6 +64,8 @@ struct DialogInner {
     /// The receivers for being closed as a cancel, by Esc and the like.
     dismiss: RefCell<Vec<Listener>>,
     on_response: RefCell<Option<Box<dyn FnMut(DialogResponse)>>>,
+    /// The answer [`Dialog::respond`] keeps for the next time it opens.
+    pending: Cell<Option<DialogResponse>>,
 }
 
 /// A modal dialog (`<dialog>`).
@@ -120,6 +122,7 @@ impl Dialog {
             listeners: RefCell::new(Vec::new()),
             dismiss: RefCell::new(Vec::new()),
             on_response: RefCell::new(None),
+            pending: Cell::new(None),
         }));
         this.set_title(title);
         this.rebuild_buttons()?;
@@ -220,11 +223,11 @@ impl Dialog {
             return;
         }
         key.prevent_default();
-        self.respond(role);
+        self.finish(role);
     }
 
     /// Closes and notifies `role`, as a click on that button does.
-    fn respond(&self, role: DialogResponse) {
+    fn finish(&self, role: DialogResponse) {
         if !self.0.element.open() {
             return;
         }
@@ -330,7 +333,7 @@ impl Dialog {
             let weak = Rc::downgrade(&self.0);
             listeners.push(Listener::attach(button.as_ref(), "click", move || {
                 if let Some(inner) = weak.upgrade() {
-                    Dialog(inner).respond(role);
+                    Dialog(inner).finish(role);
                 }
             })?);
             elements.push((role, button));
@@ -371,7 +374,48 @@ impl Dialog {
         if self.0.element.open() {
             return;
         }
-        let _ = self.0.element.show_modal();
+        if self.0.element.show_modal().is_err() {
+            return;
+        }
+        if let Some(response) = self.0.pending.take() {
+            // 利用者と同じく、出てから押す。
+            let weak = Rc::downgrade(&self.0);
+            let answer = wasm_bindgen::closure::Closure::once_into_js(move || {
+                if let Some(inner) = weak.upgrade() {
+                    Dialog(inner).respond(response);
+                }
+            });
+            if let Some(window) = web_sys::window() {
+                let _ = window.set_timeout_with_callback_and_timeout_and_arguments_0(
+                    answer.unchecked_ref(),
+                    0,
+                );
+            }
+        }
+    }
+
+    /// Answers it the way the user does, by clicking its `<button>` for `response`
+    /// (`click()`), so `on_response` is called with it (for tests and automation).
+    /// Nothing happens if it has no such button or the button is disabled.
+    ///
+    /// If it is not open, the answer is kept and given a moment after it next
+    /// opens (on a timer of its own, as a user's click would come).
+    pub fn respond(&self, response: DialogResponse) {
+        if !self.0.element.open() {
+            self.0.pending.set(Some(response));
+            return;
+        }
+        let button = self
+            .0
+            .button_elements
+            .borrow()
+            .iter()
+            .find(|(role, _)| *role == response)
+            .map(|(_, button)| button.clone());
+        // 無効な `<button>` の `click()` はブラウザが何もしない。
+        if let Some(button) = button {
+            button.click();
+        }
     }
 
     /// Closes the dialog being shown. `on_response` is not called.

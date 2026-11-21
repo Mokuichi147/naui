@@ -2092,6 +2092,11 @@ fn remember_owner(window: &XamlWindow) {
     }
 }
 
+/// Whether a window has been shown, to show dialogs over.
+pub(crate) fn has_owner_window() -> bool {
+    OWNER_WINDOW.with(|slot| slot.borrow().is_some())
+}
+
 /// The base on which `ContentDialog`s are shown. `None` if no window has been shown
 /// yet.
 ///

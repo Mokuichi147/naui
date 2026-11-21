@@ -88,6 +88,10 @@ struct DialogInner {
     /// Whether it was closed with [`Dialog::close`]. A marker so that the reason for
     /// closing is not notified.
     closed_by_app: Cell<bool>,
+    /// The `NSAlert` being shown and the roles of its buttons, while open.
+    running: RefCell<Option<(Retained<NSAlert>, Vec<DialogResponse>)>>,
+    /// The answer [`Dialog::respond`] keeps for the next time it opens.
+    pending: Cell<Option<DialogResponse>>,
 }
 
 /// A modal dialog (NSAlert).
@@ -107,6 +111,8 @@ impl Dialog {
             on_response: ResponseHandler::default(),
             open: Cell::new(false),
             closed_by_app: Cell::new(false),
+            running: RefCell::new(None),
+            pending: Cell::new(None),
         }))
     }
 
@@ -165,7 +171,20 @@ impl Dialog {
         let (alert, roles) = self.build();
         self.0.open.set(true);
         self.0.closed_by_app.set(false);
+        *self.0.running.borrow_mut() = Some((alert.clone(), roles.clone()));
+        if let Some(response) = self.0.pending.take() {
+            // `runModal` は閉じるまで戻らないので、答えは入れ子のループの中で
+            // 押す。main queue はここが main queue の仕事の中 (`Tasks` の poll
+            // など) だと回らないので、run loop のブロックで届ける。
+            let weak = Rc::downgrade(&self.0);
+            crate::main_thread::on_main_run_loop(move || {
+                if let Some(inner) = weak.upgrade() {
+                    Dialog(inner).click(response);
+                }
+            });
+        }
         let code = alert.runModal();
+        self.0.running.borrow_mut().take();
         self.0.open.set(false);
         if self.0.closed_by_app.replace(false) {
             return; // アプリ側から閉じた。通知はしない。
@@ -188,6 +207,42 @@ impl Dialog {
     /// Whether it is showing now.
     pub fn is_open(&self) -> bool {
         self.0.open.get()
+    }
+
+    /// Answers it the way the user does, by clicking the button for `response`
+    /// (`performClick:`), so `on_response` is called with it (for tests and
+    /// automation).
+    ///
+    /// If it is not open, the answer is kept and given right after it next opens,
+    /// inside `open()`'s modal loop. That is how a test answers a dialog that a
+    /// click opens, since the click does not return until the dialog is closed.
+    /// Nothing happens if it has no button for `response`.
+    pub fn respond(&self, response: DialogResponse) {
+        if self.0.open.get() {
+            self.click(response);
+        } else {
+            self.0.pending.set(Some(response));
+        }
+    }
+
+    /// Clicks the button for `response` on the `NSAlert` being shown.
+    fn click(&self, response: DialogResponse) {
+        let button = {
+            let running = self.0.running.borrow();
+            let Some((alert, roles)) = running.as_ref() else {
+                return;
+            };
+            let Some(index) = roles.iter().position(|role| *role == response) else {
+                return;
+            };
+            let buttons = alert.buttons();
+            if index >= buttons.count() {
+                return;
+            }
+            buttons.objectAtIndex(index)
+        };
+        // 押すと `NSAlert` が `stopModalWithCode:` を呼ぶ。借用は先に手放す。
+        unsafe { button.performClick(None) };
     }
 
     /// Builds and returns an `NSAlert` reflecting the current settings. **It is not

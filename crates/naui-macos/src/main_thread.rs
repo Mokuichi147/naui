@@ -37,3 +37,27 @@ impl MainThread for MainQueue {
             .is_ok()
     }
 }
+
+/// Runs `f` on the main run loop's next pass in any of the common modes, which
+/// include the modal panel mode `runModal` spins in.
+///
+/// Unlike the main queue, this also runs inside a nested run loop started from a
+/// main-queue item (a `Tasks` poll opening a `Dialog`, for example), where libdispatch
+/// does not drain the main queue again until the item returns.
+pub(crate) fn on_main_run_loop(f: impl FnOnce() + 'static) {
+    use std::cell::Cell;
+
+    use objc2_foundation::{NSArray, NSRunLoop, NSRunLoopCommonModes};
+
+    let f = Cell::new(Some(f));
+    let block = block2::RcBlock::new(move || {
+        if let Some(f) = f.take() {
+            let _ = catch_unwind(AssertUnwindSafe(f));
+        }
+    });
+    // SAFETY: 共通モードの名前は Foundation が持つ定数で、ブロックは 1 度だけ呼ばれる。
+    unsafe {
+        let modes = NSArray::from_slice(&[NSRunLoopCommonModes]);
+        NSRunLoop::mainRunLoop().performInModes_block(&modes, &block);
+    }
+}

@@ -3284,6 +3284,11 @@ that notify **like the user's own action**, and checks what the app did:
 | [`SplitView`] | `drag_to` | `set_position` |
 | [`AdaptivePanes`] | `go_back` | |
 | [`Popover`] | `dismiss` | `close` |
+| [`TextInput`], [`PasswordInput`], [`TextArea`] | `enter_text`, `submit` | `set_text` |
+| [`SearchInput`] | `enter_text`, `search` | `set_text` |
+| [`NumberInput`] | `enter_text`, `submit` | `set_value` |
+| [`EditableComboBox`] | `enter_text` (and `select`) | `set_text` |
+| [`Dialog`], [`Sheet`] | `respond` | `close` |
 | [`Window`] | [`testing::resize`] | |
 
 `click` goes through each platform's own path for a click (`performClick` on
@@ -3294,8 +3299,40 @@ exceptions: [`Link::click`] notifies without opening `href`, so a test does not
 open the browser, and [`Popover::dismiss`] can notify a moment later (wait for it
 with [`testing::wait_until`]).
 
-Typing into text fields has no counterpart yet: `set_text` and `set_value` do not
-call `on_change`, so put text in with them before the click that reads it.
+`enter_text` replaces a field's text the way the user does by selecting everything
+and typing over it, so `on_change` is called once with the new text, and `submit`
+(`search` on [`SearchInput`]) confirms as Enter does. They go through each
+platform's own path for typed text (AppKit's text-change notification,
+`GtkEditable`, the DOM's `input` event), but no key is pressed: `on_key_down` is
+not called and no IME is involved. On Windows, WinUI gives the app's own process
+no UI Automation Value pattern for a text field, so naui writes the text and calls
+`on_change` itself before `enter_text` returns, whether or not the window has been
+drawn. ([`TextArea`] has no `submit`, since Enter types a newline there.) Wait for
+what the notification does with [`testing::wait_until`] where it takes effect
+later:
+
+```rust,ignore
+app.window.show();
+app.name.enter_text("Ada");
+testing::wait_until(&ui, || app.preview.text() == "Signing up as Ada").await?;
+app.name.submit();
+```
+
+`respond` answers a [`Dialog`] or [`Sheet`] by clicking its button for a role, so
+`on_response` is called with it. Give the answer **before** whatever opens the
+dialog: the answer is kept and given right after the dialog opens. On macOS
+[`Dialog::open`] does not return until the dialog is closed, so the click that
+opens it returns only once it has been answered (from inside its modal loop); on
+the other platforms the answer arrives a moment after the dialog opens:
+
+```rust,ignore
+app.confirm_clear.respond(DialogResponse::Primary);
+app.clear.click();
+testing::wait_until(&ui, || app.status.text() == "The form is cleared").await?;
+```
+
+A role without a button, or with a disabled one, clicks nothing and leaves the
+dialog open (on macOS, with the click that opened a `Dialog` still waiting).
 
 ### Setting up the tests
 

@@ -1,14 +1,14 @@
 //! A sign-up form whose UI is tested on all four platforms (`tests/ui.rs`).
 //!
 //! The UI is built in a library function, [`build`], that returns the widgets the
-//! tests operate. `main.rs` only shows the window it builds. The tests click the
-//! buttons the way a user does and resize the window to check the adaptive layout:
-//! the form lines up its parts when there is room, and the sidebar collapses when
-//! the window is narrow.
+//! tests operate. `main.rs` only shows the window it builds. The tests type and click
+//! the way a user does, answer the dialog that asks before clearing the form, and
+//! resize the window to check the adaptive layout: the form lines up its parts when
+//! there is room, and the sidebar collapses when the window is narrow.
 
 use naui::{
-    Breakpoint, Button, Checkbox, Label, Orientation, Padding, Result, Sidebar, SidebarItem,
-    Sizing, Stack, TextInput, Ui, Window,
+    Breakpoint, Button, Checkbox, Dialog, DialogButtons, DialogResponse, Label, Orientation,
+    Padding, Result, Sidebar, SidebarItem, Sizing, Stack, TextInput, Ui, Window,
 };
 
 /// The width the form needs to put its parts side by side.
@@ -25,10 +25,19 @@ pub struct Signup {
     /// [`FORM_BREAKPOINT`] wide.
     pub form: Stack,
     pub name: TextInput,
+    /// Follows the name as it is typed.
+    pub preview: Label,
     pub subscribe: Checkbox,
     pub create: Button,
+    /// Clears the form after asking with [`Signup::confirm_clear`].
+    pub clear: Button,
+    /// Asks before clearing the form.
+    pub confirm_clear: Dialog,
     pub status: Label,
 }
+
+/// What the status line says once the form has been cleared.
+pub const CLEARED: &str = "The form is cleared";
 
 /// Builds the window and its contents. The window is not shown yet.
 pub fn build(ui: &Ui) -> Result<Signup> {
@@ -54,20 +63,57 @@ pub fn build(ui: &Ui) -> Result<Signup> {
     name.set_placeholder("Name");
     let subscribe = ui.checkbox("Send me news")?;
     let create = ui.button("Create account")?;
+    let clear = ui.button("Clear")?;
     form.append(&name);
     form.append(&subscribe);
     form.append(&create);
 
+    let confirm_clear = ui.dialog("Clear the form?")?;
+    confirm_clear.set_message("The name you typed will be lost.");
+    confirm_clear.set_buttons(DialogButtons::new().primary("Clear").cancel("Keep"));
+
+    let preview = ui.label("")?;
     let status = ui.label("")?;
     root.append(&form);
+    root.append(&preview);
     root.append(&status);
+    root.append(&clear);
     window.set_child(&root);
 
-    create.on_click({
+    let create_account = {
         let name = name.clone();
         let subscribe = subscribe.clone();
         let status = status.clone();
         move || status.set_text(&greeting(&name.text(), subscribe.is_checked()))
+    };
+    create.on_click(create_account.clone());
+    // Enter in the name field does the same as the button.
+    name.on_submit({
+        let create_account = create_account.clone();
+        move |_| create_account()
+    });
+    name.on_change({
+        let preview = preview.clone();
+        move |text| preview.set_text(&signing_up_as(text))
+    });
+
+    clear.on_click({
+        let confirm_clear = confirm_clear.clone();
+        move || confirm_clear.open()
+    });
+    confirm_clear.on_response({
+        let name = name.clone();
+        let preview = preview.clone();
+        let subscribe = subscribe.clone();
+        let status = status.clone();
+        move |response| {
+            if response == DialogResponse::Primary {
+                name.set_text("");
+                preview.set_text("");
+                subscribe.set_checked(false);
+                status.set_text(CLEARED);
+            }
+        }
     });
 
     Ok(Signup {
@@ -75,10 +121,23 @@ pub fn build(ui: &Ui) -> Result<Signup> {
         sidebar,
         form,
         name,
+        preview,
         subscribe,
         create,
+        clear,
+        confirm_clear,
         status,
     })
+}
+
+/// What the line below the form says while a name is typed.
+pub fn signing_up_as(name: &str) -> String {
+    let name = name.trim();
+    if name.is_empty() {
+        String::new()
+    } else {
+        format!("Signing up as {name}")
+    }
 }
 
 /// What the status line says after "Create account".
