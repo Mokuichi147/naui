@@ -1238,17 +1238,19 @@ fn typing_notifies_like_the_user(ui: &Ui) -> Result<()> {
     assert_eq!(*values.borrow(), [4.0]);
     number.submit();
     assert_eq!(*submits.borrow(), [4.0]);
-    // 数として読めない文字は値にならない (`GtkSpinButton` は数字以外を打たせない)。
-    // 確定すると元へ戻るはずだが、GTK の既定の更新方針では 0 になるので、
-    // ここでは確定まではしない。
+    // 数として読めない文字は値にならず、確定すると元の値へ戻る
+    // (`GtkSpinButton` は数字以外を打たせない)。
     number.enter_text("-");
     assert_eq!(values.borrow().len(), 1, "読めない文字は値にならない");
-    number.enter_text("4");
+    number.submit();
+    assert_eq!(number.value(), 4.0, "読めない文字は確定しても値を変えない");
+    assert_eq!(*values.borrow(), [4.0], "戻すときは通知しない");
+    assert_eq!(*submits.borrow(), [4.0, 4.0]);
     number.set_enabled(false);
     number.enter_text("7");
     number.submit();
     assert_eq!(number.value(), 4.0, "無効な欄には打てない");
-    assert_eq!(submits.borrow().len(), 1);
+    assert_eq!(submits.borrow().len(), 2);
 
     let combo = ui.editable_combo_box()?;
     combo.set_items(&["Apple", "Banana"]);
