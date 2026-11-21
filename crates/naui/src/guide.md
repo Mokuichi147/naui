@@ -1131,6 +1131,56 @@ The native controls are two-pane. For a third pane, attach a [`Sidebar`] to the
 window, which collapses by itself when the window narrows, or put another
 `AdaptivePanes` in the detail; each one decides by its own width.
 
+## Rearranging list rows
+
+With [`List::set_reorderable`], the user can drag rows to another place in the same
+list: a row, or the whole selection when the row pressed is selected. naui moves the
+rows on screen and keeps the selection on them, then calls
+[`List::on_reorder`] with a [`RowMove`]: the rows that moved and the gap they went
+into, both counted before the move. Move the app's own data the same way with
+[`RowMove::apply`]:
+
+```no_run
+# use naui::{ListItem, Result, Ui};
+# use std::cell::RefCell;
+# use std::rc::Rc;
+# fn build(ui: &Ui) -> Result<()> {
+let tasks = Rc::new(RefCell::new(vec!["Write", "Review", "Ship"]));
+let list = ui.list()?;
+list.set_items(&tasks.borrow().iter().map(|&task| ListItem::new(task)).collect::<Vec<_>>());
+list.set_reorderable(true);
+list.on_reorder({
+    let tasks = tasks.clone();
+    move |moved| moved.apply(&mut tasks.borrow_mut())
+});
+# Ok(())
+# }
+```
+
+Rows passed to [`List::set_row_builder`] are rebuilt from the app's data once
+`on_reorder` returns, so moving that data inside it is what puts the rows in their
+new places. An index the app kept from an earlier notification (the row shown in a
+detail pane, say) is mapped with [`RowMove::new_index`]. `on_select` is not called,
+since the same rows stay selected.
+
+| | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| Native mechanism | `ListView`'s `CanReorderItems` | `NSTableView`'s drag and drop | `GtkDragSource` on each row, `GtkDropTarget` on the `GtkListBox` | HTML drag and drop on `draggable` rows |
+| Where the rows will land | The rows open a gap | A line between the rows | A line in the accent color, drawn by naui | A line in the `Highlight` system color, drawn by naui |
+| Scrolling near the edge while dragging | No | Yes | No | As the browser does |
+| Moving rows with the keyboard | Alt + Shift + Up / Down moves the focused row (with the selection when it is in it) one place | No | No | No |
+
+Rows that cannot be selected cannot be dragged, and only rows from the same list
+can be dropped: rows from other lists, other widgets and other apps are refused,
+and the rows cannot be dragged out of the app. A drag carries only a mark of the
+list it came from (a private pasteboard type, a boxed GType, a `DataTransfer`
+type); the rows themselves stay in the list. On the Web, a list of text-only rows
+becomes a `<ul role="listbox">` while it is reorderable, since an `<option>`
+cannot be dragged.
+
+[`List::drag_rows`] moves rows through the same path as a drop, for tests, and
+[`List::move_rows`] moves them without notifying.
+
 ## Label wrapping
 
 [`Label`] **does not wrap by default**. Whatever does not fit on one line is cut
@@ -2954,17 +3004,18 @@ cancel button when there is no primary one), except on Linux (see
 
 ## Toasts
 
-A [`Toast`] is a notification that shows a short message at the bottom of the
-screen and **disappears by itself**. Unlike a dialog it does not block the user, so
+A [`Toast`] is a notification that shows a short message at the edge of the
+window and **disappears by itself**. Unlike a dialog it does not block the user, so
 use it for news about something already done, such as "Saved".
 
 ```no_run
-# use naui::{Result, Ui};
+# use naui::{Result, ToastPosition, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let toast = ui.toast("Saved")?;
-toast.set_action("Undo"); // optional; an empty string removes it
+let toast = ui.toast("Deleted")?;
+toast.set_actions(&["Undo", "Show"]); // optional; an empty list removes them
 toast.set_timeout(3.0); // seconds; with 0 it does not disappear by itself
-toast.on_action(|| println!("undo"));
+toast.set_position(ToastPosition::TopEnd); // the default is the bottom center
+toast.on_action(|index| println!("action {index}")); // 0 is "Undo"
 toast.show();
 # Ok(())
 # }
@@ -2974,17 +3025,30 @@ toast.show();
 | --- | --- | --- | --- | --- |
 | `Toast` | An `InfoBar` overlaid on the content | An `NSVisualEffectView` overlaid on the content | `AdwToast` + `AdwToastOverlay` | `<div role="status">` |
 
-**Only Linux has a native toast** (`AdwToast`). Windows's `InfoBar` /
-`TeachingTip` cannot be used because naui does not project them, and macOS and
-browsers have nothing corresponding at all, so on the remaining three platforms
-naui builds the same shape. Notifications sent to the OS notification center are a
-separate mechanism that leaves the app, so they are not covered.
+**Only Linux has a native toast** (`AdwToast`). macOS and browsers have nothing
+corresponding at all, and Windows's `InfoBar` is a band laid inside a page, so on
+the remaining three platforms naui builds the same shape. Notifications sent to the
+OS notification center are a separate mechanism that leaves the app, so they are
+not covered.
 
-**Only one is shown at a time**, and a newly shown one replaces the previous one
-(naui also aligns `AdwToastOverlay`'s queueing to this behavior). Dismissing with
-[`Toast::dismiss`] and being replaced do not call `on_dismiss` (the same rule as
-[`Dialog::close`]: the app's own operations are not notified). Only on Linux is the
-time granularity **seconds**, so values under one second become one second.
+**One toast is on screen at a time, and the others wait their turn**, modelled on
+how `AdwToastOverlay` queues them. [`Toast::show`] puts a toast at the back of the
+queue; with [`ToastPriority::High`] it comes up at once instead, and the one it
+interrupts goes back to the front of the queue. Its time starts when it comes up.
+[`Toast::is_visible`] tells whether it is on screen and [`Toast::is_queued`]
+whether it is waiting. To replace the toast on screen, [`Toast::dismiss`] it first.
+
+Dismissing with [`Toast::dismiss`] and being put back in the queue do not call
+`on_dismiss` (the same rule as [`Dialog::close`]: the app's own operations are not
+notified). When a toast goes by itself, the next one is already on screen by the
+time `on_dismiss` is called.
+
+Some things differ by platform. `AdwToastOverlay` always places toasts at the
+bottom center, so **Linux ignores [`ToastPosition`]**. `AdwToast` has room for one
+button, so with two or more actions they go after the text in its custom title;
+on Windows they go in a row below the text. Only on Linux is the time granularity
+**seconds**, so values under one second become one second, and only Linux has a
+close button (×), which calls `on_dismiss`.
 
 ## Other threads and async
 
@@ -3239,7 +3303,8 @@ that notify **like the user's own action**, and checks what the app did:
 | [`Checkbox`], [`Toggle`], [`Expander`] | `click` | `set_checked`, `set_on`, `set_expanded` |
 | [`ComboBox`], [`EditableComboBox`], [`RadioGroup`], [`Tabs`], [`Navbar`], [`Dock`], [`Menu`], [`Breadcrumbs`], [`Sidebar`] | `select` | `set_selected` |
 | [`PopupMenu`] | `select` | |
-| [`List`], [`Table`] | `select`, `select_many` | `set_selected`, `set_selection` |
+| [`List`] | `select`, `select_many`, `drag_rows` | `set_selected`, `set_selection`, `move_rows` |
+| [`Table`] | `select`, `select_many` | `set_selected`, `set_selection` |
 | [`Tree`] | `select`, `select_many`, `expand`, `collapse` | `set_selected`, `set_selection`, `set_expanded` |
 | [`Pagination`] | `select`, `go_previous`, `go_next` | `set_page` |
 | [`Toolbar`], [`MenuBar`] | `activate` | |

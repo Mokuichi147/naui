@@ -123,15 +123,33 @@ v0.17.0.
 Gaps that ordinary apps run into right away and that all four platforms have
 native counterparts for.
 
-- [ ] **Relax the limits on toasts** (queueing, more than one action, position).
-      Dialogs needing more than three buttons can now put the extra controls in a
-      `Sheet`'s content, so only toasts remain. Queueing has a native counterpart
-      only in `AdwToastOverlay`, so the others would be built in naui.
-- [ ] **Reordering rows in a `List` by drag and drop.** `NSTableView` drag and
-      drop, WinUI `ListView` (`CanReorderItems`), GTK drag sources and drop targets
-      on a `GtkListBox`, and HTML5 drag and drop all support it. It builds on the
-      file drops that are already in place. Still open: the shape of the payload
-      passed between widgets within one app. `Tree` on GTK is built from
+- [x] **Relax the limits on toasts** (queueing, more than one action, position).
+      `Toast::show` now waits its turn in a queue, with `ToastPriority::High` to
+      come up at once and put the current one back at the front, modelled on
+      `AdwToastOverlay`'s order; `is_queued` tells a waiting toast. The queue is one
+      `ToastQueue` in naui-core shared by all four backends, since
+      `AdwToastOverlay` keeps one per window and has no signal for a waiting toast
+      coming up. `set_actions` takes a list of labels and `on_action` the index
+      (replacing `set_action` and `action`): in a row with the text on macOS and
+      the Web, `ActionButton` for one and a row in `Content` below the text for
+      more on WinUI's `InfoBar`, and `AdwToast`'s own button for one and its custom
+      title for more on GTK. `ToastPosition` places it at the start, center or end
+      of the top or bottom edge (safe-area constraints on macOS, `InfoBar`
+      alignment on WinUI, logical CSS insets on the Web); `AdwToastOverlay` has no
+      placement, so GTK stays at the bottom center.
+- [x] **Reordering rows in a `List` by drag and drop** (`List::set_reorderable`,
+      `on_reorder` with a `RowMove`, `drag_rows` for tests and `move_rows`).
+      `NSTableView`'s drag and drop, WinUI `ListView`'s `CanReorderItems`, a
+      `GtkDragSource` on each row with a `GtkDropTarget` on the `GtkListBox`, and
+      HTML drag and drop on `draggable` rows. naui moves the rows and keeps the
+      selection on them, then tells the app the rows that moved and the gap they
+      went into, which `RowMove::apply` repeats on the app's data (rows from a
+      builder are built again from it afterwards). Only rows from the same list are
+      taken: a drag carries a mark of the list it came from (a private pasteboard
+      type, a boxed GType, a `DataTransfer` type) while the rows stay in the list,
+      the shape that drags between widgets can grow from later. GTK and the Web have
+      no mark for a gap between rows, so naui draws a line there (the accent color
+      on GTK, the `Highlight` system color on the Web). `Tree` on GTK is built from
       `GtkListBox`, so dragging in `Tree` is left out.
 - [ ] **Typing and answering dialogs in tests.** Since v0.17.0, `click`,
       `select`, `activate`, `pick` and `drag_to` work on all four platforms with
@@ -155,14 +173,17 @@ native counterparts for.
       selected while hidden on every platform (macOS used to drop them with single
       selection too), and the next choice keeps them or drops them by the same
       rule as rows off screen in a long `List`.
-- [ ] **Modifier keys in `Canvas`'s pointer notifications.** `PointerEvent`
-      tells buttons apart but not ⇧, Ctrl, ⌥ / Alt or ⌘, so a drawing app cannot
-      tell a click from a ⇧-click. `KeyEvent` already carries them as
-      `Modifiers`, and `PointerEvent` is `#[non_exhaustive]`, so a field can be
-      added without breaking apps. Every platform's pointer event carries them
-      (`NSEvent`'s `modifierFlags`, `GdkModifierType` from the event, WinUI's
-      `KeyModifiers` on `PointerRoutedEventArgs`, `shiftKey` and the others on DOM
-      events), so it is light.
+- [x] **Modifier keys in `Canvas`'s pointer notifications.** `PointerEvent`
+      has a `modifiers` field (the same `Modifiers` as `KeyEvent`), set on every
+      phase that `on_pointer` and `on_wheel` receive: `Down`, `Move` (hover
+      included), `Up` and `Wheel`. Each event reports the keys held at its own
+      moment. They are read from `NSEvent`'s `modifierFlags` on macOS, the state
+      of the event being handled (`current_event_state`) on GTK, WinUI's
+      `KeyModifiers` on `PointerRoutedEventArgs` on Windows (the keyboard state for
+      wheels taken by the `WH_MOUSE_LL` hook, whose messages carry none), and
+      `shiftKey`, `ctrlKey`, `altKey` and `metaKey` on the Web, each through the
+      same reading as key events. Ctrl and ⌘ are delivered as they are, and
+      `Modifiers::primary` decides which is primary, counting either on the Web.
 
 ## v0.19.0
 
@@ -263,11 +284,10 @@ conditions for making that promise. They are a draft, settled before v1.0.0 is
 planned, and the versions above may change to meet them.
 
 - **Items that change existing API come first.** Items on this page that would
-  change what is public rather than add to it are done before v1.0.0. More than
-  one action on a toast changes `Toast::action` and `on_action`, which assume one
-  button. Widgets in `Tree` items change `TreeItem`, whose fields are public, so
-  a new field breaks apps that build it with a struct literal. Items that only
-  add, such as modifier keys on `PointerEvent`, can also come after.
+  change what is public rather than add to it are done before v1.0.0. Widgets in
+  `Tree` items change `TreeItem`, whose fields are public, so a new field breaks
+  apps that build it with a struct literal (more than one action on a toast,
+  which changed `Toast::action` and `on_action`, was done in v0.18.0).
 - **Public types are reviewed for growth.** Each public struct and enum is
   checked for whether it may gain fields or variants later. Those that may get
   `#[non_exhaustive]`, or private fields with constructors, as `PointerEvent`

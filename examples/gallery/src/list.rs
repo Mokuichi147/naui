@@ -169,6 +169,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     pane.append(&list);
 
     build_large_list(ui, &pane, notice)?;
+    build_reorderable_list(ui, &pane, notice)?;
     build_composed_list(ui, &pane)?;
     build_dynamic_rows(ui, &pane)?;
 
@@ -213,6 +214,45 @@ fn build_large_list(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> 
     });
     actions.append(&jump);
     pane.append(&actions);
+    pane.append(&list);
+    Ok(())
+}
+
+/// 行をドラッグで並べ替えられるリスト。選んだ行をつかむと選択ごと動き、
+/// on_reorder で手元のデータも同じように動かす。
+fn build_reorderable_list(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
+    parts::section(ui, pane, "Reorderable list")?;
+
+    let tasks = Rc::new(RefCell::new(vec![
+        "Write the draft",
+        "Ask for a review",
+        "Fix the comments",
+        "Merge",
+        "Release",
+    ]));
+    let list = ui.list()?;
+    list.set_selection_mode(SelectionMode::Multiple);
+    list.set_items(
+        &tasks
+            .borrow()
+            .iter()
+            .map(|&task| ListItem::new(task))
+            .collect::<Vec<_>>(),
+    );
+    list.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(180.0)),
+    );
+    list.set_reorderable(true);
+    list.on_reorder({
+        let notice = notice.clone();
+        let tasks = tasks.clone();
+        move |moved| {
+            moved.apply(&mut tasks.borrow_mut());
+            notice.show(&format!("Order: {}", tasks.borrow().join(" / ")));
+        }
+    });
     pane.append(&list);
     Ok(())
 }

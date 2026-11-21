@@ -28,8 +28,8 @@ use naui_core::{
     ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState,
     Point, PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode,
     SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle,
-    Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem, WindowPlacement, WindowState,
-    DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_OVERSCAN,
+    Theme, Time, ToastPosition, ToastPriority, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_OVERSCAN,
 };
 use naui_gtk::{run_for_test, ListRow, TableCells, Ui, Widget};
 
@@ -712,6 +712,18 @@ fn main() {
             list_row_activate_notifies,
         ),
         (
+            "リストの行をドラッグで並べ替えると選択がついてくる",
+            list_drag_rows_moves_rows_and_selection,
+        ),
+        (
+            "リストの行の並べ替えが GtkDragSource と GtkDropTarget を通る",
+            list_reorder_goes_through_drag_source_and_drop_target,
+        ),
+        (
+            "組み立てる行のリストも窓を絞ったまま並べ替えられる",
+            list_reorder_with_row_builder,
+        ),
+        (
             "リストの右クリックが行と位置を通知する",
             list_context_menu_notifies,
         ),
@@ -1030,8 +1042,16 @@ fn main() {
             toast_events_reach_the_closures,
         ),
         (
-            "新しいトーストが前のものを黙って置き換える",
-            toast_replaces_the_previous_one,
+            "後から出したトーストは並び、High はすぐ出る",
+            toast_waits_its_turn,
+        ),
+        (
+            "消えた通知が届くときには次のトーストが出ている",
+            toast_next_one_is_up_before_on_dismiss,
+        ),
+        (
+            "閉じた窓に残ったトーストは次のものに場所を譲る",
+            toast_in_a_closed_window_gives_way,
         ),
         (
             "外さずに別の親へ入れた子は断られ、どちらのコンテナの操作でも動かない",
@@ -1746,6 +1766,13 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
         ],
         "{seen:?}"
     );
+    // 修飾キーは処理中のイベントの状態から読む。シグナルを直接起こしたときは
+    // イベントが無いので空 (GTK4 ではアプリがイベントを作れず、押した状態は
+    // ここからは送れない。状態の読み替えは単体テストで見る)。
+    assert!(
+        seen.iter().all(|e| e.modifiers.is_empty()),
+        "イベントが無ければ修飾キーは空: {seen:?}"
+    );
     Ok(())
 }
 
@@ -1825,6 +1852,10 @@ fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
                 -2.0 * step
             ),
         ]
+    );
+    assert!(
+        seen.iter().all(|e| e.modifiers.is_empty()),
+        "イベントが無ければ修飾キーは空: {seen:?}"
     );
     assert!(
         pointer
@@ -5799,6 +5830,269 @@ fn shown_list_for_events(ui: &Ui) -> Result<(naui_gtk::Window, naui_gtk::List)> 
     Ok((window, list))
 }
 
+/// The text of each row the `GtkListBox` has now.
+fn list_texts(list: &naui_gtk::List) -> Vec<String> {
+    list_box_rows(&list_box_of(list))
+        .iter()
+        .map(|row| row_texts(row).into_iter().next().unwrap_or_default())
+        .collect()
+}
+
+/// `drag_rows` moves the rows like the user's drop: the rows and the selection move,
+/// `on_reorder` is told, `on_select` is not.
+fn list_drag_rows_moves_rows_and_selection(ui: &Ui) -> Result<()> {
+    use naui_core::RowMove;
+
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("東京"),
+        ListItem::new("大阪"),
+        ListItem::new("札幌"),
+        ListItem::new("那覇").enabled(false),
+        ListItem::new("福岡"),
+    ]);
+    list.set_selection_mode(SelectionMode::Multiple);
+    let (moves, mut sink) = recorder::<RowMove>();
+    list.on_reorder(move |moved| sink(moved.clone()));
+    let selections = Rc::new(Cell::new(0));
+    list.on_select({
+        let selections = selections.clone();
+        move |_| selections.set(selections.get() + 1)
+    });
+
+    // 並べ替えを許すまでは、ドラッグは何もしない。
+    assert!(!list.is_reorderable());
+    list.drag_rows(&[0], 3);
+    assert!(moves.borrow().is_empty());
+
+    list.set_reorderable(true);
+    assert!(list.is_reorderable());
+    list.set_selection(&[0, 2]);
+    list.drag_rows(&[0, 2], 5);
+    assert_eq!(list_texts(&list), ["大阪", "那覇", "福岡", "東京", "札幌"]);
+    assert_eq!(*moves.borrow(), vec![RowMove::new([0, 2], 5)]);
+    assert_eq!(list.selection(), vec![3, 4], "選択は動いた行についていく");
+    let native = list_box_of(&list);
+    let shown: Vec<i32> = native
+        .selected_rows()
+        .iter()
+        .map(|row| row.index())
+        .collect();
+    assert_eq!(shown, vec![3, 4], "GtkListBox の選択も動いた行に付く");
+    assert_eq!(
+        selections.get(),
+        0,
+        "選ばれている行は同じなので on_select は来ない"
+    );
+
+    // 選べない行はつかめない。ほかの行といっしょでも、その行だけ残る。
+    list.drag_rows(&[1], 0);
+    assert_eq!(moves.borrow().len(), 1, "選べない行だけなら何も起きない");
+    list.drag_rows(&[1, 4], 0);
+    assert_eq!(list_texts(&list), ["札幌", "大阪", "那覇", "福岡", "東京"]);
+    assert_eq!(moves.borrow()[1], RowMove::new([4], 0));
+    assert_eq!(list.selection(), vec![0, 4]);
+
+    // 自分の場所へ落としても通知しない。
+    list.drag_rows(&[1], 2);
+    assert_eq!(moves.borrow().len(), 2);
+
+    // move_rows は通知せず、並べ替えを許していなくても動かす。
+    list.set_reorderable(false);
+    list.move_rows(&RowMove::new([0], 5));
+    assert_eq!(list_texts(&list), ["大阪", "那覇", "福岡", "東京", "札幌"]);
+    assert_eq!(list.selection(), vec![3, 4]);
+    assert_eq!(moves.borrow().len(), 2);
+    assert_eq!(selections.get(), 0);
+    Ok(())
+}
+
+/// The controller of type `T` attached to `widget`.
+fn controller_of<T: IsA<gtk::EventController> + IsA<glib::Object>>(
+    widget: &impl IsA<gtk::Widget>,
+) -> T {
+    let controllers = widget.observe_controllers();
+    (0..controllers.n_items())
+        .filter_map(|index| controllers.item(index))
+        .find_map(|item| item.downcast::<T>().ok())
+        .expect("コントローラが付いていること")
+}
+
+/// Starts a drag on a row as GTK does (`prepare` on its drag source), and returns the
+/// value the drag carries.
+fn start_row_drag(row: &gtk::ListBoxRow) -> Option<glib::Value> {
+    let source: gtk::DragSource = controller_of(row);
+    let provider =
+        source.emit_by_name::<Option<gtk::gdk::ContentProvider>>("prepare", &[&5.0f64, &5.0f64])?;
+    let kind = glib::Type::from_name("NauiListRowDrag").expect("行のドラッグの型");
+    Some(provider.value(kind).expect("ドラッグの値"))
+}
+
+/// The color of a row's top edge and of a point halfway down its left margin, as
+/// drawn.
+fn row_line_pixels(list: &gtk::ListBox, row: &gtk::ListBoxRow) -> ((u8, u8, u8), (u8, u8, u8)) {
+    let width = row.width().max(1);
+    let height = row.height().max(1);
+    let snapshot = gtk::Snapshot::new();
+    list.snapshot_child(row, &snapshot);
+    let node = snapshot.to_node().expect("行を描いたものがあること");
+    let mut surface = gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, width, height)
+        .expect("画像の生成");
+    let cr = gtk::cairo::Context::new(&surface).expect("コンテキストの生成");
+    // 行の位置ぶんずらして、行の左上を画像の原点にそろえる。
+    let origin = row.compute_bounds(list).expect("行の位置");
+    cr.translate(-f64::from(origin.x()), -f64::from(origin.y()));
+    node.draw(&cr);
+    drop(cr);
+    surface.flush();
+    let stride = surface.stride() as usize;
+    let data = surface.data().expect("画素の読み出し");
+    let read = |x: usize, y: usize| -> (u8, u8, u8) {
+        let i = y * stride + x * 4;
+        (data[i + 2], data[i + 1], data[i])
+    };
+    (read(2, 0), read(2, height as usize / 2))
+}
+
+/// A drag of rows goes through GTK's drag and drop: each row's `GtkDragSource` starts it
+/// (only for selectable rows of a reorderable list), the `GtkListBox`'s `GtkDropTarget`
+/// draws the line where it lands and takes only this list's own rows.
+fn list_reorder_goes_through_drag_source_and_drop_target(ui: &Ui) -> Result<()> {
+    use naui_core::RowMove;
+
+    let (window, list) = shown_list_for_events(ui)?;
+    let (moves, mut sink) = recorder::<RowMove>();
+    list.on_reorder(move |moved| sink(moved.clone()));
+    let native = list_box_of(&list);
+    let row = |index: i32| native.row_at_index(index).expect("行");
+    assert!(
+        start_row_drag(&row(0)).is_none(),
+        "並べ替えを許すまでは行をつかめない"
+    );
+
+    list.set_reorderable(true);
+    assert!(start_row_drag(&row(3)).is_none(), "選べない行はつかめない");
+    let target: gtk::DropTarget = controller_of(&native);
+    let bounds = |index: i32| row(index).compute_bounds(&native).expect("行の位置");
+    let motion =
+        |y: f32| target.emit_by_name::<gtk::gdk::DragAction>("motion", &[&10.0f64, &f64::from(y)]);
+    let drop = |value: &glib::Value, y: f32| {
+        target.emit_by_name::<bool>(
+            "drop",
+            &[&glib::BoxedValue(value.clone()), &10.0f64, &f64::from(y)],
+        )
+    };
+
+    // ドラッグが始まるまでは受けない。
+    assert_eq!(motion(1.0), gtk::gdk::DragAction::empty());
+
+    // ほかのリストの行は受けない。
+    let other = ui.list()?;
+    other.set_items(&ListItem::list(["よそ"]));
+    other.set_reorderable(true);
+    let foreign = start_row_drag(&list_box_of(&other).row_at_index(0).expect("行"))
+        .expect("よそのリストの行もつかめる");
+    assert!(!drop(&foreign, 1.0), "よそのリストの行は落とせない");
+
+    // 3 行目を 2 行目の上半分へ: 2 行目の前へ入る。線は 2 行目の上に出る。
+    let value = start_row_drag(&row(2)).expect("選べる行はつかめる");
+    let second = bounds(1);
+    let upper = second.y() + second.height() / 4.0;
+    assert_eq!(motion(upper), gtk::gdk::DragAction::MOVE);
+    assert!(
+        row(1).has_css_class("naui-drop-before"),
+        "線は入る先の行の上に出る"
+    );
+    tick(&native);
+    let (top, middle) = row_line_pixels(&native, &row(1));
+    assert!(
+        top.2 > top.0 + 60 && top != middle,
+        "行の上端に強調色の線が描かれること: 上端 {top:?} / 中ほど {middle:?}"
+    );
+    // 最後の行の下半分では、最後の行の下に出る。
+    let last = bounds(3);
+    assert_eq!(
+        motion(last.y() + last.height() * 0.75),
+        gtk::gdk::DragAction::MOVE
+    );
+    assert!(!row(1).has_css_class("naui-drop-before"), "前の線は消える");
+    assert!(row(3).has_css_class("naui-drop-after"));
+    target.emit_by_name::<()>("leave", &[]);
+    assert!(
+        !row(3).has_css_class("naui-drop-after"),
+        "離れたら線は消える"
+    );
+
+    assert!(drop(&value, upper));
+    assert_eq!(list_texts(&list), ["札幌", "東京", "仙台", "大阪"]);
+    assert_eq!(*moves.borrow(), vec![RowMove::new([2], 1)]);
+    assert!(
+        !drop(&value, upper),
+        "落としたあとは同じドラッグをもう受けない"
+    );
+
+    // 選ばれている行をつかむと、選択ごと動く。
+    list.set_selection_mode(SelectionMode::Multiple);
+    list.set_selection(&[0, 1]);
+    let value = start_row_drag(&row(1)).expect("選ばれている行をつかむ");
+    let last = bounds(3);
+    assert!(drop(&value, last.y() + last.height() * 0.75));
+    assert_eq!(list_texts(&list), ["仙台", "大阪", "札幌", "東京"]);
+    assert_eq!(moves.borrow()[1], RowMove::new([0, 1], 4));
+    assert_eq!(list.selection(), vec![2, 3]);
+    window.close();
+    Ok(())
+}
+
+/// Rows from a builder move too, with only the rows on screen built: the app moves its
+/// data in `on_reorder`, and the rows built afterwards read it.
+fn list_reorder_with_row_builder(ui: &Ui) -> Result<()> {
+    const ROWS: usize = 1000;
+    let window = ui.window("組み立てる行", 320.0, 240.0)?;
+    let data: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(
+        (0..ROWS).map(|index| format!("行 {index}")).collect(),
+    ));
+    let list = ui.list()?;
+    list.set_row_builder(ROWS, {
+        let data = data.clone();
+        let ui = ui.clone();
+        move |index| Ok(ListRow::new(&ui.label(&data.borrow()[index])?))
+    });
+    list.on_reorder({
+        let data = data.clone();
+        move |moved| moved.apply(&mut data.borrow_mut())
+    });
+    list.set_reorderable(true);
+    list.set_sizing(Sizing::fill());
+    window.set_child(&list);
+    window.show();
+    for _ in 0..3 {
+        tick(&list.native_widget());
+    }
+    let native = list_box_of(&list);
+    assert!(
+        list_box_rows(&native).len() < ROWS,
+        "画面に出ている行だけを組み立てる"
+    );
+    list.set_selected(0);
+    list.drag_rows(&[0], 2);
+    assert_eq!(data.borrow()[..3], ["行 1", "行 0", "行 2"]);
+    assert_eq!(list_texts(&list)[..3], ["行 1", "行 0", "行 2"]);
+    assert_eq!(list.selection(), vec![1], "選択は動いた行についていく");
+
+    // 窓の外へ動かしても、選択は覚えている。
+    list.drag_rows(&[1], ROWS);
+    assert_eq!(data.borrow()[ROWS - 1], "行 0");
+    assert_eq!(list.selection(), vec![ROWS - 1]);
+    assert!(
+        native.selected_rows().is_empty(),
+        "窓の外の行は GtkListBox にない"
+    );
+    assert_eq!(list_texts(&list)[..2], ["行 1", "行 2"]);
+    window.close();
+    Ok(())
+}
+
 /// Double-clicks, and Enter while a row has focus, reach `on_row_activate`.
 fn list_row_activate_notifies(ui: &Ui) -> Result<()> {
     let (window, list) = shown_list_for_events(ui)?;
@@ -9286,7 +9580,8 @@ fn file_saver_configuration(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// The toast's settings reach the `AdwToast`, and dismissing removes it.
+/// The toast's settings reach the `AdwToast`, and dismissing removes it. One action
+/// is `AdwToast`'s own button; two or more all follow the text in a custom title.
 fn toast_configuration_reaches_the_native_toast(ui: &Ui) -> Result<()> {
     let window = ui.window("naui", 320.0, 200.0)?;
     let content = ui.stack(Orientation::Vertical)?;
@@ -9298,8 +9593,11 @@ fn toast_configuration_reaches_the_native_toast(ui: &Ui) -> Result<()> {
     );
 
     let toast = ui.toast("保存しました")?;
-    toast.set_action("元に戻す");
+    toast.set_actions(&["元に戻す"]);
     toast.set_timeout(3.0);
+    // 位置は覚えておくが、AdwToastOverlay は下中央にしか置けない。
+    toast.set_position(ToastPosition::TopEnd);
+    assert_eq!(toast.spec().position(), ToastPosition::TopEnd);
     assert!(!toast.is_visible(), "作っただけでは出ていないこと");
     assert!(toast.native_toast().is_none());
 
@@ -9314,16 +9612,33 @@ fn toast_configuration_reaches_the_native_toast(ui: &Ui) -> Result<()> {
         native.button_label().map(|l| l.to_string()),
         Some("元に戻す".into())
     );
+    assert!(native.custom_title().is_none(), "1 つなら題はそのまま");
     assert_eq!(native.timeout(), 3, "秒で AdwToast へ渡ること");
 
-    // 出したまま書き換えると、出ている AdwToast がその場で変わる。
+    // 出したまま 2 つにすると、どちらも題の中で文字の後ろに並ぶ。
+    toast.set_actions(&["元に戻す", "開く"]);
+    assert_eq!(native.button_label(), None, "本来のボタンは使わない");
+    let title = native.custom_title().expect("題の中にボタンを並べること");
+    assert_eq!(
+        custom_title_texts(&title),
+        ["保存しました", "元に戻す", "開く"]
+    );
+
+    // 文字の書き換えは題の中のラベルへ届く。
     toast.set_message("書き出しました");
-    toast.set_action("");
+    assert_eq!(
+        custom_title_texts(&title),
+        ["書き出しました", "元に戻す", "開く"]
+    );
+
+    // 空の列でボタンが外れ、題は AdwToast 自身のものへ戻る。
+    toast.set_actions::<&str>(&[]);
+    assert_eq!(native.button_label(), None, "空の列でボタンが外れること");
+    assert!(native.custom_title().is_none());
     assert_eq!(
         native.title().map(|t| t.to_string()),
         Some("書き出しました".into())
     );
-    assert_eq!(native.button_label(), None, "空文字列でボタンが外れること");
 
     toast.dismiss();
     assert!(!toast.is_visible());
@@ -9332,14 +9647,30 @@ fn toast_configuration_reaches_the_native_toast(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// The action button and dismissal each reach their closures.
+/// The text of a custom title: the label, then the buttons' labels.
+fn custom_title_texts(title: &gtk::Widget) -> Vec<String> {
+    let mut texts = Vec::new();
+    let mut child = title.first_child();
+    while let Some(widget) = child {
+        if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+            texts.push(label.label().to_string());
+        } else if let Some(button) = widget.downcast_ref::<gtk::Button>() {
+            texts.push(button.label().map(|l| l.to_string()).unwrap_or_default());
+        }
+        child = widget.next_sibling();
+    }
+    texts
+}
+
+/// The action buttons and dismissal each reach their closures, with the index of
+/// the button.
 fn toast_events_reach_the_closures(ui: &Ui) -> Result<()> {
     let window = ui.window("naui", 320.0, 200.0)?;
     window.set_child(&ui.stack(Orientation::Vertical)?);
     window.show();
 
     let toast = ui.toast("削除しました")?;
-    toast.set_action("元に戻す");
+    toast.set_actions(&["元に戻す"]);
     // 押されるまで消えないトーストにしておく。
     toast.set_timeout(0.0);
     assert_eq!(toast.spec().timeout_secs(), 0);
@@ -9347,11 +9678,11 @@ fn toast_events_reach_the_closures(ui: &Ui) -> Result<()> {
     let seen = Rc::new(RefCell::new(Vec::new()));
     toast.on_action({
         let seen = seen.clone();
-        move || seen.borrow_mut().push("action")
+        move |index| seen.borrow_mut().push(format!("action {index}"))
     });
     toast.on_dismiss({
         let seen = seen.clone();
-        move || seen.borrow_mut().push("dismiss")
+        move || seen.borrow_mut().push("dismiss".to_string())
     });
 
     toast.show();
@@ -9363,7 +9694,7 @@ fn toast_events_reach_the_closures(ui: &Ui) -> Result<()> {
 
     assert_eq!(
         seen.borrow().as_slice(),
-        ["action", "dismiss"],
+        ["action 0", "dismiss"],
         "押された通知のあとに、消えた通知が届くこと"
     );
     assert!(!toast.is_visible());
@@ -9371,39 +9702,161 @@ fn toast_events_reach_the_closures(ui: &Ui) -> Result<()> {
     // 消えたあとに来る通知は捨てられ、二重には届かない。
     native.dismiss();
     assert_eq!(seen.borrow().len(), 2);
+
+    // 題の中のボタンも、押すと番号を知らせて消える。
+    seen.borrow_mut().clear();
+    toast.set_actions(&["元に戻す", "開く"]);
+    toast.show();
+    let native = toast.native_toast().expect("出し直した AdwToast");
+    let title = native.custom_title().expect("題の中のボタン");
+    let open = title
+        .last_child()
+        .and_downcast::<gtk::Button>()
+        .expect("2 つ目の操作のボタン");
+    open.emit_clicked();
+    assert_eq!(seen.borrow().as_slice(), ["action 1", "dismiss"]);
+    assert!(!toast.is_visible());
+
+    // フォーカスのあるボタンを押したときは、窓のフォーカスを外してから消す (本来の
+    // ボタンと同じ)。題ごと外れたボタンをフォーカスが指したままだと、フォーカスを
+    // 移す GTK が警告を出す。
+    seen.borrow_mut().clear();
+    toast.show();
+    let native = toast.native_toast().expect("もう一度出した AdwToast");
+    let open = native
+        .custom_title()
+        .and_then(|title| title.last_child())
+        .and_downcast::<gtk::Button>()
+        .expect("2 つ目の操作のボタン");
+    spin_until(std::time::Duration::from_secs(2), || open.is_mapped());
+    assert!(open.grab_focus(), "題の中のボタンにフォーカスを置けること");
+    let root = open.root().expect("窓に載っていること");
+    open.emit_clicked();
+    assert_eq!(seen.borrow().as_slice(), ["action 1", "dismiss"]);
+    assert_eq!(root.focus(), None, "押したボタンからフォーカスが外れること");
     window.close();
     Ok(())
 }
 
-/// A new toast replaces the previous one, and the replaced one does not notify.
-fn toast_replaces_the_previous_one(ui: &Ui) -> Result<()> {
+/// A toast shown while another is up waits its turn (not in `AdwToastOverlay`'s own
+/// queue, but in naui's), and `High` comes up at once and puts the current one back
+/// at the front. None of this is notified.
+fn toast_waits_its_turn(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 320.0, 200.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    window.show();
+
+    let dismissed = Rc::new(Cell::new(0));
+    let make = |message: &str| -> Result<_> {
+        let toast = ui.toast(message)?;
+        toast.set_timeout(0.0);
+        toast.on_dismiss({
+            let dismissed = dismissed.clone();
+            move || dismissed.set(dismissed.get() + 1)
+        });
+        Ok(toast)
+    };
+    let first = make("1 つめ")?;
+    let second = make("2 つめ")?;
+    let urgent = make("急ぎ")?;
+    urgent.set_priority(ToastPriority::High);
+
+    first.show();
+    second.show();
+    assert!(first.is_visible());
+    assert!(second.is_queued() && !second.is_visible(), "後のものは並ぶ");
+    assert!(
+        second.native_toast().is_none(),
+        "並んでいる間は AdwToast を作らない"
+    );
+
+    urgent.show();
+    assert!(urgent.is_visible(), "High は並ばずにすぐ出る");
+    assert!(first.is_queued(), "前のものは列の先頭へ戻る");
+
+    urgent.dismiss();
+    assert!(first.is_visible(), "割り込まれたものが先に戻る");
+    first.dismiss();
+    assert!(second.is_visible());
+    assert!(second.native_toast().is_some());
+    second.dismiss();
+    assert_eq!(
+        dismissed.get(),
+        0,
+        "アプリ自身の操作なので、消えた通知は届かないこと"
+    );
+    window.close();
+    Ok(())
+}
+
+/// When a toast goes by itself, the next in the queue is already up by the time
+/// `on_dismiss` arrives, and showing another from inside it queues it behind.
+fn toast_next_one_is_up_before_on_dismiss(ui: &Ui) -> Result<()> {
     let window = ui.window("naui", 320.0, 200.0)?;
     window.set_child(&ui.stack(Orientation::Vertical)?);
     window.show();
 
     let first = ui.toast("1 つめ")?;
     first.set_timeout(0.0);
-    let dismissed = Rc::new(Cell::new(0));
+    let second = ui.toast("2 つめ")?;
+    second.set_timeout(0.0);
+    let third = ui.toast("3 つめ")?;
+    third.set_timeout(0.0);
+
+    let seen = Rc::new(Cell::new(None));
     first.on_dismiss({
+        let (seen, second, third) = (seen.clone(), second.clone(), third.clone());
+        move || {
+            seen.set(Some(second.is_visible()));
+            third.show();
+        }
+    });
+    first.show();
+    second.show();
+
+    // 閉じるボタン (×) で消えたときと同じく、AdwToast の側から消す。
+    first.native_toast().expect("AdwToast").dismiss();
+    assert_eq!(seen.get(), Some(true), "通知の時点で次が出ていること");
+    assert!(second.is_visible());
+    assert!(third.is_queued(), "通知の中で出したものは後ろに並ぶ");
+    second.dismiss();
+    assert!(third.is_visible());
+    third.dismiss();
+    window.close();
+    Ok(())
+}
+
+/// A toast left on screen in a window that has closed does not hold up the queue:
+/// the next one shown takes its place, without notifying.
+fn toast_in_a_closed_window_gives_way(ui: &Ui) -> Result<()> {
+    let old = ui.window("閉じる窓", 320.0, 200.0)?;
+    old.set_child(&ui.stack(Orientation::Vertical)?);
+    old.show();
+    let stuck = ui.toast("閉じた窓のトースト")?;
+    stuck.set_timeout(0.0);
+    let dismissed = Rc::new(Cell::new(0));
+    stuck.on_dismiss({
         let dismissed = dismissed.clone();
         move || dismissed.set(dismissed.get() + 1)
     });
-    first.show();
+    stuck.show();
+    assert!(stuck.is_visible());
+    old.close();
 
-    let second = ui.toast("2 つめ")?;
-    second.set_timeout(0.0);
-    second.show();
-
-    assert!(!first.is_visible(), "前のものは消えること");
-    assert!(second.is_visible());
-    assert_eq!(
-        dismissed.get(),
-        0,
-        "アプリ自身の操作なので、消えた通知は届かないこと"
+    let new = ui.window("新しい窓", 320.0, 200.0)?;
+    new.set_child(&ui.stack(Orientation::Vertical)?);
+    new.show();
+    let next = ui.toast("新しい窓のトースト")?;
+    next.set_timeout(0.0);
+    next.show();
+    assert!(next.is_visible(), "並ばずに出る");
+    assert!(
+        !stuck.is_visible() && !stuck.is_queued(),
+        "残ったものは外れる"
     );
-
-    second.dismiss();
-    window.close();
+    assert_eq!(dismissed.get(), 0, "外しても通知は届かない");
+    next.dismiss();
+    new.close();
     Ok(())
 }
 

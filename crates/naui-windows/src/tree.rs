@@ -51,7 +51,7 @@ use windows::Foundation::{PropertyValue, TypedEventHandler};
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
-use crate::list::{item_content, SelectionHandler};
+use crate::list::{item_content, name_row_on_load, SelectionHandler};
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
@@ -936,7 +936,10 @@ fn append_nodes(
         path.push(index);
         let selectable = enabled && item.enabled;
         let node = TreeViewNode::new().map_err(|e| to_error("create the TreeViewNode", e))?;
-        let content = row_content(item, selectable)?
+        let content = row_content(item, selectable)?;
+        // 行の `TreeViewItem` は WinUI が作って使い回すので、中身が載るたびに名前を付ける。
+        name_row_on_load(&content);
+        let content = content
             .cast::<IInspectable>()
             .map_err(|e| to_error("convert the row to UIElement", e))?;
         node.SetContent(&content)
