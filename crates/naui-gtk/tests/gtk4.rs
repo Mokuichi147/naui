@@ -1783,7 +1783,7 @@ fn canvas_follows_light_and_dark(ui: &Ui) -> Result<()> {
             .width(Length::Fixed(60.0))
             .height(Length::Fixed(40.0)),
     );
-    type Seen = (bool, (Color, f64), (Color, f64));
+    type Seen = (bool, (Color, f64), (Color, f64), (Color, f64));
     let (seen, sink) = recorder::<Seen>();
     canvas.on_draw({
         let mut sink = sink;
@@ -1792,6 +1792,7 @@ fn canvas_follows_light_and_dark(ui: &Ui) -> Result<()> {
                 painter.is_dark(),
                 painter.role_color(TextColor::Default),
                 painter.role_color(TextColor::Secondary),
+                painter.role_color(TextColor::Danger),
             ));
             painter.fill_rect(Rect::new(0.0, 0.0, 30.0, 40.0), TextColor::Default);
             painter.fill_rect(Rect::new(30.0, 0.0, 30.0, 40.0), Color::rgb(0xff, 0, 0));
@@ -1825,9 +1826,15 @@ fn canvas_follows_light_and_dark(ui: &Ui) -> Result<()> {
         (read(15, 20), read(45, 20))
     };
     let brightness = |c: Color| u32::from(c.r) + u32::from(c.g) + u32::from(c.b);
+    // 危険の色はどの環境でも赤系 (アクセントは灰色にもなるので見ない)。
+    let reddish = |c: Color| c.r > c.g.saturating_add(40) && c.r > c.b.saturating_add(40);
 
     let (left, _) = render();
     let light = *seen.borrow().last().expect("描くときに呼ばれること");
+    assert!(
+        reddish(light.3 .0),
+        "明るい外観の危険の色は赤寄り: {light:?}"
+    );
     assert!(!light.0, "明るい外観では is_dark が偽");
     assert!(
         brightness(light.1 .0) < 150,
@@ -1852,6 +1859,7 @@ fn canvas_follows_light_and_dark(ui: &Ui) -> Result<()> {
         "外観が変わると描き直されること"
     );
     let dark = *seen.borrow().last().unwrap();
+    assert!(reddish(dark.3 .0), "暗い外観の危険の色は赤寄り: {dark:?}");
     window.set_theme(Theme::System)?;
     assert!(dark.0, "暗い外観では is_dark が真");
     assert!(

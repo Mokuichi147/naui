@@ -917,7 +917,7 @@ async fn canvas_draws_the_broader_vocabulary() {
 /// fixed red.
 #[wasm_bindgen_test]
 async fn canvas_follows_light_and_dark() {
-    type Seen = (bool, (Color, f64), (Color, f64));
+    type Seen = (bool, (Color, f64), (Color, f64), (Color, f64));
     let seen: Rc<RefCell<Vec<Seen>>> = Rc::new(RefCell::new(Vec::new()));
     let mut kept = None;
     with_ui(|ui| {
@@ -935,6 +935,7 @@ async fn canvas_follows_light_and_dark() {
                     painter.is_dark(),
                     painter.role_color(TextColor::Default),
                     painter.role_color(TextColor::Secondary),
+                    painter.role_color(TextColor::Danger),
                 ));
                 painter.fill_rect(Rect::new(0.0, 0.0, 30.0, 40.0), TextColor::Default);
                 painter.fill_rect(Rect::new(30.0, 0.0, 30.0, 40.0), Color::rgb(0xff, 0, 0));
@@ -962,9 +963,15 @@ async fn canvas_follows_light_and_dark() {
         (data[0], data[1], data[2], data[3])
     };
     let brightness = |c: Color| u32::from(c.r) + u32::from(c.g) + u32::from(c.b);
+    // 危険の色はどの環境でも赤系 (アクセントは灰色にもなるので見ない)。
+    let reddish = |c: Color| c.r > c.g.saturating_add(40) && c.r > c.b.saturating_add(40);
     let sum = |(r, g, b, _): (u8, u8, u8, u8)| u32::from(r) + u32::from(g) + u32::from(b);
 
     let light = *seen.borrow().last().expect("描くときに呼ばれること");
+    assert!(
+        reddish(light.3 .0),
+        "明るい外観の危険の色は赤寄り: {light:?}"
+    );
     assert!(!light.0, "明るいテーマでは is_dark が偽");
     assert!(
         brightness(light.1 .0) < 150,
@@ -1003,6 +1010,7 @@ async fn canvas_follows_light_and_dark() {
         "テーマが変わると描き直されること"
     );
     let dark = dark.unwrap();
+    assert!(reddish(dark.3 .0), "暗い外観の危険の色は赤寄り: {dark:?}");
     assert!(dark.0, "暗いテーマでは is_dark が真");
     assert!(
         brightness(dark.1 .0) > 600,

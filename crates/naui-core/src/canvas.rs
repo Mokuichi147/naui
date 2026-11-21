@@ -976,8 +976,8 @@ impl Painter {
     /// Drawing commands take a role directly ([`Ink`], [`Paint::Role`]), so this is
     /// for building other things from it, such as a [`Gradient`] fading out from the
     /// accent color. Inside `Canvas::on_draw` the platform resolves it each time the
-    /// surface is drawn, so it follows light and dark and the accent color. A
-    /// painter made with [`new`](Self::new) returns fixed colors for light.
+    /// surface is drawn, so it follows light and dark. A painter made with
+    /// [`new`](Self::new) returns fixed colors for light.
     pub fn role_color(&self, role: TextColor) -> (Color, f64) {
         match &self.colors {
             Some(colors) => colors.get(role),

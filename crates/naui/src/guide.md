@@ -1784,7 +1784,9 @@ chart.on_draw(|painter| {
 | Light or dark | `ActualTheme` | `effectiveAppearance` | `AdwStyleManager`'s `dark` | `color-scheme`, then `prefers-color-scheme` |
 | Redrawn on | `ActualThemeChanged` | `viewDidChangeEffectiveAppearance` | `dark`, `high-contrast`, `accent-color` | The media query's `change`, and naui's theme |
 
-A role's color can be translucent (secondary text is the text color at part
+The surface draws itself again on a switch between light and dark. A change of
+the accent color alone redraws it only on Linux; elsewhere the new color shows at
+the next draw. A role's color can be translucent (secondary text is the text color at part
 opacity on several platforms); its opacity multiplies into the painter's. A
 `Painter` made outside a `Canvas` (in a unit test, say) draws roles in fixed light
 colors; [`with_role_colors`](Painter::with_role_colors) gives it others.
