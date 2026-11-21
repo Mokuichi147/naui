@@ -307,19 +307,11 @@ impl Toast {
             let button = gtk::Button::with_label(text);
             button.set_valign(gtk::Align::Center);
             let weak = Rc::downgrade(&self.0);
-            button.connect_clicked(move |button| {
+            button.connect_clicked(move |_| {
                 let Some(inner) = weak.upgrade() else {
                     return;
                 };
                 inner.clicked.set(Some(index));
-                // 押したボタンにフォーカスがあるまま題ごと外れると、GTK がフォーカスを
-                // 移すときに外れたウィジェットを辿って警告を出す。本来のボタンで消えた
-                // ときと同じく、窓のフォーカスを外してから消す。
-                if button.is_focus() {
-                    if let Some(root) = button.root() {
-                        root.set_focus(None::<&gtk::Widget>);
-                    }
-                }
                 // 本来のボタンと同じく、押したら消える。`dismissed` から知らせる。
                 let native = inner
                     .shown
