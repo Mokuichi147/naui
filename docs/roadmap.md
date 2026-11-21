@@ -92,7 +92,11 @@ drawing is done by separate crates.
   changes, and its lifecycle (when it is attached and released), and has no part
   in GPU setup, drawing or game loops.
 - **`Widget` stays sealed.** Extension goes through `NativeHost`, not through
-  widget types implemented outside naui.
+  widget types implemented outside naui: `Widget` hands out the backend's own
+  widget, whose trait has methods for naui's internal use, so opening it would
+  put them under the API promise. A type made outside naui is passed to
+  containers through a second trait that only names the naui widget inside it
+  (v0.20.0).
 - **No GPU dependencies in naui.** wgpu and the like are dependencies of the
   separate crates only.
 - **`Canvas` stays for simple 2D.** Static shapes and charts keep using `Canvas`,
@@ -102,7 +106,7 @@ drawing is done by separate crates.
   | Crate | Role | Needs from naui |
   | --- | --- | --- |
   | `naui-charts` | Line, bar and scatter charts | Nothing new (draws on `Canvas`) |
-  | An extension widget crate | Tags, badges and other widgets no platform has | Colors that follow light and dark in `Canvas` |
+  | An extension widget crate | Tags, badges and other widgets no platform has | `NativeHost`, and passing its types to containers |
   | `naui-wgpu` | Fast 2D and 3D drawing with wgpu | `NativeHost` |
   | A scene crate | 3D models, cameras, lights | Nothing beyond `naui-wgpu` |
   | Game crates | ECS, physics, audio, game loop | Nothing beyond `naui-wgpu` |
@@ -117,8 +121,8 @@ drawing is done by separate crates.
 
 `naui-charts` (v0.19.0) draws on `Canvas`, so it does not wait for these. What it
 waited on in `Canvas`, clipping and text width measurement, was released in
-v0.17.0. The extension widget crate (v0.22.0) draws on `Canvas` too, and waits
-for the colors that follow light and dark (v0.19.0).
+v0.17.0. The extension widget crate (v0.22.0) builds its widgets from native
+pieces through `NativeHost`, so it comes after it.
 
 ## v0.19.0
 
@@ -158,7 +162,8 @@ need investigating first but are not heavy.
 
 ## v0.20.0
 
-Heavier items, `NativeHost`, which the drawing crates and a WebView build on,
+Heavier items, `NativeHost`, which the drawing crates, a WebView and the
+extension widgets build on, passing types made outside naui to containers,
 shortcuts that are not in a menu, and the always-visible calendar.
 
 - [ ] *(drawing)* **`NativeHost`.** A widget that places a native view created by
@@ -171,6 +176,16 @@ shortcuts that are not in a menu, and the always-visible calendar.
       wgpu's GL backend, or rendering offscreen and handing frames over as
       textures (`GdkDmabufTexture` from GTK 4.14). Windows needs `SwapChainPanel`
       in the projection, and the Web a `<canvas>` for WebGPU or WebGL.
+- [ ] **Passing a type made outside naui to containers.** `Stack::append` and
+      the like take `&dyn Widget`, which is sealed, so a crate's own type (a
+      composition of naui widgets, or one wrapping a `NativeHost`) has to hand
+      out the widget inside it at every call (`tag.root()`), as `naui-app`'s
+      `Mounted::root` does. A public trait with one method returning that
+      widget, taken by the containers, lets `stack.append(&tag)` be written
+      while `Widget` stays sealed. Decided first: whether the containers take
+      the new trait in place of `&dyn Widget` (every `Widget` would implement
+      it) or beside it, and that the common methods (`set_sizing`,
+      `set_visible`) reach the inner widget.
 - [ ] **Keyboard shortcuts outside the menu bar.** A shortcut is given today
       only to a `MenuBar` item (`MenuShortcut`); anything else is matched by
       hand in `on_key_down`, whose order relative to menu shortcuts differs by
@@ -269,14 +284,19 @@ widgets no platform has.
 - [ ] *(drawing)* **An extension crate for widgets no platform has.** Tags,
       badges, avatars and the like are common in current UIs but are not
       controls of any of the four toolkits, so naui itself does not carry
-      them. A separate crate offers them on top of naui, as `naui-charts`
-      does charts. Decided first: which widgets come first (tags and badges
-      are the candidates); how they are made, since `Widget` is sealed and a
-      crate outside naui can only compose existing widgets and `Canvas`; how
-      they take each platform's look (the accent and text colors from v0.19.0,
-      the platform's corner radius and font) rather than one look everywhere;
-      and what they tell assistive technology, which a `Canvas` drawing does
-      not do by itself.
+      them. A separate crate offers them on top of naui. It builds each from
+      the platform's own pieces through `NativeHost` (v0.20.0): an element
+      styled with CSS on the Web, a label with a CSS class on GTK, a `Border`
+      around a `TextBlock` with theme resources on WinUI, a layer-backed view
+      on AppKit. The text is then a real text element, so the platform's
+      font, light and dark, and assistive technology come with it, which a
+      `Canvas` drawing would have to be given by hand; `Canvas` is the
+      fallback where a platform has no piece to build from. The colors and
+      corner radii naui does not set per widget are set here with each
+      platform's API. Decided first: which widgets come first (tags and
+      badges are the candidates), and how the crate depends on the native
+      crates: on Windows it needs naui's own WinUI projection (`naui-winui3`),
+      so its versions move with naui's.
 
 ## v0.23.0
 
