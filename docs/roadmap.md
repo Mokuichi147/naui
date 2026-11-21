@@ -1,6 +1,6 @@
 # Roadmap
 
-This lists features commonly expected of a GUI toolkit that naui (as of v0.17.0)
+This lists features commonly expected of a GUI toolkit that naui (as of v0.18.0)
 does not have yet, with priorities.
 
 The native counterparts written for each item are estimates. When work starts,
@@ -74,7 +74,7 @@ one or two panes.
 
 What remains is `Flow` and the narrow navigation rail (v0.19.0), which do not
 depend on the released `Stack::set_breakpoint`, `AdaptivePanes` and `Sidebar`
-collapsing, and the display shape (v0.22.0), which comes with the first mobile
+collapsing, and the display shape (v0.24.0), which comes with the first mobile
 target. The composition swap and the bottom bar were investigated against those
 and moved to Not planned.
 
@@ -118,87 +118,28 @@ drawing is done by separate crates.
 waited on in `Canvas`, clipping and text width measurement, was released in
 v0.17.0.
 
-## v0.18.0
-
-Gaps that ordinary apps run into right away and that all four platforms have
-native counterparts for.
-
-- [x] **Relax the limits on toasts** (queueing, more than one action, position).
-      `Toast::show` now waits its turn in a queue, with `ToastPriority::High` to
-      come up at once and put the current one back at the front, modelled on
-      `AdwToastOverlay`'s order; `is_queued` tells a waiting toast. The queue is one
-      `ToastQueue` in naui-core shared by all four backends, since
-      `AdwToastOverlay` keeps one per window and has no signal for a waiting toast
-      coming up. `set_actions` takes a list of labels and `on_action` the index
-      (replacing `set_action` and `action`): in a row with the text on macOS and
-      the Web, `ActionButton` for one and a row in `Content` below the text for
-      more on WinUI's `InfoBar`, and `AdwToast`'s own button for one and its custom
-      title for more on GTK. `ToastPosition` places it at the start, center or end
-      of the top or bottom edge (safe-area constraints on macOS, `InfoBar`
-      alignment on WinUI, logical CSS insets on the Web); `AdwToastOverlay` has no
-      placement, so GTK stays at the bottom center.
-- [x] **Reordering rows in a `List` by drag and drop** (`List::set_reorderable`,
-      `on_reorder` with a `RowMove`, `drag_rows` for tests and `move_rows`).
-      `NSTableView`'s drag and drop, WinUI `ListView`'s `CanReorderItems`, a
-      `GtkDragSource` on each row with a `GtkDropTarget` on the `GtkListBox`, and
-      HTML drag and drop on `draggable` rows. naui moves the rows and keeps the
-      selection on them, then tells the app the rows that moved and the gap they
-      went into, which `RowMove::apply` repeats on the app's data (rows from a
-      builder are built again from it afterwards). Only rows from the same list are
-      taken: a drag carries a mark of the list it came from (a private pasteboard
-      type, a boxed GType, a `DataTransfer` type) while the rows stay in the list,
-      the shape that drags between widgets can grow from later. GTK and the Web have
-      no mark for a gap between rows, so naui draws a line there (the accent color
-      on GTK, the `Highlight` system color on the Web). `Tree` on GTK is built from
-      `GtkListBox`, so dragging in `Tree` is left out.
-- [x] **Typing and answering dialogs in tests.** `enter_text` on `TextInput`,
-      `PasswordInput`, `SearchInput`, `TextArea`, `NumberInput` and
-      `EditableComboBox` replaces the text as typing over it does, so `on_change`
-      is called; `submit` (`search` on `SearchInput`) confirms as Enter does; and
-      `respond` on `Dialog` and `Sheet` clicks the button for a role. Each goes
-      through the platform's own path: AppKit's text-change notification and
-      `performClick:`, `GtkEditable` and the `clicked` / `activate` signals, UI
-      Automation's Value and Invoke patterns, and the DOM's `input` event and
-      `click()`. No key is pressed, so `on_key_down` is not called. macOS's modal
-      `Dialog::open` is answered from inside its modal loop: an answer given
-      before the dialog opens is kept and clicked from a run-loop block (the main
-      queue does not run there when the dialog was opened from a `Tasks` poll),
-      so a test answers first and then clicks whatever opens the dialog.
-- [x] **Multiple selection in `Tree`** (`set_selection_mode` with
-      `SelectionMode`, as `List` has). Added `set_selection_mode`,
-      `selection_mode`, `selection`, `set_selection` and `select_many`; `selected`
-      and `on_select` keep passing one path (the first selected item). As in
-      `List`, items are picked with ⌘ / Ctrl and Shift, and **selecting a branch
-      does not select its children**: that is how `NSOutlineView` and `GtkListBox`
-      behave, while WinUI's `TreeView` offers only check boxes that also select a
-      branch's descendants (and its parent once all children are). So on Windows a
-      tree with multiple selection is laid out in a `ListView` with `Extended`
-      selection, with `TreeViewItem`'s chevrons and indentation; the Web's tree
-      sets `aria-multiselectable`. Selected items inside a collapsed branch stay
-      selected while hidden on every platform (macOS used to drop them with single
-      selection too), and the next choice keeps them or drops them by the same
-      rule as rows off screen in a long `List`.
-- [x] **Modifier keys in `Canvas`'s pointer notifications.** `PointerEvent`
-      has a `modifiers` field (the same `Modifiers` as `KeyEvent`), set on every
-      phase that `on_pointer` and `on_wheel` receive: `Down`, `Move` (hover
-      included), `Up` and `Wheel`. Each event reports the keys held at its own
-      moment. They are read from `NSEvent`'s `modifierFlags` on macOS, the state
-      of the event being handled (`current_event_state`) on GTK, WinUI's
-      `KeyModifiers` on `PointerRoutedEventArgs` on Windows (the keyboard state for
-      wheels taken by the `WH_MOUSE_LL` hook, whose messages carry none), and
-      `shiftKey`, `ctrlKey`, `altKey` and `metaKey` on the Web, each through the
-      same reading as key events. Ctrl and ⌘ are delivered as they are, and
-      `Modifiers::primary` decides which is primary, counting either on the Web.
-
 ## v0.19.0
 
 The rest of the testing actions, the separate crate that `Canvas` is now ready
-for, and adaptive items that need investigating first but are not heavy.
+for along with the colors it needs in a dark appearance, and adaptive items that
+need investigating first but are not heavy.
 
 - [ ] **The rest of the actions for testing apps:** a `Toast`'s action button,
       the window's close button (`on_close_request`), pointer events on a
-      `Canvas`, and choosing and dropping files, delivered the way v0.18.0
-      settles for typing and dialogs.
+      `Canvas`, and choosing and dropping files, delivered the way typing and
+      answering dialogs are since v0.18.0. Whether a test can also read what the
+      app handed to the OS (the URL given to `Ui::open_url`, say) without it
+      really opening is decided with them.
+- [ ] **Colors that follow light and dark in `Canvas`.** Widgets follow the
+      appearance by themselves, but `Canvas` draws with fixed `Color`s and
+      nothing tells the app when the appearance changes, so a drawing made for
+      light stays that way in dark. All four can tell: AppKit's
+      `viewDidChangeEffectiveAppearance`, `AdwStyleManager`'s `dark` property,
+      WinUI's `ActualThemeChanged` and the `prefers-color-scheme` media query.
+      Which shape fits is decided first: `Painter` taking the roles of
+      `TextColor` (and the accent color) so that the platform resolves them at
+      each draw, a notification with the resolved light or dark, or both. The
+      charts below need it for axes and labels, so it comes before them.
 - [ ] *(drawing)* **`naui-charts`.** Line, bar and scatter charts in a separate
       crate drawing on `Canvas`. What it waited on, clipping so that plot areas
       do not draw outside their bounds and text width measurement for laying out
@@ -215,8 +156,8 @@ for, and adaptive items that need investigating first but are not heavy.
 
 ## v0.20.0
 
-Heavier items, `NativeHost`, which the drawing crates and a WebView build on, and
-the always-visible calendar.
+Heavier items, `NativeHost`, which the drawing crates and a WebView build on,
+shortcuts that are not in a menu, and the always-visible calendar.
 
 - [ ] *(drawing)* **`NativeHost`.** A widget that places a native view created by
       another crate: an `NSView` on macOS, a `GtkWidget` on Linux, a XAML element
@@ -228,6 +169,20 @@ the always-visible calendar.
       wgpu's GL backend, or rendering offscreen and handing frames over as
       textures (`GdkDmabufTexture` from GTK 4.14). Windows needs `SwapChainPanel`
       in the projection, and the Web a `<canvas>` for WebGPU or WebGL.
+- [ ] **Keyboard shortcuts outside the menu bar.** A shortcut is given today
+      only to a `MenuBar` item (`MenuShortcut`); anything else is matched by
+      hand in `on_key_down`, whose order relative to menu shortcuts differs by
+      platform. All four have a counterpart: WinUI's `KeyboardAccelerator` on
+      any element, `GtkShortcutController`, AppKit's key equivalents
+      (`performKeyEquivalent:`), and `keydown` on the Web
+      (`KeyboardAccelerator` is not in naui's WinUI projection yet; the menu
+      bar's shortcuts are matched from keys that reach the window's root).
+      Decided first: whether
+      a shortcut belongs to a window or to a widget and its descendants (the
+      scope `GtkShortcutController` and `KeyboardAccelerator` both have), and
+      whether it reuses `MenuShortcut`. Naming commands, binding them from a
+      keymap the user can edit, and choosing by context are an app's own layer
+      on top (they fit `naui-app` or a separate crate), not the core.
 - [ ] **Make dragging `Table` column widths work on Windows and Linux too.** Linux
       has the native feature in `GtkColumnView`, while Windows uses a custom table,
       so it is heavy.
@@ -240,8 +195,8 @@ the always-visible calendar.
 
 ## v0.21.0
 
-Items that build on `NativeHost`, and the items that depend on how an app is
-distributed.
+Items that build on `NativeHost`, cursor shapes for `Canvas`, and the items that
+depend on how an app is distributed.
 
 - [ ] *(drawing)* **`naui-wgpu`.** A separate crate that connects a wgpu surface
       through `NativeHost` on all four platforms, and checks basic 2D and 3D
@@ -252,25 +207,110 @@ distributed.
       separate crate. A WebView builds on `NativeHost` (`WKWebView`, WebKitGTK,
       WebView2, `<iframe>`), and a code editor is a separate crate too. None of
       them needs the core.
+- [ ] **Pointer cursor shapes on `Canvas`.** A drawing that can be dragged or
+      resized cannot show it: the cursor over a `Canvas` stays the arrow.
+      `NSCursor` with cursor rects, `gtk_widget_set_cursor` and CSS `cursor`
+      take a shape per view. WinUI has only `UIElement.ProtectedCursor`, which
+      is protected, so whether naui's `Canvas` element can set it through the
+      projection is checked first, along with which shapes all four name
+      (WinUI's `InputSystemCursorShape` is the shortest list). Other widgets
+      keep the cursors their controls choose.
 - [ ] **Single instance, file associations, URL schemes.** GTK's `GtkApplication`
       already gives single-instance activation and an `open` signal for files.
       macOS needs `application:openURLs:` and a bundle `Info.plist`, WinUI uses
       `AppInstance` key redirection with MSIX registration, and the Web has no
       counterpart. What each distribution method (`cargo run`, `.app`, MSIX,
-      Flatpak) provides has to be decided first.
+      Flatpak) provides has to be decided first. Being reopened while running
+      (a click on the Dock icon), the list of recent documents, and the Dock
+      menu and Windows's jump list hang on the same registration and are
+      looked at with it; the Web has none of them.
 - [ ] **Desktop notifications.** macOS needs a bundle, Linux a `.desktop` file, and
       Windows registration, so the conditions for each distribution method need to
       be documented.
 
 ## v0.22.0
 
-The heaviest items: printing, and a first backend beyond the four platforms.
+Printing and dragging between widgets, the heaviest of the features, and what
+windows tell and take about activation and focus.
 
+- [ ] **Dragging between widgets and out of the app.** A drag today stays
+      inside one `List` (reordering, v0.18.0) or comes in as files
+      (`on_file_drop`). Dragging a row to another `List` or a `Tree`, onto any
+      widget, and out to other apps as files or text use the same native
+      machinery (`NSDraggingSource`, `GtkDragSource` and `GtkDropTarget`,
+      WinUI's `CanDragItems` and `DragStarting`, HTML drag and drop), and the
+      mark a drag already carries for its list is the shape they grow from.
+      Decided first: what a drag carries (rows of a known widget, or data by
+      type as a clipboard holds), and which widgets take drops.
 - [ ] **Printing.** All four have a print pipeline (`NSPrintOperation`,
       `GtkPrintOperation`, WinUI's `PrintDocument` through window interop, and
       CSS for `window.print()`). None can print a naui widget tree directly, so
       an app would print what `Canvas` draws or a separate document; which of
       the two naui offers is decided first.
+- [ ] **Telling when a window becomes active or inactive.** For pausing work
+      while the app is in the background and refreshing on return. AppKit's
+      `windowDidBecomeKey:` and `windowDidResignKey:`, `GtkWindow`'s
+      `is-active`, WinUI's `Window.Activated`, and `focus` and `blur` on the
+      Web's `window`. It joins `on_state_change`, which tells minimizing but
+      not being covered or switched away from.
+- [ ] **Moving focus to the next widget, and the Tab order.** `request_focus`
+      names one widget; nothing moves focus forward or back from where it is,
+      and the Tab order is the order the widgets were added in. AppKit has
+      `selectNextKeyView:` and `nextKeyView`, WinUI `FocusManager.TryMoveFocus`
+      and `TabIndex`, GTK `child_focus`, and the Web `tabindex`. GTK 4 dropped
+      the focus chain and the Web has no call that moves focus to the next
+      element, so what all four can do is checked first: moving may be offered
+      without setting the order, or the item moves to
+      [Not planned](#not-planned) with "add the widgets in Tab order".
+
+## v0.23.0
+
+Small pieces of OS integration. Several are missing on one or two platforms, so
+each says what is checked before it is built.
+
+- [ ] **Keeping the system awake** while a task runs (playback, a long export).
+      `NSProcessInfo`'s `beginActivityWithOptions:`, `gtk_application_inhibit`,
+      Win32's `SetThreadExecutionState` (WinUI has none of its own), and the
+      Web's Screen Wake Lock, which holds only while the page is visible and
+      keeps the screen on rather than the system. Whether one request with a
+      reason covers both "keep the display on" and "do not sleep" is decided
+      first.
+- [ ] **Showing a file in the file manager, and opening one with its default
+      app.** `Ui::open_url` is documented for `https:` and `mailto:`; whether
+      a `file:` URL already opens through it on every platform is checked
+      first, which would leave only the file manager to add. `NSWorkspace`
+      (`activateFileViewerSelectingURLs:`, `openURL:`), `GtkFileLauncher`
+      (`open_containing_folder`, GTK 4.10) and Windows's
+      `SHOpenFolderAndSelectItems` and `Launcher` exist. The Web has neither
+      (a page cannot reach the file manager), so it would return an error
+      there and be listed in [Known limitations](known-limitations.md).
+- [ ] **Reading the "reduce motion" setting.** naui animates nothing itself,
+      but an app that animates a `Canvas` with a `Timer` should stop when the
+      user asks for less motion. `NSWorkspace`'s
+      `accessibilityDisplayShouldReduceMotion`, GTK's `gtk-enable-animations`,
+      Windows's `UISettings.AnimationsEnabled` and the `prefers-reduced-motion`
+      media query. Whether it is read once or also told when it changes, and
+      whether it sits with the appearance from v0.19.0, is decided first.
+- [ ] **Asking for the user's attention** when a background window finishes
+      something. `NSApplication`'s `requestUserAttention:` (the Dock icon
+      bounces) and Win32's `FlashWindowEx` exist. GTK 4 dropped the urgency
+      hint and the Web has nothing but the tab's title, so whether desktop
+      notifications (v0.21.0) cover the need is checked first; if they do,
+      this moves to [Not planned](#not-planned).
+- [ ] **Telling when the system sleeps and wakes, and its power state** (for
+      dropping connections before sleep and refreshing after, or doing less
+      work on battery). `NSWorkspace`'s `willSleep` and `didWake`
+      notifications and `NSProcessInfo`'s low power mode and thermal state,
+      and Windows's `PowerManager` and suspend and resume notifications. Linux
+      has it only over DBus (logind's `PrepareForSleep`, UPower), not in GTK,
+      and the Web tells only page visibility. Which of the three (sleep and
+      wake, low power, thermal state) enough platforms share is checked
+      first.
+
+## v0.24.0
+
+A first backend beyond the four platforms.
+
 - [ ] **iOS, Android, or an embedded device.** naui has no mobile backend, so
       each would need a new one, and the native-control approach would have to
       fit touch and phone navigation. The obstacle is checking: the iOS Simulator
@@ -293,6 +333,9 @@ planned, and the versions above may change to meet them.
   `Tree` items change `TreeItem`, whose fields are public, so a new field breaks
   apps that build it with a struct literal (more than one action on a toast,
   which changed `Toast::action` and `on_action`, was done in v0.18.0).
+  Shortcuts outside the menu bar may rename or move `MenuShortcut`, and colors
+  by role in `Canvas` may add a variant to `Paint`, which is not
+  `#[non_exhaustive]`.
 - **Public types are reviewed for growth.** Each public struct and enum is
   checked for whether it may gain fields or variants later. Those that may get
   `#[non_exhaustive]`, or private fields with constructors, as `PointerEvent`
@@ -325,17 +368,34 @@ Things that do not fit naui's approach.
   built at all, they would be separate crates on top, not part of the core. The
   application layer, `naui-app` (see [Structuring large apps](large-apps.md)),
   is not one of these: it builds the tree with the existing API and updates it
-  with setters.
+  with setters. Shared state objects that widgets observe are left to that
+  layer too.
 - **Swapping whole compositions by size** (a different widget tree per size
   class). It would rebuild the tree from a size callback, which the adaptive
   approach rules out. The cases it would cover are handled by `Stack::set_breakpoint`
   and `AdaptivePanes`.
 - **A bottom navigation bar.** It is a phone pattern, and naui has no mobile
-  backend (see the mobile entry in v0.22.0).
+  backend (see the mobile entry in v0.24.0).
 - **Font choosers.** WinUI has no font picker (only Win32's `ChooseFont`), and the
   Web can list fonts only through Local Font Access, which is available in Chrome
   and Edge from version 103 and not in Firefox or Safari. There is no common
   behavior to build on.
+- **Widgets composed from drawing where no platform has the control** (badges,
+  avatars, skeleton placeholders, ratings, one-time-code fields, carousels).
+  naui composes a widget only where most platforms have the control and one
+  lacks it (as `Toast` on the Web). An app can build these from `Canvas` or
+  existing widgets.
+- **Window chrome that only some platforms have:** always on top, transparent
+  or blurred backgrounds, custom title bars, native window tabs, the
+  document-edited mark. Each exists on one or two platforms, and an app that
+  needs one reaches it through the window's native object.
+- **Listing displays and placing windows on them.** Linux and the Web do not
+  give a window's position (see the window section of
+  [Known limitations](known-limitations.md)), so there is nothing common to
+  build on beyond `WindowPlacement`.
+- **Storing credentials** (the keychain, Credential Manager, Secret Service).
+  The Web has no counterpart, and it involves no UI: crates such as `keyring`
+  work beside naui as they are.
 - **Tray icons.** The Web has no counterpart, and Linux needs DBus
   StatusNotifierItem. An app that needs one can add it as native code in its own
   crate.
