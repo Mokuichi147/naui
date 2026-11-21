@@ -1623,6 +1623,9 @@ impl Window {
 
     pub fn close(&self) {
         self.release_backdrop();
+        if let Some(layer) = self.0.content_layer.borrow().as_ref() {
+            crate::toast::window_closing(layer);
+        }
         if self.0.native.Close().is_ok() {
             *self.0.visible.borrow_mut() = false;
             if let Some(child) = self.0.child.borrow().as_ref() {

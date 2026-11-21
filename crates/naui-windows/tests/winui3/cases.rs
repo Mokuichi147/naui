@@ -20,8 +20,9 @@ use crate::automation;
 use naui_winui3::Microsoft::UI::Windowing::TitleBarTheme;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Border, Button as XamlButton, Canvas as XamlCanvas, CheckBox as XamlCheckBox,
-    ComboBox as XamlComboBox, Grid, Image as XamlImage, ListView, ListViewItem, MenuFlyoutItem,
-    ProgressRing, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock, TextBox, ToggleSwitch,
+    ComboBox as XamlComboBox, Grid, Image as XamlImage, InfoBar, ListView, ListViewItem,
+    MenuFlyoutItem, ProgressRing, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock,
+    TextBox, ToggleSwitch,
 };
 use naui_winui3::Microsoft::UI::Xaml::Documents::{Hyperlink, Inline, Run};
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::{BitmapImage, SvgImageSource};
@@ -733,6 +734,23 @@ const CASES: &[Case] = &[
     (
         "PNG 形式と Bitmap の両方があれば PNG 形式を読む",
         clipboard_prefers_the_png_format,
+    ),
+    // 順序に頼るケースがあるので、新しいものは末尾に足す。
+    (
+        "トーストの操作ボタンが番号を知らせ、2 つ以上は Content に並ぶ",
+        toast_action_buttons_report_their_index,
+    ),
+    (
+        "後から出したトーストは並び、High はすぐ出る",
+        toast_waits_its_turn_and_high_comes_up_at_once,
+    ),
+    (
+        "トーストの位置が InfoBar の揃えになる",
+        toast_positions_become_the_alignment,
+    ),
+    (
+        "閉じた窓に残ったトーストは次のものに場所を譲る",
+        toast_in_a_closed_window_gives_way,
     ),
 ];
 
@@ -3369,7 +3387,7 @@ fn with_toast_focus_window(
 }
 
 /// When a toast goes away with focus on its action button — time running out, `dismiss`,
-/// or another toast replacing it — focus goes back to the element it came from, in the
+/// or a `High` toast putting it back in the queue — focus goes back to the element it came from, in the
 /// same `FocusState`, not to the first element of the window.
 fn toast_puts_focus_back_where_it_came_from(ui: &Ui) -> Result<()> {
     use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
@@ -3384,14 +3402,14 @@ fn toast_puts_focus_back_where_it_came_from(ui: &Ui) -> Result<()> {
                     .FocusState()
                     .unwrap_or(FocusState::Unfocused)
             };
-            for way in ["時間切れ", "dismiss", "置き換え"] {
+            for way in ["時間切れ", "dismiss", "High に譲る"] {
                 pump_until(FOCUS_TIMEOUT, || {
                     native::<XamlButton>(origin)
                         .Focus(FocusState::Keyboard)
                         .unwrap_or(false)
                 });
                 let toast = ui.toast("消しました").expect("トースト");
-                toast.set_action("元に戻す");
+                toast.set_actions(&["元に戻す"]);
                 toast.set_timeout(if way == "時間切れ" { 0.8 } else { 0.0 });
                 toast.show();
                 let mut action = None;
@@ -3418,6 +3436,7 @@ fn toast_puts_focus_back_where_it_came_from(ui: &Ui) -> Result<()> {
 
                 let replacement = ui.toast("別の知らせ").expect("トースト");
                 replacement.set_timeout(0.0);
+                replacement.set_priority(naui_core::ToastPriority::High);
                 match way {
                     "時間切れ" => pump_until(Duration::from_secs(5), || !toast.is_visible()),
                     "dismiss" => toast.dismiss(),
@@ -3436,6 +3455,8 @@ fn toast_puts_focus_back_where_it_came_from(ui: &Ui) -> Result<()> {
                     FocusState::Unfocused,
                     "{way}: 窓の先頭へは飛ばないこと"
                 );
+                // High に譲ったものは列の先頭で待っているので、先に列から外す。
+                toast.dismiss();
                 replacement.dismiss();
             }
         },
@@ -3462,12 +3483,12 @@ fn toast_action_by_keys_puts_focus_back(ui: &Ui) -> Result<()> {
                 return;
             }
             let toast = ui.toast("消しました").expect("トースト");
-            toast.set_action("元に戻す");
+            toast.set_actions(&["元に戻す"]);
             toast.set_timeout(0.0);
             let acted = Rc::new(Cell::new(false));
             toast.on_action({
                 let acted = acted.clone();
-                move || acted.set(true)
+                move |index| acted.set(index == 0)
             });
             pump_until(FOCUS_TIMEOUT, || {
                 native::<XamlButton>(origin)
@@ -12791,5 +12812,203 @@ fn clipboard_reads_a_bmp_image(ui: &Ui) -> Result<()> {
             "WIC で読み、不透明な画素で返す"
         );
     });
+    Ok(())
+}
+
+// ------------------------------------------------------------------ トースト
+
+/// The toast's `InfoBar`.
+fn info_bar(toast: &naui_windows::Toast) -> InfoBar {
+    toast
+        .native_element()
+        .cast::<InfoBar>()
+        .expect("トーストは InfoBar")
+}
+
+/// One action goes in `InfoBar.ActionButton`; two or more go in a row in `Content`.
+/// Clicking one reports its index, then `on_dismiss`.
+fn toast_action_buttons_report_their_index(ui: &Ui) -> Result<()> {
+    let window = ui.window("トースト", 360.0, 240.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    window.show();
+
+    let toast = ui.toast("削除しました")?;
+    toast.set_timeout(0.0);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    toast.on_action({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(format!("action {index}"))
+    });
+    toast.on_dismiss({
+        let seen = seen.clone();
+        move || seen.borrow_mut().push("dismiss".to_string())
+    });
+    let bar = info_bar(&toast);
+
+    toast.set_actions(&["元に戻す"]);
+    assert!(bar.ActionButton().is_ok(), "1 つなら ActionButton に置く");
+    assert!(bar.Content().is_err(), "Content は空");
+
+    toast.set_actions(&["元に戻す", "開く"]);
+    assert!(
+        bar.ActionButton().is_err(),
+        "2 つ以上は ActionButton に置かない"
+    );
+    let row = bar
+        .Content()
+        .and_then(|content| content.cast::<StackPanel>())
+        .expect("Content に並べた StackPanel");
+    let children = row.Children().expect("ボタンの並び");
+    assert_eq!(children.Size().expect("数"), 2);
+
+    toast.show();
+    assert!(toast.is_visible());
+
+    // ボタンの並びは面の内側に収まる。InfoBar は Content の終わり側と下に余白を
+    // 持たないので、何もしないとボタンが面の右端と下端に接する。
+    let laid_out =
+        || row.ActualWidth().unwrap_or(0.0) > 0.0 && bar.ActualWidth().unwrap_or(0.0) > 0.0;
+    pump_until(SCROLL_LAYOUT_TIMEOUT, laid_out);
+    if laid_out() {
+        let origin = row
+            .TransformToVisual(&bar)
+            .and_then(|transform| {
+                transform.TransformPoint(windows::Foundation::Point { X: 0.0, Y: 0.0 })
+            })
+            .expect("面から見たボタンの並びの位置");
+        let end_gap = bar.ActualWidth().unwrap_or(f64::NAN)
+            - (f64::from(origin.X) + row.ActualWidth().unwrap_or(f64::NAN));
+        let bottom_gap = bar.ActualHeight().unwrap_or(f64::NAN)
+            - (f64::from(origin.Y) + row.ActualHeight().unwrap_or(f64::NAN));
+        assert!(end_gap >= 15.5, "終わり側に余白がある: {end_gap}");
+        assert!(bottom_gap >= 15.5, "下に余白がある: {bottom_gap}");
+    } else {
+        println!("     (実寸が付かない環境なので、ボタンの並びの余白は確かめずに通す)");
+    }
+
+    automation::invoke(&children.GetAt(1).expect("2 つ目のボタン"));
+    assert_eq!(*seen.borrow(), ["action 1", "dismiss"]);
+    assert!(!toast.is_visible(), "押すと消える");
+
+    toast.set_actions::<&str>(&[]);
+    assert!(bar.ActionButton().is_err() && bar.Content().is_err());
+    window.close();
+    Ok(())
+}
+
+/// A toast shown while another is up waits its turn; `High` comes up at once and
+/// puts the current one back at the front. None of this is notified.
+fn toast_waits_its_turn_and_high_comes_up_at_once(ui: &Ui) -> Result<()> {
+    let window = ui.window("トースト", 360.0, 240.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    window.show();
+
+    let dismissed = Rc::new(Cell::new(0));
+    let make = |message: &str| -> Result<_> {
+        let toast = ui.toast(message)?;
+        toast.set_timeout(0.0);
+        toast.on_dismiss({
+            let dismissed = dismissed.clone();
+            move || dismissed.set(dismissed.get() + 1)
+        });
+        Ok(toast)
+    };
+    let first = make("1 つめ")?;
+    let second = make("2 つめ")?;
+    let urgent = make("急ぎ")?;
+    urgent.set_priority(naui_core::ToastPriority::High);
+
+    first.show();
+    second.show();
+    assert!(first.is_visible());
+    assert!(second.is_queued() && !second.is_visible(), "後のものは並ぶ");
+    assert!(
+        !info_bar(&second).IsOpen().expect("IsOpen"),
+        "並んでいる間は開かない"
+    );
+
+    urgent.show();
+    assert!(urgent.is_visible(), "High はすぐ出る");
+    assert!(first.is_queued(), "前のものは列の先頭へ戻る");
+
+    urgent.dismiss();
+    assert!(first.is_visible(), "割り込まれたものが先に戻る");
+    first.dismiss();
+    assert!(second.is_visible() && info_bar(&second).IsOpen().expect("IsOpen"));
+    second.dismiss();
+    assert_eq!(dismissed.get(), 0, "アプリ自身の操作は通知しない");
+    window.close();
+    Ok(())
+}
+
+/// Each position becomes the `InfoBar`'s alignment in the layer it is overlaid on.
+fn toast_positions_become_the_alignment(ui: &Ui) -> Result<()> {
+    let window = ui.window("トースト", 360.0, 240.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    window.show();
+
+    let toast = ui.toast("ここ")?;
+    toast.set_timeout(0.0);
+    let bar = info_bar(&toast);
+    for position in naui_core::ToastPosition::ALL {
+        toast.set_position(position);
+        toast.show();
+        let vertical = if position.is_top() {
+            VerticalAlignment::Top
+        } else {
+            VerticalAlignment::Bottom
+        };
+        let horizontal = match position.align() {
+            Align::Start => HorizontalAlignment::Left,
+            Align::End => HorizontalAlignment::Right,
+            _ => HorizontalAlignment::Center,
+        };
+        assert_eq!(
+            bar.VerticalAlignment().expect("縦"),
+            vertical,
+            "{position:?}"
+        );
+        assert_eq!(
+            bar.HorizontalAlignment().expect("横"),
+            horizontal,
+            "{position:?}"
+        );
+        toast.dismiss();
+    }
+    window.close();
+    Ok(())
+}
+
+/// A toast left on screen in a window closed with `Window::close` does not hold up
+/// the queue: the next one shown takes its place, without notifying.
+fn toast_in_a_closed_window_gives_way(ui: &Ui) -> Result<()> {
+    let old = ui.window("閉じる窓", 360.0, 240.0)?;
+    old.set_child(&ui.stack(Orientation::Vertical)?);
+    old.show();
+    let stuck = ui.toast("閉じた窓のトースト")?;
+    stuck.set_timeout(0.0);
+    let dismissed = Rc::new(Cell::new(0));
+    stuck.on_dismiss({
+        let dismissed = dismissed.clone();
+        move || dismissed.set(dismissed.get() + 1)
+    });
+    stuck.show();
+    assert!(stuck.is_visible());
+    old.close();
+
+    let new = ui.window("新しい窓", 360.0, 240.0)?;
+    new.set_child(&ui.stack(Orientation::Vertical)?);
+    new.show();
+    let next = ui.toast("新しい窓のトースト")?;
+    next.set_timeout(0.0);
+    next.show();
+    assert!(next.is_visible(), "並ばずに出る");
+    assert!(
+        !stuck.is_visible() && !stuck.is_queued(),
+        "残ったものは外れる"
+    );
+    assert_eq!(dismissed.get(), 0, "外しても通知は届かない");
+    next.dismiss();
+    new.close();
     Ok(())
 }

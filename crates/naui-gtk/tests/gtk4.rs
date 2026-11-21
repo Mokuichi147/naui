@@ -28,8 +28,8 @@ use naui_core::{
     ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState,
     Point, PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode,
     SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle,
-    Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem, WindowPlacement, WindowState,
-    DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_OVERSCAN,
+    Theme, Time, ToastPosition, ToastPriority, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_OVERSCAN,
 };
 use naui_gtk::{run_for_test, ListRow, TableCells, Ui, Widget};
 
@@ -1034,8 +1034,16 @@ fn main() {
             toast_events_reach_the_closures,
         ),
         (
-            "新しいトーストが前のものを黙って置き換える",
-            toast_replaces_the_previous_one,
+            "後から出したトーストは並び、High はすぐ出る",
+            toast_waits_its_turn,
+        ),
+        (
+            "消えた通知が届くときには次のトーストが出ている",
+            toast_next_one_is_up_before_on_dismiss,
+        ),
+        (
+            "閉じた窓に残ったトーストは次のものに場所を譲る",
+            toast_in_a_closed_window_gives_way,
         ),
         (
             "外さずに別の親へ入れた子は断られ、どちらのコンテナの操作でも動かない",
@@ -9429,7 +9437,8 @@ fn file_saver_configuration(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// The toast's settings reach the `AdwToast`, and dismissing removes it.
+/// The toast's settings reach the `AdwToast`, and dismissing removes it. One action
+/// is `AdwToast`'s own button; two or more all follow the text in a custom title.
 fn toast_configuration_reaches_the_native_toast(ui: &Ui) -> Result<()> {
     let window = ui.window("naui", 320.0, 200.0)?;
     let content = ui.stack(Orientation::Vertical)?;
@@ -9441,8 +9450,11 @@ fn toast_configuration_reaches_the_native_toast(ui: &Ui) -> Result<()> {
     );
 
     let toast = ui.toast("保存しました")?;
-    toast.set_action("元に戻す");
+    toast.set_actions(&["元に戻す"]);
     toast.set_timeout(3.0);
+    // 位置は覚えておくが、AdwToastOverlay は下中央にしか置けない。
+    toast.set_position(ToastPosition::TopEnd);
+    assert_eq!(toast.spec().position(), ToastPosition::TopEnd);
     assert!(!toast.is_visible(), "作っただけでは出ていないこと");
     assert!(toast.native_toast().is_none());
 
@@ -9457,16 +9469,33 @@ fn toast_configuration_reaches_the_native_toast(ui: &Ui) -> Result<()> {
         native.button_label().map(|l| l.to_string()),
         Some("元に戻す".into())
     );
+    assert!(native.custom_title().is_none(), "1 つなら題はそのまま");
     assert_eq!(native.timeout(), 3, "秒で AdwToast へ渡ること");
 
-    // 出したまま書き換えると、出ている AdwToast がその場で変わる。
+    // 出したまま 2 つにすると、どちらも題の中で文字の後ろに並ぶ。
+    toast.set_actions(&["元に戻す", "開く"]);
+    assert_eq!(native.button_label(), None, "本来のボタンは使わない");
+    let title = native.custom_title().expect("題の中にボタンを並べること");
+    assert_eq!(
+        custom_title_texts(&title),
+        ["保存しました", "元に戻す", "開く"]
+    );
+
+    // 文字の書き換えは題の中のラベルへ届く。
     toast.set_message("書き出しました");
-    toast.set_action("");
+    assert_eq!(
+        custom_title_texts(&title),
+        ["書き出しました", "元に戻す", "開く"]
+    );
+
+    // 空の列でボタンが外れ、題は AdwToast 自身のものへ戻る。
+    toast.set_actions::<&str>(&[]);
+    assert_eq!(native.button_label(), None, "空の列でボタンが外れること");
+    assert!(native.custom_title().is_none());
     assert_eq!(
         native.title().map(|t| t.to_string()),
         Some("書き出しました".into())
     );
-    assert_eq!(native.button_label(), None, "空文字列でボタンが外れること");
 
     toast.dismiss();
     assert!(!toast.is_visible());
@@ -9475,14 +9504,30 @@ fn toast_configuration_reaches_the_native_toast(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// The action button and dismissal each reach their closures.
+/// The text of a custom title: the label, then the buttons' labels.
+fn custom_title_texts(title: &gtk::Widget) -> Vec<String> {
+    let mut texts = Vec::new();
+    let mut child = title.first_child();
+    while let Some(widget) = child {
+        if let Some(label) = widget.downcast_ref::<gtk::Label>() {
+            texts.push(label.label().to_string());
+        } else if let Some(button) = widget.downcast_ref::<gtk::Button>() {
+            texts.push(button.label().map(|l| l.to_string()).unwrap_or_default());
+        }
+        child = widget.next_sibling();
+    }
+    texts
+}
+
+/// The action buttons and dismissal each reach their closures, with the index of
+/// the button.
 fn toast_events_reach_the_closures(ui: &Ui) -> Result<()> {
     let window = ui.window("naui", 320.0, 200.0)?;
     window.set_child(&ui.stack(Orientation::Vertical)?);
     window.show();
 
     let toast = ui.toast("削除しました")?;
-    toast.set_action("元に戻す");
+    toast.set_actions(&["元に戻す"]);
     // 押されるまで消えないトーストにしておく。
     toast.set_timeout(0.0);
     assert_eq!(toast.spec().timeout_secs(), 0);
@@ -9490,11 +9535,11 @@ fn toast_events_reach_the_closures(ui: &Ui) -> Result<()> {
     let seen = Rc::new(RefCell::new(Vec::new()));
     toast.on_action({
         let seen = seen.clone();
-        move || seen.borrow_mut().push("action")
+        move |index| seen.borrow_mut().push(format!("action {index}"))
     });
     toast.on_dismiss({
         let seen = seen.clone();
-        move || seen.borrow_mut().push("dismiss")
+        move || seen.borrow_mut().push("dismiss".to_string())
     });
 
     toast.show();
@@ -9506,7 +9551,7 @@ fn toast_events_reach_the_closures(ui: &Ui) -> Result<()> {
 
     assert_eq!(
         seen.borrow().as_slice(),
-        ["action", "dismiss"],
+        ["action 0", "dismiss"],
         "押された通知のあとに、消えた通知が届くこと"
     );
     assert!(!toast.is_visible());
@@ -9514,39 +9559,161 @@ fn toast_events_reach_the_closures(ui: &Ui) -> Result<()> {
     // 消えたあとに来る通知は捨てられ、二重には届かない。
     native.dismiss();
     assert_eq!(seen.borrow().len(), 2);
+
+    // 題の中のボタンも、押すと番号を知らせて消える。
+    seen.borrow_mut().clear();
+    toast.set_actions(&["元に戻す", "開く"]);
+    toast.show();
+    let native = toast.native_toast().expect("出し直した AdwToast");
+    let title = native.custom_title().expect("題の中のボタン");
+    let open = title
+        .last_child()
+        .and_downcast::<gtk::Button>()
+        .expect("2 つ目の操作のボタン");
+    open.emit_clicked();
+    assert_eq!(seen.borrow().as_slice(), ["action 1", "dismiss"]);
+    assert!(!toast.is_visible());
+
+    // フォーカスのあるボタンを押したときは、窓のフォーカスを外してから消す (本来の
+    // ボタンと同じ)。題ごと外れたボタンをフォーカスが指したままだと、フォーカスを
+    // 移す GTK が警告を出す。
+    seen.borrow_mut().clear();
+    toast.show();
+    let native = toast.native_toast().expect("もう一度出した AdwToast");
+    let open = native
+        .custom_title()
+        .and_then(|title| title.last_child())
+        .and_downcast::<gtk::Button>()
+        .expect("2 つ目の操作のボタン");
+    spin_until(std::time::Duration::from_secs(2), || open.is_mapped());
+    assert!(open.grab_focus(), "題の中のボタンにフォーカスを置けること");
+    let root = open.root().expect("窓に載っていること");
+    open.emit_clicked();
+    assert_eq!(seen.borrow().as_slice(), ["action 1", "dismiss"]);
+    assert_eq!(root.focus(), None, "押したボタンからフォーカスが外れること");
     window.close();
     Ok(())
 }
 
-/// A new toast replaces the previous one, and the replaced one does not notify.
-fn toast_replaces_the_previous_one(ui: &Ui) -> Result<()> {
+/// A toast shown while another is up waits its turn (not in `AdwToastOverlay`'s own
+/// queue, but in naui's), and `High` comes up at once and puts the current one back
+/// at the front. None of this is notified.
+fn toast_waits_its_turn(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 320.0, 200.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    window.show();
+
+    let dismissed = Rc::new(Cell::new(0));
+    let make = |message: &str| -> Result<_> {
+        let toast = ui.toast(message)?;
+        toast.set_timeout(0.0);
+        toast.on_dismiss({
+            let dismissed = dismissed.clone();
+            move || dismissed.set(dismissed.get() + 1)
+        });
+        Ok(toast)
+    };
+    let first = make("1 つめ")?;
+    let second = make("2 つめ")?;
+    let urgent = make("急ぎ")?;
+    urgent.set_priority(ToastPriority::High);
+
+    first.show();
+    second.show();
+    assert!(first.is_visible());
+    assert!(second.is_queued() && !second.is_visible(), "後のものは並ぶ");
+    assert!(
+        second.native_toast().is_none(),
+        "並んでいる間は AdwToast を作らない"
+    );
+
+    urgent.show();
+    assert!(urgent.is_visible(), "High は並ばずにすぐ出る");
+    assert!(first.is_queued(), "前のものは列の先頭へ戻る");
+
+    urgent.dismiss();
+    assert!(first.is_visible(), "割り込まれたものが先に戻る");
+    first.dismiss();
+    assert!(second.is_visible());
+    assert!(second.native_toast().is_some());
+    second.dismiss();
+    assert_eq!(
+        dismissed.get(),
+        0,
+        "アプリ自身の操作なので、消えた通知は届かないこと"
+    );
+    window.close();
+    Ok(())
+}
+
+/// When a toast goes by itself, the next in the queue is already up by the time
+/// `on_dismiss` arrives, and showing another from inside it queues it behind.
+fn toast_next_one_is_up_before_on_dismiss(ui: &Ui) -> Result<()> {
     let window = ui.window("naui", 320.0, 200.0)?;
     window.set_child(&ui.stack(Orientation::Vertical)?);
     window.show();
 
     let first = ui.toast("1 つめ")?;
     first.set_timeout(0.0);
-    let dismissed = Rc::new(Cell::new(0));
+    let second = ui.toast("2 つめ")?;
+    second.set_timeout(0.0);
+    let third = ui.toast("3 つめ")?;
+    third.set_timeout(0.0);
+
+    let seen = Rc::new(Cell::new(None));
     first.on_dismiss({
+        let (seen, second, third) = (seen.clone(), second.clone(), third.clone());
+        move || {
+            seen.set(Some(second.is_visible()));
+            third.show();
+        }
+    });
+    first.show();
+    second.show();
+
+    // 閉じるボタン (×) で消えたときと同じく、AdwToast の側から消す。
+    first.native_toast().expect("AdwToast").dismiss();
+    assert_eq!(seen.get(), Some(true), "通知の時点で次が出ていること");
+    assert!(second.is_visible());
+    assert!(third.is_queued(), "通知の中で出したものは後ろに並ぶ");
+    second.dismiss();
+    assert!(third.is_visible());
+    third.dismiss();
+    window.close();
+    Ok(())
+}
+
+/// A toast left on screen in a window that has closed does not hold up the queue:
+/// the next one shown takes its place, without notifying.
+fn toast_in_a_closed_window_gives_way(ui: &Ui) -> Result<()> {
+    let old = ui.window("閉じる窓", 320.0, 200.0)?;
+    old.set_child(&ui.stack(Orientation::Vertical)?);
+    old.show();
+    let stuck = ui.toast("閉じた窓のトースト")?;
+    stuck.set_timeout(0.0);
+    let dismissed = Rc::new(Cell::new(0));
+    stuck.on_dismiss({
         let dismissed = dismissed.clone();
         move || dismissed.set(dismissed.get() + 1)
     });
-    first.show();
+    stuck.show();
+    assert!(stuck.is_visible());
+    old.close();
 
-    let second = ui.toast("2 つめ")?;
-    second.set_timeout(0.0);
-    second.show();
-
-    assert!(!first.is_visible(), "前のものは消えること");
-    assert!(second.is_visible());
-    assert_eq!(
-        dismissed.get(),
-        0,
-        "アプリ自身の操作なので、消えた通知は届かないこと"
+    let new = ui.window("新しい窓", 320.0, 200.0)?;
+    new.set_child(&ui.stack(Orientation::Vertical)?);
+    new.show();
+    let next = ui.toast("新しい窓のトースト")?;
+    next.set_timeout(0.0);
+    next.show();
+    assert!(next.is_visible(), "並ばずに出る");
+    assert!(
+        !stuck.is_visible() && !stuck.is_queued(),
+        "残ったものは外れる"
     );
-
-    second.dismiss();
-    window.close();
+    assert_eq!(dismissed.get(), 0, "外しても通知は届かない");
+    next.dismiss();
+    new.close();
     Ok(())
 }
 

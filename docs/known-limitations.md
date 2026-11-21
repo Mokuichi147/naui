@@ -31,6 +31,8 @@ that shape are covered in
 | `Label` holding links | Selectable as asked | Always selectable | Selectable as asked | Selectable as asked |
 | Where `Group`'s heading goes | Above the card | On the frame's top edge | On the frame's top edge | On the frame's top edge (`<legend>`) |
 | Images written to the clipboard (`set_image`) | PNG (and a bitmap without transparency for apps that read no PNG), kept after the app quits | PNG and TIFF, kept after the app quits | Offered by the app while it runs (unless a clipboard manager keeps it) | `image/png` only, inside a user action (Firefox 127 and later) |
+| Where a `Toast` appears (`ToastPosition`) | Any of the six | Any of the six | Always the bottom center | Any of the six |
+| Where a `Toast`'s second and later action buttons go | A row below the text | Next to the first, after the text | Next to the first, after the text | Next to the first, after the text |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
 
 ## Common
@@ -206,12 +208,15 @@ that shape are covered in
   cannot be disabled (Esc closes it anyway).
 - A `Sheet` takes its content's natural size (at least 320 px wide), so `Fill` in
   the content has nothing to fill. It cannot be resized by the user.
-- Only one `Toast` is shown at a time too, and a newly shown one replaces the
-  previous one (`AdwToastOverlay`'s queueing is aligned to this behavior). There is
-  one action button, and the position is fixed at the bottom center.
-- When a `Toast` disappears while its action button has focus (reached with Tab),
-  only Windows puts focus back on the element it came from. naui does nothing about
-  it elsewhere: on macOS the removed view's window itself becomes the first
+- One `Toast` is on screen at a time; the others wait in one queue for the whole
+  app (not one per window, as `AdwToastOverlay` keeps), and each comes up in the
+  frontmost window when its turn comes. `ToastPriority::High` shows one at once
+  instead. Toasts are meant for one or two short actions: the buttons are laid out
+  in a single row (on Windows, a row below the text when there are two or more),
+  which does not wrap.
+- When a `Toast` disappears while one of its action buttons has focus (reached with
+  Tab), only Windows puts focus back on the element it came from. naui does nothing
+  about it elsewhere: on macOS the removed view's window itself becomes the first
   responder, on the Web focus falls to `<body>` (the button is hidden with
   `display: none`), and on Linux it goes wherever GTK moves it when
   `AdwToastOverlay` removes the toast.
@@ -542,6 +547,12 @@ that shape are covered in
   rather than "original size".
 - `Toast` durations are in **seconds**. Values under one second become one second
   (rounding to 0 would turn it into "never disappear").
+- `Toast` always appears at the bottom center: `AdwToastOverlay` has no way to
+  change where toasts go, so `ToastPosition` is ignored. With two or more actions,
+  the buttons are laid out after the text in a custom title rather than as
+  `AdwToast`'s own button, which holds only one.
+- `AdwToast` always has a close button (×), which the other platforms do not.
+  Closing a toast with it calls `on_dismiss`, as a timeout does.
 - `MenuBar` goes **below** the header bar. Shortcuts work without opening the menu,
   and when there are several windows, only the items of the focused window are
   invoked.

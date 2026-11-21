@@ -27,8 +27,9 @@ use naui_core::{
     GridCell, Key, KeyEvent, LayoutDirection, Length, ListItem, MenuItem, MenuShortcut, MenuSpec,
     NavItem, Orientation, Padding, Pane, Point, PointerButton, PointerPhase, PopupItem, Rect,
     Result, RichText, ScrollMetrics, SelectionMode, SidebarItem, SidebarSection, Sizing,
-    TableColumn, TableRow, TextColor, TextRun, TextStyle, Theme, ToolbarIcon, ToolbarItem,
-    WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
+    TableColumn, TableRow, TextColor, TextRun, TextStyle, Theme, ToastPosition, ToastPriority,
+    ToolbarIcon, ToolbarItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
+    ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, WebWidgetExt, Widget};
 use wasm_bindgen::{JsCast, JsValue};
@@ -4779,6 +4780,199 @@ fn dialog_leaves_escape_to_the_ime_while_composing() {
 
         dialog.close();
         dialog.native_element().remove();
+        Ok(())
+    });
+}
+
+// --------------------------------------------------------------- Toast
+
+/// The toast's action buttons, in order.
+fn toast_buttons(toast: &naui_web::Toast) -> Vec<HtmlElement> {
+    let list = toast
+        .native_element()
+        .query_selector_all("button")
+        .expect("ボタンを探せること");
+    (0..list.length())
+        .filter_map(|i| list.item(i))
+        .filter_map(|node| node.dyn_into::<HtmlElement>().ok())
+        .collect()
+}
+
+/// The labels of the toast's action buttons, in order.
+fn toast_button_labels(toast: &naui_web::Toast) -> Vec<String> {
+    toast_buttons(toast)
+        .iter()
+        .map(|b| b.text_content().unwrap_or_default())
+        .collect()
+}
+
+/// Whether the toast's element is laid out (not `display: none`).
+fn toast_is_displayed(toast: &naui_web::Toast) -> bool {
+    web_sys::window()
+        .and_then(|w| w.get_computed_style(&toast.native_element()).ok().flatten())
+        .and_then(|style| style.get_property_value("display").ok())
+        .is_some_and(|display| display != "none")
+}
+
+/// A toast shown while another is up waits its turn and comes up once the other is
+/// dismissed; `High` comes up at once and puts the current one back at the front.
+/// None of this is notified.
+#[wasm_bindgen_test]
+fn toast_waits_its_turn_and_high_comes_up_at_once() {
+    with_ui(|ui| {
+        let dismissed = Rc::new(Cell::new(0));
+        let make = |message: &str| -> Result<_> {
+            let toast = ui.toast(message)?;
+            toast.set_timeout(0.0);
+            toast.on_dismiss({
+                let dismissed = dismissed.clone();
+                move || dismissed.set(dismissed.get() + 1)
+            });
+            Ok(toast)
+        };
+        let first = make("1 つめ")?;
+        let second = make("2 つめ")?;
+        let urgent = make("急ぎ")?;
+        urgent.set_priority(ToastPriority::High);
+
+        first.show();
+        second.show();
+        assert!(first.is_visible() && toast_is_displayed(&first));
+        assert!(second.is_queued() && !second.is_visible(), "後のものは並ぶ");
+        assert!(!toast_is_displayed(&second), "並んでいる間は見えない");
+
+        urgent.show();
+        assert!(
+            urgent.is_visible() && toast_is_displayed(&urgent),
+            "すぐ出る"
+        );
+        assert!(first.is_queued() && !toast_is_displayed(&first), "列へ戻る");
+
+        urgent.dismiss();
+        assert!(first.is_visible(), "割り込まれたものが先に戻る");
+        first.dismiss();
+        assert!(second.is_visible() && toast_is_displayed(&second));
+        second.dismiss();
+        assert!(!toast_is_displayed(&second));
+        assert_eq!(dismissed.get(), 0, "アプリ自身の操作は通知しない");
+
+        for toast in [first, second, urgent] {
+            toast.native_element().remove();
+        }
+        Ok(())
+    });
+}
+
+/// Clicking an action button reports its index, then `on_dismiss`; by then the next
+/// toast is up, and replacing the buttons from inside `on_action` is fine.
+#[wasm_bindgen_test]
+fn toast_action_buttons_report_their_index() {
+    with_ui(|ui| {
+        let toast = ui.toast("削除しました")?;
+        toast.set_timeout(0.0);
+        toast.set_actions(&["元に戻す", "開く"]);
+        assert_eq!(toast.actions(), ["元に戻す", "開く"]);
+        assert_eq!(toast_button_labels(&toast), ["元に戻す", "開く"]);
+        let next = ui.toast("次")?;
+        next.set_timeout(0.0);
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        toast.on_action({
+            let (seen, toast) = (seen.clone(), toast.clone());
+            move |index| {
+                seen.borrow_mut().push(format!("action {index}"));
+                // 押された通知の中でボタンを差し替えても、走っている購読は消えない。
+                toast.set_actions(&["やり直す"]);
+            }
+        });
+        toast.on_dismiss({
+            let (seen, next) = (seen.clone(), next.clone());
+            move || {
+                seen.borrow_mut()
+                    .push(format!("dismiss (次: {})", next.is_visible()))
+            }
+        });
+
+        toast.show();
+        next.show();
+        toast_buttons(&toast)[1].click();
+        assert_eq!(
+            *seen.borrow(),
+            ["action 1", "dismiss (次: true)"],
+            "番号が届き、消えた通知の時点で次が出ていること"
+        );
+        assert!(!toast.is_visible());
+        assert_eq!(toast_button_labels(&toast), ["やり直す"]);
+
+        next.dismiss();
+        seen.borrow_mut().clear();
+        toast.show();
+        toast_buttons(&toast)[0].click();
+        assert_eq!(*seen.borrow(), ["action 0", "dismiss (次: false)"]);
+
+        toast.set_actions::<&str>(&[]);
+        assert!(toast_buttons(&toast).is_empty(), "空の列でボタンが消える");
+        toast.native_element().remove();
+        next.native_element().remove();
+        Ok(())
+    });
+}
+
+/// Each position puts the toast 24 px from that edge of the viewport, and the start
+/// and end sides swap in a right-to-left page.
+#[wasm_bindgen_test]
+fn toast_positions_follow_the_edges_and_sides() {
+    let root = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.document_element())
+        .expect("html");
+    let _restore = PageDirection(root.get_attribute("dir"));
+    let (width, height) = (
+        f64::from(root.client_width()),
+        f64::from(root.client_height()),
+    );
+    if width < 200.0 || height < 200.0 {
+        // ペインが隠れたブラウザなどでは大きさが 0 になり、位置を確かめられない。
+        return;
+    }
+
+    with_ui(|ui| {
+        let toast = ui.toast("ここ")?;
+        toast.set_timeout(0.0);
+        for dir in ["ltr", "rtl"] {
+            root.set_attribute("dir", dir).expect("dir");
+            for position in ToastPosition::ALL {
+                toast.set_position(position);
+                assert_eq!(toast.position(), position);
+                toast.show();
+                let rect = toast.native_element().get_bounding_client_rect();
+                if position.is_top() {
+                    assert!((rect.top() - 24.0).abs() < 1.0, "{dir} {position:?} 上端");
+                } else {
+                    assert!(
+                        (height - rect.bottom() - 24.0).abs() < 1.0,
+                        "{dir} {position:?} 下端"
+                    );
+                }
+                let from_left = rect.left();
+                let from_right = width - rect.right();
+                let (start, end) = if dir == "rtl" {
+                    (from_right, from_left)
+                } else {
+                    (from_left, from_right)
+                };
+                match position.align() {
+                    Align::Start => assert!((start - 24.0).abs() < 1.0, "{dir} {position:?}"),
+                    Align::End => assert!((end - 24.0).abs() < 1.0, "{dir} {position:?}"),
+                    _ => assert!(
+                        (from_left - from_right).abs() < 1.0,
+                        "{dir} {position:?} 中央: {from_left} / {from_right}"
+                    ),
+                }
+                toast.dismiss();
+            }
+        }
+        toast.native_element().remove();
         Ok(())
     });
 }
