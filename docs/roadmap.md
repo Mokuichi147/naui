@@ -160,9 +160,10 @@ need investigating first but are not heavy.
       automatic collapsing (`LeftCompact`). Whether the same collapsing covers
       macOS, GTK and the Web is checked first; if it does, nothing new is needed.
       It does: only WinUI's `NavigationView` has a strip of icons. AppKit's
-      sidebar item and libadwaita's split views (and `AdwSidebar` up to 1.9) hide
-      the whole pane, and the Web follows macOS, so no new API is added. The
-      difference is written in `Sidebar`'s documentation and the known limitations.
+      sidebar item, libadwaita's split views and `AdwSidebar` (1.9) have no
+      icon-only state, so naui hides the whole pane there and on the Web, and no
+      new API is added. The difference is written in `Sidebar`'s documentation and
+      the known limitations.
 
 ## v0.20.0
 

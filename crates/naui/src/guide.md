@@ -2137,7 +2137,7 @@ narrow lays it over the content.
 | Web | `<button aria-expanded>` at the start of the toolbar row (a row with just the button if there is no toolbar) | The whole pane is hidden |
 
 The strip of icons (a navigation rail) is WinUI's own: AppKit's sidebar item and
-libadwaita's split views have no such state, so naui does not add one to the
+libadwaita's split views have no icon-only state, so naui does not add one to the
 others. Give items icons so the Windows strip shows something.
 
 Icons use the same kinds as [`ToolbarIcon`] and are mapped to the platform's
