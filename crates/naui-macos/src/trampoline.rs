@@ -80,6 +80,11 @@ impl FieldHandlers {
         *self.submit.borrow_mut() = Some(Box::new(f));
     }
 
+    /// Calls the handler for Enter, as the delegate does when Enter is pressed.
+    pub(crate) fn submit(&self, text: &str) {
+        Self::emit(&self.submit, text);
+    }
+
     fn emit(slot: &TextSlot, text: &str) {
         let Some(mut f) = slot.borrow_mut().take() else {
             return;

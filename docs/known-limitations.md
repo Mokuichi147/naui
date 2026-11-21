@@ -22,12 +22,17 @@ that shape are covered in
 | Maximizing and minimizing | Possible | Possible | Possible (minimizing cannot be detected on Wayland) | Not possible |
 | Full screen | Possible | Possible | Possible | Only from within a user action |
 | `Sender::send` from `std::thread::spawn` | Possible | Possible | Possible | Not possible (no threads) |
+| Where dragged `List` rows will land | The rows open a gap | A line between the rows | A line in the accent color | A line in the `Highlight` system color |
+| Scrolling while dragging `List` rows near the edge | No | Yes | No | As the browser does |
+| Moving `List` rows with the keyboard | Alt + Shift + Up / Down (`ListView`'s own) | No | No | No |
 | What a dropped file carries (`on_file_drop`) | The absolute path | The absolute path | The absolute path (local files only) | A `blob:` URL, no path |
 | Looks of `ButtonRole` | Only `Primary` (accent) | `Primary` (accent), `Destructive` (red text, macOS 26 and later) | Both (`suggested-action` / `destructive-action`) | Neither (only `data-naui-role` is written) |
 | `AdaptivePanes` switching to one pane | `TwoPaneView` decides, below the breakpoint, with no slack | naui decides, with 8 px of slack | naui decides, with 8 px of slack (slides between the panes) | naui decides, with 8 px of slack |
 | `Label` holding links | Selectable as asked | Always selectable | Selectable as asked | Selectable as asked |
 | Where `Group`'s heading goes | Above the card | On the frame's top edge | On the frame's top edge | On the frame's top edge (`<legend>`) |
 | Images written to the clipboard (`set_image`) | PNG (and a bitmap without transparency for apps that read no PNG), kept after the app quits | PNG and TIFF, kept after the app quits | Offered by the app while it runs (unless a clipboard manager keeps it) | `image/png` only, inside a user action (Firefox 127 and later) |
+| Where a `Toast` appears (`ToastPosition`) | Any of the six | Any of the six | Always the bottom center | Any of the six |
+| Where a `Toast`'s second and later action buttons go | A row below the text | Next to the first, after the text | Next to the first, after the text | Next to the first, after the text |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
 
 ## Common
@@ -203,9 +208,18 @@ that shape are covered in
   cannot be disabled (Esc closes it anyway).
 - A `Sheet` takes its content's natural size (at least 320 px wide), so `Fill` in
   the content has nothing to fill. It cannot be resized by the user.
-- Only one `Toast` is shown at a time too, and a newly shown one replaces the
-  previous one (`AdwToastOverlay`'s queueing is aligned to this behavior). There is
-  one action button, and the position is fixed at the bottom center.
+- One `Toast` is on screen at a time; the others wait in one queue for the whole
+  app (not one per window, as `AdwToastOverlay` keeps), and each comes up in the
+  frontmost window when its turn comes. `ToastPriority::High` shows one at once
+  instead. Toasts are meant for one or two short actions: the buttons are laid out
+  in a single row (on Windows, a row below the text when there are two or more),
+  which does not wrap.
+- When a `Toast` disappears while one of its action buttons has focus (reached with
+  Tab), only Windows puts focus back on the element it came from. naui does nothing
+  about it elsewhere: on macOS the removed view's window itself becomes the first
+  responder, on the Web focus falls to `<body>` (the button is hidden with
+  `display: none`), and on Linux it goes wherever GTK moves it when
+  `AdwToastOverlay` removes the toast.
 - `Canvas` draws single lines of text only (no wrapping or rich text), gradients
   fill shapes but do not stroke lines, and gradients are linear or radial. A radial
   gradient spreads from its center, with no separate focal point, and there are no
@@ -217,15 +231,24 @@ that shape are covered in
 - Gradient stops that differ in both color and opacity blend slightly differently
   between platforms (some interpolate premultiplied colors, some not). Stops of one
   color fading out look the same everywhere.
-- `Canvas` pointer notifications distinguish buttons but not modifier keys (⇧,
-  Ctrl, and so on). Trackpad pinches do not arrive as zooming (on the Web,
+- `Canvas` pointer notifications carry the modifier keys held at the time of each
+  event (`PointerEvent::modifiers`), not those held when the drag began. On macOS
+  a Ctrl-click on a `Canvas` arrives as the primary button with `control` set, not
+  as a secondary click. Trackpad pinches do not arrive as zooming (on the Web,
   Chromium-based browsers and Firefox deliver them to `on_wheel` as wheel events
   with Ctrl). The amount per wheel notch is normalized to `WHEEL_STEP`, but when a
   browser on the Web passes pixels, the browser's amount is kept.
-- `on_file_drop` takes only files from the OS. Dragging between widgets (to
-  rearrange `List` or `Tree` rows), dragging out of the app, and dropped text or
-  links are not supported. Drops onto text-input widgets go to the field itself
-  and do not reach `on_file_drop`.
+- `on_file_drop` takes only files from the OS. Dragging between widgets (rows from
+  one `List` into another, or onto other widgets), dragging out of the app, and
+  dropped text or links are not supported. Drops onto text-input widgets go to the
+  field itself and do not reach `on_file_drop`.
+- Rows can be rearranged by dragging only within one `List`
+  (`List::set_reorderable`), not in `Tree` or `Table`. Rows that cannot be selected
+  cannot be dragged, and the line or gap showing where the rows will land differs
+  by platform (see [the guide](../crates/naui/src/guide.md#rearranging-list-rows)).
+  Only Windows moves rows with the keyboard (Alt + Shift + Up / Down, which
+  `ListView` has by itself); on macOS, Linux and the Web they are moved only by
+  dragging.
 
 ### Window
 
@@ -295,12 +318,38 @@ that shape are covered in
 
 ### Testing apps
 
-- Not every user action has a method that acts like it. **Typing into text
-  fields** (`set_text` and `set_value` do not call `on_change`), answering a
-  `Dialog` or `Sheet` with its buttons, a `Toast`'s action button, the window's
-  close button (`on_close_request`), pointer events on a `Canvas`, choosing files
-  and dropping them have none yet. Test the code behind them directly, or put the
-  value in with the method that does not notify before the click that reads it.
+- Not every user action has a method that acts like it. A `Toast`'s action
+  button, the window's close button (`on_close_request`), pointer events on a
+  `Canvas`, choosing files and dropping them have none yet. Test the code behind
+  them directly.
+- `enter_text`, `submit` and `search` press no key: `on_key_down` is not called,
+  so an `on_key_down` that stops Enter does not stop `submit`, and nothing goes
+  through an IME. `enter_text` replaces the whole text at once, so `on_change` is
+  called once with the new text rather than once per character, and an
+  `EditableComboBox` completes nothing from its suggestions.
+- On Windows, `enter_text` does not go through UI Automation: WinUI gives the
+  app's own process no Value pattern for a text field, even once the window is
+  drawn (UI Automation clients in other processes, such as Narrator, do get one).
+  naui writes the text and calls `on_change` itself before `enter_text` returns,
+  the same whether or not the window has been drawn. `search` and `respond` click
+  through UI Automation's Invoke pattern, so their notifications arrive a moment
+  later; wait for their effect with `testing::wait_until`. `search` calls
+  `on_search` itself where the Invoke pattern is not offered. A dialog's buttons
+  are in its template, which WinUI applies only once the dialog is drawn, so
+  where they are missing (a window nothing draws, as on CI runners) `respond`
+  closes the dialog with the role itself when its button has not appeared (or,
+  after the dialog opens again, been loaded again) within a second or a click on
+  it leaves the dialog open. Right after the first window is shown, `Dialog::open` and
+  `Sheet::open` wait until WinUI can show them (its `XamlRoot`), for up to 10
+  seconds.
+- `Dialog::respond` and `Sheet::respond` click a button, so a role with no button,
+  or a disabled one, leaves the dialog open; on macOS that leaves `Dialog::open`
+  (and the click that opened it) waiting. Give the answer **before** whatever opens
+  the dialog: on macOS `Dialog::open` returns only once the dialog is answered. On
+  the other platforms the answer arrives a moment after the dialog opens. An
+  answer given while it is closed waits for the next `open` that shows it, so one
+  given to a dialog that then could not open (no window shown yet, for example)
+  answers it later.
 - `Link::click` calls `on_click` without opening `href`, unlike a user's click.
 - The tests need a test target with `harness = false` (`naui::test_cases!` writes
   its `main`): macOS and Linux touch the UI only from the main thread, and WinUI 3
@@ -458,7 +507,11 @@ that shape are covered in
 - On Linux, SVG is read by librsvg's gdk-pixbuf loader (`librsvg2-common` on
   Debian and Ubuntu), which desktops install with GTK.
 - `Expander` has no expand/collapse animation.
-- `Dialog::open` and `PopupMenu::open_at` do not return until closed.
+- `Dialog::open` and `PopupMenu::open_at` do not return until closed. While a
+  `Dialog` opened from inside a `Tasks` task or a timer is shown, other tasks and
+  timers wait until it closes: they run on the main dispatch queue, which does not
+  run again until the work that opened the dialog returns. One opened from a
+  click or another notification does not hold them up.
 - A `Toast` appears in the frontmost window (or the most recently created window
   when none has been decided yet).
 - Attaching a `Toolbar` hides the window's title text (the macOS convention). The
@@ -528,6 +581,12 @@ that shape are covered in
   rather than "original size".
 - `Toast` durations are in **seconds**. Values under one second become one second
   (rounding to 0 would turn it into "never disappear").
+- `Toast` always appears at the bottom center: `AdwToastOverlay` has no way to
+  change where toasts go, so `ToastPosition` is ignored. With two or more actions,
+  the buttons are laid out after the text in a custom title rather than as
+  `AdwToast`'s own button, which holds only one.
+- `AdwToast` always has a close button (×), which the other platforms do not.
+  Closing a toast with it calls `on_dismiss`, as a timeout does.
 - `MenuBar` goes **below** the header bar. Shortcuts work without opening the menu,
   and when there are several windows, only the items of the focused window are
   invoked.

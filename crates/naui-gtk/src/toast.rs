@@ -1,42 +1,137 @@
 //! Toasts (`AdwToast`).
 //!
 //! **This is the only one of the four platforms with a native toast.** naui's shape
-//! for toasts (text, action button, time until it disappears) maps directly onto
-//! `AdwToast`. Where it appears (bottom center), how they stack, how they animate
-//! out, and screen reader announcements are all done by `AdwToastOverlay`.
+//! for toasts (text, action buttons, time until it disappears) maps onto
+//! `AdwToast`. Where it appears (bottom center), how they animate in and out, and
+//! screen reader announcements are all done by `AdwToastOverlay`.
 //!
 //! Changing an `AdwToast`'s contents after adding it would be fine, but it is
-//! **recreated each time it is shown** (the same as `Dialog` rebuilding its
+//! **recreated each time it comes up** (the same as `Dialog` rebuilding its
 //! `AdwAlertDialog`). `Toast` itself holds only "what to show".
+//!
+//! ## The queue
+//!
+//! `AdwToastOverlay` queues toasts itself, but one queue per window, and it has no
+//! signal for "a waiting toast came up", so `is_visible()` could not be answered
+//! from it. The order is therefore kept by [`naui_core::ToastQueue`], shared with
+//! the other backends (modelled on `AdwToastOverlay`'s order: `High` comes up at
+//! once and puts the current one back at the front; unlike the overlay, showing a
+//! waiting toast again does not move it forward), and only the toast whose turn it
+//! is is added to the overlay.
 //!
 //! ## Differences from other platforms
 //!
-//! `adw_toast_set_timeout` accepts only **seconds**, so anything under one second
-//! becomes one second ([`ToastSpec::timeout_secs`]).
+//! - `adw_toast_set_timeout` accepts only **seconds**, so anything under one second
+//!   becomes one second ([`ToastSpec::timeout_secs`]).
+//! - `AdwToast` has **one** button. With two or more actions, they are all laid out
+//!   after the text in a custom title (`adw_toast_set_custom_title`) instead, in the
+//!   same order as elsewhere.
+//! - `AdwToastOverlay` has no way to change where toasts appear, so
+//!   [`ToastPosition`] is ignored: they are always at the bottom center.
+//! - `AdwToast` always has a close button (×). Closing it with that counts as
+//!   disappearing by itself, so `on_dismiss` is called.
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
-use naui_core::ToastSpec;
+use naui_core::{ToastPosition, ToastPriority, ToastQueue, ToastSlot, ToastSpec};
 
 use crate::callback::Notifier;
 
+/// The spacing between the text and the buttons in a custom title.
+const TITLE_SPACING: i32 = 12;
+
 thread_local! {
-    /// The toast showing now. Only one is shown at a time, and a new one replaces it.
-    static CURRENT: RefCell<Option<Toast>> = const { RefCell::new(None) };
+    /// The toast on screen and the ones waiting their turn.
+    static QUEUE: RefCell<ToastQueue<ToastInner>> = const { RefCell::new(ToastQueue::new()) };
+}
+
+/// What is held only while it is on screen.
+struct Presentation {
+    native: adw::Toast,
+    /// The overlay it was added to. Used to tell whether its window has closed.
+    overlay: adw::ToastOverlay,
+    /// The text in the custom title. Present only with two or more actions.
+    title: Option<gtk::Label>,
 }
 
 struct ToastInner {
     app: adw::Application,
     spec: RefCell<ToastSpec>,
-    /// The real toast, held only while it is showing.
-    current: RefCell<Option<adw::Toast>>,
-    on_action: Notifier<()>,
+    /// The real toast, held only while it is on screen.
+    shown: RefCell<Option<Presentation>>,
+    /// The action button that was clicked, until the toast's `dismissed` arrives.
+    clicked: Cell<Option<usize>>,
+    on_action: Notifier<usize>,
     on_dismiss: Notifier<()>,
-    /// Whether the app closed it. A marker so that the reason for closing is not
-    /// notified.
-    dismissed_by_app: Cell<bool>,
+}
+
+impl ToastSlot for ToastInner {
+    fn present(this: &Rc<Self>) -> bool {
+        let Some(overlay) = Toast(this.clone()).overlay() else {
+            return false;
+        };
+        let spec = this.spec.borrow().clone();
+        let native = adw::Toast::new(spec.message());
+        native.set_timeout(spec.timeout_secs());
+        let toast = Toast(this.clone());
+        let title = toast.apply_actions(&native, spec.message(), spec.actions());
+
+        {
+            let weak = Rc::downgrade(this);
+            native.connect_button_clicked(move |_| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                // 本来のボタンを使うのは操作が 1 つのとき。消えるのは次の idle なので、
+                // そこで知らせる。
+                inner.clicked.set(Some(0));
+            });
+        }
+        {
+            let weak = Rc::downgrade(this);
+            native.connect_dismissed(move |_| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                Toast(inner).finish();
+            });
+        }
+
+        this.clicked.set(None);
+        *this.shown.borrow_mut() = Some(Presentation {
+            native: native.clone(),
+            overlay: overlay.clone(),
+            title,
+        });
+        overlay.add_toast(native);
+        true
+    }
+
+    fn withdraw(this: &Rc<Self>) {
+        // 先に手放しておけば、`dismiss` で飛ぶ `dismissed` は `finish` で素通りする。
+        let Some(shown) = this.shown.borrow_mut().take() else {
+            return;
+        };
+        shown.native.dismiss();
+    }
+
+    fn is_stranded(this: &Rc<Self>) -> bool {
+        let shown = this.shown.borrow();
+        let Some(shown) = shown.as_ref() else {
+            return false;
+        };
+        let Some(window) = shown.overlay.root().and_downcast::<gtk::Window>() else {
+            return true;
+        };
+        // 表示する前の窓にも出せるので、見えていないだけでは決めない。
+        // 閉じた窓は見えておらず、次に出す先でもなくなっている。
+        !window.is_visible()
+            && Toast(this.clone())
+                .overlay()
+                .is_none_or(|overlay| overlay != shown.overlay)
+    }
 }
 
 /// A transient notification (`AdwToast`).
@@ -50,18 +145,21 @@ impl Toast {
         Self(Rc::new(ToastInner {
             app: app.clone(),
             spec: RefCell::new(ToastSpec::new(message)),
-            current: RefCell::new(None),
+            shown: RefCell::new(None),
+            clicked: Cell::new(None),
             on_action: Notifier::default(),
             on_dismiss: Notifier::default(),
-            dismissed_by_app: Cell::new(false),
         }))
     }
 
     /// The string to show. Calling it while shown updates it on the spot.
     pub fn set_message(&self, message: &str) {
         self.0.spec.borrow_mut().set_message(message);
-        if let Some(native) = self.0.current.borrow().as_ref() {
-            native.set_title(message);
+        if let Some(shown) = self.0.shown.borrow().as_ref() {
+            match &shown.title {
+                Some(label) => label.set_label(message),
+                None => shown.native.set_title(message),
+            }
         }
     }
 
@@ -69,28 +167,28 @@ impl Toast {
         self.0.spec.borrow().message().to_string()
     }
 
-    /// The action button's label. **Passing an empty string removes the button.**
-    pub fn set_action(&self, label: &str) {
-        self.0.spec.borrow_mut().set_action(label);
-        if let Some(native) = self.0.current.borrow().as_ref() {
-            native.set_button_label(self.0.spec.borrow().action());
+    /// The action buttons' labels, laid out in this order. **Passing an empty list
+    /// removes the buttons.**
+    ///
+    /// Calling it while shown replaces them on the spot.
+    pub fn set_actions<S: AsRef<str>>(&self, labels: &[S]) {
+        self.0.spec.borrow_mut().set_actions(labels);
+        let spec = self.0.spec.borrow().clone();
+        let mut shown = self.0.shown.borrow_mut();
+        if let Some(shown) = shown.as_mut() {
+            shown.title = self.apply_actions(&shown.native, spec.message(), spec.actions());
         }
     }
 
-    /// The action button's label. The empty string if there is no button.
-    pub fn action(&self) -> String {
-        self.0
-            .spec
-            .borrow()
-            .action()
-            .unwrap_or_default()
-            .to_string()
+    /// The action buttons' labels. Empty if there are none.
+    pub fn actions(&self) -> Vec<String> {
+        self.0.spec.borrow().actions().to_vec()
     }
 
     /// Seconds until it disappears automatically. **Passing 0 means it never
     /// disappears automatically.**
     ///
-    /// Takes effect from the next [`show`](Self::show).
+    /// Takes effect from the next time it comes up.
     pub fn set_timeout(&self, seconds: f64) {
         self.0.spec.borrow_mut().set_timeout(seconds);
     }
@@ -99,121 +197,162 @@ impl Toast {
         self.0.spec.borrow().timeout()
     }
 
+    /// How it takes its turn when shown. Takes effect from the next
+    /// [`show`](Self::show).
+    pub fn set_priority(&self, priority: ToastPriority) {
+        self.0.spec.borrow_mut().set_priority(priority);
+    }
+
+    pub fn priority(&self) -> ToastPriority {
+        self.0.spec.borrow().priority()
+    }
+
+    /// Where in the window it appears. **Ignored on GTK** (always the bottom
+    /// center), but kept so that [`spec`](Self::spec) returns it.
+    pub fn set_position(&self, position: ToastPosition) {
+        self.0.spec.borrow_mut().set_position(position);
+    }
+
+    pub fn position(&self) -> ToastPosition {
+        self.0.spec.borrow().position()
+    }
+
     /// The current settings.
     pub fn spec(&self) -> ToastSpec {
         self.0.spec.borrow().clone()
     }
 
-    /// Called when the action button is clicked. Setting it again removes the previous
-    /// one.
+    /// Called with the index of the clicked action button. Setting it again removes
+    /// the previous one.
     ///
     /// Clicking it makes the toast disappear, so `on_dismiss` is called next.
-    pub fn on_action(&self, mut f: impl FnMut() + 'static) {
-        self.0.on_action.set(move |()| f());
+    pub fn on_action(&self, f: impl FnMut(usize) + 'static) {
+        self.0.on_action.set(f);
     }
 
     /// Called when it disappears. Setting it again removes the previous one.
     ///
-    /// It is called **when it times out** and **when it is closed by the action
-    /// button**. It is not called when it is closed with [`dismiss`](Self::dismiss) or
-    /// replaced by another toast (the same rule as
-    /// [`Dialog::close`](crate::Dialog::close): the app's own actions are not
-    /// notified).
+    /// It is called **when it times out**, **when it is closed by an action button**
+    /// and when it is closed by `AdwToast`'s close button. It is not called when it is
+    /// closed with [`dismiss`](Self::dismiss) or put back in the queue by a `High`
+    /// toast (the same rule as [`Dialog::close`](crate::Dialog::close): the app's own
+    /// actions are not notified).
     pub fn on_dismiss(&self, mut f: impl FnMut() + 'static) {
         self.0.on_dismiss.set(move |()| f());
     }
 
-    /// Shows the toast.
-    ///
-    /// **Only one is shown at a time**; if another toast is showing, it is replaced
-    /// (the replaced one's `on_dismiss` is not called). Does nothing if there is no
-    /// window to show it in yet.
-    ///
-    /// `AdwToastOverlay` is designed to queue added toasts, but to behave the same on
-    /// all four platforms, naui removes the previous one before adding.
+    /// Shows the toast: on screen at once, or at the back of the queue (see
+    /// [`naui_core::ToastQueue`]). Dropped if there is no window to show it in when
+    /// its turn comes.
     pub fn show(&self) {
-        let Some(overlay) = self.overlay() else {
-            return;
-        };
-        if let Some(previous) = CURRENT.with(|slot| slot.borrow_mut().take()) {
-            previous.take_down();
-        }
-
-        let spec = self.0.spec.borrow().clone();
-        let native = adw::Toast::new(spec.message());
-        native.set_timeout(spec.timeout_secs());
-        native.set_button_label(spec.action());
-
-        {
-            let weak = Rc::downgrade(&self.0);
-            native.connect_button_clicked(move |_| {
-                let Some(inner) = weak.upgrade() else {
-                    return;
-                };
-                inner.on_action.emit(());
-            });
-        }
-        {
-            let weak = Rc::downgrade(&self.0);
-            native.connect_dismissed(move |_| {
-                let Some(inner) = weak.upgrade() else {
-                    return;
-                };
-                Toast(inner).finish();
-            });
-        }
-
-        *self.0.current.borrow_mut() = Some(native.clone());
-        self.0.dismissed_by_app.set(false);
-        CURRENT.with(|slot| *slot.borrow_mut() = Some(self.clone()));
-        overlay.add_toast(native);
+        let priority = self.0.spec.borrow().priority();
+        ToastQueue::show(&QUEUE, &self.0, priority);
     }
 
-    /// Closes the toast being shown. `on_dismiss` is not called.
+    /// Closes the toast, or takes it out of the queue. `on_dismiss` is not called.
     pub fn dismiss(&self) {
-        if !self.is_visible() {
-            return;
-        }
-        self.forget_current();
-        self.take_down();
+        ToastQueue::remove(&QUEUE, &self.0);
     }
 
-    /// Whether it is showing now.
+    /// Whether it is on screen now.
     pub fn is_visible(&self) -> bool {
-        self.0.current.borrow().is_some()
+        self.0.shown.borrow().is_some()
     }
 
-    /// The `AdwToast` showing now. `None` if none is showing.
+    /// Whether it is waiting its turn in the queue.
+    pub fn is_queued(&self) -> bool {
+        ToastQueue::is_waiting_in(&QUEUE, &self.0)
+    }
+
+    /// The `AdwToast` on screen now. `None` if it is not on screen.
     ///
     /// Public as a backend-specific escape hatch.
     pub fn native_toast(&self) -> Option<adw::Toast> {
-        self.0.current.borrow().clone()
+        self.0
+            .shown
+            .borrow()
+            .as_ref()
+            .map(|shown| shown.native.clone())
     }
 
-    /// Cleanup and notification when the `AdwToast` disappears.
-    fn finish(&self) {
-        if self.0.current.borrow_mut().take().is_none() {
-            return; // すでに片付けてある。
+    /// Puts the action buttons on `native`. Returns the label of the custom title, if
+    /// one was needed (two or more actions).
+    ///
+    /// One action is `AdwToast`'s own button. `AdwToast` has room for only one, and
+    /// gives the spare width to the space before it, so two or more all go after the
+    /// text in a custom title instead, next to each other.
+    fn apply_actions(
+        &self,
+        native: &adw::Toast,
+        message: &str,
+        actions: &[String],
+    ) -> Option<gtk::Label> {
+        if actions.len() < 2 {
+            native.set_button_label(actions.first().map(String::as_str));
+            native.set_title(message);
+            return None;
         }
-        self.forget_current();
-        if self.0.dismissed_by_app.replace(false) {
-            return; // アプリ側から消した。通知はしない。
+        native.set_button_label(None);
+
+        let row = gtk::Box::new(gtk::Orientation::Horizontal, TITLE_SPACING);
+        // AdwToast が自分で作る題と同じ見た目にする (太字・1 行・末尾を省略)。
+        let label = gtk::Label::new(Some(message));
+        label.add_css_class("heading");
+        label.set_xalign(0.0);
+        label.set_single_line_mode(true);
+        label.set_ellipsize(gtk::pango::EllipsizeMode::End);
+        label.set_hexpand(true);
+        row.append(&label);
+        for (index, text) in actions.iter().enumerate() {
+            let button = gtk::Button::with_label(text);
+            button.set_valign(gtk::Align::Center);
+            let weak = Rc::downgrade(&self.0);
+            button.connect_clicked(move |button| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                inner.clicked.set(Some(index));
+                // 押したボタンにフォーカスがあるまま題ごと外れると、GTK がフォーカスを
+                // 移すときに外れたウィジェットを辿って警告を出す。本来のボタンで消えた
+                // ときと同じく、窓のフォーカスを外してから消す。
+                if button.is_focus() {
+                    if let Some(root) = button.root() {
+                        root.set_focus(None::<&gtk::Widget>);
+                    }
+                }
+                // 本来のボタンと同じく、押したら消える。`dismissed` から知らせる。
+                let native = inner
+                    .shown
+                    .borrow()
+                    .as_ref()
+                    .map(|shown| shown.native.clone());
+                if let Some(native) = native {
+                    native.dismiss();
+                }
+            });
+            row.append(&button);
+        }
+        native.set_custom_title(Some(&row));
+        Some(label)
+    }
+
+    /// Cleanup and notification when the `AdwToast` disappears by itself (time ran
+    /// out, or a button was clicked).
+    ///
+    /// When naui took it down itself, `shown` is already empty and nothing happens.
+    fn finish(&self) {
+        // 先に手放す。並びから外したときの `withdraw` が、`dismissed` の最中に
+        // もう一度 `dismiss` を呼んでシグナルを入れ子にしないように。
+        if self.0.shown.borrow_mut().take().is_none() {
+            return;
+        }
+        // 次のものを出すのは、`AdwToastOverlay` 自身の `dismissed` の処理より前になる。
+        // そのときは overlay がそれを自分の待ち行列へ入れ、今のものを下げた直後に出す。
+        ToastQueue::remove(&QUEUE, &self.0);
+        if let Some(index) = self.0.clicked.take() {
+            self.0.on_action.emit(index);
         }
         self.0.on_dismiss.emit(());
-    }
-
-    /// Closes the toast without notifying.
-    fn take_down(&self) {
-        let native = self.0.current.borrow().clone();
-        let Some(native) = native else {
-            return;
-        };
-        // 消せば `dismissed` が飛ぶので、後始末はそちらの経路で済む。
-        self.0.dismissed_by_app.set(true);
-        native.dismiss();
-        // ウィンドウが閉じたあとなど、`dismissed` が来なかったときの受け皿。
-        self.0.current.borrow_mut().take();
-        self.0.dismissed_by_app.set(false);
     }
 
     /// The `AdwToastOverlay` the toast is placed on. `None` if there is no window yet.
@@ -228,18 +367,5 @@ impl Toast {
             .active_window()
             .or_else(|| self.0.app.windows().into_iter().next())?;
         crate::window::toast_overlay(&window)
-    }
-
-    /// If "the toast showing now" is this one, vacates that slot.
-    fn forget_current(&self) {
-        CURRENT.with(|slot| {
-            let mine = slot
-                .borrow()
-                .as_ref()
-                .is_some_and(|current| Rc::ptr_eq(&current.0, &self.0));
-            if mine {
-                slot.borrow_mut().take();
-            }
-        });
     }
 }

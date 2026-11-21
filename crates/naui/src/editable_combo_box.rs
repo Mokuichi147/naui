@@ -100,4 +100,16 @@ impl EditableComboBox {
     pub fn on_change(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_change(f)
     }
+
+    /// Replaces the text with `text` the way the user does by selecting everything
+    /// and typing over it, so [`on_change`](Self::on_change) is called with it.
+    /// Nothing is completed from the suggestions. Does nothing while disabled.
+    ///
+    /// For tests and automation. It goes through each platform's own path for
+    /// typed text; no key is pressed, so `on_key_down` is not called. See
+    /// [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn enter_text(&self, text: &str) {
+        self.0.enter_text(text)
+    }
 }

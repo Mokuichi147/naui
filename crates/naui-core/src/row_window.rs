@@ -25,7 +25,7 @@ use std::collections::BTreeSet;
 use std::ops::Range;
 use std::rc::Rc;
 
-use crate::Result;
+use crate::{Result, RowMove};
 
 /// The row count at which rows start being limited to "just the visible ones".
 ///
@@ -536,6 +536,23 @@ impl<T: Clone> RowSource<T> {
     /// Whether any row that already exists satisfies `test`. `false` for built rows.
     pub fn any_stored(&self, test: impl FnMut(&T) -> bool) -> bool {
         self.rows.borrow().iter().any(test)
+    }
+
+    /// Moves the rows the way `moved` says ([`RowMove`] limited to this many rows).
+    ///
+    /// Rows that already exist move. For built rows only what they said when built
+    /// moves with them; the app moves the data its builder reads.
+    pub fn move_rows(&self, moved: &RowMove) {
+        if !self.is_built() {
+            moved.apply(&mut self.rows.borrow_mut());
+        }
+        let unselectable: BTreeSet<usize> = self
+            .unselectable
+            .borrow()
+            .iter()
+            .map(|&index| moved.new_index(index))
+            .collect();
+        *self.unselectable.borrow_mut() = unselectable;
     }
 
     /// Passes a function that answers whether a row can be selected without building it.

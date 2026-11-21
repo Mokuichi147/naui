@@ -82,7 +82,7 @@ pub use layout::{
     Breakpoint, GridCell, Length, ScrollMetrics, ScrollPolicy, ScrollTarget, Sizing,
     StackArrangement, Track,
 };
-pub use list::{ListItem, SelectionMode};
+pub use list::{ListItem, RowMove, SelectionMode};
 pub use main_thread::{MainThread, Tasks, Work};
 pub use media::{Fit, PlaybackState};
 pub use menu::{MenuHandler, MenuItem, MenuShortcut, MenuSpec};
@@ -106,7 +106,7 @@ pub use table::{SortOrder, TableColumn, TableRow};
 pub use task::Task;
 pub use text::{TextColor, TextStyle};
 pub use timer::{Sleep, Timer};
-pub use toast::ToastSpec;
+pub use toast::{ToastPosition, ToastPriority, ToastQueue, ToastSlot, ToastSpec};
 pub use toolbar::{ToolbarIcon, ToolbarItem};
 pub use tree::TreeItem;
 pub use ui_text::{app_language, set_app_language, set_ui_languages, ui_strings, UiStrings};

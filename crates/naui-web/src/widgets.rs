@@ -710,7 +710,7 @@ impl Checkbox {
 struct TextInputInner {
     input: HtmlInputElement,
     on_change: RefCell<Option<Listener>>,
-    on_submit: RefCell<Option<Listener>>,
+    on_submit: EnterHandler,
     key_down: KeyDown,
     focus: crate::focus::Focus,
     /// `on_file_drop`.
@@ -732,7 +732,7 @@ impl TextInput {
         Ok(Self(Rc::new(TextInputInner {
             input,
             on_change: RefCell::new(None),
-            on_submit: RefCell::new(None),
+            on_submit: EnterHandler::default(),
             key_down: KeyDown::default(),
             focus: Default::default(),
             file_drop: Default::default(),
@@ -775,12 +775,23 @@ impl TextInput {
     /// Not called for an Enter pressed while an IME is composing (which confirms the
     /// conversion). Not called while read-only either.
     pub fn on_submit(&self, mut f: impl FnMut(&str) + 'static) {
-        let listener = on_enter(&self.0.input, move |input| {
+        self.0.on_submit.set(&self.0.input, move |input| {
             if !input.read_only() {
                 f(&input.value());
             }
         });
-        *self.0.on_submit.borrow_mut() = listener;
+    }
+
+    /// Replaces the text the way typing does, so `on_change` is called (for tests
+    /// and automation). It writes the value and dispatches the `input` event typing fires.
+    pub fn enter_text(&self, text: &str) {
+        enter_input_text(&self.0.input, text);
+    }
+
+    /// Confirms it as Enter does, so `on_submit` is called (for tests and
+    /// automation). Does nothing while disabled or read-only.
+    pub fn submit(&self) {
+        self.0.on_submit.press(&self.0.input);
     }
 
     /// Whether it is read-only. Editable by default.
@@ -802,7 +813,7 @@ impl TextInput {
 struct PasswordInputInner {
     input: HtmlInputElement,
     on_change: RefCell<Option<Listener>>,
-    on_submit: RefCell<Option<Listener>>,
+    on_submit: EnterHandler,
     key_down: KeyDown,
     focus: crate::focus::Focus,
     /// `on_file_drop`.
@@ -827,7 +838,7 @@ impl PasswordInput {
         Ok(Self(Rc::new(PasswordInputInner {
             input,
             on_change: RefCell::new(None),
-            on_submit: RefCell::new(None),
+            on_submit: EnterHandler::default(),
             key_down: KeyDown::default(),
             focus: Default::default(),
             file_drop: Default::default(),
@@ -869,8 +880,21 @@ impl PasswordInput {
 
     /// Called with the current text when the user confirms with Enter.
     pub fn on_submit(&self, mut f: impl FnMut(&str) + 'static) {
-        let listener = on_enter(&self.0.input, move |input| f(&input.value()));
-        *self.0.on_submit.borrow_mut() = listener;
+        self.0
+            .on_submit
+            .set(&self.0.input, move |input| f(&input.value()));
+    }
+
+    /// Replaces the text the way typing does, so `on_change` is called (for tests
+    /// and automation). It writes the value and dispatches the `input` event typing fires.
+    pub fn enter_text(&self, text: &str) {
+        enter_input_text(&self.0.input, text);
+    }
+
+    /// Confirms it as Enter does, so `on_submit` is called (for tests and
+    /// automation). Does nothing while disabled.
+    pub fn submit(&self) {
+        self.0.on_submit.press(&self.0.input);
     }
 }
 
@@ -879,7 +903,7 @@ impl PasswordInput {
 struct SearchInputInner {
     input: HtmlInputElement,
     on_change: RefCell<Option<Listener>>,
-    on_search: RefCell<Option<Listener>>,
+    on_search: EnterHandler,
     key_down: KeyDown,
     focus: crate::focus::Focus,
     /// `on_file_drop`.
@@ -903,7 +927,7 @@ impl SearchInput {
         Ok(Self(Rc::new(SearchInputInner {
             input,
             on_change: RefCell::new(None),
-            on_search: RefCell::new(None),
+            on_search: EnterHandler::default(),
             key_down: KeyDown::default(),
             focus: Default::default(),
             file_drop: Default::default(),
@@ -949,8 +973,92 @@ impl SearchInput {
     /// presses. **An Enter during composition does not count** (the IME is merely
     /// confirming a conversion, not the search).
     pub fn on_search(&self, mut f: impl FnMut(&str) + 'static) {
-        let listener = on_enter(&self.0.input, move |input| f(&input.value()));
-        *self.0.on_search.borrow_mut() = listener;
+        self.0
+            .on_search
+            .set(&self.0.input, move |input| f(&input.value()));
+    }
+
+    /// Replaces the text the way typing does, so `on_change` is called (for tests
+    /// and automation). It writes the value and dispatches the `input` event typing fires.
+    pub fn enter_text(&self, text: &str) {
+        enter_input_text(&self.0.input, text);
+    }
+
+    /// Confirms it as Enter does, so `on_search` is called (for tests and
+    /// automation). Does nothing while disabled.
+    pub fn search(&self) {
+        self.0.on_search.press(&self.0.input);
+    }
+}
+
+/// The app's closure for Enter in a single-line field, and the key listener that
+/// calls it. `submit` and `search` call the same closure as Enter does.
+#[derive(Default)]
+pub(crate) struct EnterHandler {
+    f: EnterSlot,
+    listener: RefCell<Option<Listener>>,
+}
+
+/// The slot for the closure called on Enter. May be empty.
+type EnterSlot = Rc<RefCell<Option<Box<dyn FnMut(&HtmlInputElement)>>>>;
+
+impl EnterHandler {
+    /// Replaces the closure, listening for Enter on `input` from the first call.
+    pub(crate) fn set(&self, input: &HtmlInputElement, f: impl FnMut(&HtmlInputElement) + 'static) {
+        *self.f.borrow_mut() = Some(Box::new(f));
+        if self.listener.borrow().is_none() {
+            let slot = self.f.clone();
+            *self.listener.borrow_mut() = on_enter(input, move |input| Self::call(&slot, input));
+        }
+    }
+
+    /// Calls the closure as Enter does, for `submit` and `search` (tests and
+    /// automation). No key event is dispatched, so `on_key_down` is not called.
+    /// Does nothing while `input` is disabled.
+    pub(crate) fn press(&self, input: &HtmlInputElement) {
+        if !input.disabled() {
+            Self::call(&self.f, input);
+        }
+    }
+
+    /// Takes the closure out for the call, so that setting it again from inside
+    /// does not double-borrow.
+    fn call(slot: &EnterSlot, input: &HtmlInputElement) {
+        let Some(mut f) = slot.borrow_mut().take() else {
+            return;
+        };
+        f(input);
+        let mut slot = slot.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+    }
+}
+
+/// Replaces the value of an `<input>` the way typing does, for `enter_text` (tests
+/// and automation): the value is written and an `input` event is dispatched, the
+/// event typed text fires, so `on_change` is called before this returns. Does
+/// nothing while it is disabled or read-only.
+///
+/// The event is not trusted (`isTrusted` is false) and no key event comes before
+/// it, so `on_key_down` is not called. A browser sanitizes the value as it does for
+/// typing: an `<input type="number">` keeps only a valid number.
+pub(crate) fn enter_input_text(input: &HtmlInputElement, text: &str) {
+    if input.disabled() || input.read_only() {
+        return;
+    }
+    input.set_value(text);
+    dispatch_input(input.as_ref(), text);
+}
+
+/// Dispatches the `input` event typing fires, after the value was replaced.
+pub(crate) fn dispatch_input(target: &web_sys::EventTarget, text: &str) {
+    let init = web_sys::InputEventInit::new();
+    init.set_bubbles(true);
+    init.set_input_type("insertText");
+    init.set_data(Some(text));
+    if let Ok(event) = web_sys::InputEvent::new_with_event_init_dict("input", &init) {
+        let _ = target.dispatch_event(&event);
     }
 }
 
@@ -1044,6 +1152,19 @@ impl TextArea {
         })
         .ok();
         *self.0.on_change.borrow_mut() = listener;
+    }
+
+    /// Replaces the text the way typing does: the value is written and an `input`
+    /// event is dispatched, so `on_change` is called before this returns (for tests
+    /// and automation). Does nothing while disabled or read-only. See
+    /// `enter_input_text`.
+    pub fn enter_text(&self, text: &str) {
+        let element = &self.0.element;
+        if element.disabled() || element.read_only() {
+            return;
+        }
+        element.set_value(text);
+        dispatch_input(element.as_ref(), text);
     }
 
     /// Whether it is read-only. Editable by default.

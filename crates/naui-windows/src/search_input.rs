@@ -160,6 +160,50 @@ impl SearchInput {
     pub fn on_search(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_search.set(f);
     }
+
+    /// Whether it takes input (`Control.IsEnabled`).
+    fn is_enabled(&self) -> bool {
+        self.0
+            .native
+            .cast::<Control>()
+            .and_then(|control| control.IsEnabled())
+            .unwrap_or(false)
+    }
+
+    /// Replaces the text the way typing does, so `on_change` is called with it once,
+    /// before this returns (for tests and automation). Does nothing while disabled.
+    ///
+    /// The text is written to `Text` and `on_change` is notified right away, the
+    /// same on every window (WinUI reports a written `Text` as a change from code,
+    /// which naui does not notify). It does not go through UI Automation: the
+    /// `TextBox` in the template hands out no Value pattern inside the process.
+    pub fn enter_text(&self, text: &str) {
+        if !self.is_enabled() {
+            return;
+        }
+        let _ = self.0.native.SetText(&HSTRING::from(text));
+        self.0.on_change.emit(text);
+    }
+
+    /// Confirms it as Enter does, so `on_search` is called (for tests and
+    /// automation). Does nothing while disabled.
+    ///
+    /// It goes through UI Automation's Invoke pattern, which the `AutoSuggestBox`
+    /// answers by submitting the query (`QuerySubmitted`). Where it does not offer
+    /// that pattern, `on_search` is called directly.
+    pub fn search(&self) {
+        if !self.is_enabled() {
+            return;
+        }
+        let invoked = self
+            .0
+            .native
+            .cast::<UIElement>()
+            .is_ok_and(|element| crate::automation::invoke(&element).is_ok());
+        if !invoked {
+            self.0.on_search.emit(&self.text());
+        }
+    }
 }
 
 fn load_auto_suggest_box() -> Result<AutoSuggestBox> {

@@ -95,4 +95,20 @@ impl Sheet {
     pub fn is_open(&self) -> bool {
         self.0.is_open()
     }
+
+    /// Answers it the way the user does, by clicking its button for `response`, so
+    /// [`on_response`](Self::on_response) is called with it. Nothing happens if it
+    /// has no button for `response` or the button is disabled
+    /// ([`set_button_enabled`](Self::set_button_enabled)).
+    ///
+    /// If it is not open, the answer is kept and given right after it next opens, so
+    /// a test can answer a sheet that a click opens by calling this before the
+    /// click. The answer arrives a moment after the sheet opens; wait for its effect
+    /// with [`testing::wait_until`](crate::testing::wait_until).
+    ///
+    /// For tests and automation. See [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn respond(&self, response: DialogResponse) {
+        self.0.respond(response)
+    }
 }
