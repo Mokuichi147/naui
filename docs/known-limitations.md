@@ -336,8 +336,12 @@ that shape are covered in
   plays the alert sound when `on_close_request` keeps the window open.
 - `drop_files` on the Web dispatches a real `drop` event with an empty file per
   entry, so the files arrive named after the entries, with `blob:` URLs and no
-  paths, as dropped files do there. `FilePicker::choose` on the Web goes through
-  the file input the same way. `FileSaver::choose` on the Web writes nothing and
+  paths, as dropped files do there. Text fields take drops themselves there, so
+  `drop_files` onto one reaches no `on_file_drop`, and the widgets inside a
+  `Dialog` or `Sheet` do not pass a drop on to the window, as with real drops.
+  `FilePicker::choose` on the Web goes through the file input the same way, except
+  in folder mode, where a made-up file cannot stand for a folder: the first entry
+  arrives with its name only. `FileSaver::choose` on the Web writes nothing and
   starts no download; `on_save` gets an entry with the name only.
 - Inside a test case `Ui::open_url` opens nothing and records the URL for
   `testing::opened_urls` instead. Links the user clicks inside a `Label` are not

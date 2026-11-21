@@ -587,6 +587,25 @@ impl Ui {
         Ok(())
     }
 
+    /// Reads `url` the way [`open_url`](Self::open_url) does, without opening
+    /// anything: `Err` if `window.open` would throw for it, that is, if it cannot be
+    /// parsed as a URL, relative to the document's base URL. A blocked tab is not
+    /// checked (nothing is opened).
+    #[doc(hidden)]
+    pub fn check_url(&self, url: &str) -> Result<()> {
+        // `window.open` は文書の基準 URL で URL を読み、読めなければ
+        // SyntaxError を投げる。同じ読み方で確かめる。
+        let base = self
+            .0
+            .document
+            .base_uri()
+            .map_err(|e| to_error("open the URL", e))?
+            .ok_or_else(|| Error::new("open the URL", "the document has no base URL"))?;
+        web_sys::Url::new_with_base(url, &base)
+            .map(|_| ())
+            .map_err(|e| to_error("open the URL", e))
+    }
+
     /// Browsers have no concept of quitting an app, so this does nothing.
     pub fn quit(&self) {}
 }
