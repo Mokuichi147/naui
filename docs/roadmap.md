@@ -102,6 +102,7 @@ drawing is done by separate crates.
   | Crate | Role | Needs from naui |
   | --- | --- | --- |
   | `naui-charts` | Line, bar and scatter charts | Nothing new (draws on `Canvas`) |
+  | An extension widget crate | Tags, badges and other widgets no platform has | Colors that follow light and dark in `Canvas` |
   | `naui-wgpu` | Fast 2D and 3D drawing with wgpu | `NativeHost` |
   | A scene crate | 3D models, cameras, lights | Nothing beyond `naui-wgpu` |
   | Game crates | ECS, physics, audio, game loop | Nothing beyond `naui-wgpu` |
@@ -116,7 +117,8 @@ drawing is done by separate crates.
 
 `naui-charts` (v0.19.0) draws on `Canvas`, so it does not wait for these. What it
 waited on in `Canvas`, clipping and text width measurement, was released in
-v0.17.0.
+v0.17.0. The extension widget crate (v0.22.0) draws on `Canvas` too, and waits
+for the colors that follow light and dark (v0.19.0).
 
 ## v0.19.0
 
@@ -230,8 +232,9 @@ depend on how an app is distributed.
 
 ## v0.22.0
 
-Printing and dragging between widgets, the heaviest of the features, and what
-windows tell and take about activation and focus.
+Printing and dragging between widgets, the heaviest of the features, what
+windows tell and take about activation and focus, and the extension crate for
+widgets no platform has.
 
 - [ ] **Dragging between widgets and out of the app.** A drag today stays
       inside one `List` (reordering, v0.18.0) or comes in as files
@@ -262,6 +265,18 @@ windows tell and take about activation and focus.
       element, so what all four can do is checked first: moving may be offered
       without setting the order, or the item moves to
       [Not planned](#not-planned) with "add the widgets in Tab order".
+
+- [ ] *(drawing)* **An extension crate for widgets no platform has.** Tags,
+      badges, avatars and the like are common in current UIs but are not
+      controls of any of the four toolkits, so naui itself does not carry
+      them. A separate crate offers them on top of naui, as `naui-charts`
+      does charts. Decided first: which widgets come first (tags and badges
+      are the candidates); how they are made, since `Widget` is sealed and a
+      crate outside naui can only compose existing widgets and `Canvas`; how
+      they take each platform's look (the accent and text colors from v0.19.0,
+      the platform's corner radius and font) rather than one look everywhere;
+      and what they tell assistive technology, which a `Canvas` drawing does
+      not do by itself.
 
 ## v0.23.0
 
@@ -380,11 +395,10 @@ Things that do not fit naui's approach.
   Web can list fonts only through Local Font Access, which is available in Chrome
   and Edge from version 103 and not in Firefox or Safari. There is no common
   behavior to build on.
-- **Widgets composed from drawing where no platform has the control** (badges,
-  avatars, skeleton placeholders, ratings, one-time-code fields, carousels).
-  naui composes a widget only where most platforms have the control and one
-  lacks it (as `Toast` on the Web). An app can build these from `Canvas` or
-  existing widgets.
+- **Widgets no platform has, in naui itself** (tags, badges, avatars, skeleton
+  placeholders, ratings). naui composes a widget only where most platforms
+  have the control and one lacks it (as `Toast` on the Web). The others are
+  left to an extension crate (see v0.22.0).
 - **Window chrome that only some platforms have:** always on top, transparent
   or blurred backgrounds, custom title bars, native window tabs, the
   document-edited mark. Each exists on one or two platforms, and an app that
