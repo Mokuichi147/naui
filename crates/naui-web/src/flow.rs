@@ -125,10 +125,7 @@ impl Flow {
             .iter()
             .map(|next| next.native_element())
             .find(|next| crate::handover::is_placed_in(next, &self.0.element));
-        let inserted = self
-            .0
-            .element
-            .insert_before(&element, anchor.as_deref());
+        let inserted = self.0.element.insert_before(&element, anchor.as_deref());
         if inserted.is_ok() {
             crate::layout::apply_child_layout(&element, self.parent_layout());
             children.insert(index, child.boxed_clone());

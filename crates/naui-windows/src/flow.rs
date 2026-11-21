@@ -41,9 +41,13 @@ struct FlowState {
     row_spacing: Cell<f64>,
     padding: Cell<Padding>,
     align: Cell<Align>,
+    /// The shown children as the last `MeasureOverride` measured them.
+    /// `ArrangeOverride` places them from this without measuring again.
+    measured: RefCell<Vec<Measured>>,
 }
 
 /// One shown child, as measured.
+#[derive(Clone)]
 struct Measured {
     element: UIElement,
     /// The size it asks for with no limit on the width.
@@ -54,10 +58,8 @@ struct Measured {
 }
 
 impl FlowState {
-    /// Measures the shown children with no limit on the width (their natural size)
-    /// and breaks them into lines for `width`, the room inside the padding; `None`
-    /// for the width of one line.
-    fn lines(&self, width: Option<f64>) -> (Vec<Measured>, FlowLayout) {
+    /// Measures the shown children with no limit on the width (their natural size).
+    fn measure_children(&self) -> Vec<Measured> {
         // 測っている間に表を借りたままにしない (子の測定から naui の処理へ戻る
         // ことがある)。
         let children = self.children.borrow().clone();
@@ -65,7 +67,7 @@ impl FlowState {
             Width: f32::INFINITY,
             Height: f32::INFINITY,
         };
-        let measured: Vec<Measured> = children
+        children
             .into_iter()
             .filter(|element| element.Visibility().ok() != Some(Visibility::Collapsed))
             .map(|element| {
@@ -89,7 +91,12 @@ impl FlowState {
                     element,
                 }
             })
-            .collect();
+            .collect()
+    }
+
+    /// Breaks the measured children into lines for `width`, the room inside the
+    /// padding; for the width of one line when it is not finite.
+    fn lines(&self, measured: &[Measured], width: f64) -> FlowLayout {
         let items: Vec<FlowItem> = measured
             .iter()
             .map(|child| FlowItem {
@@ -104,12 +111,12 @@ impl FlowState {
             })
             .collect();
         let spacing = self.column_spacing.get();
-        let width = match width {
-            Some(width) if width.is_finite() => width.max(0.0),
-            _ => naui_core::flow_natural_width(&items, spacing),
+        let width = if width.is_finite() {
+            width.max(0.0)
+        } else {
+            naui_core::flow_natural_width(&items, spacing)
         };
-        let layout = FlowLayout::new(&items, width, spacing, self.align.get());
-        (measured, layout)
+        FlowLayout::new(&items, width, spacing, self.align.get())
     }
 
     /// The width each child gets: its slot, held to its maximum.
@@ -150,10 +157,12 @@ impl FlowState {
         let horizontal = padding.start + padding.end;
         let vertical = padding.top + padding.bottom;
         let room = available.Width as f64 - horizontal;
-        let (measured, layout) = self.lines(Some(room));
+        let measured = self.measure_children();
+        let layout = self.lines(&measured, room);
         let widths = Self::widths(&measured, &layout);
         let heights = Self::heights(&measured, &widths);
         let (_, height) = flow_line_tops(&layout.line_heights(&heights), self.row_spacing.get());
+        *self.measured.borrow_mut() = measured;
         // 幅は 1 行に並べた幅を、与えられた幅までに抑えたもの (CSS の
         // fit-content)。ただし一番広い子より狭くはならない。
         let items_width = layout
@@ -167,12 +176,30 @@ impl FlowState {
         }
     }
 
+    /// Places the children `measure` measured, without measuring them again.
+    ///
+    /// Measuring here would change a child's desired size during the arrange pass
+    /// (a `TextBox` asks for the width it is offered), which has WinUI measure the
+    /// panel again, and arranging would measure again: a layout cycle, which WinUI
+    /// ends by raising an exception. Each child's height is the one its last
+    /// measuring (at its slot's width when that differed from its natural width)
+    /// left in `DesiredSize`.
     fn arrange(&self, final_size: Size) -> Size {
         let padding = self.padding.get();
         let room = final_size.Width as f64 - padding.start - padding.end;
-        let (measured, layout) = self.lines(Some(room));
+        let measured = self.measured.borrow().clone();
+        let layout = self.lines(&measured, room);
         let widths = Self::widths(&measured, &layout);
-        let heights = Self::heights(&measured, &widths);
+        let heights: Vec<f64> = measured
+            .iter()
+            .map(|child| {
+                child
+                    .element
+                    .DesiredSize()
+                    .map(|size| size.Height as f64)
+                    .unwrap_or(child.natural.Height as f64)
+            })
+            .collect();
         let line_heights = layout.line_heights(&heights);
         let (tops, _) = flow_line_tops(&line_heights, self.row_spacing.get());
         for (((child, slot), width), height) in measured
@@ -401,6 +428,7 @@ impl Flow {
             row_spacing: Cell::new(0.0),
             padding: Cell::new(Padding::ZERO),
             align: Cell::new(Align::Start),
+            measured: RefCell::new(Vec::new()),
         });
         let native = Compose::compose(FlowPanel {
             state: state.clone(),
