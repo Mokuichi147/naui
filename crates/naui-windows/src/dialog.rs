@@ -24,7 +24,7 @@ use std::rc::{Rc, Weak};
 use naui_core::{default_response, DialogButtons, DialogResponse, EnabledButtons, Result, Theme};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     ContentDialog, ContentDialogButton, ContentDialogClosingEventArgs, ContentDialogResult,
-    Orientation as XamlOrientation, StackPanel, TextBlock,
+    Control, Orientation as XamlOrientation, StackPanel, TextBlock,
 };
 use naui_winui3::Microsoft::UI::Xaml::{UIElement, Visibility};
 use windows::Foundation::TypedEventHandler;
@@ -35,6 +35,16 @@ use crate::ui_thread::UiThreadCell;
 use crate::widgets::Widget;
 use crate::window::{owner_xaml_root, set_theme_on_element};
 use crate::Slot;
+
+/// How long [`Dialog::open`] and [`Dialog::respond`] wait before trying again.
+const RETRY_INTERVAL: std::time::Duration = std::time::Duration::from_millis(20);
+/// How long [`Dialog::respond`] waits for a clicked button to close the dialog
+/// before closing it with that role itself.
+const RECHECK_INTERVAL: std::time::Duration = std::time::Duration::from_millis(500);
+/// How many more times [`Dialog::respond`] looks for the button (about a second).
+const PRESS_TRIES: u32 = 50;
+/// How many more times [`Dialog::open`] tries to show it (about 10 seconds).
+const SHOW_TRIES: u32 = 500;
 
 struct DialogInner {
     native: ContentDialog,
@@ -51,6 +61,18 @@ struct DialogInner {
     /// Whether it was closed with [`Dialog::close`]. A marker so that the reason for
     /// closing is not notified.
     closed_by_app: Cell<bool>,
+    /// The answer [`Dialog::respond`] keeps for the next time it opens.
+    pending: Cell<Option<DialogResponse>>,
+    /// Whether the `ContentDialog` has been shown in this opening. `open` is set
+    /// first and stays set while it waits for the window's `XamlRoot`.
+    shown: Cell<bool>,
+    /// The role an answer closed it with where its button could not be clicked
+    /// (see [`Dialog::respond`]). `Closing` notifies it instead of the result.
+    forced: Cell<Option<DialogResponse>>,
+    /// Whether a `Closing` still to come belongs to an opening already finished.
+    stale_closing: Cell<bool>,
+    /// Counts the times it has been shown, to tell one opening from the next.
+    opening: Cell<u64>,
 }
 
 /// A modal dialog (ContentDialog).
@@ -96,6 +118,11 @@ impl Dialog {
             theme: Cell::new(theme),
             open: Cell::new(false),
             closed_by_app: Cell::new(false),
+            pending: Cell::new(None),
+            shown: Cell::new(false),
+            forced: Cell::new(None),
+            stale_closing: Cell::new(false),
+            opening: Cell::new(0),
         }));
         this.set_title(title);
         this.apply_buttons()?;
@@ -136,7 +163,16 @@ impl Dialog {
 
     /// Cleanup and notification on close.
     fn finish(&self, result: ContentDialogResult) {
+        if self.0.stale_closing.replace(false) {
+            return; // もう閉じたことにした回の `Closing`。
+        }
         self.0.open.set(false);
+        self.0.shown.set(false);
+        if let Some(response) = self.0.forced.take() {
+            self.0.closed_by_app.set(false);
+            self.emit(response);
+            return;
+        }
         if self.0.closed_by_app.replace(false) {
             return; // アプリ側から閉じた。通知はしない。
         }
@@ -307,12 +343,161 @@ impl Dialog {
         if self.0.open.get() {
             return;
         }
-        if let Err(error) = self.show() {
-            eprintln!("naui-windows: could not show the dialog: {error}");
-            return;
-        }
         self.0.open.set(true);
         self.0.closed_by_app.set(false);
+        self.try_show(SHOW_TRIES);
+    }
+
+    /// Shows the `ContentDialog`. Right after the first window is shown its
+    /// `XamlRoot` may not exist yet, and a dialog closed a moment ago may still be
+    /// on its way out, so while a window has been shown it tries again `tries` more
+    /// times, [`RETRY_INTERVAL`] apart. [`Dialog::close`] in the meantime stops it.
+    fn try_show(&self, tries: u32) {
+        if !self.0.open.get() || self.0.shown.get() {
+            return;
+        }
+        // 前の回がまだ閉じきっていない (読み込まれたまま) うちに `ShowAsync` を
+        // 呼ぶと、成功を返すのに出てこない。外れるまで待つ。
+        let leaving = self.is_loaded();
+        if leaving && tries > 0 {
+            self.later(move |this| this.try_show(tries - 1));
+            return;
+        }
+        match self.show() {
+            Ok(()) => {
+                self.0.shown.set(true);
+                self.0.stale_closing.set(false);
+                self.0.opening.set(self.0.opening.get().wrapping_add(1));
+                if let Some(response) = self.0.pending.take() {
+                    self.press(response, PRESS_TRIES);
+                }
+            }
+            Err(_) if tries > 0 && crate::window::has_owner_window() => {
+                self.later(move |this| this.try_show(tries - 1));
+            }
+            Err(error) => {
+                eprintln!("naui-windows: could not show the dialog: {error}");
+                self.0.open.set(false);
+            }
+        }
+    }
+
+    /// Whether the `ContentDialog` is still in the visual tree, from this opening or
+    /// one on its way out.
+    fn is_loaded(&self) -> bool {
+        is_element_loaded(&self.0.native)
+    }
+
+    /// Calls `f` on the UI thread after [`RETRY_INTERVAL`], if the dialog is still
+    /// alive.
+    fn later(&self, f: impl FnOnce(&Dialog) + 'static) {
+        self.later_by(RETRY_INTERVAL, f);
+    }
+
+    /// Calls `f` on the UI thread after `delay`, if the dialog is still alive.
+    fn later_by(&self, delay: std::time::Duration, f: impl FnOnce(&Dialog) + 'static) {
+        let weak = UiThreadCell::new(Rc::downgrade(&self.0));
+        let f = UiThreadCell::new(Some(f));
+        naui_core::MainThread::post_after(
+            &crate::main_thread::Dispatcher::for_current_thread(),
+            delay,
+            Box::new(move || {
+                let inner = weak.with_mut(|weak| weak.upgrade());
+                let f = f.with_mut(Option::take);
+                if let (Some(inner), Some(f)) = (inner, f) {
+                    f(&Dialog(inner));
+                }
+            }),
+        );
+    }
+
+    /// Answers it the way the user does, by clicking its button for `response`
+    /// through UI Automation's Invoke pattern, so WinUI closes it and `on_response`
+    /// is called with it (for tests and automation). Nothing happens if it has no
+    /// such button or the button is disabled.
+    ///
+    /// If it is not open, the answer is kept and given once it next opens. The
+    /// buttons are part of the `ContentDialog`'s template, which is applied a moment
+    /// after it is shown, so the click waits for them. When it opens again, the
+    /// buttons from the last opening are there before they are loaded again, and a
+    /// click on them does nothing, so the click also waits until they are loaded.
+    /// Where they are still missing or not loaded after about a second, or a click
+    /// WinUI took leaves it open for half a second (windows nothing draws, as on CI
+    /// runners), it closes the dialog with that role itself.
+    pub fn respond(&self, response: DialogResponse) {
+        if self.0.open.get() && self.0.shown.get() {
+            self.press(response, PRESS_TRIES);
+        } else {
+            // 閉じているか、開いたがまだ出せていない。出たところで押す。
+            self.0.pending.set(Some(response));
+        }
+    }
+
+    /// Clicks the button for `response` once the template has it, trying again
+    /// `tries` more times, [`RETRY_INTERVAL`] apart, and then closing it with that
+    /// role itself.
+    fn press(&self, response: DialogResponse, tries: u32) {
+        if !self.0.open.get() || self.0.buttons.borrow().resolved().label(response).is_none() {
+            return;
+        }
+        let part = match response {
+            DialogResponse::Primary => "PrimaryButton",
+            DialogResponse::Secondary => "SecondaryButton",
+            DialogResponse::Cancel => "CloseButton",
+        };
+        let button = self
+            .0
+            .native
+            .GetTemplateChild(&HSTRING::from(part))
+            .and_then(|part| part.cast::<Control>());
+        // 開き直した直後は、前の回のテンプレートのボタンがまだ読み込まれていない。
+        // それを Invoke しても受け付けるだけで何も起きないので、読み込まれるまで待つ。
+        // 無効なボタンは利用者と同じく押せない。押せるはずなのに断られたときは、
+        // まだ出きっていないとみなして待つ。
+        let pressed = match &button {
+            Ok(button) if !is_element_loaded(button) => false,
+            Ok(button) if !button.IsEnabled().unwrap_or(false) => return,
+            Ok(button) => button
+                .cast::<UIElement>()
+                .is_ok_and(|button| crate::automation::invoke(&button).is_ok()),
+            Err(_) => false,
+        };
+        if pressed {
+            // WinUI が受け付けたのに閉じないことがある (何も描かれていない窓)。
+            // 同じ回のまま開いていれば、その役割で閉じる。
+            let opening = self.0.opening.get();
+            self.later_by(RECHECK_INTERVAL, move |this| {
+                if this.0.open.get() && this.0.opening.get() == opening {
+                    this.close_with(response);
+                }
+            });
+            return;
+        }
+        if tries > 0 {
+            self.later(move |this| this.press(response, tries - 1));
+        } else {
+            self.close_with(response);
+        }
+    }
+
+    /// Closes it with `response` as a click on that button would, for where the
+    /// button cannot be clicked. A disabled role does nothing, as its button does.
+    fn close_with(&self, response: DialogResponse) {
+        if response != DialogResponse::Cancel && !self.0.enabled.get().get(response) {
+            return;
+        }
+        self.0.forced.set(Some(response));
+        let _ = self.0.native.Hide();
+        // `Closing` が来ないまま (何も描かれていない窓) なら、ここで閉じたことにする。
+        self.later(|this| {
+            let Some(response) = this.0.forced.take() else {
+                return;
+            };
+            this.0.stale_closing.set(true);
+            this.0.open.set(false);
+            this.0.shown.set(false);
+            this.emit(response);
+        });
     }
 
     fn show(&self) -> Result<()> {
@@ -347,6 +532,11 @@ impl Dialog {
         if !self.0.open.get() {
             return;
         }
+        if !self.0.shown.get() {
+            // まだ出せていない。出すのをやめる。
+            self.0.open.set(false);
+            return;
+        }
         self.0.closed_by_app.set(true);
         if self.0.native.Hide().is_err() {
             self.0.closed_by_app.set(false);
@@ -379,4 +569,12 @@ fn response_for(result: ContentDialogResult) -> DialogResponse {
         ContentDialogResult::Secondary => DialogResponse::Secondary,
         _ => DialogResponse::Cancel,
     }
+}
+
+/// Whether the element is in the live visual tree (`FrameworkElement.IsLoaded`).
+fn is_element_loaded(element: &impl Interface) -> bool {
+    element
+        .cast::<naui_winui3::Microsoft::UI::Xaml::FrameworkElement>()
+        .and_then(|element| element.IsLoaded())
+        .unwrap_or(false)
 }

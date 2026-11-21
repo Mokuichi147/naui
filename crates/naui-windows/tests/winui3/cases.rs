@@ -20,8 +20,9 @@ use crate::automation;
 use naui_winui3::Microsoft::UI::Windowing::TitleBarTheme;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Border, Button as XamlButton, Canvas as XamlCanvas, CheckBox as XamlCheckBox,
-    ComboBox as XamlComboBox, Grid, Image as XamlImage, ListView, ListViewItem, MenuFlyoutItem,
-    ProgressRing, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock, TextBox, ToggleSwitch,
+    ComboBox as XamlComboBox, Grid, Image as XamlImage, InfoBar, ListView, ListViewItem,
+    MenuFlyoutItem, ProgressRing, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock,
+    TextBox, ToggleSwitch,
 };
 use naui_winui3::Microsoft::UI::Xaml::Documents::{Hyperlink, Inline, Run};
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::{BitmapImage, SvgImageSource};
@@ -158,6 +159,22 @@ const CASES: &[Case] = &[
     (
         "リストに行の起動と文脈メニューの受け口を付けられる",
         list_accepts_row_activate_and_context_menu,
+    ),
+    (
+        "リストの行をドラッグで並べ替えると選択がついてくる",
+        list_drag_rows_moves_rows_and_selection,
+    ),
+    (
+        "リストの行を実際のマウスのドラッグで並べ替えられる",
+        list_reorder_by_a_real_drag,
+    ),
+    (
+        "リストの行を Alt + Shift + 上下で並べ替えられる",
+        list_reorder_by_keyboard,
+    ),
+    (
+        "組み立てる行のリストも窓を絞ったまま並べ替えられる",
+        list_reorder_with_row_builder,
     ),
     (
         "行の多いリストが見えている行だけを組み立てる",
@@ -342,6 +359,10 @@ const CASES: &[Case] = &[
     (
         "リストは画面に載る前に選んだ行を載ってから選んで見せる",
         list_shows_the_selection_set_before_it_is_on_screen,
+    ),
+    (
+        "ツリーの複数選択は ListView で組み、閉じた枝の中の選択を覚える",
+        tree_multiple_selection_uses_a_list_view,
     ),
     (
         "表は画面に載る前に選んだ行を載ってから選んで見せる",
@@ -717,6 +738,23 @@ const CASES: &[Case] = &[
     (
         "PNG 形式と Bitmap の両方があれば PNG 形式を読む",
         clipboard_prefers_the_png_format,
+    ),
+    // 順序に頼るケースがあるので、新しいものは末尾に足す。
+    (
+        "トーストの操作ボタンが番号を知らせ、2 つ以上は Content に並ぶ",
+        toast_action_buttons_report_their_index,
+    ),
+    (
+        "後から出したトーストは並び、High はすぐ出る",
+        toast_waits_its_turn_and_high_comes_up_at_once,
+    ),
+    (
+        "トーストの位置が InfoBar の揃えになる",
+        toast_positions_become_the_alignment,
+    ),
+    (
+        "閉じた窓に残ったトーストは次のものに場所を譲る",
+        toast_in_a_closed_window_gives_way,
     ),
 ];
 
@@ -3353,7 +3391,7 @@ fn with_toast_focus_window(
 }
 
 /// When a toast goes away with focus on its action button — time running out, `dismiss`,
-/// or another toast replacing it — focus goes back to the element it came from, in the
+/// or a `High` toast putting it back in the queue — focus goes back to the element it came from, in the
 /// same `FocusState`, not to the first element of the window.
 fn toast_puts_focus_back_where_it_came_from(ui: &Ui) -> Result<()> {
     use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
@@ -3368,14 +3406,14 @@ fn toast_puts_focus_back_where_it_came_from(ui: &Ui) -> Result<()> {
                     .FocusState()
                     .unwrap_or(FocusState::Unfocused)
             };
-            for way in ["時間切れ", "dismiss", "置き換え"] {
+            for way in ["時間切れ", "dismiss", "High に譲る"] {
                 pump_until(FOCUS_TIMEOUT, || {
                     native::<XamlButton>(origin)
                         .Focus(FocusState::Keyboard)
                         .unwrap_or(false)
                 });
                 let toast = ui.toast("消しました").expect("トースト");
-                toast.set_action("元に戻す");
+                toast.set_actions(&["元に戻す"]);
                 toast.set_timeout(if way == "時間切れ" { 0.8 } else { 0.0 });
                 toast.show();
                 let mut action = None;
@@ -3402,6 +3440,7 @@ fn toast_puts_focus_back_where_it_came_from(ui: &Ui) -> Result<()> {
 
                 let replacement = ui.toast("別の知らせ").expect("トースト");
                 replacement.set_timeout(0.0);
+                replacement.set_priority(naui_core::ToastPriority::High);
                 match way {
                     "時間切れ" => pump_until(Duration::from_secs(5), || !toast.is_visible()),
                     "dismiss" => toast.dismiss(),
@@ -3420,6 +3459,8 @@ fn toast_puts_focus_back_where_it_came_from(ui: &Ui) -> Result<()> {
                     FocusState::Unfocused,
                     "{way}: 窓の先頭へは飛ばないこと"
                 );
+                // High に譲ったものは列の先頭で待っているので、先に列から外す。
+                toast.dismiss();
                 replacement.dismiss();
             }
         },
@@ -3446,12 +3487,12 @@ fn toast_action_by_keys_puts_focus_back(ui: &Ui) -> Result<()> {
                 return;
             }
             let toast = ui.toast("消しました").expect("トースト");
-            toast.set_action("元に戻す");
+            toast.set_actions(&["元に戻す"]);
             toast.set_timeout(0.0);
             let acted = Rc::new(Cell::new(false));
             toast.on_action({
                 let acted = acted.clone();
-                move || acted.set(true)
+                move |index| acted.set(index == 0)
             });
             pump_until(FOCUS_TIMEOUT, || {
                 native::<XamlButton>(origin)
@@ -7168,6 +7209,354 @@ fn list_accepts_row_activate_and_context_menu(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// The first text inside a XAML element, looking through panels, borders and content
+/// controls.
+fn first_text(element: &windows_core::IInspectable) -> Option<String> {
+    use naui_winui3::Microsoft::UI::Xaml::Controls::{ContentControl, Panel};
+
+    if let Ok(text) = element.cast::<TextBlock>() {
+        return text.Text().ok().map(|text| text.to_string());
+    }
+    if let Ok(content) = element.cast::<ContentControl>() {
+        return first_text(&content.Content().ok()?);
+    }
+    if let Ok(border) = element.cast::<Border>() {
+        return first_text(&border.Child().ok()?.cast().ok()?);
+    }
+    let children = element.cast::<Panel>().ok()?.Children().ok()?;
+    (0..children.Size().ok()?).find_map(|i| first_text(&children.GetAt(i).ok()?.cast().ok()?))
+}
+
+/// The text of each row the `ListView` has now.
+fn list_texts(list: &naui_windows::List) -> Vec<String> {
+    let items = list.native_list_view().Items().expect("Items");
+    (0..items.Size().expect("Size"))
+        .map(|slot| first_text(&items.GetAt(slot).expect("行")).unwrap_or_default())
+        .collect()
+}
+
+/// `drag_rows` moves the rows like the user's drop: the rows and the selection move,
+/// `on_reorder` is told, `on_select` is not. Reordering is `ListView`'s own.
+fn list_drag_rows_moves_rows_and_selection(ui: &Ui) -> Result<()> {
+    use naui_core::{ListItem, RowMove, SelectionMode};
+
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("東京"),
+        ListItem::new("大阪"),
+        ListItem::new("札幌"),
+        ListItem::new("那覇").enabled(false),
+        ListItem::new("福岡"),
+    ]);
+    list.set_selection_mode(SelectionMode::Multiple);
+    let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
+    list.on_reorder({
+        let moves = moves.clone();
+        move |moved| moves.borrow_mut().push(moved.clone())
+    });
+    let selections = Rc::new(Cell::new(0));
+    list.on_select({
+        let selections = selections.clone();
+        move |_| selections.set(selections.get() + 1)
+    });
+    let native = list.native_list_view();
+
+    // 並べ替えを許すまでは、ドラッグは何もしない。
+    assert!(!list.is_reorderable());
+    assert!(!native.CanReorderItems().expect("CanReorderItems"));
+    list.drag_rows(&[0], 3);
+    assert!(moves.borrow().is_empty());
+
+    list.set_reorderable(true);
+    assert!(list.is_reorderable());
+    assert!(native.CanReorderItems().expect("CanReorderItems"));
+    assert!(native.CanDragItems().expect("CanDragItems"));
+    // AllowDrop は自分の行を運んでいる間だけ (ファイルのドラッグで行の隙間を開かない)。
+    assert!(!native.AllowDrop().expect("AllowDrop"));
+    list.set_selection(&[0, 2]);
+    list.drag_rows(&[0, 2], 5);
+    assert_eq!(list_texts(&list), ["大阪", "那覇", "福岡", "東京", "札幌"]);
+    assert_eq!(*moves.borrow(), vec![RowMove::new([0, 2], 5)]);
+    assert_eq!(list.selection(), vec![3, 4], "選択は動いた行についていく");
+    let items = native.Items().expect("Items");
+    let shown: Vec<bool> = (0..items.Size().expect("Size"))
+        .map(|slot| {
+            items
+                .GetAt(slot)
+                .and_then(|row| row.cast::<ListViewItem>())
+                .and_then(|row| row.IsSelected())
+                .expect("IsSelected")
+        })
+        .collect();
+    assert_eq!(
+        shown,
+        [false, false, false, true, true],
+        "ListView の選択も動いた行に付く"
+    );
+    assert_eq!(
+        selections.get(),
+        0,
+        "選ばれている行は同じなので on_select は来ない"
+    );
+
+    // 選べない行はつかめない。ほかの行といっしょでも、その行だけ残る。
+    list.drag_rows(&[1], 0);
+    assert_eq!(moves.borrow().len(), 1, "選べない行だけなら何も起きない");
+    list.drag_rows(&[1, 4], 0);
+    assert_eq!(list_texts(&list), ["札幌", "大阪", "那覇", "福岡", "東京"]);
+    assert_eq!(moves.borrow()[1], RowMove::new([4], 0));
+    assert_eq!(list.selection(), vec![0, 4]);
+
+    // 自分の場所へ落としても通知しない。
+    list.drag_rows(&[1], 2);
+    assert_eq!(moves.borrow().len(), 2);
+
+    // move_rows は通知せず、並べ替えを許していなくても動かす。
+    list.set_reorderable(false);
+    assert!(!native.CanReorderItems().expect("CanReorderItems"));
+    assert!(!native.CanDragItems().expect("CanDragItems"));
+    list.move_rows(&RowMove::new([0], 5));
+    assert_eq!(list_texts(&list), ["大阪", "那覇", "福岡", "東京", "札幌"]);
+    assert_eq!(list.selection(), vec![3, 4]);
+    assert_eq!(moves.borrow().len(), 2);
+    assert_eq!(selections.get(), 0);
+    Ok(())
+}
+
+/// A row dragged with the real mouse goes through `ListView`'s own reordering:
+/// `DragItemsStarting` takes the row, the drop moves the `ListViewItem`s, and
+/// `DragItemsCompleted` moves naui's rows the same way and tells the app.
+fn list_reorder_by_a_real_drag(ui: &Ui) -> Result<()> {
+    use naui_core::RowMove;
+    use naui_winui3::Microsoft::UI::Xaml::Controls::{
+        DragItemsCompletedEventArgs, DragItemsStartingEventHandler, ListViewBase,
+    };
+    use std::sync::Mutex;
+    use windows::Foundation::TypedEventHandler;
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP};
+    use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
+
+    with_shown_list_for_input(ui, 8, |hwnd, list| {
+        let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
+        list.on_reorder({
+            let moves = moves.clone();
+            move |moved| moves.borrow_mut().push(moved.clone())
+        });
+        list.set_reorderable(true);
+        // `ListView` のドラッグの出来事も見ておく (落ちたときにどこで止まったか分かる)。
+        let events: Arc<Mutex<Vec<String>>> = Arc::default();
+        let native = list.native_list_view();
+        let starting = DragItemsStartingEventHandler::new({
+            let events = events.clone();
+            move |_, args| {
+                if let Some(args) = args.as_ref() {
+                    let count = args.Items().and_then(|items| items.Size()).unwrap_or(0);
+                    let cancel = args.Cancel().unwrap_or(false);
+                    events
+                        .lock()
+                        .unwrap()
+                        .push(format!("starting items={count} cancel={cancel}"));
+                }
+                Ok(())
+            }
+        });
+        native
+            .DragItemsStarting(&starting)
+            .expect("DragItemsStarting");
+        let completed = TypedEventHandler::new({
+            let events = events.clone();
+            move |_: windows_core::Ref<'_, ListViewBase>,
+                  args: windows_core::Ref<'_, DragItemsCompletedEventArgs>| {
+                let result = args.as_ref().and_then(|args| args.DropResult().ok());
+                events.lock().unwrap().push(format!("completed {result:?}"));
+                Ok(())
+            }
+        });
+        native
+            .DragItemsCompleted(&completed)
+            .expect("DragItemsCompleted");
+
+        // 動かす前に、つかむ所と落とす所を決めておく (ドラッグの間は行がずれる)。
+        let from = row_screen_point(hwnd, list, 0, 40.0, 0.5)?;
+        let to = row_screen_point(hwnd, list, 3, 40.0, 0.8)?;
+        // SAFETY: 引数は値だけ。
+        let _ = unsafe { SetCursorPos(from.x, from.y) };
+        pump_until(Duration::from_millis(150), || false);
+        send_input(mouse_move_to(from));
+        send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
+        // 本物のマウスの移動として少しずつ運ぶ。初めの数歩でドラッグが始まる。
+        const STEPS: i32 = 16;
+        for step in 1..=STEPS {
+            let at = POINT {
+                x: from.x + (to.x - from.x) * step / STEPS,
+                y: from.y + (to.y - from.y) * step / STEPS,
+            };
+            send_input(mouse_move_to(at));
+        }
+        pump_until(Duration::from_millis(300), || false);
+        send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
+        pump_until(Duration::from_secs(3), || !moves.borrow().is_empty());
+        let events = events.lock().unwrap().clone();
+        println!("     (本物のマウスでドラッグした: {events:?})");
+        // ほかの実際の入力のケースと同じく、入力が届かない環境では確かめずに通す。
+        // ドラッグが始まったのに並べ替わらないときは落とす。
+        if moves.borrow().is_empty() && !events.iter().any(|event| event.starts_with("starting")) {
+            println!("     (ドラッグが始まらない環境なので、確かめずに通す)");
+            return None;
+        }
+        let moves = moves.borrow();
+        assert_eq!(
+            moves.len(),
+            1,
+            "ドロップで 1 回だけ並べ替わる: {moves:?} / ListView の出来事 {events:?} / 行 {:?}",
+            list_texts(list)
+        );
+        assert_eq!(moves[0].rows, vec![0], "つかんだ行だけが動く");
+        assert!(
+            (3..=5).contains(&moves[0].to),
+            "下の行の間へ入る: {:?}",
+            moves[0]
+        );
+        let mut expected: Vec<String> = (0..8).map(|index| format!("行 {index}")).collect();
+        moves[0].apply(&mut expected);
+        assert_eq!(
+            list_texts(list),
+            expected,
+            "ListView の行も naui の並びと同じ"
+        );
+        assert!(
+            list.selection().is_empty(),
+            "選んでいなかったので選択は空のまま"
+        );
+        assert!(
+            !native.AllowDrop().expect("AllowDrop"),
+            "ドロップを受けるのは行を運んでいる間だけ"
+        );
+        Some(())
+    })
+}
+
+/// Alt + Shift + Up / Down, `ListView`'s own keyboard reordering, moves naui's rows too:
+/// the focused row, with the selection when it is in it, moves one place, the app is
+/// told, and the focus stays on the row. Left to `ListView`, only its `Items` would move.
+fn list_reorder_by_keyboard(ui: &Ui) -> Result<()> {
+    use naui_core::RowMove;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        VK_CONTROL, VK_DOWN, VK_LEFT, VK_MENU, VK_RIGHT, VK_SHIFT, VK_UP,
+    };
+
+    with_shown_list_for_input(ui, 8, |hwnd, list| {
+        let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
+        list.on_reorder({
+            let moves = moves.clone();
+            move |moved| moves.borrow_mut().push(moved.clone())
+        });
+        list.set_reorderable(true);
+        let mut expected: Vec<String> = (0..8).map(|index| format!("行 {index}")).collect();
+        let reorder = [VK_MENU, VK_SHIFT];
+
+        first_click_on_list_row(hwnd, list, 2)?;
+        press_nav_key(&reorder, VK_DOWN)?;
+        pump_until(Duration::from_secs(1), || moves.borrow().len() == 1);
+        assert_eq!(moves.borrow()[..], [RowMove::new([2], 4)], "1 つ下へ");
+        RowMove::new([2], 4).apply(&mut expected);
+        assert_eq!(
+            list_texts(list),
+            expected,
+            "ListView の行も naui の並びと同じ"
+        );
+        assert_eq!(list.selection(), vec![3], "選択は動いた行についていく");
+        assert_eq!(
+            focused_list_row(list),
+            Some(3),
+            "フォーカスは動いた行に残る"
+        );
+
+        // フォーカスが残っているので、続けて動かせる。
+        press_nav_key(&reorder, VK_UP)?;
+        press_nav_key(&reorder, VK_UP)?;
+        pump_until(Duration::from_secs(1), || moves.borrow().len() == 3);
+        assert_eq!(
+            moves.borrow()[1..],
+            [RowMove::new([3], 2), RowMove::new([2], 1)],
+            "1 つずつ上へ"
+        );
+        RowMove::new([3], 2).apply(&mut expected);
+        RowMove::new([2], 1).apply(&mut expected);
+        assert_eq!(list_texts(list), expected);
+        assert_eq!(list.selection(), vec![1]);
+        assert_eq!(focused_list_row(list), Some(1));
+
+        // 選んだ行の上では、ドラッグと同じく選択ごと動く。
+        click_list_row_expecting(hwnd, list, 5, &[VK_CONTROL], &[1, 5], "Ctrl で足す")?;
+        press_nav_key(&reorder, VK_UP)?;
+        pump_until(Duration::from_secs(1), || moves.borrow().len() == 4);
+        assert_eq!(moves.borrow()[3], RowMove::new([1, 5], 4), "選択ごと上へ");
+        RowMove::new([1, 5], 4).apply(&mut expected);
+        assert_eq!(list_texts(list), expected);
+        assert_eq!(list.selection(), vec![3, 4]);
+        assert_eq!(focused_list_row(list), Some(4));
+
+        // 先頭より上へは動かず、`ListView` も行を動かさない。
+        click_list_row_expecting(hwnd, list, 0, &[], &[0], "先頭の行")?;
+        press_nav_key(&reorder, VK_UP)?;
+        pump_until(Duration::from_millis(300), || false);
+        assert_eq!(moves.borrow().len(), 4, "先頭では何も起きない");
+        assert_eq!(list_texts(list), expected);
+
+        // 左右は `ListView` なら並べ替えるが、naui は上下だけ。行は食い違わない。
+        click_list_row_expecting(hwnd, list, 2, &[], &[2], "左右を試す行")?;
+        press_nav_key(&reorder, VK_LEFT)?;
+        press_nav_key(&reorder, VK_RIGHT)?;
+        press_nav_key(&reorder, VK_RIGHT)?;
+        pump_until(Duration::from_millis(300), || false);
+        assert_eq!(moves.borrow().len(), 4, "左右では動かない");
+        assert_eq!(list_texts(list), expected, "ListView の行も動かない");
+        assert_eq!(list.selection(), vec![2]);
+        Some(())
+    })
+}
+
+/// Rows from a builder move too, with only the rows on screen built: the app moves its
+/// data in `on_reorder`, and the rows built afterwards read it.
+fn list_reorder_with_row_builder(ui: &Ui) -> Result<()> {
+    use naui_windows::ListRow;
+
+    const ROWS: usize = 1000;
+    let data: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(
+        (0..ROWS).map(|index| format!("行 {index}")).collect(),
+    ));
+    let list = ui.list()?;
+    list.set_sizing(Sizing::fixed(240.0, 200.0));
+    list.set_row_builder(ROWS, {
+        let data = data.clone();
+        let ui = ui.clone();
+        move |index| Ok(ListRow::new(&ui.label(&data.borrow()[index])?))
+    });
+    list.on_reorder({
+        let data = data.clone();
+        move |moved| moved.apply(&mut data.borrow_mut())
+    });
+    list.set_reorderable(true);
+    assert!(
+        list_texts(&list).len() < ROWS,
+        "画面に出ている行だけを組み立てる"
+    );
+    list.set_selected(0);
+    list.drag_rows(&[0], 2);
+    assert_eq!(data.borrow()[..3], ["行 1", "行 0", "行 2"]);
+    assert_eq!(list_texts(&list)[..3], ["行 1", "行 0", "行 2"]);
+    assert_eq!(list.selection(), vec![1], "選択は動いた行についていく");
+
+    // 窓の外へ動かしても、選択は覚えている。
+    list.drag_rows(&[1], ROWS);
+    assert_eq!(data.borrow()[ROWS - 1], "行 0");
+    assert_eq!(list.selection(), vec![ROWS - 1]);
+    assert_eq!(list_texts(&list)[..2], ["行 1", "行 2"]);
+    Ok(())
+}
+
 /// Even before the list has a size, it builds only a foothold, not every row, and the
 /// function is asked only for those rows.
 fn list_builds_only_the_rows_it_needs(ui: &Ui) -> Result<()> {
@@ -7786,6 +8175,208 @@ fn list_keeps_the_selection_outside_the_window(ui: &Ui) -> Result<()> {
         item(0).SetIsSelected(true).expect("SetIsSelected");
         pump_until(Duration::from_secs(2), || seen.borrow().len() > before);
         assert_eq!(list.selection(), vec![0], "窓の外の行を残さないこと");
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// Multiple selection in a `Tree` swaps the `TreeView` for a `ListView` with Ctrl /
+/// Shift selection (`TreeView`'s own multiple selection selects a branch's
+/// descendants too). Items inside a collapsed branch stay selected, and come back
+/// selected when it is expanded.
+fn tree_multiple_selection_uses_a_list_view(ui: &Ui) -> Result<()> {
+    use naui_core::{SelectionMode, TreeItem};
+    use naui_winui3::Microsoft::UI::Xaml::Controls::ListViewSelectionMode;
+
+    let window = ui.window("ツリーの複数選択", 300.0, 320.0)?;
+    let tree = ui.tree()?;
+    tree.set_items(&[
+        TreeItem::new("src").children([TreeItem::new("main.rs"), TreeItem::new("lib.rs")]),
+        TreeItem::new("docs").child(TreeItem::new("guide").child(TreeItem::new("intro.md"))),
+        TreeItem::new("target")
+            .enabled(false)
+            .child(TreeItem::new("debug")),
+    ]);
+    tree.set_sizing(Sizing::fill());
+    window.set_child(&tree);
+    let seen = Rc::new(RefCell::new(Vec::<Vec<usize>>::new()));
+    tree.on_select({
+        let seen = seen.clone();
+        move |path| seen.borrow_mut().push(path.to_vec())
+    });
+
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        let frame = tree.native_element().cast::<Border>().expect("枠は Border");
+        let child = || frame.Child().expect("枠の中身");
+        assert!(tree.native_list_view().is_none(), "単一選択の間は作らない");
+        assert!(child()
+            .cast::<naui_winui3::Microsoft::UI::Xaml::Controls::TreeView>()
+            .is_ok());
+
+        tree.set_selection_mode(SelectionMode::Multiple);
+        assert_eq!(tree.selection_mode(), SelectionMode::Multiple);
+        let list = tree.native_list_view().expect("複数選択の ListView");
+        assert!(
+            child().cast::<ListView>().is_ok(),
+            "枠の中身が ListView に替わる"
+        );
+        assert_eq!(
+            list.SelectionMode().expect("SelectionMode"),
+            ListViewSelectionMode::Extended,
+            "Ctrl / Shift で選ぶ形"
+        );
+        let items = list.Items().expect("Items");
+        let count = || items.Size().expect("Size");
+        let row = |index: u32| {
+            items
+                .GetAt(index)
+                .and_then(|item| item.cast::<ListViewItem>())
+                .expect("行")
+        };
+        assert_eq!(count(), 3, "閉じた枝の中の行は ListView に入れない");
+
+        // 閉じた枝の中も、祖先を開いて選ぶ。選べない項目と無いパスは落とす。
+        tree.set_selection(&[vec![1, 0, 0], vec![0, 1], vec![2, 0], vec![9]]);
+        assert_eq!(tree.selection(), vec![vec![0, 1], vec![1, 0, 0]]);
+        // 行は 0 src, 1 main.rs, 2 lib.rs, 3 docs, 4 guide, 5 intro.md, 6 target。
+        assert_eq!(count(), 7);
+        let picked = || -> Vec<u32> {
+            (0..count())
+                .filter(|&index| row(index).IsSelected().unwrap_or(false))
+                .collect()
+        };
+        assert_eq!(picked(), vec![2, 5], "ListView の行も選ばれる");
+
+        // 段は左の余白で付ける。枝の山形は開閉で向きが変わる。
+        let line = |index: u32| {
+            row(index)
+                .Content()
+                .and_then(|content| content.cast::<Grid>())
+                .expect("行の中身は Grid")
+        };
+        assert_eq!(line(5).Padding().expect("Padding").Left, 32.0, "2 段下がる");
+        let glyph = |index: u32| {
+            line(index)
+                .Children()
+                .and_then(|children| children.GetAt(0))
+                .and_then(|child| child.cast::<XamlButton>())
+                .and_then(|button| button.Content())
+                .and_then(|content| content.cast::<TextBlock>())
+                .and_then(|icon| icon.Text())
+                .expect("山形")
+                .to_string()
+        };
+        assert_eq!(glyph(3), "\u{E70D}", "開いた枝は下向き");
+        // 山形は TreeViewItem の ExpandCollapseChevron と同じ大きさ (字形 8、12 × 12)。
+        let chevron = line(3)
+            .Children()
+            .and_then(|children| children.GetAt(0))
+            .and_then(|child| child.cast::<XamlButton>())
+            .and_then(|button| button.Content())
+            .and_then(|content| content.cast::<TextBlock>())
+            .expect("山形の字");
+        assert_eq!(chevron.FontSize().expect("FontSize"), 8.0);
+        assert_eq!(chevron.Width().expect("Width"), 12.0);
+
+        // 枝を閉じても中の選択は覚えていて、開き直すと戻る。通知はしない。
+        tree.collapse(&[1]);
+        assert_eq!(count(), 5);
+        assert_eq!(glyph(3), "\u{E76C}", "閉じた枝は横向き");
+        assert_eq!(tree.selection(), vec![vec![0, 1], vec![1, 0, 0]]);
+        tree.expand(&[1]);
+        assert_eq!(count(), 7);
+        assert_eq!(picked(), vec![2, 5], "開き直すと選択が戻る");
+        assert!(
+            seen.borrow().is_empty(),
+            "set_selection と開閉は選択を通知しない"
+        );
+
+        // ここからは画面に載った ListView の振る舞い。
+        window.show();
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || {
+            list.IsLoaded().unwrap_or(false) && list.ActualHeight().unwrap_or(0.0) > 0.0
+        });
+        if list.ActualHeight().unwrap_or(0.0) <= 0.0 {
+            println!(
+                "     (ListView が画面に載らない環境なので、ネイティブ側の選択は確かめずに通す)"
+            );
+            return;
+        }
+        pump_until(Duration::from_millis(300), || false);
+        assert_eq!(picked(), vec![2, 5], "載ったあとも選ばれて見える");
+
+        // ListView 側で選ぶと (ここでは修飾キーが押されていない)、選び直しなので
+        // 隠れた選択は落ちる。
+        tree.collapse(&[1]);
+        row(1).SetIsSelected(true).expect("SetIsSelected");
+        pump_until(Duration::from_secs(2), || !seen.borrow().is_empty());
+        assert_eq!(tree.selection(), vec![vec![0, 0], vec![0, 1]]);
+        assert_eq!(
+            seen.borrow().last(),
+            Some(&vec![0, 0]),
+            "先頭の 1 つを通知する"
+        );
+
+        // 落とした隠れた選択は、枝を開き直しても戻らない。抜いた行に残った
+        // IsSelected を、入れ直したときに ListView が選択として拾わないこと。
+        let notified = seen.borrow().len();
+        tree.expand(&[1]);
+        pump_until(Duration::from_millis(500), || false);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0, 0], vec![0, 1]],
+            "intro.md は選ばれていない"
+        );
+        assert_eq!(picked(), vec![1, 2], "ListView でも intro.md は外れている");
+        assert_eq!(seen.borrow().len(), notified, "開いただけでは通知しない");
+
+        // 覚えている隠れた選択は、画面の上で閉じて開き直しても選ばれて見える。
+        tree.set_selection(&[vec![0, 0], vec![1, 0, 0]]);
+        pump_until(Duration::from_millis(300), || false);
+        tree.collapse(&[1]);
+        pump_until(Duration::from_millis(300), || false);
+        tree.expand(&[1]);
+        pump_until(Duration::from_millis(500), || false);
+        assert_eq!(tree.selection(), vec![vec![0, 0], vec![1, 0, 0]]);
+        assert_eq!(picked(), vec![1, 5], "開き直した intro.md も選ばれて見える");
+        assert_eq!(
+            seen.borrow().len(),
+            notified,
+            "開閉と set_selection は通知しない"
+        );
+        tree.set_selection(&[vec![0, 0], vec![0, 1]]);
+        tree.collapse(&[1]);
+
+        // すべて選んでも、選べない項目は外れる。
+        list.SelectAll().expect("SelectAll");
+        pump_until(Duration::from_secs(2), || tree.selection().len() > 2);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0], vec![0, 0], vec![0, 1], vec![1]]
+        );
+        pump_until(Duration::from_millis(300), || false);
+        assert!(
+            !row(4).IsSelected().unwrap_or(true),
+            "target は ListView でも外れる"
+        );
+
+        // 単一選択に戻すと TreeView が戻り、選択は外れる。
+        let before = seen.borrow().len();
+        tree.set_selection_mode(SelectionMode::Single);
+        assert!(child()
+            .cast::<naui_winui3::Microsoft::UI::Xaml::Controls::TreeView>()
+            .is_ok());
+        assert!(tree.selection().is_empty());
+        assert_eq!(seen.borrow().len(), before, "切り替えは通知しない");
+        tree.set_selection(&[vec![1], vec![0, 1]]);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0, 1]],
+            "単一選択では先頭の 1 つだけ"
+        );
     }));
     window.close();
     if let Err(panic) = outcome {
@@ -9368,13 +9959,40 @@ fn aim_at_row_point(
     index: usize,
     x: f32,
 ) -> Option<()> {
+    aim_at_row_spot(hwnd, list, index, x, 0.5)
+}
+
+/// [`aim_at_row_point`], at a fraction of the row's height from its top.
+fn aim_at_row_spot(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+    index: usize,
+    x: f32,
+    fraction: f32,
+) -> Option<()> {
+    use windows::Win32::UI::WindowsAndMessaging::SetCursorPos;
+
+    let point = row_screen_point(hwnd, list, index, x, fraction)?;
+    // SAFETY: 引数は値だけ。
+    let _ = unsafe { SetCursorPos(point.x, point.y) };
+    pump_until(Duration::from_millis(150), || false);
+    Some(())
+}
+
+/// Where a spot of a row on screen is, in screen pixels. `None` if it is not in this
+/// process's window. A row out of view fails the case.
+fn row_screen_point(
+    hwnd: windows::Win32::Foundation::HWND,
+    list: &impl RowsForInput,
+    index: usize,
+    x: f32,
+    fraction: f32,
+) -> Option<windows::Win32::Foundation::POINT> {
     use windows::Foundation::Point as XamlPoint;
     use windows::Win32::Foundation::POINT;
     use windows::Win32::Graphics::Gdi::ClientToScreen;
     use windows::Win32::UI::HiDpi::GetDpiForWindow;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        GetWindowThreadProcessId, SetCursorPos, WindowFromPoint,
-    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, WindowFromPoint};
 
     let row = built_list_row(list, index).unwrap_or_else(|| {
         let first = list.list_view().Items().ok().and_then(|items| items.GetAt(0).ok());
@@ -9382,7 +10000,7 @@ fn aim_at_row_point(
         panic!("{index} 行目が組み立てられていない: 先頭 {first:?} 位置 {:?}", list.scroller().VerticalOffset())
     });
     let scroll = list.scroller();
-    let middle = (row.ActualHeight().expect("行の高さ") / 2.0) as f32;
+    let middle = row.ActualHeight().expect("行の高さ") as f32 * fraction;
     let row_at = || {
         row.TransformToVisual(None)
             .and_then(|to| to.TransformPoint(XamlPoint { X: x, Y: middle }))
@@ -9421,10 +10039,38 @@ fn aim_at_row_point(
         println!("     (押す位置がテストのウィンドウの上に無いので、押さずに通す)");
         return None;
     }
+    Some(point)
+}
+
+/// A move of the pointer to a point on the primary screen, for [`send_input`].
+///
+/// Unlike `SetCursorPos`, it arrives as mouse input, which a drag needs to start and
+/// follow the pointer.
+fn mouse_move_to(
+    point: windows::Win32::Foundation::POINT,
+) -> windows::Win32::UI::Input::KeyboardAndMouse::INPUT {
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_ABSOLUTE, MOUSEEVENTF_MOVE, MOUSEINPUT,
+    };
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+
     // SAFETY: 引数は値だけ。
-    let _ = unsafe { SetCursorPos(point.x, point.y) };
-    pump_until(Duration::from_millis(150), || false);
-    Some(())
+    let (width, height) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
+    // 絶対座標は画面を 0〜65535 に引き伸ばした値で渡す。
+    let normalize = |at: i32, size: i32| ((at * 65536 + size / 2) / size.max(1)).clamp(0, 65535);
+    INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx: normalize(point.x, width),
+                dy: normalize(point.y, height),
+                mouseData: 0,
+                dwFlags: MOUSEEVENTF_MOVE | MOUSEEVENTF_ABSOLUTE,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
 }
 
 /// Clicks a row to start a case. The first click after coming to the front can be lost, so
@@ -9822,6 +10468,39 @@ fn shift_range_scenario(
         };
         let aimed = pointer_at();
         let start = scroll.VerticalOffset().expect("位置");
+        // ポインターの下の行と、その行の画面上の位置。
+        let under_pointer = || {
+            use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
+            use windows::Foundation::Point as XamlPoint;
+            use windows::Win32::Graphics::Gdi::ClientToScreen;
+            use windows::Win32::UI::HiDpi::GetDpiForWindow;
+            let mut pointer = POINT::default();
+            // SAFETY: `pointer` はこの関数の中で生きている。
+            let _ = unsafe { GetCursorPos(&mut pointer) };
+            // SAFETY: HWND は window が閉じるまで有効で、UI スレッドから読んでいる。
+            let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
+            let mut origin = POINT::default();
+            // SAFETY: `origin` はこの関数の中で生きている。
+            let _ = unsafe { ClientToScreen(hwnd, &mut origin) };
+            let y = (pointer.y - origin.y) as f32 / scale;
+            let items = list.list_view().Items().expect("行");
+            (0..items.Size().expect("行の数")).find_map(|slot| {
+                let row = items.GetAt(slot).ok()?.cast::<ListViewItem>().ok()?;
+                let top = row
+                    .TransformToVisual(None)
+                    .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+                    .ok()?
+                    .Y;
+                let bottom = top + row.ActualHeight().ok()? as f32;
+                let index = AutomationProperties::GetPositionInSet(&row).ok()? as usize - 1;
+                (y >= top && y < bottom).then_some((index, top, y))
+            })
+        };
+        // 続けて送る (人が勢いよく回すのと同じ)。ただし、行が動かないまま何回も積み上げると、
+        // 残りが数秒あとにまとめて流れ、押す行を決めたあとで窓が大きく動くことがある。
+        // 見た目が動かないうちに送るのは 3 回までにする。
+        let mut last_seen = under_pointer();
+        let mut unseen = 0;
         for _ in 0..60 {
             if !foreground_is_ours() {
                 return None;
@@ -9829,7 +10508,16 @@ fn shift_range_scenario(
             if built_list_row(list, 7).is_none() {
                 break;
             }
+            if unseen >= 3 {
+                pump_until(Duration::from_secs(2), || under_pointer() != last_seen);
+            }
+            let now = under_pointer();
+            if now != last_seen {
+                last_seen = now;
+                unseen = 0;
+            }
             send_input(mouse_input(MOUSEEVENTF_WHEEL, (-480_i32) as u32));
+            unseen += 1;
         }
         pump_until(Duration::from_millis(500), || false);
         // ホイールもこの先のクリックも、ポインターの下へ届く。
@@ -9842,46 +10530,90 @@ fn shift_range_scenario(
             "ホイールで窓が動いている: 位置 {start} → {} ポインター {aimed:?}",
             scroll.VerticalOffset().expect("位置")
         );
-        // ホイールのスクロールは少しのあいだ続くので、止まってから押す行を決める。
-        let mut settled = scroll.VerticalOffset().expect("位置");
+        // ホイールのスクロールは少しのあいだ続くので、止まってから押す行を決める。止まったかは
+        // 行の位置で見る。`VerticalOffset` はスクロールの途中の値のまま残ることがあり、
+        // 行がもう止まっていても、まだ動いていても当てにならない。
+        let mut settled = under_pointer();
         pump_until(Duration::from_secs(3), || {
             pump_until(Duration::from_millis(300), || false);
-            let now = scroll.VerticalOffset().expect("位置");
-            let still = (now - settled).abs() < 0.5;
+            let now = under_pointer();
+            let still = match (now, settled) {
+                (Some((now, at, _)), Some((before, was, _))) => {
+                    now == before && (at - was).abs() < 0.5
+                }
+                _ => false,
+            };
             settled = now;
             still
         });
-        let mut pointer = POINT::default();
-        // SAFETY: `pointer` はこの関数の中で生きている。
-        let _ = unsafe { GetCursorPos(&mut pointer) };
-        let under_pointer = |row: &ListViewItem| {
+        let (pointed, top, y) = under_pointer().expect("ポインターの下の行");
+        let height = list.row_height() as f32;
+        // ポインターが行の境目 (1 px 以内) にあると、どちらの行に当たるかは XAML の丸め次第。
+        // どちらでもよいことにして、押したあとで当たったほうを押した行とする。
+        let candidates: Vec<usize> = [
+            Some(pointed),
+            (y - top < 1.0).then(|| pointed.checked_sub(1)).flatten(),
+            (top + height - y <= 1.0).then_some(pointed + 1),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        // 画面に出ている行が受けたフォーカスは、その行に残る。`VerticalOffset` がスクロールの
+        // 途中の値のままでも、行の描かれた位置で見えていると分かる。下の端の行ほど、
+        // 古い位置からは画面の外に見える。
+        let viewport = scroll.ViewportHeight().expect("高さ");
+        let lowest_shown = {
+            use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
             use windows::Foundation::Point as XamlPoint;
-            use windows::Win32::Graphics::Gdi::ClientToScreen;
-            use windows::Win32::UI::HiDpi::GetDpiForWindow;
-            let top = row
-                .TransformToVisual(None)
-                .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
-                .expect("行の位置");
-            // SAFETY: HWND は window が閉じるまで有効で、UI スレッドから読んでいる。
-            let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
-            let mut origin = POINT::default();
-            // SAFETY: `origin` はこの関数の中で生きている。
-            let _ = unsafe { ClientToScreen(hwnd, &mut origin) };
-            let y = (pointer.y - origin.y) as f32 / scale;
-            y >= top.Y && y < top.Y + row.ActualHeight().unwrap_or(0.0) as f32
+            let items = list.list_view().Items().expect("行");
+            (0..items.Size().expect("行の数"))
+                .filter_map(|slot| {
+                    let row = items.GetAt(slot).ok()?.cast::<ListViewItem>().ok()?;
+                    let top = row
+                        .TransformToVisual(&scroll)
+                        .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+                        .ok()?
+                        .Y as f64;
+                    let bottom = top + row.ActualHeight().ok()?;
+                    let index = AutomationProperties::GetPositionInSet(&row).ok()? as usize - 1;
+                    (top >= 0.0 && bottom <= viewport && !candidates.contains(&index))
+                        .then_some((index, row))
+                })
+                .max_by_key(|(index, _)| *index)
         };
-        let target = (0..ROWS)
-            .find(|&index| built_list_row(list, index).is_some_and(|row| under_pointer(&row)))
-            .expect("ポインターの下の行");
+        if let Some((shown, row)) = lowest_shown {
+            use naui_winui3::Microsoft::UI::Xaml::Controls::Control;
+            use naui_winui3::Microsoft::UI::Xaml::FocusState;
+            let focused = row
+                .cast::<Control>()
+                .and_then(|row| row.Focus(FocusState::Programmatic))
+                .unwrap_or(false);
+            if !focused || !foreground_is_ours() {
+                println!("     (行へフォーカスを渡せない環境なので、確かめずに通す)");
+                return None;
+            }
+            // フォーカスの移り先を直すのは `GotFocus` で、あとから届く。
+            pump_until(Duration::from_millis(500), || false);
+            assert_eq!(
+                focused_list_row(list),
+                Some(shown),
+                "画面に出ている行のフォーカスは動かない (ホイールのあと、位置 {})",
+                scroll.VerticalOffset().expect("位置")
+            );
+        }
+        let hit = || {
+            candidates
+                .iter()
+                .copied()
+                .find(|&row| list.selection() == span(7, row))
+        };
         for _ in 0..3 {
             with_modifiers(&[VK_SHIFT], || {
                 send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
                 send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
             });
-            pump_until(Duration::from_secs(1), || {
-                list.selection() == span(7, target)
-            });
-            if list.selection() == span(7, target) {
+            pump_until(Duration::from_secs(1), || hit().is_some());
+            if hit().is_some() {
                 break;
             }
         }
@@ -9889,7 +10621,12 @@ fn shift_range_scenario(
             println!("     (ポインターがほかから動かされたので、確かめずに通す)");
             return None;
         }
-        assert_eq!(list.selection(), span(7, target), "ポインターの下の行まで");
+        let target = hit().unwrap_or(pointed);
+        assert_eq!(
+            list.selection(),
+            span(7, target),
+            "ポインターの下の行まで (候補 {candidates:?})"
+        );
         // 選択は押した時点で変わる。フォーカスはそのあとで届くことがあるので待つ。
         pump_until(Duration::from_secs(1), || {
             focused_list_row(list) == Some(target)
@@ -10585,11 +11322,40 @@ fn shift_click_in_margin_scenario(
         }
         send_input(mouse_input(MOUSEEVENTF_WHEEL, (-480_i32) as u32));
     }
-    let mut settled = scroll.VerticalOffset().expect("位置");
+    // ポインターの下の行を、行そのものの位置で求める。
+    // SAFETY: HWND は window が閉じるまで有効で、UI スレッドから読んでいる。
+    let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
+    let mut origin = POINT::default();
+    // SAFETY: `origin` はこの関数の中で生きている。
+    let _ = unsafe { ClientToScreen(hwnd, &mut origin) };
+    let y = (aimed.y - origin.y) as f32 / scale;
+    // ポインターの下の行と、その行の画面上の位置。
+    let placed_under_pointer = || {
+        let items = list.list_view().Items().ok()?;
+        (0..items.Size().ok()?).find_map(|slot| {
+            let row = items.GetAt(slot).ok()?.cast::<ListViewItem>().ok()?;
+            let top = row
+                .TransformToVisual(None)
+                .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
+                .ok()?;
+            let bottom = top.Y + row.ActualHeight().ok()? as f32;
+            (y >= top.Y && y < bottom).then(|| {
+                let index = AutomationProperties::GetPositionInSet(&row).expect("位置");
+                (index as usize - 1, top.Y, bottom)
+            })
+        })
+    };
+    let row_under_pointer = || placed_under_pointer().map(|(index, _, _)| index);
+    // 止まったかは行の位置で見る。`VerticalOffset` はホイールのスクロールの途中の値のまま
+    // 残ることがあり、当てにならない。
+    let mut settled = placed_under_pointer();
     pump_until(Duration::from_secs(3), || {
         pump_until(Duration::from_millis(300), || false);
-        let now = scroll.VerticalOffset().expect("位置");
-        let still = (now - settled).abs() < 0.5;
+        let now = placed_under_pointer();
+        let still = match (now, settled) {
+            (Some((now, at, _)), Some((before, was, _))) => now == before && (at - was).abs() < 0.5,
+            _ => false,
+        };
         settled = now;
         still
     });
@@ -10599,39 +11365,30 @@ fn shift_click_in_margin_scenario(
         return None;
     }
     assert!(built_list_row(list, 2).is_none(), "起点の行が窓の外にある");
-
-    // ポインターの下の行を、行そのものの位置で求める。
-    // SAFETY: HWND は window が閉じるまで有効で、UI スレッドから読んでいる。
-    let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
-    let mut origin = POINT::default();
-    // SAFETY: `origin` はこの関数の中で生きている。
-    let _ = unsafe { ClientToScreen(hwnd, &mut origin) };
-    let y = (aimed.y - origin.y) as f32 / scale;
-    let row_under_pointer = || {
-        let items = list.list_view().Items().ok()?;
-        (0..items.Size().ok()?).find_map(|slot| {
-            let row = items.GetAt(slot).ok()?.cast::<ListViewItem>().ok()?;
-            let top = row
-                .TransformToVisual(None)
-                .and_then(|to| to.TransformPoint(XamlPoint { X: 0.0, Y: 0.0 }))
-                .ok()?;
-            let bottom = top.Y + row.ActualHeight().ok()? as f32;
-            (y >= top.Y && y < bottom)
-                .then(|| AutomationProperties::GetPositionInSet(&row).expect("位置") as usize - 1)
-        })
+    let (pointed, top, bottom) = placed_under_pointer().expect("ポインターの下の行");
+    // ポインターが行の境目 (1 px 以内) にあると、どちらの行に当たるかは XAML の丸め次第。
+    // どちらでもよいことにして、押したあとで当たったほうを押した行とする。
+    let candidates: Vec<usize> = [
+        Some(pointed),
+        (y - top < 1.0).then(|| pointed.checked_sub(1)).flatten(),
+        (bottom - y <= 1.0).then_some(pointed + 1),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    let hit = || {
+        candidates
+            .iter()
+            .copied()
+            .find(|&row| list.selection() == (2..=row).collect::<Vec<usize>>())
     };
-    let target = row_under_pointer().expect("ポインターの下の行");
-
-    let range: Vec<usize> = (2..=target).collect();
-    click(
-        "余白の Shift クリック",
-        &|| list.selection() == range,
-        &[VK_SHIFT],
-    );
+    click("余白の Shift クリック", &|| hit().is_some(), &[VK_SHIFT]);
     if moved_elsewhere(pointer_at()) {
         println!("     (ポインターがほかから動かされたので、確かめずに通す)");
         return None;
     }
+    let target = hit().unwrap_or(pointed);
+    let range: Vec<usize> = (2..=target).collect();
     let picked = list.selection();
     assert_eq!(
         (
@@ -12372,5 +13129,203 @@ fn clipboard_reads_a_bmp_image(ui: &Ui) -> Result<()> {
             "WIC で読み、不透明な画素で返す"
         );
     });
+    Ok(())
+}
+
+// ------------------------------------------------------------------ トースト
+
+/// The toast's `InfoBar`.
+fn info_bar(toast: &naui_windows::Toast) -> InfoBar {
+    toast
+        .native_element()
+        .cast::<InfoBar>()
+        .expect("トーストは InfoBar")
+}
+
+/// One action goes in `InfoBar.ActionButton`; two or more go in a row in `Content`.
+/// Clicking one reports its index, then `on_dismiss`.
+fn toast_action_buttons_report_their_index(ui: &Ui) -> Result<()> {
+    let window = ui.window("トースト", 360.0, 240.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    window.show();
+
+    let toast = ui.toast("削除しました")?;
+    toast.set_timeout(0.0);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    toast.on_action({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(format!("action {index}"))
+    });
+    toast.on_dismiss({
+        let seen = seen.clone();
+        move || seen.borrow_mut().push("dismiss".to_string())
+    });
+    let bar = info_bar(&toast);
+
+    toast.set_actions(&["元に戻す"]);
+    assert!(bar.ActionButton().is_ok(), "1 つなら ActionButton に置く");
+    assert!(bar.Content().is_err(), "Content は空");
+
+    toast.set_actions(&["元に戻す", "開く"]);
+    assert!(
+        bar.ActionButton().is_err(),
+        "2 つ以上は ActionButton に置かない"
+    );
+    let row = bar
+        .Content()
+        .and_then(|content| content.cast::<StackPanel>())
+        .expect("Content に並べた StackPanel");
+    let children = row.Children().expect("ボタンの並び");
+    assert_eq!(children.Size().expect("数"), 2);
+
+    toast.show();
+    assert!(toast.is_visible());
+
+    // ボタンの並びは面の内側に収まる。InfoBar は Content の終わり側と下に余白を
+    // 持たないので、何もしないとボタンが面の右端と下端に接する。
+    let laid_out =
+        || row.ActualWidth().unwrap_or(0.0) > 0.0 && bar.ActualWidth().unwrap_or(0.0) > 0.0;
+    pump_until(SCROLL_LAYOUT_TIMEOUT, laid_out);
+    if laid_out() {
+        let origin = row
+            .TransformToVisual(&bar)
+            .and_then(|transform| {
+                transform.TransformPoint(windows::Foundation::Point { X: 0.0, Y: 0.0 })
+            })
+            .expect("面から見たボタンの並びの位置");
+        let end_gap = bar.ActualWidth().unwrap_or(f64::NAN)
+            - (f64::from(origin.X) + row.ActualWidth().unwrap_or(f64::NAN));
+        let bottom_gap = bar.ActualHeight().unwrap_or(f64::NAN)
+            - (f64::from(origin.Y) + row.ActualHeight().unwrap_or(f64::NAN));
+        assert!(end_gap >= 15.5, "終わり側に余白がある: {end_gap}");
+        assert!(bottom_gap >= 15.5, "下に余白がある: {bottom_gap}");
+    } else {
+        println!("     (実寸が付かない環境なので、ボタンの並びの余白は確かめずに通す)");
+    }
+
+    automation::invoke(&children.GetAt(1).expect("2 つ目のボタン"));
+    assert_eq!(*seen.borrow(), ["action 1", "dismiss"]);
+    assert!(!toast.is_visible(), "押すと消える");
+
+    toast.set_actions::<&str>(&[]);
+    assert!(bar.ActionButton().is_err() && bar.Content().is_err());
+    window.close();
+    Ok(())
+}
+
+/// A toast shown while another is up waits its turn; `High` comes up at once and
+/// puts the current one back at the front. None of this is notified.
+fn toast_waits_its_turn_and_high_comes_up_at_once(ui: &Ui) -> Result<()> {
+    let window = ui.window("トースト", 360.0, 240.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    window.show();
+
+    let dismissed = Rc::new(Cell::new(0));
+    let make = |message: &str| -> Result<_> {
+        let toast = ui.toast(message)?;
+        toast.set_timeout(0.0);
+        toast.on_dismiss({
+            let dismissed = dismissed.clone();
+            move || dismissed.set(dismissed.get() + 1)
+        });
+        Ok(toast)
+    };
+    let first = make("1 つめ")?;
+    let second = make("2 つめ")?;
+    let urgent = make("急ぎ")?;
+    urgent.set_priority(naui_core::ToastPriority::High);
+
+    first.show();
+    second.show();
+    assert!(first.is_visible());
+    assert!(second.is_queued() && !second.is_visible(), "後のものは並ぶ");
+    assert!(
+        !info_bar(&second).IsOpen().expect("IsOpen"),
+        "並んでいる間は開かない"
+    );
+
+    urgent.show();
+    assert!(urgent.is_visible(), "High はすぐ出る");
+    assert!(first.is_queued(), "前のものは列の先頭へ戻る");
+
+    urgent.dismiss();
+    assert!(first.is_visible(), "割り込まれたものが先に戻る");
+    first.dismiss();
+    assert!(second.is_visible() && info_bar(&second).IsOpen().expect("IsOpen"));
+    second.dismiss();
+    assert_eq!(dismissed.get(), 0, "アプリ自身の操作は通知しない");
+    window.close();
+    Ok(())
+}
+
+/// Each position becomes the `InfoBar`'s alignment in the layer it is overlaid on.
+fn toast_positions_become_the_alignment(ui: &Ui) -> Result<()> {
+    let window = ui.window("トースト", 360.0, 240.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    window.show();
+
+    let toast = ui.toast("ここ")?;
+    toast.set_timeout(0.0);
+    let bar = info_bar(&toast);
+    for position in naui_core::ToastPosition::ALL {
+        toast.set_position(position);
+        toast.show();
+        let vertical = if position.is_top() {
+            VerticalAlignment::Top
+        } else {
+            VerticalAlignment::Bottom
+        };
+        let horizontal = match position.align() {
+            Align::Start => HorizontalAlignment::Left,
+            Align::End => HorizontalAlignment::Right,
+            _ => HorizontalAlignment::Center,
+        };
+        assert_eq!(
+            bar.VerticalAlignment().expect("縦"),
+            vertical,
+            "{position:?}"
+        );
+        assert_eq!(
+            bar.HorizontalAlignment().expect("横"),
+            horizontal,
+            "{position:?}"
+        );
+        toast.dismiss();
+    }
+    window.close();
+    Ok(())
+}
+
+/// A toast left on screen in a window closed with `Window::close` does not hold up
+/// the queue: the next one shown takes its place, without notifying.
+fn toast_in_a_closed_window_gives_way(ui: &Ui) -> Result<()> {
+    let old = ui.window("閉じる窓", 360.0, 240.0)?;
+    old.set_child(&ui.stack(Orientation::Vertical)?);
+    old.show();
+    let stuck = ui.toast("閉じた窓のトースト")?;
+    stuck.set_timeout(0.0);
+    let dismissed = Rc::new(Cell::new(0));
+    stuck.on_dismiss({
+        let dismissed = dismissed.clone();
+        move || dismissed.set(dismissed.get() + 1)
+    });
+    stuck.show();
+    assert!(stuck.is_visible());
+    old.close();
+
+    let new = ui.window("新しい窓", 360.0, 240.0)?;
+    new.set_child(&ui.stack(Orientation::Vertical)?);
+    new.show();
+    let next = ui.toast("新しい窓のトースト")?;
+    next.set_timeout(0.0);
+    next.show();
+    assert!(next.is_visible(), "並ばずに出る");
+    assert!(
+        !stuck.is_visible() && !stuck.is_queued(),
+        "残ったものは外れる"
+    );
+    assert_eq!(dismissed.get(), 0, "外しても通知は届かない");
+    next.dismiss();
+    new.close();
     Ok(())
 }

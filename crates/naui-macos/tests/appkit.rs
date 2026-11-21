@@ -18,11 +18,11 @@ use std::time::{Duration, Instant};
 use naui_core::{
     Align, Bitmap, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
     EventResponse, FileFilter, FilePickerMode, Fit, Gradient, GridCell, Length, ListItem, MenuItem,
-    MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
+    MenuShortcut, MenuSpec, Modifiers, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
     PointerButton, PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode,
     SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle,
-    Theme, Time, ToolbarIcon, ToolbarItem, Track, TreeItem, WindowPlacement, WindowState,
-    DEFAULT_SIDEBAR_WIDTH,
+    Theme, Time, ToastPosition, ToastPriority, ToolbarIcon, ToolbarItem, Track, TreeItem,
+    WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
 use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
 use objc2::rc::{autoreleasepool, Retained};
@@ -66,6 +66,14 @@ fn main() {
         (
             "click が利用者の操作と同じく通知し、無効なら何もしない",
             clicks_notify_like_the_user,
+        ),
+        (
+            "enter_text と submit が打鍵と Enter と同じく通知し、無効なら何もしない",
+            typing_notifies_like_the_user,
+        ),
+        (
+            "respond が Dialog と Sheet のボタンを押し、開く前なら開いた直後に押す",
+            respond_answers_like_the_user,
         ),
         (
             "チェックボックスが反転し新しい値を通知する",
@@ -191,6 +199,18 @@ fn main() {
             list_selection_round_trips,
         ),
         ("リストの複数選択が 0 件にもなる", list_multiple_selection),
+        (
+            "リストの行をドラッグで並べ替えると選択がついてくる",
+            list_drag_rows_moves_rows_and_selection,
+        ),
+        (
+            "リストの行の並べ替えが NSTableView のドラッグ＆ドロップを通る",
+            list_reorder_goes_through_table_drag_and_drop,
+        ),
+        (
+            "組み立てる行のリストも並べ替えられる",
+            list_reorder_with_row_builder,
+        ),
         ("リストが選べない行を飛ばす", list_skips_disabled_rows),
         (
             "行のクリックがクロージャへ届く",
@@ -323,6 +343,18 @@ fn main() {
             tree_selection_round_trips,
         ),
         ("ツリーが選べない枝を飛ばす", tree_skips_disabled_branches),
+        (
+            "ツリーの複数選択が NSOutlineView と往復し、閉じた枝の中の選択を覚える",
+            tree_multiple_selection_round_trips,
+        ),
+        (
+            "ツリーの複数選択で ⌘ は隠れた選択を残し、⇧ と修飾なしは選び直す",
+            tree_modifier_keys_decide_hidden_selection,
+        ),
+        (
+            "ツリーの単一選択も閉じた枝の中で覚えている",
+            tree_keeps_a_single_selection_inside_a_collapsed_branch,
+        ),
         ("ツリーの開閉が通知される", tree_expansion_notifies),
         (
             "閉じた枝の中の開閉が保たれる",
@@ -864,8 +896,24 @@ fn main() {
             toast_action_notifies_and_dismisses,
         ),
         (
-            "新しいトーストが前のものを黙って置き換える",
-            toast_replaces_the_previous_one,
+            "後から出したトーストは前のものが消えるまで並んで待つ",
+            toast_waits_its_turn,
+        ),
+        (
+            "消えた通知が届くときには次のトーストが出ている",
+            toast_next_one_is_up_before_on_dismiss,
+        ),
+        (
+            "優先度 High のトーストはすぐ出て、前のものを列の先頭へ戻す",
+            toast_high_priority_comes_up_at_once,
+        ),
+        (
+            "トーストが指定した端の位置に出る",
+            toast_positions_place_it_on_each_edge,
+        ),
+        (
+            "閉じた窓に残ったトーストは次のものに場所を譲る",
+            toast_in_a_closed_window_gives_way,
         ),
         (
             "トーストが指定した時間で自分から消える",
@@ -1258,6 +1306,200 @@ fn clicks_notify_like_the_user(ui: &Ui) -> Result<()> {
     link.set_enabled(false);
     link.click();
     assert_eq!(follows.get(), 1, "無効なリンクは押せない");
+    Ok(())
+}
+
+/// Records every value a notification passes.
+fn recorder<T: Clone + 'static>() -> (Rc<RefCell<Vec<T>>>, impl FnMut(T) + 'static) {
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = {
+        let seen = seen.clone();
+        move |value: T| seen.borrow_mut().push(value)
+    };
+    (seen, sink)
+}
+
+/// `enter_text` replaces the text and notifies as typing does, and `submit` /
+/// `search` as Enter does. Neither does anything while disabled or read-only.
+fn typing_notifies_like_the_user(ui: &Ui) -> Result<()> {
+    // 窓に載せていなくても、打鍵の通知は届く。
+    let field = ui.text_input("前の文字")?;
+    let (changes, sink) = recorder::<String>();
+    let mut sink = sink;
+    field.on_change(move |text| sink(text.to_string()));
+    let (submits, sink) = recorder::<String>();
+    let mut sink = sink;
+    field.on_submit(move |text| sink(text.to_string()));
+    field.enter_text("Ada");
+    assert_eq!(field.text(), "Ada");
+    assert_eq!(
+        *changes.borrow(),
+        ["Ada"],
+        "1 度だけ新しい中身で通知すること"
+    );
+    field.submit();
+    assert_eq!(*submits.borrow(), ["Ada"]);
+    field.set_read_only(true);
+    field.enter_text("Grace");
+    field.submit();
+    assert_eq!(field.text(), "Ada", "読み取り専用の欄には打てない");
+    assert_eq!(submits.borrow().len(), 1, "読み取り専用の欄は確定しない");
+    field.set_read_only(false);
+    field.set_enabled(false);
+    field.enter_text("Grace");
+    field.submit();
+    assert_eq!(field.text(), "Ada", "無効な欄には打てない");
+    assert_eq!(changes.borrow().len(), 1);
+    assert_eq!(submits.borrow().len(), 1);
+
+    let password = ui.password_input()?;
+    let (changes, sink) = recorder::<String>();
+    let mut sink = sink;
+    password.on_change(move |text| sink(text.to_string()));
+    let (submits, sink) = recorder::<String>();
+    let mut sink = sink;
+    password.on_submit(move |text| sink(text.to_string()));
+    password.enter_text("secret");
+    password.submit();
+    assert_eq!(password.text(), "secret");
+    assert_eq!(*changes.borrow(), ["secret"]);
+    assert_eq!(*submits.borrow(), ["secret"]);
+
+    let search = ui.search_input()?;
+    let (changes, sink) = recorder::<String>();
+    let mut sink = sink;
+    search.on_change(move |text| sink(text.to_string()));
+    let (searches, sink) = recorder::<String>();
+    let mut sink = sink;
+    search.on_search(move |text| sink(text.to_string()));
+    search.enter_text("naui");
+    search.search();
+    assert_eq!(*changes.borrow(), ["naui"]);
+    assert_eq!(*searches.borrow(), ["naui"]);
+    search.set_enabled(false);
+    search.enter_text("other");
+    search.search();
+    assert_eq!(search.text(), "naui");
+    assert_eq!(searches.borrow().len(), 1, "無効な検索欄は確定しない");
+
+    let area = ui.text_area("1 行目")?;
+    let (changes, sink) = recorder::<String>();
+    let mut sink = sink;
+    area.on_change(move |text| sink(text.to_string()));
+    area.enter_text("一\n二");
+    assert_eq!(area.text(), "一\n二");
+    assert_eq!(*changes.borrow(), ["一\n二"]);
+    area.set_read_only(true);
+    area.enter_text("三");
+    assert_eq!(area.text(), "一\n二", "読み取り専用の欄には打てない");
+    area.set_read_only(false);
+    area.set_enabled(false);
+    area.enter_text("三");
+    assert_eq!(area.text(), "一\n二", "無効な欄には打てない");
+    assert_eq!(changes.borrow().len(), 1);
+
+    let number = ui.number_input(1.0)?;
+    number.set_range(Some(0.0), Some(10.0));
+    let (values, sink) = recorder::<f64>();
+    number.on_change(sink);
+    let (submits, sink) = recorder::<f64>();
+    number.on_submit(sink);
+    number.enter_text("4");
+    assert_eq!(number.value(), 4.0, "読める数はすぐ値になる");
+    assert_eq!(*values.borrow(), [4.0]);
+    number.submit();
+    assert_eq!(*submits.borrow(), [4.0]);
+    number.enter_text("-");
+    assert_eq!(values.borrow().len(), 1, "読めない文字は確定まで待つ");
+    number.submit();
+    assert_eq!(number.value(), 4.0, "確定で読めない文字は元へ戻る");
+    assert_eq!(*submits.borrow(), [4.0, 4.0]);
+    number.set_enabled(false);
+    number.enter_text("7");
+    number.submit();
+    assert_eq!(number.value(), 4.0, "無効な欄には打てない");
+    assert_eq!(submits.borrow().len(), 2);
+
+    let combo = ui.editable_combo_box()?;
+    combo.set_items(&["Apple", "Banana"]);
+    let (changes, sink) = recorder::<String>();
+    let mut sink = sink;
+    combo.on_change(move |text| sink(text.to_string()));
+    combo.enter_text("Ap");
+    assert_eq!(combo.text(), "Ap", "候補で補わない");
+    assert_eq!(*changes.borrow(), ["Ap"]);
+    combo.enter_text("Banana");
+    assert_eq!(combo.selected(), Some(1), "候補と同じ文字なら選ばれる");
+    combo.set_enabled(false);
+    combo.enter_text("Cherry");
+    assert_eq!(combo.text(), "Banana", "無効な欄には打てない");
+    assert_eq!(*changes.borrow(), ["Ap", "Banana"]);
+    Ok(())
+}
+
+/// `respond` clicks the dialog's or sheet's button for the role. Given before it
+/// opens, it is kept and given right after it opens: inside `Dialog::open`'s modal
+/// loop on macOS, which is why a click that opens a dialog returns answered.
+fn respond_answers_like_the_user(ui: &Ui) -> Result<()> {
+    let dialog = ui.dialog("消しますか")?;
+    dialog.set_buttons(
+        DialogButtons::new()
+            .primary("消す")
+            .secondary("あとで")
+            .cancel("やめる"),
+    );
+    let (responses, sink) = recorder::<DialogResponse>();
+    dialog.on_response(sink);
+    // 開くボタンの on_click から開き、押す前に答えを預けておく。
+    let opener = ui.button("消す…")?;
+    opener.on_click({
+        let dialog = dialog.clone();
+        move || dialog.open()
+    });
+    for response in [
+        DialogResponse::Primary,
+        DialogResponse::Secondary,
+        DialogResponse::Cancel,
+    ] {
+        dialog.respond(response);
+        opener.click();
+        assert!(!dialog.is_open(), "{response:?}: 答えて閉じてから戻ること");
+    }
+    assert_eq!(
+        *responses.borrow(),
+        [
+            DialogResponse::Primary,
+            DialogResponse::Secondary,
+            DialogResponse::Cancel
+        ]
+    );
+
+    let window = sheet_window(ui, "シートに答える")?;
+    let sheet = ui.sheet("新しいフォルダ")?;
+    sheet.set_child(&ui.text_input("")?);
+    sheet.set_buttons(DialogButtons::new().primary("作成").cancel("キャンセル"));
+    let (responses, sink) = recorder::<DialogResponse>();
+    sheet.on_response(sink);
+    sheet.respond(DialogResponse::Primary);
+    sheet.open();
+    pump_until(2.0, || !sheet.is_open());
+    assert_eq!(*responses.borrow(), [DialogResponse::Primary]);
+
+    // 無効なボタンは押せず、開いたまま。ないボタンも同じ。
+    sheet.set_button_enabled(DialogResponse::Primary, false);
+    sheet.open();
+    pump_until(2.0, || sheet.native_window().isVisible());
+    sheet.respond(DialogResponse::Primary);
+    sheet.respond(DialogResponse::Secondary);
+    pump(0.2);
+    assert!(sheet.is_open(), "無効なボタンとないボタンは押せない");
+    sheet.respond(DialogResponse::Cancel);
+    assert!(!sheet.is_open());
+    assert_eq!(
+        *responses.borrow(),
+        [DialogResponse::Primary, DialogResponse::Cancel]
+    );
+    window.close();
     Ok(())
 }
 
@@ -1669,7 +1911,7 @@ fn canvas_draws_the_broader_vocabulary(ui: &Ui) -> Result<()> {
 /// Mouse presses, drags and releases arrive converted from window coordinates to
 /// surface coordinates.
 fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
-    use objc2_core_graphics::{CGEvent, CGEventType, CGMouseButton};
+    use objc2_core_graphics::{CGEvent, CGEventFlags, CGEventType, CGMouseButton};
 
     let canvas = ui.canvas()?;
     canvas.set_sizing(
@@ -1691,12 +1933,12 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
     let native_window = window.native_window();
 
     // 面の (30, 20) をウィンドウ座標へ直して、本物の NSEvent を作る。
-    let send = |kind: NSEventType, x: f64, y: f64| {
+    let send_with = |kind: NSEventType, x: f64, y: f64, flags: NSEventModifierFlags| {
         let point = view.convertPoint_toView(NSPoint::new(x, y), None);
         let event = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
             kind,
             point,
-            NSEventModifierFlags::empty(),
+            flags,
             0.0,
             native_window.windowNumber(),
             None,
@@ -1712,9 +1954,12 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
             NSEventType::RightMouseDown => view.rightMouseDown(&event),
             NSEventType::RightMouseUp => view.rightMouseUp(&event),
             NSEventType::OtherMouseDown => view.otherMouseDown(&event),
+            NSEventType::MouseMoved => view.mouseMoved(&event),
             _ => view.otherMouseUp(&event),
         }
     };
+    let send =
+        |kind: NSEventType, x: f64, y: f64| send_with(kind, x, y, NSEventModifierFlags::empty());
     send(NSEventType::LeftMouseDown, 30.0, 20.0);
     send(NSEventType::LeftMouseDragged, 50.0, 40.0);
     send(NSEventType::LeftMouseUp, 50.0, 40.0);
@@ -1755,11 +2000,13 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
 
     // 左右以外は `otherMouseDown:` へまとめて届くので、ボタンの番号で見分ける。
     // `mouseEventWithType` では番号を決められないので CGEvent から作る
-    // (位置はスクリーン座標になるので、ここでは見ない)。
+    // (位置はスクリーン座標になるので、ここでは見ない)。修飾キーは本物の
+    // キーボードの状態を拾わないよう、空と明示する。
     let other = |kind: CGEventType, number: u32| {
         let cg =
             CGEvent::new_mouse_event(None, kind, NSPoint::new(0.0, 0.0), CGMouseButton(number))
                 .expect("マウスの CGEvent");
+        CGEvent::set_flags(Some(&cg), CGEventFlags::empty());
         let event = NSEvent::eventWithCGEvent(&cg).expect("マウスの NSEvent");
         if kind == CGEventType::OtherMouseDown {
             view.otherMouseDown(&event);
@@ -1785,6 +2032,93 @@ fn canvas_reports_pointer_events(ui: &Ui) -> Result<()> {
             (PointerPhase::Down, Some(PointerButton::Forward)),
         ],
         "右・中・側面のボタンも見分けて届くこと"
+    );
+    assert!(
+        seen.borrow().iter().all(|e| e.modifiers.is_empty()),
+        "修飾キーを押していなければ空: {:?}",
+        seen.borrow()
+    );
+
+    // 修飾キーは押下・移動・解放のどれにも、その時点の状態で付く。
+    seen.borrow_mut().clear();
+    let shift = NSEventModifierFlags::Shift;
+    send_with(
+        NSEventType::MouseMoved,
+        5.0,
+        5.0,
+        NSEventModifierFlags::Option,
+    );
+    send_with(NSEventType::LeftMouseDown, 30.0, 20.0, shift);
+    send_with(
+        NSEventType::LeftMouseDragged,
+        40.0,
+        30.0,
+        shift | NSEventModifierFlags::Command,
+    );
+    send_with(
+        NSEventType::LeftMouseUp,
+        40.0,
+        30.0,
+        NSEventModifierFlags::Control,
+    );
+    send_with(
+        NSEventType::RightMouseDown,
+        10.0,
+        10.0,
+        NSEventModifierFlags::Command,
+    );
+    send_with(
+        NSEventType::RightMouseUp,
+        10.0,
+        10.0,
+        // Caps Lock や関数キーの印は修飾キーに数えない。
+        NSEventModifierFlags::CapsLock | NSEventModifierFlags::Function,
+    );
+    let mods = |shift, control, alt, meta| Modifiers {
+        shift,
+        control,
+        alt,
+        meta,
+    };
+    let events: Vec<_> = seen
+        .borrow()
+        .iter()
+        .map(|e| (e.phase, e.modifiers))
+        .collect();
+    assert_eq!(
+        events,
+        vec![
+            (PointerPhase::Move, mods(false, false, true, false)),
+            (PointerPhase::Down, mods(true, false, false, false)),
+            (PointerPhase::Move, mods(true, false, false, true)),
+            (PointerPhase::Up, mods(false, true, false, false)),
+            (PointerPhase::Down, mods(false, false, false, true)),
+            (PointerPhase::Up, Modifiers::default()),
+        ],
+        "修飾キーが相ごとに届くこと"
+    );
+    assert!(seen.borrow()[4].modifiers.primary(), "⌘ は主の修飾キー");
+
+    // `otherMouseDown:` へ届くボタンも同じ。
+    seen.borrow_mut().clear();
+    let cg = CGEvent::new_mouse_event(
+        None,
+        CGEventType::OtherMouseDown,
+        NSPoint::new(0.0, 0.0),
+        CGMouseButton(2),
+    )
+    .expect("マウスの CGEvent");
+    CGEvent::set_flags(
+        Some(&cg),
+        CGEventFlags::MaskShift | CGEventFlags::MaskAlternate,
+    );
+    view.otherMouseDown(&NSEvent::eventWithCGEvent(&cg).expect("マウスの NSEvent"));
+    assert_eq!(
+        seen.borrow()
+            .iter()
+            .map(|e| (e.button, e.modifiers))
+            .collect::<Vec<_>>(),
+        vec![(Some(PointerButton::Middle), mods(true, false, true, false))]
     );
     window.close();
     Ok(())
@@ -1818,7 +2152,7 @@ define_class!(
 /// depends on the environment (it moved locally but not on the CI runner), so
 /// whether it was passed on is observed with a recording responder.
 fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
-    use objc2_core_graphics::{CGEvent, CGScrollEventUnit};
+    use objc2_core_graphics::{CGEvent, CGEventFlags, CGScrollEventUnit};
 
     let canvas = ui.canvas()?;
     canvas.set_sizing(
@@ -1851,12 +2185,14 @@ fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
 
     // 本物のホイールの NSEvent は CGEvent からしか作れない。正の量は上へ
     // (中身が下へ動く向き) なので、負の量で下へ読み進める。
-    let wheel = |unit: CGScrollEventUnit, amount: i32| {
+    let wheel_with = |unit: CGScrollEventUnit, amount: i32, flags: CGEventFlags| {
         let cg = CGEvent::new_scroll_wheel_event2(None, unit, 1, amount, 0, 0)
             .expect("ホイールの CGEvent");
+        CGEvent::set_flags(Some(&cg), flags);
         let event = NSEvent::eventWithCGEvent(&cg).expect("ホイールの NSEvent");
         view.scrollWheel(&event);
     };
+    let wheel = |unit, amount| wheel_with(unit, amount, CGEventFlags::empty());
 
     // 細かく測れる量 (ピクセル) はそのまま、向きは「下へ読み進めると正」。
     wheel(CGScrollEventUnit::Pixel, -30);
@@ -1865,6 +2201,7 @@ fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].phase, PointerPhase::Wheel);
         assert_eq!(seen[0].button, None);
+        assert!(seen[0].modifiers.is_empty(), "{:?}", seen[0]);
         assert_eq!(
             (seen[0].wheel_x, seen[0].wheel_y),
             (0.0, 30.0),
@@ -1896,6 +2233,28 @@ fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
         1,
         "Handled なら次のレスポンダーへは回さないこと"
     );
+
+    // ⌘ を押しながらのホイール (拡大縮小によく使う) は修飾キー付きで届く。
+    wheel_with(
+        CGScrollEventUnit::Line,
+        -1,
+        CGEventFlags::MaskCommand | CGEventFlags::MaskControl,
+    );
+    {
+        let seen = seen.borrow();
+        assert_eq!(seen.len(), 3);
+        assert_eq!(
+            seen[2].modifiers,
+            Modifiers {
+                control: true,
+                meta: true,
+                ..Modifiers::default()
+            },
+            "{:?}",
+            seen[2]
+        );
+        assert!(seen[2].modifiers.primary());
+    }
 
     unsafe { view.setNextResponder(original.as_deref()) };
     window.close();
@@ -8996,6 +9355,257 @@ fn list_multiple_selection(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// The text of each row of a list made from `ListItem`s, as the table shows it.
+fn list_texts(list: &naui_macos::List) -> Vec<String> {
+    let table = list.native_table();
+    (0..table.numberOfRows())
+        .map(|row| {
+            let cell = table
+                .viewAtColumn_row_makeIfNecessary(0, row, true)
+                .expect("行のビューが作られること")
+                .downcast::<objc2_app_kit::NSTableCellView>()
+                .expect("行は NSTableCellView であること");
+            unsafe { cell.textField() }
+                .map(|field| field.stringValue().to_string())
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// `drag_rows` moves the rows like the user's drop: the rows and the selection move,
+/// `on_reorder` is told, `on_select` is not.
+fn list_drag_rows_moves_rows_and_selection(ui: &Ui) -> Result<()> {
+    use naui_core::RowMove;
+
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("東京"),
+        ListItem::new("大阪"),
+        ListItem::new("札幌"),
+        ListItem::new("那覇").enabled(false),
+        ListItem::new("福岡"),
+    ]);
+    list.set_selection_mode(SelectionMode::Multiple);
+    let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
+    let selections = Rc::new(Cell::new(0));
+    list.on_reorder({
+        let moves = moves.clone();
+        move |moved| moves.borrow_mut().push(moved.clone())
+    });
+    list.on_select({
+        let selections = selections.clone();
+        move |_| selections.set(selections.get() + 1)
+    });
+
+    // 並べ替えを許すまでは、ドラッグは何もしない。
+    assert!(!list.is_reorderable());
+    list.drag_rows(&[0], 3);
+    assert!(moves.borrow().is_empty());
+    assert_eq!(list_texts(&list)[0], "東京");
+
+    list.set_reorderable(true);
+    assert!(list.is_reorderable());
+    list.set_selection(&[0, 2]);
+    list.drag_rows(&[0, 2], 5);
+    assert_eq!(list_texts(&list), ["大阪", "那覇", "福岡", "東京", "札幌"]);
+    assert_eq!(*moves.borrow(), vec![RowMove::new([0, 2], 5)]);
+    assert_eq!(list.selection(), vec![3, 4], "選択は動いた行についていく");
+    assert_eq!(
+        selections.get(),
+        0,
+        "選ばれている行は同じなので on_select は来ない"
+    );
+
+    // 選べない行はつかめない。ほかの行といっしょでも、その行だけ残る。
+    list.drag_rows(&[1], 0);
+    assert_eq!(moves.borrow().len(), 1, "選べない行だけなら何も起きない");
+    list.drag_rows(&[1, 4], 0);
+    assert_eq!(list_texts(&list), ["札幌", "大阪", "那覇", "福岡", "東京"]);
+    assert_eq!(moves.borrow()[1], RowMove::new([4], 0));
+    assert_eq!(list.selection(), vec![0, 4]);
+
+    // 自分の場所へ落としても通知しない。
+    list.drag_rows(&[1], 2);
+    assert_eq!(moves.borrow().len(), 2);
+
+    // move_rows は通知せず、並べ替えを許していなくても動かす。
+    list.set_reorderable(false);
+    list.move_rows(&RowMove::new([0], 5));
+    assert_eq!(list_texts(&list), ["大阪", "那覇", "福岡", "東京", "札幌"]);
+    assert_eq!(list.selection(), vec![3, 4]);
+    assert_eq!(moves.borrow().len(), 2);
+    assert_eq!(selections.get(), 0);
+    Ok(())
+}
+
+define_class!(
+    /// Stands in for the `NSDraggingInfo` of a drag of rows: the source of the drag and
+    /// the pasteboard.
+    #[unsafe(super(objc2_foundation::NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiTestRowDraggingInfo"]
+    #[ivars = (Option<Retained<AnyObject>>, Retained<objc2_app_kit::NSPasteboard>)]
+    struct FakeRowDraggingInfo;
+
+    unsafe impl NSObjectProtocol for FakeRowDraggingInfo {}
+
+    impl FakeRowDraggingInfo {
+        #[unsafe(method_id(draggingSource))]
+        fn dragging_source(&self) -> Option<Retained<AnyObject>> {
+            self.ivars().0.clone()
+        }
+
+        #[unsafe(method_id(draggingPasteboard))]
+        fn dragging_pasteboard(&self) -> Retained<objc2_app_kit::NSPasteboard> {
+            self.ivars().1.clone()
+        }
+    }
+);
+
+/// A drag of rows goes through `NSTableView`'s data source: only selectable rows put
+/// something on the pasteboard, only the table's own rows can be dropped (always
+/// between two rows), and the drop moves the rows. A real drag cannot be
+/// synthesized, so the messages AppKit sends are sent directly.
+fn list_reorder_goes_through_table_drag_and_drop(ui: &Ui) -> Result<()> {
+    use naui_core::RowMove;
+    use objc2_app_kit::{NSDragOperation, NSPasteboard, NSTableViewDropOperation};
+    use objc2_foundation::{NSIndexSet, NSInteger};
+
+    let window = ui.window("並べ替え", 320.0, 240.0)?;
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("一"),
+        ListItem::new("二").enabled(false),
+        ListItem::new("三"),
+        ListItem::new("四"),
+    ]);
+    window.set_child(&list);
+    window.show();
+    pump(0.1);
+
+    let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
+    list.on_reorder({
+        let moves = moves.clone();
+        move |moved| moves.borrow_mut().push(moved.clone())
+    });
+    let table = list.native_table();
+    let source = unsafe { table.dataSource() }.expect("データソースがあること");
+    let writer = |row: NSInteger| -> Option<Retained<AnyObject>> {
+        unsafe { msg_send![&*source, tableView: &*table, pasteboardWriterForRow: row] }
+    };
+    assert!(writer(0).is_none(), "並べ替えを許すまでは行をつかめない");
+    assert!(
+        table.registeredDraggedTypes().is_empty(),
+        "並べ替えを許すまではドロップを受けない"
+    );
+
+    list.set_reorderable(true);
+    assert!(writer(0).is_some(), "選べる行はつかめる");
+    assert!(writer(1).is_none(), "選べない行はつかめない");
+    assert_eq!(table.registeredDraggedTypes().len(), 1);
+
+    let mtm = MainThreadMarker::new().expect("main thread");
+    let pasteboard = NSPasteboard::pasteboardWithUniqueName();
+    let info_from = |source: Option<Retained<AnyObject>>| {
+        let info = FakeRowDraggingInfo::alloc(mtm).set_ivars((source, pasteboard.clone()));
+        let info: Retained<FakeRowDraggingInfo> = unsafe { msg_send![super(info), init] };
+        info
+    };
+    let own = info_from(Some(Retained::into_super(Retained::into_super(
+        Retained::into_super(Retained::into_super(Retained::into_super(table.clone()))),
+    ))));
+    let foreign = info_from(None);
+    let validate = |info: &FakeRowDraggingInfo, row: NSInteger| -> NSDragOperation {
+        unsafe {
+            msg_send![&*source, tableView: &*table, validateDrop: info,
+                proposedRow: row, proposedDropOperation: NSTableViewDropOperation::On]
+        }
+    };
+    let accept = |info: &FakeRowDraggingInfo, row: NSInteger| -> bool {
+        unsafe {
+            msg_send![&*source, tableView: &*table, acceptDrop: info,
+                row: row, dropOperation: NSTableViewDropOperation::Above]
+        }
+    };
+
+    // ドラッグが始まる前は、自分の表からでも受けない。
+    assert_eq!(validate(&own, 0), NSDragOperation::None);
+
+    // 3 行目と 4 行目をつかむ。
+    let rows = NSIndexSet::indexSetWithIndexesInRange(objc2_foundation::NSRange::new(2, 2));
+    let no_session: Option<&AnyObject> = None;
+    let _: () = unsafe {
+        msg_send![&*source, tableView: &*table, draggingSession: no_session,
+            willBeginAtPoint: NSPoint::ZERO, forRowIndexes: &*rows]
+    };
+    assert_eq!(
+        validate(&foreign, 0),
+        NSDragOperation::None,
+        "ほかのところからのドラッグは断る"
+    );
+    assert!(!accept(&foreign, 0));
+    // 行の上へ向けたドロップも受ける (行の間へ向け直す)。
+    assert_eq!(validate(&own, 1), NSDragOperation::Move);
+    assert!(accept(&own, 0));
+    let _: () = unsafe {
+        msg_send![&*source, tableView: &*table, draggingSession: no_session,
+            endedAtPoint: NSPoint::ZERO, operation: NSDragOperation::Move]
+    };
+    assert_eq!(list_texts(&list), ["三", "四", "一", "二"]);
+    assert_eq!(*moves.borrow(), vec![RowMove::new([2, 3], 0)]);
+    assert_eq!(
+        validate(&own, 0),
+        NSDragOperation::None,
+        "ドラッグが終わったら受けない"
+    );
+
+    list.set_reorderable(false);
+    assert!(table.registeredDraggedTypes().is_empty());
+    window.close();
+    Ok(())
+}
+
+/// Rows from a builder move too: the app moves its data in `on_reorder`, and the rows
+/// built afterwards read it.
+fn list_reorder_with_row_builder(ui: &Ui) -> Result<()> {
+    let data: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(
+        (0..1000).map(|index| format!("行 {index}")).collect(),
+    ));
+    let list = ui.list()?;
+    list.set_row_builder(1000, {
+        let data = data.clone();
+        let ui = ui.clone();
+        move |index| Ok(ListRow::new(&ui.label(&data.borrow()[index])?))
+    });
+    list.on_reorder({
+        let data = data.clone();
+        move |moved| moved.apply(&mut data.borrow_mut())
+    });
+    list.set_reorderable(true);
+    let table = list.native_table();
+    let _ = table.viewAtColumn_row_makeIfNecessary(0, 1, true);
+    list.set_selected(1);
+    list.drag_rows(&[1], 900);
+    assert_eq!(data.borrow()[898], "行 899");
+    assert_eq!(data.borrow()[899], "行 1");
+    assert_eq!(list.selection(), vec![899], "選択は動いた行についていく");
+    list.refresh();
+    let cell = table
+        .viewAtColumn_row_makeIfNecessary(0, 899, true)
+        .expect("動いた先の行が作られること");
+    let label = find_label(&cell).expect("行にラベルがあること");
+    assert_eq!(label, "行 1", "動いた先はアプリのデータから組み立てる");
+    Ok(())
+}
+
+/// The text of the first `NSTextField` inside `view`.
+fn find_label(view: &NSView) -> Option<String> {
+    if let Ok(field) = view.retain().downcast::<NSTextField>() {
+        return Some(field.stringValue().to_string());
+    }
+    view.subviews().iter().find_map(|child| find_label(&child))
+}
+
 /// Rows that cannot be selected are selected neither from code nor natively.
 fn list_skips_disabled_rows(ui: &Ui) -> Result<()> {
     let list = ui.list()?;
@@ -12201,15 +12811,15 @@ fn toast_is_placed_over_the_window(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// Clicking the action button calls `on_action` and `on_dismiss`, and it
-/// disappears.
+/// Clicking an action button calls `on_action` with its index and `on_dismiss`,
+/// and it disappears. The buttons follow `set_actions` in order, even while shown.
 fn toast_action_notifies_and_dismisses(ui: &Ui) -> Result<()> {
     let window = ui.window("トースト", 360.0, 240.0)?;
     window.set_child(&ui.stack(Orientation::Vertical)?);
 
     let toast = ui.toast("削除しました")?;
-    toast.set_action("元に戻す");
-    assert_eq!(toast.action(), "元に戻す");
+    toast.set_actions(&["元に戻す"]);
+    assert_eq!(toast.actions(), ["元に戻す"]);
     // 押されるまでは消えないトーストにしておく。
     toast.set_timeout(0.0);
     assert!(toast.spec().is_persistent());
@@ -12217,30 +12827,55 @@ fn toast_action_notifies_and_dismisses(ui: &Ui) -> Result<()> {
     let seen = Rc::new(RefCell::new(Vec::new()));
     toast.on_action({
         let seen = seen.clone();
-        move || seen.borrow_mut().push("action")
+        move |index| seen.borrow_mut().push(format!("action {index}"))
     });
     toast.on_dismiss({
         let seen = seen.clone();
-        move || seen.borrow_mut().push("dismiss")
+        move || seen.borrow_mut().push("dismiss".to_string())
     });
 
     toast.show();
     let view = toast.native_view().expect("出ている間はビューがあること");
-    let button = toast_button(&view).expect("操作ボタンが並んでいること");
-    assert_eq!(button.title().to_string(), "元に戻す");
-    unsafe { button.performClick(None) };
+    assert_eq!(button_titles(&view), ["元に戻す"]);
+
+    // 出したまま並べ替えても、その場で差し替わる。
+    toast.set_actions(&["元に戻す", "開く"]);
+    assert_eq!(button_titles(&view), ["元に戻す", "開く"]);
+    toast.set_actions::<&str>(&[]);
+    assert!(
+        button_titles(&view).is_empty(),
+        "空の列でボタンが消えること"
+    );
+    toast.set_actions(&["元に戻す", "開く"]);
+    assert_eq!(
+        toast_labels(&view),
+        ["削除しました"],
+        "文字は先頭に残ること"
+    );
+
+    let open = toast_buttons(&view).pop().expect("2 つ目のボタン");
+    unsafe { open.performClick(None) };
 
     assert_eq!(
         *seen.borrow(),
-        ["action", "dismiss"],
-        "押された通知のあとに、消えた通知が届くこと"
+        ["action 1", "dismiss"],
+        "押したボタンの番号が届き、そのあとに消えた通知が届くこと"
     );
     assert!(!toast.is_visible(), "押すと消えること");
+
+    // 出し直すと 1 つ目のボタンも働く。
+    seen.borrow_mut().clear();
+    toast.show();
+    let view = toast.native_view().expect("出し直したビュー");
+    let undo = toast_buttons(&view).remove(0);
+    unsafe { undo.performClick(None) };
+    assert_eq!(*seen.borrow(), ["action 0", "dismiss"]);
     Ok(())
 }
 
-/// A new toast replaces the previous one, and the replaced one does not notify.
-fn toast_replaces_the_previous_one(ui: &Ui) -> Result<()> {
+/// A toast shown while another is up waits its turn, and comes up once the other
+/// is dismissed. Taking a waiting one out skips it, and nothing is notified.
+fn toast_waits_its_turn(ui: &Ui) -> Result<()> {
     let window = ui.window("トースト", 360.0, 240.0)?;
     window.set_child(&ui.stack(Orientation::Vertical)?);
     let content = window
@@ -12248,34 +12883,218 @@ fn toast_replaces_the_previous_one(ui: &Ui) -> Result<()> {
         .contentView()
         .expect("ウィンドウの中身があること");
 
-    let first = ui.toast("1 つめ")?;
-    first.set_timeout(0.0);
     let dismissed = Rc::new(RefCell::new(0));
-    first.on_dismiss({
-        let dismissed = dismissed.clone();
-        move || *dismissed.borrow_mut() += 1
-    });
+    let make = |message: &str| -> Result<_> {
+        let toast = ui.toast(message)?;
+        toast.set_timeout(0.0);
+        toast.on_dismiss({
+            let dismissed = dismissed.clone();
+            move || *dismissed.borrow_mut() += 1
+        });
+        Ok(toast)
+    };
+    let first = make("1 つめ")?;
+    let second = make("2 つめ")?;
+    let third = make("3 つめ")?;
     first.show();
-
-    let second = ui.toast("2 つめ")?;
-    second.set_timeout(0.0);
     second.show();
+    third.show();
 
-    assert!(!first.is_visible(), "前のものは消えること");
-    assert!(second.is_visible());
+    assert!(first.is_visible() && !first.is_queued());
+    assert!(!second.is_visible() && second.is_queued(), "後のものは並ぶ");
+    assert!(second.native_view().is_none(), "並んでいる間はビューが無い");
+    assert_eq!(count_toasts(&content), 1, "同時に出るのは 1 つだけ");
+
+    // 並んでいるものをもう一度出しても、二重には並ばない。
+    second.show();
+    third.dismiss();
+    assert!(!third.is_queued(), "並んでいるものを外せる");
+
+    first.dismiss();
+    assert!(!first.is_visible());
+    assert!(second.is_visible() && !second.is_queued(), "次が出る");
+    assert_eq!(count_toasts(&content), 1);
+    assert_eq!(
+        toast_labels(&second.native_view().expect("出ていること")),
+        ["2 つめ"]
+    );
+
+    second.dismiss();
+    assert!(!third.is_visible(), "外したものは出ない");
+    assert_eq!(count_toasts(&content), 0);
     assert_eq!(
         *dismissed.borrow(),
         0,
         "アプリ自身の操作なので、消えた通知は届かないこと"
     );
-    assert_eq!(
-        count_toasts(&content),
-        1,
-        "同時に出るのは 1 つだけであること"
-    );
+    Ok(())
+}
 
+/// When a toast goes by itself, the next in the queue is already up by the time
+/// `on_dismiss` arrives, and showing another from inside it queues it behind.
+fn toast_next_one_is_up_before_on_dismiss(ui: &Ui) -> Result<()> {
+    let window = ui.window("トースト", 360.0, 240.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+
+    let first = ui.toast("1 つめ")?;
+    first.set_timeout(0.0);
+    first.set_actions(&["閉じる"]);
+    let second = ui.toast("2 つめ")?;
+    second.set_timeout(0.0);
+    let third = ui.toast("3 つめ")?;
+    third.set_timeout(0.0);
+
+    let seen = Rc::new(RefCell::new(None));
+    first.on_dismiss({
+        let (seen, second, third) = (seen.clone(), second.clone(), third.clone());
+        move || {
+            *seen.borrow_mut() = Some(second.is_visible());
+            third.show();
+        }
+    });
+    first.show();
+    second.show();
+
+    let view = first.native_view().expect("出ていること");
+    let close = toast_buttons(&view).remove(0);
+    unsafe { close.performClick(None) };
+
+    assert_eq!(*seen.borrow(), Some(true), "通知の時点で次が出ていること");
+    assert!(second.is_visible());
+    assert!(third.is_queued(), "通知の中で出したものは後ろに並ぶ");
     second.dismiss();
+    assert!(third.is_visible());
+    third.dismiss();
+    Ok(())
+}
+
+/// A `High` toast comes up at once; the one it interrupts goes back to the front of
+/// the queue without being notified, and comes up again afterwards.
+fn toast_high_priority_comes_up_at_once(ui: &Ui) -> Result<()> {
+    let window = ui.window("トースト", 360.0, 240.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("ウィンドウの中身があること");
+
+    let dismissed = Rc::new(RefCell::new(0));
+    let normal = ui.toast("ふつう")?;
+    normal.set_timeout(0.0);
+    normal.on_dismiss({
+        let dismissed = dismissed.clone();
+        move || *dismissed.borrow_mut() += 1
+    });
+    let later = ui.toast("あとで")?;
+    later.set_timeout(0.0);
+    let urgent = ui.toast("急ぎ")?;
+    urgent.set_timeout(0.0);
+    urgent.set_priority(ToastPriority::High);
+    assert_eq!(urgent.priority(), ToastPriority::High);
+
+    normal.show();
+    later.show();
+    urgent.show();
+    assert!(urgent.is_visible(), "並ばずにすぐ出る");
+    assert!(
+        !normal.is_visible() && normal.is_queued(),
+        "前のものは列へ戻る"
+    );
+    assert_eq!(count_toasts(&content), 1);
+    assert_eq!(*dismissed.borrow(), 0, "列へ戻っても通知は届かない");
+
+    urgent.dismiss();
+    assert!(normal.is_visible(), "割り込まれたものが先に戻る");
+    assert!(later.is_queued());
+    normal.dismiss();
+    assert!(later.is_visible());
+    later.dismiss();
     assert_eq!(count_toasts(&content), 0);
+    Ok(())
+}
+
+/// Each position puts the toast against that edge, 24 points in.
+fn toast_positions_place_it_on_each_edge(ui: &Ui) -> Result<()> {
+    let window = ui.window("トースト", 400.0, 300.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    let content = window
+        .native_window()
+        .contentView()
+        .expect("ウィンドウの中身があること");
+    content.setFrameSize(NSSize::new(400.0, 300.0));
+
+    let toast = ui.toast("ここ")?;
+    toast.set_timeout(0.0);
+    for position in ToastPosition::ALL {
+        toast.set_position(position);
+        assert_eq!(toast.position(), position);
+        toast.show();
+        content.layoutSubtreeIfNeeded();
+        let frame = toast.native_view().expect("出ていること").frame();
+        let (min_x, max_x) = (frame.origin.x, frame.origin.x + frame.size.width);
+        let (min_y, max_y) = (frame.origin.y, frame.origin.y + frame.size.height);
+        // contentView は下から上へ数える座標なので、上端は max_y で見る。
+        if position.is_top() {
+            assert!(
+                (max_y - 276.0).abs() < 1.0,
+                "{position:?} 上端から 24: {frame:?}"
+            );
+        } else {
+            assert!(
+                (min_y - 24.0).abs() < 1.0,
+                "{position:?} 下端から 24: {frame:?}"
+            );
+        }
+        match position.align() {
+            Align::Start => assert!((min_x - 24.0).abs() < 1.0, "{position:?}: {frame:?}"),
+            Align::End => assert!((max_x - 376.0).abs() < 1.0, "{position:?}: {frame:?}"),
+            _ => assert!(
+                ((min_x + max_x) / 2.0 - 200.0).abs() < 1.0,
+                "{position:?}: {frame:?}"
+            ),
+        }
+        toast.dismiss();
+    }
+    Ok(())
+}
+
+/// A toast left on screen in a window that has closed does not hold up the queue:
+/// the next one shown takes its place, without notifying.
+fn toast_in_a_closed_window_gives_way(ui: &Ui) -> Result<()> {
+    let old = ui.window("閉じる窓", 360.0, 240.0)?;
+    old.set_child(&ui.stack(Orientation::Vertical)?);
+    old.show();
+    let stuck = ui.toast("閉じた窓のトースト")?;
+    stuck.set_timeout(0.0);
+    let dismissed = Rc::new(RefCell::new(0));
+    stuck.on_dismiss({
+        let dismissed = dismissed.clone();
+        move || *dismissed.borrow_mut() += 1
+    });
+    stuck.show();
+    assert!(stuck.is_visible());
+    old.close();
+
+    let new = ui.window("新しい窓", 360.0, 240.0)?;
+    new.set_child(&ui.stack(Orientation::Vertical)?);
+    new.show();
+    let next = ui.toast("新しい窓のトースト")?;
+    next.set_timeout(0.0);
+    next.show();
+    assert!(next.is_visible(), "並ばずに出る");
+    assert!(
+        !stuck.is_visible() && !stuck.is_queued(),
+        "残ったものは外れる"
+    );
+    assert_eq!(*dismissed.borrow(), 0, "外しても通知は届かない");
+    let view = next.native_view().expect("出ていること");
+    assert!(
+        view.window()
+            .is_some_and(|w| std::ptr::eq(&*w, &*new.native_window())),
+        "新しい窓に出る"
+    );
+    next.dismiss();
+    new.close();
     Ok(())
 }
 
@@ -12339,11 +13158,20 @@ fn toast_labels(view: &NSView) -> Vec<String> {
         .collect()
 }
 
-/// The toast's action button. `None` if there is none.
-fn toast_button(view: &NSView) -> Option<Retained<NSButton>> {
+/// The toast's action buttons, in order.
+fn toast_buttons(view: &NSView) -> Vec<Retained<NSButton>> {
     toast_row(view)
         .iter()
-        .find_map(|item| item.downcast_ref::<NSButton>().map(|b| b.retain()))
+        .filter_map(|item| item.downcast_ref::<NSButton>().map(|b| b.retain()))
+        .collect()
+}
+
+/// The titles of the toast's action buttons, in order.
+fn button_titles(view: &NSView) -> Vec<String> {
+    toast_buttons(view)
+        .iter()
+        .map(|b| b.title().to_string())
+        .collect()
 }
 
 /// The row laying out the text and the button inside the toast.
@@ -12828,6 +13656,219 @@ fn tree_callback_can_touch_the_tree(ui: &Ui) -> Result<()> {
     assert_eq!(*seen.borrow(), vec![vec![0, 0]], "通知は 1 回だけ");
     assert_eq!(tree.len(), 2, "コールバックの中の差し替えが効くこと");
     assert_eq!(tree.selected(), Some(vec![0]));
+    Ok(())
+}
+
+/// The rows AppKit has selected, from the top.
+fn outline_selected_rows(outline: &objc2_app_kit::NSOutlineView) -> Vec<usize> {
+    let set = outline.selectedRowIndexes();
+    let mut rows = Vec::new();
+    let mut row = set.firstIndex();
+    while row != NSNotFound as usize {
+        rows.push(row);
+        row = set.indexGreaterThanIndex(row);
+    }
+    rows
+}
+
+/// Multiple selection maps to `allowsMultipleSelection`, and items inside a branch
+/// collapsed on the AppKit side stay selected (AppKit itself deselects them).
+fn tree_multiple_selection_round_trips(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+    let outline = tree.native_outline_view();
+    assert_eq!(tree.selection_mode(), SelectionMode::Single);
+    assert!(!outline.allowsMultipleSelection());
+    tree.set_selection_mode(SelectionMode::Multiple);
+    assert!(outline.allowsMultipleSelection());
+
+    let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    tree.on_select({
+        let seen = seen.clone();
+        move |path| seen.borrow_mut().push(path.to_vec())
+    });
+
+    // 閉じた枝の中も、祖先を開いて選ぶ。選べないパスは落とす。
+    tree.set_selection(&[vec![1, 0, 0], vec![0, 1], vec![9], vec![0, 1]]);
+    assert_eq!(tree.selection(), vec![vec![0, 1], vec![1, 0, 0]]);
+    assert_eq!(tree.selected(), Some(vec![0, 1]));
+    // 行は 0 src, 1 main.rs, 2 lib.rs, 3 docs, 4 guide, 5 intro.md。
+    assert_eq!(outline_selected_rows(&outline), vec![2, 5]);
+    assert!(seen.borrow().is_empty(), "set_selection は通知しない");
+
+    // AppKit 側で枝を閉じると AppKit は中の選択を外すが、naui は覚えている。
+    let docs = outline.itemAtRow(3).expect("docs");
+    unsafe { outline.collapseItem(Some(&docs)) };
+    assert_eq!(tree.selection(), vec![vec![0, 1], vec![1, 0, 0]]);
+    assert_eq!(outline_selected_rows(&outline), vec![2]);
+    assert!(
+        seen.borrow().is_empty(),
+        "閉じただけでは選択の通知は起きない"
+    );
+
+    // 開き直すと、中の開閉とともに選択も戻る。
+    unsafe { outline.expandItem(Some(&docs)) };
+    assert_eq!(outline_selected_rows(&outline), vec![2, 5]);
+    assert!(seen.borrow().is_empty());
+
+    // naui から閉じて開いても同じ。
+    tree.collapse(&[1]);
+    tree.expand(&[1]);
+    assert_eq!(tree.selection(), vec![vec![0, 1], vec![1, 0, 0]]);
+    assert_eq!(outline_selected_rows(&outline), vec![2, 5]);
+
+    // 枝を選んでも子は選ばれない。select_many は 1 回だけ通知する。
+    tree.select_many(&[vec![1], vec![0]]);
+    assert_eq!(tree.selection(), vec![vec![0], vec![1]]);
+    assert_eq!(outline_selected_rows(&outline), vec![0, 3]);
+    assert_eq!(*seen.borrow(), vec![vec![0]]);
+    tree.select(&[0, 0]);
+    assert_eq!(tree.selection(), vec![vec![0, 0]]);
+
+    // 単一選択に戻すと選択は外れ、通知しない。
+    tree.set_selection_mode(SelectionMode::Single);
+    assert!(!outline.allowsMultipleSelection());
+    assert!(tree.selection().is_empty());
+    assert!(outline_selected_rows(&outline).is_empty());
+    assert_eq!(seen.borrow().len(), 2);
+    tree.set_selection(&[vec![1], vec![0, 1]]);
+    assert_eq!(
+        tree.selection(),
+        vec![vec![0, 1]],
+        "単一選択では先頭の 1 つだけ"
+    );
+    Ok(())
+}
+
+/// ⌘ adds to an AppKit selection and keeps the items hidden inside collapsed
+/// branches; a ⇧ range and a plain arrow key select anew and drop them, as for rows
+/// outside the window of a long `List` (`keeps_hidden_selection`).
+fn tree_modifier_keys_decide_hidden_selection(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+    let window = ui.window("ツリーの複数選択", 360.0, 300.0)?;
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+    tree.set_sizing(Sizing::fill());
+    tree.set_selection_mode(SelectionMode::Multiple);
+    window.set_child(&tree);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
+    window.show();
+    let native = window.native_window();
+    // 押下がアプリのアクティブ化に使われないよう、key とアクティブを待つ
+    // (`shown_list_for_events` と同じ)。
+    let ready = |native: &NSWindow| native.isKeyWindow() && app.isActive();
+    for _ in 0..60 {
+        if ready(&native) {
+            break;
+        }
+        pump(0.05);
+        deliver_events(&app);
+    }
+    let outline = tree.native_outline_view();
+    native.makeFirstResponder(Some(&outline));
+    let content_view = native.contentView().expect("contentView");
+    content_view.layoutSubtreeIfNeeded();
+
+    let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    tree.on_select({
+        let seen = seen.clone();
+        move |path| seen.borrow_mut().push(path.to_vec())
+    });
+    let arrows = NSEventModifierFlags::NumericPad | NSEventModifierFlags::Function;
+    // 行は 0 src, 1 main.rs, 2 lib.rs, 3 docs (閉じて guide > intro.md を隠す)。
+    let hide_intro = || {
+        tree.set_selection(&[vec![0, 1], vec![1, 0, 0]]);
+        tree.collapse(&[1]);
+        assert_eq!(outline_selected_rows(&outline), vec![2]);
+    };
+
+    // ⇧ + ↓ は AppKit の範囲を広げるが、naui では選び直しなので隠れた intro.md は外れる。
+    hide_intro();
+    press_key(
+        &app,
+        &native,
+        "\u{F701}",
+        125,
+        NSEventModifierFlags::Shift | arrows,
+    );
+    assert_eq!(
+        outline_selected_rows(&outline),
+        vec![2, 3],
+        "AppKit が範囲を広げること"
+    );
+    assert_eq!(tree.selection(), vec![vec![0, 1], vec![1]], "⇧ は選び直し");
+    assert_eq!(*seen.borrow(), vec![vec![0, 1]]);
+
+    // 修飾なしの ↑ も選び直し。
+    hide_intro();
+    press_key(&app, &native, "\u{F700}", 126, arrows);
+    let picked = tree.selection();
+    assert_eq!(picked.len(), 1, "1 つだけになること: {picked:?}");
+    assert!(!picked.contains(&vec![1, 0, 0]), "隠れた選択も外れること");
+    assert_eq!(seen.borrow().len(), 2);
+    tree.expand(&[1]);
+    assert_eq!(
+        outline_selected_rows(&outline).len(),
+        1,
+        "開いても戻らないこと"
+    );
+
+    // ⌘ のクリックで足すと、隠れた選択は残る。本物の押下が届く環境でだけ確かめる。
+    if ready(&native) {
+        hide_intro();
+        let point = row_center_in_window(&outline, 1);
+        for kind in [NSEventType::LeftMouseDown, NSEventType::LeftMouseUp] {
+            let event = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+                kind,
+                point,
+                NSEventModifierFlags::Command,
+                0.0,
+                native.windowNumber(),
+                None,
+                0,
+                1,
+                1.0,
+            )
+            .expect("マウスイベント");
+            app.postEvent_atStart(&event, false);
+        }
+        deliver_events(&app);
+        assert_eq!(
+            outline_selected_rows(&outline),
+            vec![1, 2],
+            "⌘ で main.rs を足すこと"
+        );
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0, 0], vec![0, 1], vec![1, 0, 0]],
+            "⌘ では隠れた選択が残ること"
+        );
+    }
+    window.close();
+    Ok(())
+}
+
+/// Single selection also keeps an item inside a collapsed branch (AppKit deselects
+/// it, and used to report an empty selection).
+fn tree_keeps_a_single_selection_inside_a_collapsed_branch(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+    let seen = Rc::new(Cell::new(0));
+    tree.on_select({
+        let seen = seen.clone();
+        move |_| seen.set(seen.get() + 1)
+    });
+    tree.select(&[0, 1]);
+    let outline = tree.native_outline_view();
+    let src = outline.itemAtRow(0).expect("src");
+    unsafe { outline.collapseItem(Some(&src)) };
+    assert_eq!(tree.selected(), Some(vec![0, 1]), "隠れても選んだまま");
+    unsafe { outline.expandItem(Some(&src)) };
+    assert_eq!(outline.selectedRow(), 2, "開き直すと選択が戻ること");
+    assert_eq!(seen.get(), 1, "開閉で選択の通知は起きない");
     Ok(())
 }
 

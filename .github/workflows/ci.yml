@@ -384,6 +384,9 @@ jobs:
           [ -x "$driver" ] || { echo "chromedriver が見つかりません: $driver" >&2; exit 1; }
           CHROMEDRIVER="$driver" WASM_BINDGEN_TEST_DRIVER_TIMEOUT=30 \
             cargo test --target wasm32-unknown-unknown -p naui-web -p signup
+          # naui のテスト用の操作は naui::testing で回す (単体テストは Web では走らせない)。
+          CHROMEDRIVER="$driver" WASM_BINDGEN_TEST_DRIVER_TIMEOUT=30 \
+            cargo test --target wasm32-unknown-unknown -p naui --test actions
       - name: ブラウザテスト (Firefox)
         timeout-minutes: 10
         run: |
@@ -391,6 +394,9 @@ jobs:
           [ -x "$driver" ] || { echo "geckodriver が見つかりません: $driver" >&2; exit 1; }
           GECKODRIVER="$driver" WASM_BINDGEN_TEST_DRIVER_TIMEOUT=30 \
             cargo test --target wasm32-unknown-unknown -p naui-web -p signup
+          # naui のテスト用の操作は naui::testing で回す (単体テストは Web では走らせない)。
+          GECKODRIVER="$driver" WASM_BINDGEN_TEST_DRIVER_TIMEOUT=30 \
+            cargo test --target wasm32-unknown-unknown -p naui --test actions
       - name: Gallery を wasm へビルド
         run: ./build.sh
         working-directory: examples/gallery/web

@@ -18,7 +18,8 @@
 //! all come to `otherMouseDown:`, so `NSEvent.buttonNumber` is checked (2 for
 //! middle, 3 and 4 for the side buttons). Two-finger clicks on a trackpad and the
 //! secondary-click setting are also dispatched by AppKit to `rightMouseDown:`, so
-//! they arrive as the right button.
+//! they arrive as the right button. The modifier keys come from each event's
+//! `modifierFlags` (the same reading as key events).
 //!
 //! The wheel comes from `scrollWheel:`. `scrollingDeltaX` / `scrollingDeltaY` are
 //! logical pixels for finely measuring devices such as trackpads
@@ -199,7 +200,8 @@ define_class!(
                 self.local_point(event),
                 -event.scrollingDeltaX() * scale,
                 -event.scrollingDeltaY() * scale,
-            );
+            )
+            .modifiers(crate::keys::modifiers_of(event));
             if self.ivars().wheel.emit(wheel) == EventResponse::Continue {
                 let _: () = unsafe { msg_send![super(self), scrollWheel: event] };
             }
@@ -223,9 +225,11 @@ impl CanvasView {
     }
 
     fn emit_pointer(&self, phase: PointerPhase, event: &NSEvent, button: Option<PointerButton>) {
-        self.ivars()
-            .pointer
-            .emit(PointerEvent::new(phase, self.local_point(event)).button(button));
+        self.ivars().pointer.emit(
+            PointerEvent::new(phase, self.local_point(event))
+                .button(button)
+                .modifiers(crate::keys::modifiers_of(event)),
+        );
     }
 
     /// Converts an event's position into coordinates with the surface's top left as
@@ -278,12 +282,17 @@ impl Canvas {
     /// Pointer (mouse) presses, moves and releases. Positions are logical pixels with
     /// the surface's top left as origin. Moves also arrive while nothing is pressed
     /// (hover). Presses and releases carry which button ([`PointerEvent::button`]).
+    /// Every event carries the modifier keys held at that moment
+    /// ([`PointerEvent::modifiers`]).
     pub fn on_pointer(&self, f: impl FnMut(PointerEvent) + 'static) {
         self.0.view.ivars().pointer.set(f);
     }
 
     /// The wheel (including two-finger scrolling on a trackpad). Amounts are logical
     /// pixels.
+    ///
+    /// The modifier keys held come with it ([`PointerEvent::modifiers`]), for
+    /// example to zoom only while Ctrl or ⌘ is held.
     ///
     /// Returning `Handled` keeps it from reaching the outer scroll view. With
     /// `Continue`, the outer `NSScrollView` scrolls as usual.

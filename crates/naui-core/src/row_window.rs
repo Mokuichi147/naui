@@ -25,7 +25,7 @@ use std::collections::BTreeSet;
 use std::ops::Range;
 use std::rc::Rc;
 
-use crate::Result;
+use crate::{Result, RowMove};
 
 /// The row count at which rows start being limited to "just the visible ones".
 ///
@@ -306,7 +306,8 @@ pub enum SelectionGesture {
 ///
 /// `previous` is the part of the previous selection that was inside the window, and
 /// `current` is the selection the native control returned. Both must be in
-/// ascending order without duplicates.
+/// ascending order without duplicates. `Tree` passes paths instead of indices, with
+/// "inside the window" meaning "not hidden inside a collapsed branch".
 ///
 /// ```
 /// # use naui_core::{keeps_hidden_selection, SelectionGesture};
@@ -318,9 +319,9 @@ pub enum SelectionGesture {
 /// assert!(keeps_hidden_selection(&[1], &[1, 3], SelectionGesture::Unknown));
 /// assert!(!keeps_hidden_selection(&[1, 3], &[5], SelectionGesture::Unknown));
 /// ```
-pub fn keeps_hidden_selection(
-    previous: &[usize],
-    current: &[usize],
+pub fn keeps_hidden_selection<T: PartialEq>(
+    previous: &[T],
+    current: &[T],
     gesture: SelectionGesture,
 ) -> bool {
     match gesture {
@@ -536,6 +537,23 @@ impl<T: Clone> RowSource<T> {
     /// Whether any row that already exists satisfies `test`. `false` for built rows.
     pub fn any_stored(&self, test: impl FnMut(&T) -> bool) -> bool {
         self.rows.borrow().iter().any(test)
+    }
+
+    /// Moves the rows the way `moved` says ([`RowMove`] limited to this many rows).
+    ///
+    /// Rows that already exist move. For built rows only what they said when built
+    /// moves with them; the app moves the data its builder reads.
+    pub fn move_rows(&self, moved: &RowMove) {
+        if !self.is_built() {
+            moved.apply(&mut self.rows.borrow_mut());
+        }
+        let unselectable: BTreeSet<usize> = self
+            .unselectable
+            .borrow()
+            .iter()
+            .map(|&index| moved.new_index(index))
+            .collect();
+        *self.unselectable.borrow_mut() = unselectable;
     }
 
     /// Passes a function that answers whether a row can be selected without building it.

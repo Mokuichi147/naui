@@ -1623,6 +1623,9 @@ impl Window {
 
     pub fn close(&self) {
         self.release_backdrop();
+        if let Some(layer) = self.0.content_layer.borrow().as_ref() {
+            crate::toast::window_closing(layer);
+        }
         if self.0.native.Close().is_ok() {
             *self.0.visible.borrow_mut() = false;
             if let Some(child) = self.0.child.borrow().as_ref() {
@@ -2087,6 +2090,11 @@ fn remember_owner(window: &XamlWindow) {
     if let Ok(hwnd) = unsafe { native.WindowHandle() } {
         OWNER_HWND.with(|slot| slot.set(hwnd.0 as isize));
     }
+}
+
+/// Whether a window has been shown, to show dialogs over.
+pub(crate) fn has_owner_window() -> bool {
+    OWNER_WINDOW.with(|slot| slot.borrow().is_some())
 }
 
 /// The base on which `ContentDialog`s are shown. `None` if no window has been shown

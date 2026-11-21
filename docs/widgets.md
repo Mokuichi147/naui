@@ -59,7 +59,7 @@ Legend:
 | `ColorPicker` | 🟡 `Button` + `Flyout` + `ColorPicker` | ✅ `NSColorWell` | ✅ `GtkColorDialogButton` | ✅ `<input type="color">` |
 | `List` | ✅ `ListView` | ✅ `NSTableView` + `NSScrollView` | 🟡 `GtkListBox` + `GtkScrolledWindow` | ✅ `<select size>` / 🟡 `<ul role="listbox">` |
 | `Table` | 🟡 `Grid` + `ListView` (rows are `Grid`s) | ✅ `NSTableView` + `NSTableHeaderView` | 🟡 `GtkListBox` + `GtkSizeGroup` | 🟡 `<table role="grid">` |
-| `Tree` | ✅ `TreeView` | ✅ `NSOutlineView` + `NSScrollView` | 🟡 `GtkListBox` + disclosure buttons | 🟡 `<ul role="tree">` |
+| `Tree` | ✅ `TreeView` (🟡 `ListView` for multiple selection) | ✅ `NSOutlineView` + `NSScrollView` | 🟡 `GtkListBox` + disclosure buttons | 🟡 `<ul role="tree">` |
 
 ### Files and media
 
@@ -252,6 +252,19 @@ collected in [Known limitations](known-limitations.md).
   spacers, because `ListView` creates a `ListViewItem` for every row it is given: with
   many rows, only the rows on screen are built, and the spacers carry the height of
   the rest. naui holds the selection, since the `ListView` knows only the rows it has.
+  With `set_reorderable`, `CanReorderItems` and `CanDragItems` are on, and `AllowDrop`
+  is on only from `DragItemsStarting` to `DragItemsCompleted`: with it on, `ListView`
+  opens a gap for anything dragged over it, files from Explorer too, though those go
+  to `on_file_drop` (taken at the window's root either way) and never into the list.
+  `ListView` moves its own `ListViewItem`s on the drop. naui reads which rows were
+  dragged from `DragItemsStarting` (cancelling a drag that holds a row that cannot be
+  selected) and where they went from the order of `Items` at `DragItemsCompleted`,
+  then moves its rows the same way and builds them again. `ListView` scrolls by itself
+  near its edge only through its own `ScrollViewer`, which naui turns off for the
+  outer one, so it does not scroll while dragging. `ListView` also reorders with
+  Alt + Shift + the arrow keys, moving only its `Items`, so naui takes Alt + Shift +
+  Up / Down in the row's `PreviewKeyDown` and moves the focused row (with the
+  selection when it is in it) one place itself, and stops Alt + Shift + Left / Right.
 - **`Table`**: WinUI 3 has no `DataGrid` (it belongs to the Community Toolkit), so
   the table is built with `ListView` rows made of `Grid`s, and the header is put in
   a separate `Grid` with the same column definitions to align widths. Only the row
@@ -268,7 +281,14 @@ collected in [Known limitations](known-limitations.md).
   chevron, so unselectable branches can still be expanded and collapsed.
   `TreeView` handles scrolling itself (its inner list lays out only as much as the
   given height, so delegating to an outer `ScrollViewer` would cut it off instead of
-  growing).
+  growing). `TreeView`'s multiple selection is check boxes that also select a
+  branch's descendants (and its parent once all children are), which cannot be
+  turned off, so with `SelectionMode::Multiple` the same frame holds a `ListView`
+  with `Extended` selection instead. Its rows are built in advance for every item,
+  indented 16 px per level, with a borderless `Button` carrying `TreeViewItem`'s
+  chevron glyphs (`\u{E76C}` / `\u{E70D}`); collapsing a branch takes its rows out
+  of the `ListView` and expanding puts them back, and naui keeps the selection of
+  the hidden ones.
 - **`PopupMenu`**: A `MenuFlyout`. Positioning, shadow, rounded corners, light
   dismiss, keyboard operation (arrows and Esc) and wrapping at screen edges all come
   from WinUI. Right-click is delegated to `UIElement.ContextFlyout`, so long press
@@ -285,15 +305,21 @@ collected in [Known limitations](known-limitations.md).
   `IsPrimaryButtonEnabled` / `IsSecondaryButtonEnabled`. An empty title sets
   `Title` to null, which leaves the title area out (for `Dialog` too).
 - **`Toast`**: It looks like an `InfoBar`. However, `InfoBar` is meant to be a band
-  laid out inside a page, so it is moved to the bottom center and overlaid on the
-  content layer. The action button goes in `ActionButton`, so WinUI decides whether
-  it is placed to the right of or below the text. No close button (×) is shown
-  (`IsClosable` is turned off). It disappears in three ways — timeout, the action
-  button and `dismiss` — because the other three platforms have no × either.
-  When it disappears with focus on its action button (reached with Tab), WinUI
-  would move focus to the first element of the window, so naui puts it back on the
-  element it came from (the one that last lost focus outside the toast, watched
-  with `LostFocus` on the window root while the toast is shown).
+  laid out inside a page, so it is overlaid on the content layer, and the position
+  becomes its `HorizontalAlignment` (`Left` / `Center` / `Right`, mirrored by a
+  right-to-left `FlowDirection`) and `VerticalAlignment` (`Top` / `Bottom`), 24 px
+  from the edges. One action button goes in `ActionButton`, so WinUI decides
+  whether it is placed to the right of or below the text; `InfoBar` has room for
+  only one there, so two or more go in a row in `Content`, on their own line below
+  the text (where WinUI's guidance puts additional buttons). No close button (×) is
+  shown (`IsClosable` is turned off). It disappears in three ways — timeout, an
+  action button and `dismiss` — because the other three platforms have no × either.
+  The queue is naui's (`ToastQueue`, shared by the four backends).
+  When it disappears with focus on one of its action buttons (reached with Tab),
+  WinUI would move focus to the first element of the window, so naui puts it back
+  on the element it came from (the one that last lost focus outside the toast,
+  watched with `LostFocus` on the window root while the toast is shown). This also
+  happens when a `High` toast puts it back in the queue.
 - **`Canvas`**: a `SpriteVisual` showing a `CompositionDrawingSurface` is placed
   over a `Grid` with `ElementCompositionPreview::SetElementChildVisual`, and the
   `on_draw` commands are replayed onto it with Direct2D (text with DirectWrite).
@@ -407,6 +433,13 @@ collected in [Known limitations](known-limitations.md).
   without a specified width because AppKit's automatic column resizing cannot
   distribute all leftover space when there are fixed-width columns, leaving the
   right side of the table empty.
+- **`Tree`**: An `NSOutlineView` with one column. Multiple selection is
+  `allowsMultipleSelection`. AppKit deselects the rows inside a branch when it is
+  collapsed, so naui holds the selection itself, ignores the change that collapsing
+  causes, and writes it back when the branch is expanded again. Whether a change by
+  the user keeps the hidden ones is read from the modifier keys of the event AppKit
+  is handling (`NSApp.currentEvent`): ⌘ keeps them, ⇧ and plain clicks or keys drop
+  them.
 - **`Popover`**: `NSPopover` with `NSPopoverBehaviorTransient` (closes on a click
   outside or Esc). The content is placed with a 12 pt margin in the view of its
   `contentViewController`, and the popover's size follows that view's constraints,
@@ -429,7 +462,11 @@ collected in [Known limitations](known-limitations.md).
   the content. The window's size follows the content's constraints through its
   `contentViewController`, with a minimum width of 320 pt (`SHEET_MIN_WIDTH`).
 - **`Toast`**: AppKit has no toast control, so it is built by overlaying an
-  `NSVisualEffectView` (the same material as `NSPopover`) on the window content.
+  `NSVisualEffectView` (the same material as `NSPopover`) on the window content,
+  with the text and the action buttons in a row. The position is constrained to the
+  content's safe area (so a toolbar does not cover a toast at the top), 24 pt in,
+  using leading and trailing anchors for the start and end sides. The queue is
+  naui's (`ToastQueue`).
 - **`Window` position and state**: While minimized, `frame` stays the original
   frame, so it is read and written as is. For maximizing, the frame before zooming
   is remembered in `windowShouldZoom:toFrame:`, and the window is moved to the
@@ -543,12 +580,21 @@ collected in [Known limitations](known-limitations.md).
   the Ctrl / Shift attached to clicks. `GtkListBox` creates a row for everything it is
   given, so with many rows only the rows on screen go in, two `GtkBox`es outside it
   carry the height of the rest, and naui holds the selection.
+  With `set_reorderable`, each row gets a `GtkDragSource` and the `GtkListBox` a
+  `GtkDropTarget`, for a boxed type that exists only in the process (it names the
+  list; the rows stay in it). `GtkListBox` has only `drag_highlight_row`, which frames
+  a whole row and reads as dropping onto it, so the line between rows is an inset
+  `box-shadow` in libadwaita's `@accent_bg_color`, added with a `GtkCssProvider`.
 - **`Table`**: Instead of `GtkColumnView` (which requires a `GtkListItemFactory` and
   a `GListModel`), it is built from `GtkListBox` rows laid out horizontally, with
   column widths aligned by a `GtkSizeGroup` per column. Sortable headers are `flat`
   `GtkButton`s, and the direction is shown by an arrow added to the header text.
 - **`Tree`**: Instead of `GtkTreeExpander` (only for `GtkListView`), it is built
-  from `GtkListBox` rows and disclosure buttons.
+  from `GtkListBox` rows and disclosure buttons. Rows inside collapsed branches are
+  only made invisible, so they keep their selection; with `SelectionMode::Multiple`
+  the `GtkListBox` selects with Ctrl / Shift as for `List` (its Shift ranges and
+  Ctrl + A pick only visible rows, and a plain click or a Shift range unselects the
+  invisible ones too).
 - **`Window` state**: On X11, the window manager sometimes does not restore a window
   with `unminimize` alone, so restoring from minimized also asks for it to be brought
   to the front with `present`. Minimizing requested before showing is applied after
@@ -556,6 +602,16 @@ collected in [Known limitations](known-limitations.md).
   maximizing, full screen or tiling as the window's default size, so `placement`
   converts it back to the content size (subtracting the window's CSS frame measured
   in the normal state, which can differ while maximized).
+
+- **`Toast`**: `AdwToast` on the window's `AdwToastOverlay`. The overlay keeps a
+  queue per window but has no signal for "a waiting toast came up", so the order is
+  kept by naui's `ToastQueue` (modelled on the overlay's: `High` comes up at once
+  and puts the current one back at the front, but showing a waiting toast again
+  does not move it forward), and only the toast whose
+  turn it is is added. One action is `AdwToast`'s own button; it has room for only
+  one, so two or more are laid out after the text in a custom title
+  (`adw_toast_set_custom_title`) instead. The overlay always places toasts at the
+  bottom center, so the position is ignored.
 
 ### Web construction
 
@@ -603,7 +659,8 @@ collected in [Known limitations](known-limitations.md).
   visuals nor the narrowing.
 - **`DatePicker`**: Uses `datetime-local` so as not to bring in time zones.
 - **`List`**: Using `ListItem::detail` or `ListRow` (rows of arbitrary content), having
-  more than 200 rows, `set_row_builder` or `set_row_height` switches from `<select>` to
+  more than 200 rows, `set_row_builder`, `set_row_height` or `set_reorderable` (an
+  `<option>` cannot be dragged) switches from `<select>` to
   an implementation using `<ul role="listbox">`, and `native_select` then returns
   `None`. With a few text-only rows it stays `<select size>`. The
   content model of `<option>` is text only and can hold neither elements nor line
@@ -621,12 +678,20 @@ collected in [Known limitations](known-limitations.md).
   (`Field` / `SelectedItem` / `Highlight` / `GrayText`). This form is the only way to
   show rows of arbitrary content, so both operating the row itself
   (`ListRow::on_activate`) and the controls inside it are kept, and either path
-  works.
+  works. With `set_reorderable`, selectable rows are `draggable`, the drag carries
+  the list's id under a private `DataTransfer` type, and the line where the rows will
+  land is an inset `box-shadow` in `Highlight`, since no DOM element marks a gap
+  between rows.
 - **`Table`**: `<table role="grid">`. `<table>` has no mechanism for selecting rows,
   so naui adds clicks (⌘ / Ctrl / Shift) and keyboard operation (arrows, Home / End,
   Space). Column widths are decided by `<col>` in a `<colgroup>` and
   `table-layout: fixed`. Sortable headers are `<button>`s inside `<th>`, and the
   direction is shown with `aria-sort` and an arrow.
+- **`Tree`**: `<ul role="tree">` with `<li role="treeitem">` items, following
+  WAI-ARIA's tree view pattern (↑ / ↓ move, → expands or moves to the first child,
+  ← collapses or moves to the parent). Multiple selection sets
+  `aria-multiselectable` and takes clicks with ⌘ / Ctrl / Shift, Shift + arrows,
+  Ctrl + arrows with Space, and Ctrl + A, as the composed `List` does.
 - **`Dialog` and `Sheet`**: The same `<dialog>`; a sheet leaves the body text
   empty and has a minimum width of 320 px (`SHEET_MIN_WIDTH`, but no wider than the
   viewport allows). Enter in a text field (an `<input>` other than check boxes,
@@ -669,8 +734,11 @@ collected in [Known limitations](known-limitations.md).
   off screen. Newer parts such as `position-visibility` still
   differ between engines and are not used.
 - **`Toast`**: Pages have no standard element for transient notifications, so a
-  `<div role="status">` is shown at the bottom center with `position: fixed` (the
-  `Notification` API goes outside the page and is a different thing).
+  `<div role="status">` with `<button>`s is shown with `position: fixed` (the
+  `Notification` API goes outside the page and is a different thing). The position
+  is written with logical properties (`inset-block-*`, `inset-inline-*`), so the
+  start and end sides swap in a right-to-left page; the center uses both inline
+  insets and automatic margins. The queue is naui's (`ToastQueue`).
 
 ## Main data types
 
@@ -694,7 +762,7 @@ collected in [Known limitations](known-limitations.md).
 - `MenuSpec` / `MenuItem` / `MenuShortcut`: menu bar headings, items and shortcuts
 - `SidebarSection` / `SidebarItem`: sidebar groups (headings) and items (text and icons)
 - `DialogButtons` / `DialogResponse`: dialog and sheet buttons and responses
-- `ToastSpec`: toast text, action button and time until it disappears
+- `ToastSpec` / `ToastPriority` / `ToastPosition`: toast text, action buttons, time until it disappears, how it takes its turn in the queue, and where it appears
 
 `WeakWidget`, the weak reference used to touch a widget itself from inside its
 notifications, is created with each widget's `downgrade()` (see

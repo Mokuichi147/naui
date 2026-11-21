@@ -185,7 +185,8 @@ fn is_composing(widget: &gtk::Widget) -> bool {
     })
 }
 
-fn modifiers_of(state: gdk::ModifierType) -> Modifiers {
+/// The modifier keys in an event's state (keys, pointer and wheel alike).
+pub(crate) fn modifiers_of(state: gdk::ModifierType) -> Modifiers {
     Modifiers {
         shift: state.contains(gdk::ModifierType::SHIFT_MASK),
         control: state.contains(gdk::ModifierType::CONTROL_MASK),

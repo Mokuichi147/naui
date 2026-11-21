@@ -169,6 +169,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     pane.append(&list);
 
     build_large_list(ui, &pane, notice)?;
+    build_reorderable_list(ui, &pane, notice)?;
     build_composed_list(ui, &pane)?;
     build_dynamic_rows(ui, &pane)?;
 
@@ -213,6 +214,45 @@ fn build_large_list(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> 
     });
     actions.append(&jump);
     pane.append(&actions);
+    pane.append(&list);
+    Ok(())
+}
+
+/// 行をドラッグで並べ替えられるリスト。選んだ行をつかむと選択ごと動き、
+/// on_reorder で手元のデータも同じように動かす。
+fn build_reorderable_list(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
+    parts::section(ui, pane, "Reorderable list")?;
+
+    let tasks = Rc::new(RefCell::new(vec![
+        "Write the draft",
+        "Ask for a review",
+        "Fix the comments",
+        "Merge",
+        "Release",
+    ]));
+    let list = ui.list()?;
+    list.set_selection_mode(SelectionMode::Multiple);
+    list.set_items(
+        &tasks
+            .borrow()
+            .iter()
+            .map(|&task| ListItem::new(task))
+            .collect::<Vec<_>>(),
+    );
+    list.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(180.0)),
+    );
+    list.set_reorderable(true);
+    list.on_reorder({
+        let notice = notice.clone();
+        let tasks = tasks.clone();
+        move |moved| {
+            moved.apply(&mut tasks.borrow_mut());
+            notice.show(&format!("Order: {}", tasks.borrow().join(" / ")));
+        }
+    });
     pane.append(&list);
     Ok(())
 }
@@ -324,7 +364,7 @@ fn build_dynamic_rows(ui: &Ui, pane: &naui::Stack) -> Result<()> {
     Ok(())
 }
 
-/// Tree の入れ子・開閉・選べない枝・通知。
+/// Tree の入れ子・開閉・選べない枝・複数選択・通知。
 fn build_tree(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
     parts::section(ui, pane, "Tree")?;
 
@@ -352,12 +392,22 @@ fn build_tree(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
             .height(Length::Fixed(200.0)),
     );
 
+    // 通知は先頭の 1 つ。複数選択では、選ばれているものを `selection` で読む。
     tree.on_select({
         let notice = notice.clone();
         let items = items.clone();
-        move |path| match TreeItem::at(&items, path) {
-            Some(item) => notice.show(&format!("Selected: {} {path:?}", item.label)),
-            None => notice.show("Selected: none"),
+        let this = tree.clone();
+        move |_| {
+            let labels: Vec<&str> = this
+                .selection()
+                .iter()
+                .filter_map(|path| TreeItem::at(&items, path))
+                .map(|item| item.label.as_str())
+                .collect();
+            match labels.is_empty() {
+                true => notice.show("Selected: none"),
+                false => notice.show(&format!("Selected: {}", labels.join(" / "))),
+            }
         }
     });
     tree.on_expand({
@@ -393,6 +443,19 @@ fn build_tree(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
     actions.append(&expand_all);
     actions.append(&collapse_all);
     actions.append(&select_deep);
+
+    // 複数選択では ⌘ / Ctrl と Shift で選ぶ。枝を選んでも子は選ばれない。
+    let (mode_row, mode) = parts::choice(ui, "Selection", &["Single", "Multiple"])?;
+    mode.on_select({
+        let tree = tree.clone();
+        move |index| {
+            tree.set_selection_mode(match index {
+                0 => SelectionMode::Single,
+                _ => SelectionMode::Multiple,
+            })
+        }
+    });
+    pane.append(&mode_row);
     pane.append(&actions);
     pane.append(&tree);
     Ok(())

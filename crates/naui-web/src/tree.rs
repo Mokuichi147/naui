@@ -21,9 +21,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
 use std::rc::Rc;
 
-use naui_core::{Result, TreeItem};
+use naui_core::{Result, SelectionMode, TreeItem};
 use wasm_bindgen::JsCast;
-use web_sys::{Document, Element, HtmlElement, KeyboardEvent};
+use web_sys::{Document, Element, HtmlElement, KeyboardEvent, MouseEvent};
 
 use crate::widgets::{create, impl_widget, Listener, Widget};
 
@@ -116,10 +116,14 @@ struct TreeInner {
     nodes: RefCell<Vec<Node>>,
     /// The items remembered as expanded. Those inside collapsed branches remain too.
     expanded: RefCell<HashSet<Vec<usize>>>,
-    /// The selected item. `None` for no selection.
-    selected: RefCell<Option<Vec<usize>>>,
+    /// The selected items, normalized ([`SelectionMode::normalize_paths`]). Those
+    /// inside collapsed branches remain too.
+    selected: RefCell<Vec<Vec<usize>>>,
+    mode: Cell<SelectionMode>,
     /// The item the keyboard is pointing at now.
     active: RefCell<Option<Vec<usize>>>,
+    /// The anchor of a Shift range selection.
+    anchor: RefCell<Option<Vec<usize>>>,
     handler: SelectionHandler,
     expand: ExpandHandler,
     /// The subscriptions of rows and expander marks. Removed on rebuild.
@@ -169,8 +173,10 @@ impl Tree {
             items: RefCell::new(Vec::new()),
             nodes: RefCell::new(Vec::new()),
             expanded: RefCell::new(HashSet::new()),
-            selected: RefCell::new(None),
+            selected: RefCell::new(Vec::new()),
+            mode: Cell::new(SelectionMode::Single),
             active: RefCell::new(None),
+            anchor: RefCell::new(None),
             handler: SelectionHandler::default(),
             expand: ExpandHandler::default(),
             listeners: RefCell::new(Vec::new()),
@@ -200,8 +206,9 @@ impl Tree {
     /// Expansion returns to what [`TreeItem::expanded`] says.
     pub fn set_items(&self, items: &[TreeItem]) {
         *self.0.items.borrow_mut() = items.to_vec();
-        *self.0.selected.borrow_mut() = None;
+        self.0.selected.borrow_mut().clear();
         *self.0.active.borrow_mut() = None;
+        *self.0.anchor.borrow_mut() = None;
         let mut expanded = HashSet::new();
         TreeItem::walk(items, |path, item| {
             if item.expanded && !item.is_leaf() {
@@ -221,8 +228,35 @@ impl Tree {
         self.len() == 0
     }
 
-    /// The path of the selected item. `None` if nothing is selected.
+    /// Switches between single and multiple selection. The selection is cleared
+    /// without notifying.
+    pub fn set_selection_mode(&self, mode: SelectionMode) {
+        self.0.mode.set(mode);
+        match mode.is_multiple() {
+            true => {
+                let _ = self.0.root.set_attribute("aria-multiselectable", "true");
+            }
+            false => {
+                let _ = self.0.root.remove_attribute("aria-multiselectable");
+            }
+        }
+        self.0.selected.borrow_mut().clear();
+        *self.0.anchor.borrow_mut() = None;
+        self.paint();
+    }
+
+    pub fn selection_mode(&self) -> SelectionMode {
+        self.0.mode.get()
+    }
+
+    /// The path of the first selected item. `None` if nothing is selected.
     pub fn selected(&self) -> Option<Vec<usize>> {
+        self.0.selected.borrow().first().cloned()
+    }
+
+    /// The paths of the selected items in the order the tree shows them, including
+    /// items hidden inside collapsed branches.
+    pub fn selection(&self) -> Vec<Vec<usize>> {
         self.0.selected.borrow().clone()
     }
 
@@ -245,24 +279,35 @@ impl Tree {
     /// selection. Items inside a collapsed branch are selected after their ancestors
     /// are expanded so they become visible.
     pub fn set_selected(&self, path: &[usize]) {
-        self.write_selected(path);
+        self.write_selection(&[path.to_vec()]);
+    }
+
+    /// Replaces the selection without notifying. Paths that cannot be selected are
+    /// left out, and the branches holding the rest are expanded.
+    pub fn set_selection(&self, paths: &[Vec<usize>]) {
+        self.write_selection(paths);
     }
 
     /// Clears the selection without notifying.
     pub fn clear_selection(&self) {
-        self.write_selected(&[]);
+        self.write_selection(&[]);
     }
 
     /// Selects one item through the same path as a user's selection (notifies).
     pub fn select(&self, path: &[usize]) {
-        self.write_selected(path);
-        // ブラウザはプログラムからの変更でイベントを出さないため、
-        // ここで 1 回だけ通知する。
-        let actual = self.selected().unwrap_or_default();
-        self.0.handler.emit(&actual);
+        self.select_many(&[path.to_vec()]);
     }
 
-    /// Called with the path of the selected item when the selection changes.
+    /// Replaces the selection through the same path as a user's selection
+    /// (notifies).
+    pub fn select_many(&self, paths: &[Vec<usize>]) {
+        self.write_selection(paths);
+        // ブラウザはプログラムからの変更でイベントを出さないため、
+        // ここで 1 回だけ通知する。
+        self.notify();
+    }
+
+    /// Called with the path of the first selected item when the selection changes.
     ///
     /// When the selection is cleared, it is called with an empty path.
     pub fn on_select(&self, f: impl FnMut(&[usize]) + 'static) {
@@ -429,13 +474,19 @@ impl Tree {
         // 行を押すと選ぶ。印を押すと開閉する (選択は動かさない)。
         let mut listeners = Vec::new();
         if selectable {
-            listeners.push(Listener::attach(row.as_ref(), "click", {
+            listeners.push(Listener::attach_event(row.as_ref(), "click", {
                 let weak = Rc::downgrade(&self.0);
                 let path = path.to_vec();
-                move || {
-                    if let Some(inner) = weak.upgrade() {
-                        Tree(inner).on_row_clicked(&path);
-                    }
+                move |event| {
+                    let Some(inner) = weak.upgrade() else {
+                        return;
+                    };
+                    // ⌘ / Ctrl は 1 つずつ足し引きし、Shift は起点からの範囲を選ぶ
+                    // (`List` と同じ)。
+                    let mouse = event.dyn_ref::<MouseEvent>();
+                    let toggle = mouse.is_some_and(|e| e.meta_key() || e.ctrl_key());
+                    let extend = mouse.is_some_and(|e| e.shift_key());
+                    Tree(inner).on_row_clicked(&path, toggle, extend);
                 }
             })?);
         }
@@ -475,7 +526,7 @@ impl Tree {
     /// Redraws the expansion and selection according to the current state.
     fn paint(&self) {
         let expanded = self.0.expanded.borrow();
-        let selected = self.0.selected.borrow();
+        let selected: HashSet<Vec<usize>> = self.0.selected.borrow().iter().cloned().collect();
         for node in self.0.nodes.borrow().iter() {
             let open = expanded.contains(&node.path);
             if let Some(group) = &node.group {
@@ -493,7 +544,7 @@ impl Tree {
                     .set_attribute("aria-expanded", if open { "true" } else { "false" });
             }
 
-            let picked = selected.as_deref() == Some(node.path.as_slice());
+            let picked = selected.contains(&node.path);
             let _ = node
                 .item
                 .set_attribute("aria-selected", if picked { "true" } else { "false" });
@@ -511,20 +562,50 @@ impl Tree {
         }
     }
 
-    /// Remembers the selection and redraws (no notification).
-    fn write_selected(&self, path: &[usize]) {
-        let picked = TreeItem::selectable(&self.0.items.borrow(), path).then(|| path.to_vec());
-        if let Some(path) = picked.as_deref() {
+    /// Remembers the selection from code and redraws (no notification).
+    ///
+    /// The branches holding the selected items are expanded, and the keyboard and
+    /// Shift ranges carry on from the last of them.
+    fn write_selection(&self, paths: &[Vec<usize>]) {
+        let picked = self
+            .0
+            .mode
+            .get()
+            .normalize_paths(&self.0.items.borrow(), paths);
+        for path in &picked {
             // 見えていないと選んだことが分からないので、祖先を開く。
             // 葉には開閉が無いので、開くのは親から上だけ。
             self.write_expanded(&path[..path.len().saturating_sub(1)], true);
         }
-        *self.0.selected.borrow_mut() = picked.clone();
-        if picked.is_some() {
-            *self.0.active.borrow_mut() = picked;
+        if let Some(last) = picked.last() {
+            *self.0.active.borrow_mut() = Some(last.clone());
+            *self.0.anchor.borrow_mut() = Some(last.clone());
         }
+        *self.0.selected.borrow_mut() = picked;
         self.paint();
         self.reveal_active();
+    }
+
+    /// Settles the selection made by a user's action, redraws and notifies.
+    ///
+    /// Unlike [`Tree::write_selection`] it expands nothing: the user can only pick
+    /// visible items, and hidden ones kept by ⌘ / Ctrl stay hidden.
+    fn commit(&self, paths: &[Vec<usize>]) {
+        let picked = self
+            .0
+            .mode
+            .get()
+            .normalize_paths(&self.0.items.borrow(), paths);
+        *self.0.selected.borrow_mut() = picked;
+        self.paint();
+        self.reveal_active();
+        self.notify();
+    }
+
+    /// Notifies the first selected item (an empty path for none).
+    fn notify(&self) {
+        let actual = self.selected().unwrap_or_default();
+        self.0.handler.emit(&actual);
     }
 
     /// Remembers the expansion state and redraws (no notification). Expanding also
@@ -575,11 +656,44 @@ impl Tree {
 
     // --------------------------------------------------------- 操作の受け口
 
-    /// When a row is clicked.
-    fn on_row_clicked(&self, path: &[usize]) {
-        self.write_selected(path);
-        let actual = self.selected().unwrap_or_default();
-        self.0.handler.emit(&actual);
+    /// When a row is clicked (or picked with the keyboard).
+    ///
+    /// With multiple selection, `toggle` (⌘ / Ctrl) adds or removes the item and
+    /// keeps the rest, hidden items included, and `extend` (Shift) selects the
+    /// visible items from the anchor to it. Otherwise only the item is selected.
+    fn on_row_clicked(&self, path: &[usize], toggle: bool, extend: bool) {
+        let multiple = self.0.mode.get().is_multiple();
+        let picked = if multiple && extend {
+            let anchor = self.0.anchor.borrow().clone();
+            self.range(anchor.as_deref().unwrap_or(path), path)
+        } else if multiple && toggle {
+            let mut picked = self.selection();
+            match picked.iter().position(|p| p == path) {
+                Some(at) => {
+                    picked.remove(at);
+                }
+                None => picked.push(path.to_vec()),
+            }
+            *self.0.anchor.borrow_mut() = Some(path.to_vec());
+            picked
+        } else {
+            *self.0.anchor.borrow_mut() = Some(path.to_vec());
+            vec![path.to_vec()]
+        };
+        *self.0.active.borrow_mut() = Some(path.to_vec());
+        self.commit(&picked);
+    }
+
+    /// The visible items from `a` to `b`, both included. If `a` is hidden now (its
+    /// branch was collapsed), only `b`.
+    fn range(&self, a: &[usize], b: &[usize]) -> Vec<Vec<usize>> {
+        let rows = self.visible_paths();
+        let at = |path: &[usize]| rows.iter().position(|row| row == path);
+        let Some(end) = at(b) else {
+            return vec![b.to_vec()];
+        };
+        let start = at(a).unwrap_or(end);
+        rows[start.min(end)..=start.max(end)].to_vec()
     }
 
     /// Key operations. Returns `true` if handled (preventing the browser's default
@@ -609,17 +723,47 @@ impl Tree {
             ("ArrowRight", true) => "ArrowLeft".to_owned(),
             (key, _) => key.to_owned(),
         };
+        let multiple = self.0.mode.get().is_multiple();
+        // 複数選択の Ctrl (⌘) + 矢印は、選択を変えずに指す項目だけを動かす
+        // (そのあと Space で足し引きする)。Shift + 矢印は起点からの範囲を選ぶ。
+        let only_move = multiple && (event.ctrl_key() || event.meta_key()) && !event.shift_key();
+        let extend = multiple && event.shift_key();
+        let go = |path: &[usize]| match only_move {
+            true => {
+                *self.0.active.borrow_mut() = Some(path.to_vec());
+                self.reveal_active();
+            }
+            false => self.focus(path, extend),
+        };
         match key.as_str() {
             "ArrowDown" => {
                 let next = at.map_or(0, |at| (at + 1).min(rows.len() - 1));
-                self.focus(&rows[next]);
+                go(&rows[next]);
             }
             "ArrowUp" => {
                 let next = at.map_or(rows.len() - 1, |at| at.saturating_sub(1));
-                self.focus(&rows[next]);
+                go(&rows[next]);
             }
-            "Home" => self.focus(&rows[0]),
-            "End" => self.focus(&rows[rows.len() - 1]),
+            "Home" => go(&rows[0]),
+            "End" => go(&rows[rows.len() - 1]),
+            // 見えている項目をすべて足す。閉じた枝の中の選択はそのまま残す。
+            "a" | "A"
+                if multiple
+                    && (event.ctrl_key() || event.meta_key())
+                    && !event.shift_key()
+                    && !event.alt_key() =>
+            {
+                let mut picked = self.selection();
+                picked.extend(rows.iter().cloned());
+                let picked = self
+                    .0
+                    .mode
+                    .get()
+                    .normalize_paths(&self.0.items.borrow(), &picked);
+                if picked != self.selection() {
+                    self.commit(&picked);
+                }
+            }
             "ArrowRight" => {
                 let Some(path) = current else {
                     return false;
@@ -633,7 +777,7 @@ impl Tree {
                     // 開いているなら、最初の子へ移る。
                     let mut child = path.clone();
                     child.push(0);
-                    self.focus(&child);
+                    self.focus(&child, false);
                 } else {
                     self.toggle(&path, true);
                 }
@@ -646,30 +790,42 @@ impl Tree {
                     self.toggle(&path, false);
                 } else if path.len() > 1 {
                     // 閉じているなら、親へ移る。
-                    self.focus(&path[..path.len() - 1]);
+                    self.focus(&path[..path.len() - 1], false);
                 } else {
                     return false;
+                }
+            }
+            // 複数選択の Space は、指している項目を足したり外したりする。
+            " " if multiple => {
+                let Some(path) = current else {
+                    return false;
+                };
+                if TreeItem::selectable(&self.0.items.borrow(), &path) {
+                    self.on_row_clicked(&path, true, false);
                 }
             }
             "Enter" | " " => {
                 let Some(path) = current else {
                     return false;
                 };
-                self.on_row_clicked(&path);
+                if TreeItem::selectable(&self.0.items.borrow(), &path) {
+                    self.on_row_clicked(&path, false, false);
+                }
             }
             _ => return false,
         }
         true
     }
 
-    /// Moves the item the keyboard points at, and selects it if it can be selected.
-    fn focus(&self, path: &[usize]) {
+    /// Moves the item the keyboard points at, and selects it if it can be selected
+    /// (`extend` selects the range from the anchor instead).
+    fn focus(&self, path: &[usize], extend: bool) {
         *self.0.active.borrow_mut() = Some(path.to_vec());
         self.reveal_active();
-        // ツリーは単一選択なので、カーソルの移動がそのまま選択になる
-        // (`NSOutlineView` の ↑↓ と同じ)。選べない項目では選択を動かさない。
+        // カーソルの移動がそのまま選択になる (`NSOutlineView` の ↑↓ と同じ)。
+        // 選べない項目では選択を動かさない。
         if TreeItem::selectable(&self.0.items.borrow(), path) {
-            self.on_row_clicked(path);
+            self.on_row_clicked(path, false, extend);
         }
     }
 

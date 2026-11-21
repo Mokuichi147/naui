@@ -1131,6 +1131,56 @@ The native controls are two-pane. For a third pane, attach a [`Sidebar`] to the
 window, which collapses by itself when the window narrows, or put another
 `AdaptivePanes` in the detail; each one decides by its own width.
 
+## Rearranging list rows
+
+With [`List::set_reorderable`], the user can drag rows to another place in the same
+list: a row, or the whole selection when the row pressed is selected. naui moves the
+rows on screen and keeps the selection on them, then calls
+[`List::on_reorder`] with a [`RowMove`]: the rows that moved and the gap they went
+into, both counted before the move. Move the app's own data the same way with
+[`RowMove::apply`]:
+
+```no_run
+# use naui::{ListItem, Result, Ui};
+# use std::cell::RefCell;
+# use std::rc::Rc;
+# fn build(ui: &Ui) -> Result<()> {
+let tasks = Rc::new(RefCell::new(vec!["Write", "Review", "Ship"]));
+let list = ui.list()?;
+list.set_items(&tasks.borrow().iter().map(|&task| ListItem::new(task)).collect::<Vec<_>>());
+list.set_reorderable(true);
+list.on_reorder({
+    let tasks = tasks.clone();
+    move |moved| moved.apply(&mut tasks.borrow_mut())
+});
+# Ok(())
+# }
+```
+
+Rows passed to [`List::set_row_builder`] are rebuilt from the app's data once
+`on_reorder` returns, so moving that data inside it is what puts the rows in their
+new places. An index the app kept from an earlier notification (the row shown in a
+detail pane, say) is mapped with [`RowMove::new_index`]. `on_select` is not called,
+since the same rows stay selected.
+
+| | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| Native mechanism | `ListView`'s `CanReorderItems` | `NSTableView`'s drag and drop | `GtkDragSource` on each row, `GtkDropTarget` on the `GtkListBox` | HTML drag and drop on `draggable` rows |
+| Where the rows will land | The rows open a gap | A line between the rows | A line in the accent color, drawn by naui | A line in the `Highlight` system color, drawn by naui |
+| Scrolling near the edge while dragging | No | Yes | No | As the browser does |
+| Moving rows with the keyboard | Alt + Shift + Up / Down moves the focused row (with the selection when it is in it) one place | No | No | No |
+
+Rows that cannot be selected cannot be dragged, and only rows from the same list
+can be dropped: rows from other lists, other widgets and other apps are refused,
+and the rows cannot be dragged out of the app. A drag carries only a mark of the
+list it came from (a private pasteboard type, a boxed GType, a `DataTransfer`
+type); the rows themselves stay in the list. On the Web, a list of text-only rows
+becomes a `<ul role="listbox">` while it is reorderable, since an `<option>`
+cannot be dragged.
+
+[`List::drag_rows`] moves rows through the same path as a drop, for tests, and
+[`List::move_rows`] moves them without notifying.
+
 ## Label wrapping
 
 [`Label`] **does not wrap by default**. Whatever does not fit on one line is cut
@@ -2233,8 +2283,8 @@ list.set_sizing(Sizing::fill_width());
 To expand and collapse nested items while choosing, use [`Tree`].
 
 The difference from `Menu` is the role: `Menu` is **navigation that switches
-screens**, and `List` is **a list for choosing data**. Only `List` has multiple
-selection and scrolling.
+screens**, and `List` is **a list for choosing data**. Only `List` (and `Table` and
+`Tree`, which choose data too) has multiple selection and scrolling.
 
 [`SelectionMode::Multiple`] takes the form "choose while holding ⌘ / Ctrl or
 Shift" on every platform (on WinUI it is mapped to `Extended`, not `Multiple`).
@@ -2456,12 +2506,40 @@ tree.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(220.0)));
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `Tree` | `TreeView` | `NSOutlineView` + `NSScrollView` | `GtkListBox` + disclosure buttons | `<ul role="tree">` |
+| `Tree` | `TreeView` (multiple selection: `ListView` with `Extended`) | `NSOutlineView` + `NSScrollView` | `GtkListBox` + disclosure buttons | `<ul role="tree">` |
 
-Only one item can be chosen (there is no multiple selection as in `List`).
-`set_selected` / `clear_selection` / `set_expanded` / `expand_all` /
-`collapse_all` do not notify, and `select` / `expand` / `collapse` notify just
-like user actions.
+`set_selected` / `set_selection` / `clear_selection` / `set_expanded` /
+`expand_all` / `collapse_all` do not notify, and `select` / `select_many` /
+`expand` / `collapse` notify just like user actions.
+
+As in `List`, [`SelectionMode::Multiple`] lets several items be chosen while
+holding ⌘ / Ctrl or Shift. **Each item is chosen on its own: choosing a branch
+does not choose its children.** `on_select` keeps passing one path (the first
+chosen item, or an empty path when nothing is chosen), so read
+[`Tree::selection`] inside it for all of them:
+
+```no_run
+# use naui::{Result, SelectionMode, TreeItem, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let tree = ui.tree()?;
+tree.set_items(&[TreeItem::new("src").children(TreeItem::list(["main.rs", "lib.rs"]))]);
+tree.set_selection_mode(SelectionMode::Multiple); // Single by default
+let chosen = tree.clone();
+tree.on_select(move |_first| println!("{:?} were chosen", chosen.selection()));
+tree.set_selection(&[vec![0, 0], vec![0, 1]]); // replace the selection without notifying
+# Ok(())
+# }
+```
+
+Chosen items inside a collapsed branch **stay chosen while hidden**, and show as
+chosen again when it is expanded. The next choice decides what happens to them,
+as for rows off screen in a long `List`: adding or removing with ⌘ / Ctrl keeps
+them, and a plain click or a Shift range chooses anew and drops them.
+[`Tree::selection`] includes them.
+
+WinUI's `TreeView` has only check-box multiple selection, which also chooses a
+branch's descendants, so on Windows a tree with multiple selection is laid out in
+a `ListView` (with the same chevrons and indentation) instead.
 
 Setting [`TreeItem::enabled`] to `false` **makes all its descendants unselectable
 too**. Expansion is remembered per item, so collapsing a parent and expanding it
@@ -2926,17 +3004,18 @@ cancel button when there is no primary one), except on Linux (see
 
 ## Toasts
 
-A [`Toast`] is a notification that shows a short message at the bottom of the
-screen and **disappears by itself**. Unlike a dialog it does not block the user, so
+A [`Toast`] is a notification that shows a short message at the edge of the
+window and **disappears by itself**. Unlike a dialog it does not block the user, so
 use it for news about something already done, such as "Saved".
 
 ```no_run
-# use naui::{Result, Ui};
+# use naui::{Result, ToastPosition, Ui};
 # fn build(ui: &Ui) -> Result<()> {
-let toast = ui.toast("Saved")?;
-toast.set_action("Undo"); // optional; an empty string removes it
+let toast = ui.toast("Deleted")?;
+toast.set_actions(&["Undo", "Show"]); // optional; an empty list removes them
 toast.set_timeout(3.0); // seconds; with 0 it does not disappear by itself
-toast.on_action(|| println!("undo"));
+toast.set_position(ToastPosition::TopEnd); // the default is the bottom center
+toast.on_action(|index| println!("action {index}")); // 0 is "Undo"
 toast.show();
 # Ok(())
 # }
@@ -2946,17 +3025,30 @@ toast.show();
 | --- | --- | --- | --- | --- |
 | `Toast` | An `InfoBar` overlaid on the content | An `NSVisualEffectView` overlaid on the content | `AdwToast` + `AdwToastOverlay` | `<div role="status">` |
 
-**Only Linux has a native toast** (`AdwToast`). Windows's `InfoBar` /
-`TeachingTip` cannot be used because naui does not project them, and macOS and
-browsers have nothing corresponding at all, so on the remaining three platforms
-naui builds the same shape. Notifications sent to the OS notification center are a
-separate mechanism that leaves the app, so they are not covered.
+**Only Linux has a native toast** (`AdwToast`). macOS and browsers have nothing
+corresponding at all, and Windows's `InfoBar` is a band laid inside a page, so on
+the remaining three platforms naui builds the same shape. Notifications sent to the
+OS notification center are a separate mechanism that leaves the app, so they are
+not covered.
 
-**Only one is shown at a time**, and a newly shown one replaces the previous one
-(naui also aligns `AdwToastOverlay`'s queueing to this behavior). Dismissing with
-[`Toast::dismiss`] and being replaced do not call `on_dismiss` (the same rule as
-[`Dialog::close`]: the app's own operations are not notified). Only on Linux is the
-time granularity **seconds**, so values under one second become one second.
+**One toast is on screen at a time, and the others wait their turn**, modelled on
+how `AdwToastOverlay` queues them. [`Toast::show`] puts a toast at the back of the
+queue; with [`ToastPriority::High`] it comes up at once instead, and the one it
+interrupts goes back to the front of the queue. Its time starts when it comes up.
+[`Toast::is_visible`] tells whether it is on screen and [`Toast::is_queued`]
+whether it is waiting. To replace the toast on screen, [`Toast::dismiss`] it first.
+
+Dismissing with [`Toast::dismiss`] and being put back in the queue do not call
+`on_dismiss` (the same rule as [`Dialog::close`]: the app's own operations are not
+notified). When a toast goes by itself, the next one is already on screen by the
+time `on_dismiss` is called.
+
+Some things differ by platform. `AdwToastOverlay` always places toasts at the
+bottom center, so **Linux ignores [`ToastPosition`]**. `AdwToast` has room for one
+button, so with two or more actions they go after the text in its custom title;
+on Windows they go in a row below the text. Only on Linux is the time granularity
+**seconds**, so values under one second become one second, and only Linux has a
+close button (×), which calls `on_dismiss`.
 
 ## Other threads and async
 
@@ -3211,14 +3303,20 @@ that notify **like the user's own action**, and checks what the app did:
 | [`Checkbox`], [`Toggle`], [`Expander`] | `click` | `set_checked`, `set_on`, `set_expanded` |
 | [`ComboBox`], [`EditableComboBox`], [`RadioGroup`], [`Tabs`], [`Navbar`], [`Dock`], [`Menu`], [`Breadcrumbs`], [`Sidebar`] | `select` | `set_selected` |
 | [`PopupMenu`] | `select` | |
-| [`List`], [`Table`] | `select`, `select_many` | `set_selected`, `set_selection` |
-| [`Tree`] | `select`, `expand`, `collapse` | `set_expanded` |
+| [`List`] | `select`, `select_many`, `drag_rows` | `set_selected`, `set_selection`, `move_rows` |
+| [`Table`] | `select`, `select_many` | `set_selected`, `set_selection` |
+| [`Tree`] | `select`, `select_many`, `expand`, `collapse` | `set_selected`, `set_selection`, `set_expanded` |
 | [`Pagination`] | `select`, `go_previous`, `go_next` | `set_page` |
 | [`Toolbar`], [`MenuBar`] | `activate` | |
 | [`ColorPicker`] | `pick` | `set_value` |
 | [`SplitView`] | `drag_to` | `set_position` |
 | [`AdaptivePanes`] | `go_back` | |
 | [`Popover`] | `dismiss` | `close` |
+| [`TextInput`], [`PasswordInput`], [`TextArea`] | `enter_text`, `submit` | `set_text` |
+| [`SearchInput`] | `enter_text`, `search` | `set_text` |
+| [`NumberInput`] | `enter_text`, `submit` | `set_value` |
+| [`EditableComboBox`] | `enter_text` (and `select`) | `set_text` |
+| [`Dialog`], [`Sheet`] | `respond` | `close` |
 | [`Window`] | [`testing::resize`] | |
 
 `click` goes through each platform's own path for a click (`performClick` on
@@ -3229,8 +3327,40 @@ exceptions: [`Link::click`] notifies without opening `href`, so a test does not
 open the browser, and [`Popover::dismiss`] can notify a moment later (wait for it
 with [`testing::wait_until`]).
 
-Typing into text fields has no counterpart yet: `set_text` and `set_value` do not
-call `on_change`, so put text in with them before the click that reads it.
+`enter_text` replaces a field's text the way the user does by selecting everything
+and typing over it, so `on_change` is called once with the new text, and `submit`
+(`search` on [`SearchInput`]) confirms as Enter does. They go through each
+platform's own path for typed text (AppKit's text-change notification,
+`GtkEditable`, the DOM's `input` event), but no key is pressed: `on_key_down` is
+not called and no IME is involved. On Windows, WinUI gives the app's own process
+no UI Automation Value pattern for a text field, so naui writes the text and calls
+`on_change` itself before `enter_text` returns, whether or not the window has been
+drawn. ([`TextArea`] has no `submit`, since Enter types a newline there.) Wait for
+what the notification does with [`testing::wait_until`] where it takes effect
+later:
+
+```rust,ignore
+app.window.show();
+app.name.enter_text("Ada");
+testing::wait_until(&ui, || app.preview.text() == "Signing up as Ada").await?;
+app.name.submit();
+```
+
+`respond` answers a [`Dialog`] or [`Sheet`] by clicking its button for a role, so
+`on_response` is called with it. Give the answer **before** whatever opens the
+dialog: the answer is kept and given right after the dialog opens. On macOS
+[`Dialog::open`] does not return until the dialog is closed, so the click that
+opens it returns only once it has been answered (from inside its modal loop); on
+the other platforms the answer arrives a moment after the dialog opens:
+
+```rust,ignore
+app.confirm_clear.respond(DialogResponse::Primary);
+app.clear.click();
+testing::wait_until(&ui, || app.status.text() == "The form is cleared").await?;
+```
+
+A role without a button, or with a disabled one, clicks nothing and leaves the
+dialog open (on macOS, with the click that opened a `Dialog` still waiting).
 
 ### Setting up the tests
 

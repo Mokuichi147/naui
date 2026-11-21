@@ -215,6 +215,14 @@ impl EditableComboBox {
         self.0.on_change.set(f);
     }
 
+    /// Replaces the text the way typing does, so `on_change` is called once with it
+    /// (for tests and automation). Nothing is completed from the suggestions. Does
+    /// nothing while insensitive. It goes through `GtkEditable`, with `changed` emitted
+    /// once for the new text.
+    pub fn enter_text(&self, text: &str) {
+        crate::widgets::enter_editable_text(&self.0.entry, &self.0.handler, text);
+    }
+
     /// The entry's `GtkEntry`. Public as a backend-specific escape hatch.
     pub fn native_entry(&self) -> gtk::Entry {
         self.0.entry.clone()

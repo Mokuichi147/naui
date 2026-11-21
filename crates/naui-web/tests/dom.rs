@@ -25,10 +25,11 @@ use std::rc::Rc;
 use naui_core::{
     Align, Bitmap, ButtonRole, Color, DialogButtons, DialogResponse, EventResponse, Gradient,
     GridCell, Key, KeyEvent, LayoutDirection, Length, ListItem, MenuItem, MenuShortcut, MenuSpec,
-    NavItem, Orientation, Padding, Pane, Point, PointerButton, PointerPhase, PopupItem, Rect,
-    Result, RichText, ScrollMetrics, SelectionMode, SidebarItem, SidebarSection, Sizing,
-    TableColumn, TableRow, TextColor, TextRun, TextStyle, Theme, ToolbarIcon, ToolbarItem,
-    WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
+    Modifiers, NavItem, Orientation, Padding, Pane, Point, PointerButton, PointerPhase, PopupItem,
+    Rect, Result, RichText, ScrollMetrics, SelectionMode, SidebarItem, SidebarSection, Sizing,
+    TableColumn, TableRow, TextColor, TextRun, TextStyle, Theme, ToastPosition, ToastPriority,
+    ToolbarIcon, ToolbarItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
+    ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
 };
 use naui_web::{run_for_test, ListRow, TableCells, Ui, WebWidgetExt, Widget};
 use wasm_bindgen::{JsCast, JsValue};
@@ -931,18 +932,26 @@ fn canvas_reports_pointer_events() {
         let element = canvas.native_element();
         let rect = element.get_bounding_client_rect();
         // `button` は変わったボタン (動きだけなら -1)、`buttons` はいま押している組。
+        let send_with =
+            |kind: &str, x: f64, y: f64, button: i16, buttons: u16, modifiers: Modifiers| {
+                let init = PointerEventInit::new();
+                init.set_bubbles(true);
+                init.set_cancelable(true);
+                init.set_client_x((rect.left() + x) as i32);
+                init.set_client_y((rect.top() + y) as i32);
+                init.set_pointer_id(1);
+                init.set_button(button);
+                init.set_buttons(buttons);
+                init.set_shift_key(modifiers.shift);
+                init.set_ctrl_key(modifiers.control);
+                init.set_alt_key(modifiers.alt);
+                init.set_meta_key(modifiers.meta);
+                let event = PointerEvent::new_with_event_init_dict(kind, &init)
+                    .expect("ポインターイベントの生成");
+                element.dispatch_event(&event).expect("イベントの配送");
+            };
         let send = |kind: &str, x: f64, y: f64, button: i16, buttons: u16| {
-            let init = PointerEventInit::new();
-            init.set_bubbles(true);
-            init.set_cancelable(true);
-            init.set_client_x((rect.left() + x) as i32);
-            init.set_client_y((rect.top() + y) as i32);
-            init.set_pointer_id(1);
-            init.set_button(button);
-            init.set_buttons(buttons);
-            let event = PointerEvent::new_with_event_init_dict(kind, &init)
-                .expect("ポインターイベントの生成");
-            element.dispatch_event(&event).expect("イベントの配送");
+            send_with(kind, x, y, button, buttons, Modifiers::default())
         };
         send("pointerdown", 30.0, 20.0, 0, 1);
         send("pointermove", 50.0, 40.0, -1, 1);
@@ -990,6 +999,85 @@ fn canvas_reports_pointer_events() {
                 (PointerPhase::Up, Some(PointerButton::Primary)),
             ]
         );
+        assert!(
+            seen.borrow().iter().all(|e| e.modifiers.is_empty()),
+            "修飾キーを押していなければ空: {:?}",
+            seen.borrow()
+        );
+
+        // 修飾キーは押下・移動・解放のどれにも、その時点の状態で付く。
+        // `pointermove` から読み替えた押下と解放にも付く。
+        seen.borrow_mut().clear();
+        let mods = |shift, control, alt, meta| Modifiers {
+            shift,
+            control,
+            alt,
+            meta,
+        };
+        send_with(
+            "pointermove",
+            5.0,
+            5.0,
+            -1,
+            0,
+            mods(false, false, true, false),
+        );
+        send_with(
+            "pointerdown",
+            30.0,
+            20.0,
+            0,
+            1,
+            mods(true, false, false, false),
+        );
+        send_with(
+            "pointermove",
+            40.0,
+            30.0,
+            -1,
+            1,
+            mods(true, true, false, false),
+        );
+        send_with(
+            "pointermove",
+            40.0,
+            30.0,
+            1,
+            1 | 4,
+            mods(false, false, false, true),
+        );
+        send_with(
+            "pointermove",
+            40.0,
+            30.0,
+            1,
+            1,
+            mods(false, true, false, false),
+        );
+        send_with("pointerup", 40.0, 30.0, 0, 0, mods(true, true, true, true));
+        let events: Vec<_> = seen
+            .borrow()
+            .iter()
+            .map(|e| (e.phase, e.modifiers))
+            .collect();
+        assert_eq!(
+            events,
+            vec![
+                (PointerPhase::Move, mods(false, false, true, false)),
+                (PointerPhase::Down, mods(true, false, false, false)),
+                (PointerPhase::Move, mods(true, true, false, false)),
+                (PointerPhase::Down, mods(false, false, false, true)),
+                (PointerPhase::Up, mods(false, true, false, false)),
+                (PointerPhase::Up, mods(true, true, true, true)),
+            ]
+        );
+        // Web では Ctrl も ⌘ も主の修飾キーに数える (キー入力と同じ)。
+        let primary: Vec<_> = seen
+            .borrow()
+            .iter()
+            .map(|e| e.modifiers.primary())
+            .collect();
+        assert_eq!(primary, vec![false, false, true, true, true, true]);
 
         // 右クリックでブラウザのコンテキストメニューを出さない。
         let init = web_sys::MouseEventInit::new();
@@ -1034,7 +1122,7 @@ fn canvas_reports_wheel() {
 
         let element = canvas.native_element();
         let rect = element.get_bounding_client_rect();
-        let send = |x: f64, y: f64, dx: f64, dy: f64, mode: u32| {
+        let send_with = |x: f64, y: f64, dx: f64, dy: f64, mode: u32, modifiers: Modifiers| {
             let init = WheelEventInit::new();
             init.set_bubbles(true);
             init.set_cancelable(true);
@@ -1043,9 +1131,16 @@ fn canvas_reports_wheel() {
             init.set_delta_x(dx);
             init.set_delta_y(dy);
             init.set_delta_mode(mode);
+            init.set_shift_key(modifiers.shift);
+            init.set_ctrl_key(modifiers.control);
+            init.set_alt_key(modifiers.alt);
+            init.set_meta_key(modifiers.meta);
             let event = WheelEvent::new_with_event_init_dict("wheel", &init).expect("wheel の生成");
             element.dispatch_event(&event).expect("イベントの配送");
             event.default_prevented()
+        };
+        let send = |x: f64, y: f64, dx: f64, dy: f64, mode: u32| {
+            send_with(x, y, dx, dy, mode, Modifiers::default())
         };
 
         // ピクセルはそのまま。Continue ならページのスクロールを止めない。
@@ -1057,9 +1152,27 @@ fn canvas_reports_wheel() {
             "Handled ならページのスクロールを止めること"
         );
         assert!(send(30.0, 20.0, 1.0, 0.0, WheelEvent::DOM_DELTA_PAGE));
+        // Ctrl を押しながらのホイール (トラックパッドのピンチもこの形で届く) は
+        // 修飾キー付きで届く。
+        let control = Modifiers {
+            control: true,
+            ..Modifiers::default()
+        };
+        assert!(send_with(
+            30.0,
+            20.0,
+            0.0,
+            4.0,
+            WheelEvent::DOM_DELTA_PIXEL,
+            control
+        ));
 
         let seen = seen.borrow();
-        assert_eq!(seen.len(), 3);
+        assert_eq!(seen.len(), 4);
+        assert!(seen[..3].iter().all(|e| e.modifiers.is_empty()), "{seen:?}");
+        assert_eq!(seen[3].modifiers, control);
+        assert!(seen[3].modifiers.primary());
+        let seen = &seen[..3];
         assert!(seen
             .iter()
             .all(|e| e.phase == PointerPhase::Wheel && e.button.is_none()));
@@ -4783,6 +4896,199 @@ fn dialog_leaves_escape_to_the_ime_while_composing() {
     });
 }
 
+// --------------------------------------------------------------- Toast
+
+/// The toast's action buttons, in order.
+fn toast_buttons(toast: &naui_web::Toast) -> Vec<HtmlElement> {
+    let list = toast
+        .native_element()
+        .query_selector_all("button")
+        .expect("ボタンを探せること");
+    (0..list.length())
+        .filter_map(|i| list.item(i))
+        .filter_map(|node| node.dyn_into::<HtmlElement>().ok())
+        .collect()
+}
+
+/// The labels of the toast's action buttons, in order.
+fn toast_button_labels(toast: &naui_web::Toast) -> Vec<String> {
+    toast_buttons(toast)
+        .iter()
+        .map(|b| b.text_content().unwrap_or_default())
+        .collect()
+}
+
+/// Whether the toast's element is laid out (not `display: none`).
+fn toast_is_displayed(toast: &naui_web::Toast) -> bool {
+    web_sys::window()
+        .and_then(|w| w.get_computed_style(&toast.native_element()).ok().flatten())
+        .and_then(|style| style.get_property_value("display").ok())
+        .is_some_and(|display| display != "none")
+}
+
+/// A toast shown while another is up waits its turn and comes up once the other is
+/// dismissed; `High` comes up at once and puts the current one back at the front.
+/// None of this is notified.
+#[wasm_bindgen_test]
+fn toast_waits_its_turn_and_high_comes_up_at_once() {
+    with_ui(|ui| {
+        let dismissed = Rc::new(Cell::new(0));
+        let make = |message: &str| -> Result<_> {
+            let toast = ui.toast(message)?;
+            toast.set_timeout(0.0);
+            toast.on_dismiss({
+                let dismissed = dismissed.clone();
+                move || dismissed.set(dismissed.get() + 1)
+            });
+            Ok(toast)
+        };
+        let first = make("1 つめ")?;
+        let second = make("2 つめ")?;
+        let urgent = make("急ぎ")?;
+        urgent.set_priority(ToastPriority::High);
+
+        first.show();
+        second.show();
+        assert!(first.is_visible() && toast_is_displayed(&first));
+        assert!(second.is_queued() && !second.is_visible(), "後のものは並ぶ");
+        assert!(!toast_is_displayed(&second), "並んでいる間は見えない");
+
+        urgent.show();
+        assert!(
+            urgent.is_visible() && toast_is_displayed(&urgent),
+            "すぐ出る"
+        );
+        assert!(first.is_queued() && !toast_is_displayed(&first), "列へ戻る");
+
+        urgent.dismiss();
+        assert!(first.is_visible(), "割り込まれたものが先に戻る");
+        first.dismiss();
+        assert!(second.is_visible() && toast_is_displayed(&second));
+        second.dismiss();
+        assert!(!toast_is_displayed(&second));
+        assert_eq!(dismissed.get(), 0, "アプリ自身の操作は通知しない");
+
+        for toast in [first, second, urgent] {
+            toast.native_element().remove();
+        }
+        Ok(())
+    });
+}
+
+/// Clicking an action button reports its index, then `on_dismiss`; by then the next
+/// toast is up, and replacing the buttons from inside `on_action` is fine.
+#[wasm_bindgen_test]
+fn toast_action_buttons_report_their_index() {
+    with_ui(|ui| {
+        let toast = ui.toast("削除しました")?;
+        toast.set_timeout(0.0);
+        toast.set_actions(&["元に戻す", "開く"]);
+        assert_eq!(toast.actions(), ["元に戻す", "開く"]);
+        assert_eq!(toast_button_labels(&toast), ["元に戻す", "開く"]);
+        let next = ui.toast("次")?;
+        next.set_timeout(0.0);
+
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        toast.on_action({
+            let (seen, toast) = (seen.clone(), toast.clone());
+            move |index| {
+                seen.borrow_mut().push(format!("action {index}"));
+                // 押された通知の中でボタンを差し替えても、走っている購読は消えない。
+                toast.set_actions(&["やり直す"]);
+            }
+        });
+        toast.on_dismiss({
+            let (seen, next) = (seen.clone(), next.clone());
+            move || {
+                seen.borrow_mut()
+                    .push(format!("dismiss (次: {})", next.is_visible()))
+            }
+        });
+
+        toast.show();
+        next.show();
+        toast_buttons(&toast)[1].click();
+        assert_eq!(
+            *seen.borrow(),
+            ["action 1", "dismiss (次: true)"],
+            "番号が届き、消えた通知の時点で次が出ていること"
+        );
+        assert!(!toast.is_visible());
+        assert_eq!(toast_button_labels(&toast), ["やり直す"]);
+
+        next.dismiss();
+        seen.borrow_mut().clear();
+        toast.show();
+        toast_buttons(&toast)[0].click();
+        assert_eq!(*seen.borrow(), ["action 0", "dismiss (次: false)"]);
+
+        toast.set_actions::<&str>(&[]);
+        assert!(toast_buttons(&toast).is_empty(), "空の列でボタンが消える");
+        toast.native_element().remove();
+        next.native_element().remove();
+        Ok(())
+    });
+}
+
+/// Each position puts the toast 24 px from that edge of the viewport, and the start
+/// and end sides swap in a right-to-left page.
+#[wasm_bindgen_test]
+fn toast_positions_follow_the_edges_and_sides() {
+    let root = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.document_element())
+        .expect("html");
+    let _restore = PageDirection(root.get_attribute("dir"));
+    let (width, height) = (
+        f64::from(root.client_width()),
+        f64::from(root.client_height()),
+    );
+    if width < 200.0 || height < 200.0 {
+        // ペインが隠れたブラウザなどでは大きさが 0 になり、位置を確かめられない。
+        return;
+    }
+
+    with_ui(|ui| {
+        let toast = ui.toast("ここ")?;
+        toast.set_timeout(0.0);
+        for dir in ["ltr", "rtl"] {
+            root.set_attribute("dir", dir).expect("dir");
+            for position in ToastPosition::ALL {
+                toast.set_position(position);
+                assert_eq!(toast.position(), position);
+                toast.show();
+                let rect = toast.native_element().get_bounding_client_rect();
+                if position.is_top() {
+                    assert!((rect.top() - 24.0).abs() < 1.0, "{dir} {position:?} 上端");
+                } else {
+                    assert!(
+                        (height - rect.bottom() - 24.0).abs() < 1.0,
+                        "{dir} {position:?} 下端"
+                    );
+                }
+                let from_left = rect.left();
+                let from_right = width - rect.right();
+                let (start, end) = if dir == "rtl" {
+                    (from_right, from_left)
+                } else {
+                    (from_left, from_right)
+                };
+                match position.align() {
+                    Align::Start => assert!((start - 24.0).abs() < 1.0, "{dir} {position:?}"),
+                    Align::End => assert!((end - 24.0).abs() < 1.0, "{dir} {position:?}"),
+                    _ => assert!(
+                        (from_left - from_right).abs() < 1.0,
+                        "{dir} {position:?} 中央: {from_left} / {from_right}"
+                    ),
+                }
+                toast.dismiss();
+            }
+        }
+        toast.native_element().remove();
+        Ok(())
+    });
+}
+
 // --------------------------------------------------------------- Sheet
 
 /// The labels of a sheet's buttons, from the left.
@@ -7388,6 +7694,220 @@ fn window_key_down_gets_what_the_widget_left() {
     });
 }
 
+// --------------------------------------------- 打ち込みとダイアログへの応答
+
+/// Records every string a text notification passes.
+fn text_recorder() -> (Rc<RefCell<Vec<String>>>, impl FnMut(&str) + 'static) {
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = {
+        let seen = seen.clone();
+        move |text: &str| seen.borrow_mut().push(text.to_string())
+    };
+    (seen, sink)
+}
+
+/// Records every value a notification passes.
+fn value_recorder<T: 'static>() -> (Rc<RefCell<Vec<T>>>, impl FnMut(T) + 'static) {
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let sink = {
+        let seen = seen.clone();
+        move |value: T| seen.borrow_mut().push(value)
+    };
+    (seen, sink)
+}
+
+/// `enter_text` replaces the text and notifies once, as typing does (`input`), and
+/// `submit` / `search` confirm as Enter does. Neither does anything while disabled
+/// or read-only, and both work before the field is placed in the page.
+#[wasm_bindgen_test]
+fn typing_notifies_like_the_user() {
+    with_ui(|ui| {
+        let field = ui.text_input("前の文字")?;
+        let (changes, sink) = text_recorder();
+        field.on_change(sink);
+        let (submits, sink) = text_recorder();
+        field.on_submit(sink);
+        let (keys, mut sink) = text_recorder();
+        field.on_key_down(move |key| {
+            sink(&format!("{:?}", key.key));
+            EventResponse::Continue
+        });
+        field.enter_text("Ada");
+        assert_eq!(field.text(), "Ada");
+        assert_eq!(
+            *changes.borrow(),
+            ["Ada"],
+            "1 度だけ新しい中身で通知すること"
+        );
+        field.submit();
+        assert_eq!(*submits.borrow(), ["Ada"]);
+        assert!(keys.borrow().is_empty(), "キーの通知は出さない");
+        field.set_read_only(true);
+        field.enter_text("Grace");
+        field.submit();
+        assert_eq!(field.text(), "Ada", "読み取り専用の欄には打てない");
+        assert_eq!(submits.borrow().len(), 1, "読み取り専用の欄は確定しない");
+        field.set_read_only(false);
+        field.set_enabled(false);
+        field.enter_text("Grace");
+        field.submit();
+        assert_eq!(field.text(), "Ada", "無効な欄には打てない");
+        assert_eq!(changes.borrow().len(), 1);
+        assert_eq!(submits.borrow().len(), 1);
+
+        let password = ui.password_input()?;
+        let (changes, sink) = text_recorder();
+        password.on_change(sink);
+        let (submits, sink) = text_recorder();
+        password.on_submit(sink);
+        password.enter_text("secret");
+        password.submit();
+        assert_eq!(password.text(), "secret");
+        assert_eq!(*changes.borrow(), ["secret"]);
+        assert_eq!(*submits.borrow(), ["secret"]);
+
+        let search = ui.search_input()?;
+        let (changes, sink) = text_recorder();
+        search.on_change(sink);
+        let (searches, sink) = text_recorder();
+        search.on_search(sink);
+        search.enter_text("naui");
+        search.search();
+        assert_eq!(*changes.borrow(), ["naui"]);
+        assert_eq!(*searches.borrow(), ["naui"]);
+        search.set_enabled(false);
+        search.enter_text("other");
+        search.search();
+        assert_eq!(search.text(), "naui");
+        assert_eq!(searches.borrow().len(), 1, "無効な検索欄は確定しない");
+
+        let area = ui.text_area("1 行目")?;
+        let (changes, sink) = text_recorder();
+        area.on_change(sink);
+        area.enter_text("一\n二");
+        assert_eq!(area.text(), "一\n二");
+        assert_eq!(*changes.borrow(), ["一\n二"]);
+        area.set_read_only(true);
+        area.enter_text("三");
+        assert_eq!(area.text(), "一\n二", "読み取り専用の欄には打てない");
+        area.set_read_only(false);
+        area.set_enabled(false);
+        area.enter_text("三");
+        assert_eq!(area.text(), "一\n二", "無効な欄には打てない");
+        assert_eq!(changes.borrow().len(), 1);
+
+        let number = ui.number_input(1.0)?;
+        number.set_range(Some(0.0), Some(10.0));
+        let (values, sink) = value_recorder::<f64>();
+        number.on_change(sink);
+        let (submits, sink) = value_recorder::<f64>();
+        number.on_submit(sink);
+        number.enter_text("4");
+        assert_eq!(number.value(), 4.0, "読める数はすぐ値になる");
+        assert_eq!(*values.borrow(), [4.0]);
+        number.submit();
+        assert_eq!(*submits.borrow(), [4.0]);
+        number.enter_text("-");
+        assert_eq!(values.borrow().len(), 1, "読めない文字は確定まで待つ");
+        number.submit();
+        assert_eq!(number.value(), 4.0, "確定で読めない文字は元へ戻る");
+        assert_eq!(*submits.borrow(), [4.0, 4.0]);
+        number.set_enabled(false);
+        number.enter_text("7");
+        number.submit();
+        assert_eq!(number.value(), 4.0, "無効な欄には打てない");
+        assert_eq!(submits.borrow().len(), 2);
+
+        let combo = ui.editable_combo_box()?;
+        combo.set_items(&["Apple", "Banana"]);
+        let (changes, sink) = text_recorder();
+        combo.on_change(sink);
+        combo.enter_text("Ap");
+        assert_eq!(combo.text(), "Ap", "候補で補わない");
+        assert_eq!(*changes.borrow(), ["Ap"]);
+        combo.enter_text("Banana");
+        assert_eq!(combo.selected(), Some(1), "候補と同じ文字なら選ばれる");
+        combo.set_enabled(false);
+        combo.enter_text("Cherry");
+        assert_eq!(combo.text(), "Banana", "無効な欄には打てない");
+        assert_eq!(*changes.borrow(), ["Ap", "Banana"]);
+        Ok(())
+    });
+}
+
+/// `respond` clicks the dialog's or sheet's button for the role. Given before it
+/// opens, it is kept and given a moment after it opens.
+#[wasm_bindgen_test]
+async fn respond_answers_like_the_user() {
+    let mut kept = None;
+    with_ui(|ui| {
+        let dialog = ui.dialog("消しますか")?;
+        dialog.set_buttons(
+            DialogButtons::new()
+                .primary("消す")
+                .secondary("あとで")
+                .cancel("やめる"),
+        );
+        let sheet = ui.sheet("新しいフォルダ")?;
+        sheet.set_child(&ui.text_input("")?);
+        sheet.set_buttons(DialogButtons::new().primary("作成").cancel("キャンセル"));
+        let opener = ui.button("消す…")?;
+        opener.on_click({
+            let dialog = dialog.clone();
+            move || dialog.open()
+        });
+        kept = Some((dialog, sheet, opener));
+        Ok(())
+    });
+    let (dialog, sheet, opener) = kept.expect("組み立て");
+    let (responses, sink) = value_recorder::<DialogResponse>();
+    dialog.on_response(sink);
+    for response in [
+        DialogResponse::Primary,
+        DialogResponse::Secondary,
+        DialogResponse::Cancel,
+    ] {
+        dialog.respond(response);
+        opener.click();
+        assert!(dialog.is_open(), "{response:?}: 開いてから答える");
+        wait_millis(50).await;
+        assert!(!dialog.is_open(), "{response:?}: 答えて閉じること");
+    }
+    assert_eq!(
+        *responses.borrow(),
+        [
+            DialogResponse::Primary,
+            DialogResponse::Secondary,
+            DialogResponse::Cancel
+        ]
+    );
+    // 開いている間に答えれば、その場で閉じる。
+    dialog.open();
+    dialog.respond(DialogResponse::Primary);
+    assert!(!dialog.is_open());
+    assert_eq!(responses.borrow().len(), 4);
+
+    let (responses, sink) = value_recorder::<DialogResponse>();
+    sheet.on_response(sink);
+    sheet.respond(DialogResponse::Primary);
+    sheet.open();
+    wait_millis(50).await;
+    assert_eq!(*responses.borrow(), [DialogResponse::Primary]);
+
+    // 無効なボタンは押せず、開いたまま。ないボタンも同じ。
+    sheet.set_button_enabled(DialogResponse::Primary, false);
+    sheet.open();
+    sheet.respond(DialogResponse::Primary);
+    sheet.respond(DialogResponse::Secondary);
+    assert!(sheet.is_open(), "無効なボタンとないボタンは押せない");
+    sheet.respond(DialogResponse::Cancel);
+    assert!(!sheet.is_open());
+    assert_eq!(
+        *responses.borrow(),
+        [DialogResponse::Primary, DialogResponse::Cancel]
+    );
+}
+
 // ------------------------------------------------- アプリ向けの基本機能
 
 /// Waits `millis` (the browser's `setTimeout`).
@@ -8250,6 +8770,291 @@ fn mounted_list(ui: &Ui) -> Result<(naui_web::List, Mounted)> {
     list.set_sizing(Sizing::fixed(240.0, 200.0));
     let mounted = Mounted::new(&list);
     Ok((list, mounted))
+}
+
+/// The text of each built row of a list.
+fn list_texts(list: &dyn Widget) -> Vec<String> {
+    list_rows(list)
+        .iter()
+        .map(|row| row.text_content().unwrap_or_default())
+        .collect()
+}
+
+/// `drag_rows` moves the rows like the user's drop: the rows and the selection move,
+/// `on_reorder` is told, `on_select` is not. A reorderable list is composed, since an
+/// `<option>` cannot be dragged.
+#[wasm_bindgen_test]
+fn list_drag_rows_moves_rows_and_selection() {
+    with_ui(|ui| {
+        use naui_core::RowMove;
+
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_items(&[
+            ListItem::new("東京"),
+            ListItem::new("大阪"),
+            ListItem::new("札幌"),
+            ListItem::new("那覇").enabled(false),
+            ListItem::new("福岡"),
+        ]);
+        list.set_selection_mode(SelectionMode::Multiple);
+        let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
+        list.on_reorder({
+            let moves = moves.clone();
+            move |moved| moves.borrow_mut().push(moved.clone())
+        });
+        let selections = Rc::new(Cell::new(0));
+        list.on_select({
+            let selections = selections.clone();
+            move |_| selections.set(selections.get() + 1)
+        });
+
+        // 並べ替えを許すまでは、ドラッグは何もしない。
+        assert!(!list.is_reorderable());
+        assert!(list.native_select().is_some(), "文字だけの行は <select>");
+        list.drag_rows(&[0], 3);
+        assert!(moves.borrow().is_empty());
+
+        list.set_selection(&[0, 2]);
+        list.set_reorderable(true);
+        assert!(list.is_reorderable());
+        assert!(
+            list.native_select().is_none(),
+            "並べ替えるリストは組み立てる"
+        );
+        assert_eq!(list.selection(), vec![0, 2], "組み立て直しても選択は残る");
+        list.drag_rows(&[0, 2], 5);
+        assert_eq!(list_texts(&list), ["大阪", "那覇", "福岡", "東京", "札幌"]);
+        assert_eq!(*moves.borrow(), vec![RowMove::new([0, 2], 5)]);
+        assert_eq!(list.selection(), vec![3, 4], "選択は動いた行についていく");
+        let marked: Vec<bool> = list_rows(&list)
+            .iter()
+            .map(|row| row.get_attribute("aria-selected").as_deref() == Some("true"))
+            .collect();
+        assert_eq!(marked, [false, false, false, true, true]);
+        assert_eq!(
+            selections.get(),
+            0,
+            "選ばれている行は同じなので on_select は来ない"
+        );
+
+        // 選べない行はつかめない。ほかの行といっしょでも、その行だけ残る。
+        list.drag_rows(&[1], 0);
+        assert_eq!(moves.borrow().len(), 1, "選べない行だけなら何も起きない");
+        list.drag_rows(&[1, 4], 0);
+        assert_eq!(list_texts(&list), ["札幌", "大阪", "那覇", "福岡", "東京"]);
+        assert_eq!(moves.borrow()[1], RowMove::new([4], 0));
+        assert_eq!(list.selection(), vec![0, 4]);
+
+        // 自分の場所へ落としても通知しない。
+        list.drag_rows(&[1], 2);
+        assert_eq!(moves.borrow().len(), 2);
+
+        // move_rows は通知せず、並べ替えを許していなくても動かす。
+        list.set_reorderable(false);
+        assert!(
+            list.native_select().is_some(),
+            "許さなくなれば <select> に戻る"
+        );
+        list.move_rows(&RowMove::new([0], 5));
+        assert_eq!(list.selection(), vec![3, 4]);
+        let select = list.native_select().expect("<select>");
+        let options = select.options();
+        let texts: Vec<String> = (0..options.length())
+            .filter_map(|i| options.get_with_index(i))
+            .map(|option| option.text_content().unwrap_or_default())
+            .collect();
+        assert_eq!(texts, ["大阪", "那覇", "福岡", "東京", "札幌"]);
+        assert_eq!(moves.borrow().len(), 2);
+        assert_eq!(selections.get(), 0);
+        Ok(())
+    });
+}
+
+/// A new `DataTransfer`, shared by the events of one synthesized drag.
+fn new_data_transfer() -> JsValue {
+    js_sys::Function::new_no_args("return new DataTransfer();")
+        .call0(&JsValue::NULL)
+        .expect("DataTransfer の生成")
+}
+
+/// Fires a drag event carrying `data` at `client_y`. **The return value is whether
+/// the default action was prevented**, which for `dragover` means the drop is taken.
+fn fire_row_drag(target: &EventTarget, kind: &str, data: &JsValue, client_y: f64) -> bool {
+    let make = js_sys::Function::new_with_args(
+        "kind, data, y",
+        "return new DragEvent(kind, { dataTransfer: data, bubbles: true, cancelable: true, clientY: y });",
+    );
+    let event: web_sys::Event = make
+        .call3(
+            &JsValue::NULL,
+            &JsValue::from_str(kind),
+            data,
+            &JsValue::from_f64(client_y),
+        )
+        .expect("ドラッグのイベントの生成")
+        .unchecked_into();
+    !target.dispatch_event(&event).expect("イベントの配送")
+}
+
+/// A drag of rows goes through HTML drag and drop: selectable rows are `draggable`,
+/// `dragstart` marks the drag, `dragover` takes only this list's own rows and draws
+/// the line where they land, and `drop` moves them.
+#[wasm_bindgen_test]
+fn list_reorder_goes_through_html_drag_and_drop() {
+    with_ui(|ui| {
+        use naui_core::RowMove;
+
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_items(&[
+            ListItem::new("札幌"),
+            ListItem::new("仙台"),
+            ListItem::new("東京"),
+            ListItem::new("大阪").enabled(false),
+        ]);
+        let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
+        list.on_reorder({
+            let moves = moves.clone();
+            move |moved| moves.borrow_mut().push(moved.clone())
+        });
+        list.set_reorderable(true);
+        let row = |index: usize| list_rows(&list)[index].clone();
+        assert!(row(0).draggable(), "選べる行はつかめる");
+        assert!(!row(3).draggable(), "選べない行はつかめない");
+        let middle = |index: usize| {
+            let rect = row(index).get_bounding_client_rect();
+            (rect.top(), rect.top() + rect.height() / 2.0, rect.bottom())
+        };
+
+        // 行から始まったのではないドラッグ (よそから持ち込んだ文字) は受けない。
+        let foreign = new_data_transfer();
+        let (_, center, _) = middle(1);
+        assert!(!fire_row_drag(&row(1), "dragover", &foreign, center));
+
+        // 3 行目をつかみ、2 行目の上半分へ: 2 行目の前へ入り、線は 2 行目の上に出る。
+        let data = new_data_transfer();
+        fire_row_drag(&row(2), "dragstart", &data, middle(2).1);
+        let types: js_sys::Array = js_sys::Reflect::get(&data, &JsValue::from_str("types"))
+            .expect("types")
+            .unchecked_into();
+        assert!(
+            types.includes(&JsValue::from_str("application/x-naui-list-rows"), 0),
+            "行のドラッグの印が付く"
+        );
+        let (top, center, bottom) = middle(1);
+        let upper = (top + center) / 2.0;
+        assert!(
+            fire_row_drag(&row(1), "dragover", &data, upper),
+            "自分の行は受ける"
+        );
+        assert!(
+            row(1)
+                .style()
+                .get_property_value("box-shadow")
+                .unwrap_or_default()
+                .contains("inset"),
+            "線は入る先の行の上に出る"
+        );
+        // 最後の行の下半分では、最後の行の下に出る。
+        let shadow = |index: usize| {
+            row(index)
+                .style()
+                .get_property_value("box-shadow")
+                .unwrap_or_default()
+        };
+        let (_, center, last_bottom) = middle(3);
+        assert!(fire_row_drag(
+            &row(3),
+            "dragover",
+            &data,
+            (center + last_bottom) / 2.0
+        ));
+        assert!(shadow(1).is_empty(), "前の線は消える");
+        assert!(shadow(3).contains("-2px"), "{}", shadow(3));
+        let _ = bottom;
+
+        assert!(fire_row_drag(&row(1), "drop", &data, upper));
+        assert_eq!(list_texts(&list), ["札幌", "東京", "仙台", "大阪"]);
+        assert_eq!(*moves.borrow(), vec![RowMove::new([2], 1)]);
+        assert!(
+            list_rows(&list).iter().all(|row| row
+                .style()
+                .get_property_value("box-shadow")
+                .unwrap_or_default()
+                .is_empty()),
+            "落としたら線は消える"
+        );
+        assert!(
+            !fire_row_drag(&row(1), "dragover", &data, upper),
+            "落としたあとは同じドラッグをもう受けない"
+        );
+
+        // ほかのリストの行は受けない。
+        let other = ui.list()?;
+        other.set_items(&ListItem::list(["よそ"]));
+        other.set_reorderable(true);
+        let _other_mounted = Mounted::new(&other);
+        let elsewhere = new_data_transfer();
+        fire_row_drag(&list_rows(&other)[0], "dragstart", &elsewhere, 0.0);
+        assert!(!fire_row_drag(&row(1), "dragover", &elsewhere, upper));
+        assert!(!fire_row_drag(&row(1), "drop", &elsewhere, upper));
+        assert_eq!(moves.borrow().len(), 1);
+
+        // 選ばれている行をつかむと、選択ごと動く。
+        list.set_selection_mode(SelectionMode::Multiple);
+        list.set_selection(&[0, 1]);
+        let data = new_data_transfer();
+        fire_row_drag(&row(1), "dragstart", &data, middle(1).1);
+        let (_, center, last_bottom) = middle(3);
+        assert!(fire_row_drag(
+            &row(3),
+            "drop",
+            &data,
+            (center + last_bottom) / 2.0
+        ));
+        assert_eq!(list_texts(&list), ["仙台", "大阪", "札幌", "東京"]);
+        assert_eq!(moves.borrow()[1], RowMove::new([0, 1], 4));
+        assert_eq!(list.selection(), vec![2, 3]);
+        Ok(())
+    });
+}
+
+/// Rows from a builder move too, with only the rows on screen built: the app moves its
+/// data in `on_reorder`, and the rows built afterwards read it.
+#[wasm_bindgen_test]
+fn list_reorder_with_row_builder() {
+    with_ui(|ui| {
+        const ROWS: usize = 1000;
+        let data: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(
+            (0..ROWS).map(|index| format!("行 {index}")).collect(),
+        ));
+        let (list, _mounted) = mounted_list(ui)?;
+        list.set_row_builder(ROWS, {
+            let data = data.clone();
+            let ui = ui.clone();
+            move |index| Ok(ListRow::new(&ui.label(&data.borrow()[index])?))
+        });
+        list.on_reorder({
+            let data = data.clone();
+            move |moved| moved.apply(&mut data.borrow_mut())
+        });
+        list.set_reorderable(true);
+        assert!(
+            list_rows(&list).len() < ROWS,
+            "画面に出ている行だけを組み立てる"
+        );
+        list.set_selected(0);
+        list.drag_rows(&[0], 2);
+        assert_eq!(data.borrow()[..3], ["行 1", "行 0", "行 2"]);
+        assert_eq!(list_texts(&list)[..3], ["行 1", "行 0", "行 2"]);
+        assert_eq!(list.selection(), vec![1], "選択は動いた行についていく");
+
+        // 窓の外へ動かしても、選択は覚えている。
+        list.drag_rows(&[1], ROWS);
+        assert_eq!(data.borrow()[ROWS - 1], "行 0");
+        assert_eq!(list.selection(), vec![ROWS - 1]);
+        assert_eq!(list_texts(&list)[..2], ["行 1", "行 2"]);
+        Ok(())
+    });
 }
 
 /// A `<select>` has no place for spacers and makes every `<option>`, so a list with more
@@ -9700,6 +10505,255 @@ fn tree_opens_ancestors_and_scrolls_to_an_item() {
             .expect("71 番目の項目")
             .unchecked_into::<Element>();
         assert!(is_within(&mounted.0, &item), "項目が見える");
+        Ok(())
+    });
+}
+
+/// The tree used by the multiple selection tests: src (two leaves), docs (guide >
+/// intro.md) and a disabled target (debug).
+fn multi_tree() -> Vec<naui_core::TreeItem> {
+    use naui_core::TreeItem;
+    vec![
+        TreeItem::new("src")
+            .expanded(true)
+            .children([TreeItem::new("main.rs"), TreeItem::new("lib.rs")]),
+        TreeItem::new("docs")
+            .expanded(true)
+            .child(TreeItem::new("guide").child(TreeItem::new("intro.md"))),
+        TreeItem::new("target")
+            .enabled(false)
+            .child(TreeItem::new("debug")),
+    ]
+}
+
+/// The row (the clickable line) of the tree item whose label is `label`.
+fn tree_row(root: &Element, label: &str) -> Element {
+    let items = root.query_selector_all("[role=treeitem]").expect("項目");
+    (0..items.length())
+        .filter_map(|i| items.item(i))
+        .map(|node| node.unchecked_into::<Element>())
+        .filter_map(|item| item.first_element_child())
+        .find(|row| row.text_content().is_some_and(|text| text.ends_with(label)))
+        .unwrap_or_else(|| panic!("「{label}」の行"))
+}
+
+/// Clicks a tree row with ⌘ / Ctrl or Shift held, as the user does.
+fn click_tree_row(root: &Element, label: &str, ctrl: bool, shift: bool) {
+    let init = MouseEventInit::new();
+    init.set_bubbles(true);
+    init.set_ctrl_key(ctrl);
+    init.set_shift_key(shift);
+    let event = MouseEvent::new_with_mouse_event_init_dict("click", &init).expect("イベント");
+    tree_row(root, label).dispatch_event(&event).expect("配送");
+}
+
+/// The labels of the items marked `aria-selected="true"`, in the order of the tree.
+fn tree_selected_labels(root: &Element) -> Vec<String> {
+    let items = root
+        .query_selector_all("[role=treeitem][aria-selected=true]")
+        .expect("項目");
+    (0..items.length())
+        .filter_map(|i| items.item(i))
+        .map(|node| node.unchecked_into::<Element>())
+        .filter_map(|item| {
+            item.first_element_child()?
+                .last_element_child()?
+                .text_content()
+        })
+        .collect()
+}
+
+#[wasm_bindgen_test]
+fn tree_selects_several_items_with_modifier_clicks() {
+    with_ui(|ui| {
+        let tree = ui.tree()?;
+        tree.set_items(&multi_tree());
+        let mounted = Mounted::new(&tree);
+        let root = &mounted.0;
+        assert_eq!(
+            tree.selection_mode(),
+            SelectionMode::Single,
+            "既定は単一選択"
+        );
+        assert_eq!(root.get_attribute("aria-multiselectable"), None);
+
+        tree.set_selection_mode(SelectionMode::Multiple);
+        assert_eq!(
+            root.get_attribute("aria-multiselectable").as_deref(),
+            Some("true")
+        );
+        let seen = Rc::new(RefCell::new(Vec::<Vec<usize>>::new()));
+        tree.on_select({
+            let seen = seen.clone();
+            move |path| seen.borrow_mut().push(path.to_vec())
+        });
+
+        // ふつうのクリックは 1 つだけ選ぶ。Ctrl で足し、Shift で範囲を選ぶ。
+        click_tree_row(root, "main.rs", false, false);
+        click_tree_row(root, "docs", true, false);
+        assert_eq!(tree.selection(), vec![vec![0, 0], vec![1]]);
+        click_tree_row(root, "guide", false, true);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![1], vec![1, 0]],
+            "Shift は起点 (最後に Ctrl で押した docs) から、見えている項目を選ぶ"
+        );
+        assert_eq!(tree_selected_labels(root), vec!["docs", "guide"]);
+        // 通知は先頭の 1 つ。
+        assert_eq!(*seen.borrow(), vec![vec![0, 0], vec![0, 0], vec![1]]);
+
+        // 枝を選んでも、子は選ばれない。Ctrl で外せる。
+        click_tree_row(root, "src", true, false);
+        assert_eq!(tree.selection(), vec![vec![0], vec![1], vec![1, 0]]);
+        click_tree_row(root, "docs", true, false);
+        assert_eq!(tree.selection(), vec![vec![0], vec![1, 0]]);
+        assert_eq!(tree.selected(), Some(vec![0]));
+
+        // 閉じた枝の中の選択は覚えていて、Ctrl で足しても残る。
+        tree.collapse(&[1]);
+        assert_eq!(tree.selection(), vec![vec![0], vec![1, 0]]);
+        click_tree_row(root, "main.rs", true, false);
+        assert_eq!(tree.selection(), vec![vec![0], vec![0, 0], vec![1, 0]]);
+        tree.expand(&[1]);
+        assert_eq!(tree_selected_labels(root), vec!["src", "main.rs", "guide"]);
+        // ふつうのクリックは、隠れた選択も含めて置き換える。
+        tree.collapse(&[1]);
+        click_tree_row(root, "lib.rs", false, false);
+        assert_eq!(tree.selection(), vec![vec![0, 1]]);
+
+        // 選べない枝は、クリックしても選ばれない。
+        click_tree_row(root, "target", true, false);
+        assert_eq!(tree.selection(), vec![vec![0, 1]]);
+
+        // 単一選択へ戻すと選択は外れ、通知しない。
+        let notified = seen.borrow().len();
+        tree.set_selection_mode(SelectionMode::Single);
+        assert!(tree.selection().is_empty());
+        assert_eq!(seen.borrow().len(), notified);
+        click_tree_row(root, "main.rs", false, false);
+        click_tree_row(root, "lib.rs", true, false);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0, 1]],
+            "単一選択では Ctrl も置き換える"
+        );
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn tree_selection_from_code_is_normalized() {
+    with_ui(|ui| {
+        let tree = ui.tree()?;
+        tree.set_items(&multi_tree());
+        tree.collapse_all();
+        let mounted = Mounted::new(&tree);
+        let seen = Rc::new(RefCell::new(Vec::<Vec<usize>>::new()));
+        tree.on_select({
+            let seen = seen.clone();
+            move |path| seen.borrow_mut().push(path.to_vec())
+        });
+
+        // 単一選択では、木に並ぶ順で最初の 1 つだけ。
+        tree.set_selection(&[vec![1, 0, 0], vec![0, 1]]);
+        assert_eq!(tree.selection(), vec![vec![0, 1]]);
+
+        tree.set_selection_mode(SelectionMode::Multiple);
+        tree.set_selection(&[vec![1, 0, 0], vec![2, 0], vec![0, 1], vec![9], vec![0, 1]]);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0, 1], vec![1, 0, 0]],
+            "選べない項目と無いパスを落とし、木に並ぶ順にそろえる"
+        );
+        assert!(
+            tree.is_expanded(&[0]) && tree.is_expanded(&[1, 0]),
+            "祖先を開く"
+        );
+        assert_eq!(tree_selected_labels(&mounted.0), vec!["lib.rs", "intro.md"]);
+        assert!(seen.borrow().is_empty(), "set_selection は通知しない");
+
+        tree.select_many(&[vec![1], vec![0]]);
+        assert_eq!(tree.selection(), vec![vec![0], vec![1]]);
+        assert_eq!(*seen.borrow(), vec![vec![0]], "select_many は 1 回通知する");
+        tree.select(&[1, 0]);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![1, 0]],
+            "select は 1 つに置き換える"
+        );
+
+        // 作り直すと外れる。
+        tree.set_items(&multi_tree());
+        assert!(tree.selection().is_empty());
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn tree_extends_the_selection_with_keys() {
+    with_ui(|ui| {
+        let tree = ui.tree()?;
+        tree.set_items(&multi_tree());
+        tree.set_selection_mode(SelectionMode::Multiple);
+        let mounted = Mounted::new(&tree);
+        let root = &mounted.0;
+
+        click_tree_row(root, "src", false, false);
+        // Shift + ↓ は範囲を広げる。
+        press_shortcut(root, "ArrowDown", false, true, false);
+        press_shortcut(root, "ArrowDown", false, true, false);
+        assert_eq!(tree.selection(), vec![vec![0], vec![0, 0], vec![0, 1]]);
+        // Ctrl + ↓ は指す項目だけを動かし、Space で足す。
+        press_shortcut(root, "ArrowDown", true, false, false);
+        press_shortcut(root, "ArrowDown", true, false, false);
+        assert_eq!(tree.selection(), vec![vec![0], vec![0, 0], vec![0, 1]]);
+        press_shortcut(root, " ", false, false, false);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0], vec![0, 0], vec![0, 1], vec![1, 0]]
+        );
+        press_shortcut(root, " ", false, false, false);
+        assert_eq!(tree.selection(), vec![vec![0], vec![0, 0], vec![0, 1]]);
+        // 矢印だけなら 1 つに戻る。
+        press_shortcut(root, "ArrowUp", false, false, false);
+        assert_eq!(tree.selection(), vec![vec![1]]);
+
+        // Ctrl + A は見えている選べる項目を足す。閉じた枝の中の選択は残る。
+        tree.set_selection(&[vec![1, 0, 0]]);
+        tree.collapse(&[1, 0]);
+        assert!(press_shortcut(root, "a", true, false, false));
+        assert_eq!(
+            tree.selection(),
+            vec![
+                vec![0],
+                vec![0, 0],
+                vec![0, 1],
+                vec![1],
+                vec![1, 0],
+                vec![1, 0, 0]
+            ]
+        );
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn tree_keeps_a_single_selection_inside_a_collapsed_branch() {
+    with_ui(|ui| {
+        let tree = ui.tree()?;
+        tree.set_items(&multi_tree());
+        let mounted = Mounted::new(&tree);
+        let seen = Rc::new(Cell::new(0));
+        tree.on_select({
+            let seen = seen.clone();
+            move |_| seen.set(seen.get() + 1)
+        });
+        click_tree_row(&mounted.0, "lib.rs", false, false);
+        tree.collapse(&[0]);
+        assert_eq!(tree.selected(), Some(vec![0, 1]), "隠れても選んだまま");
+        tree.expand(&[0]);
+        assert_eq!(tree_selected_labels(&mounted.0), vec!["lib.rs"]);
+        assert_eq!(seen.get(), 1, "開閉で選択の通知は起きない");
         Ok(())
     });
 }

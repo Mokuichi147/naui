@@ -244,6 +244,28 @@ impl PasswordInput {
     pub fn on_submit(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_submit(f)
     }
+
+    /// Replaces the contents with `text` the way the user does by selecting
+    /// everything and typing over it, so [`on_change`](Self::on_change) is called
+    /// with the new contents. Does nothing while disabled.
+    ///
+    /// For tests and automation. It goes through each platform's own path for
+    /// typed text; no key is pressed, so `on_key_down` is not called. See
+    /// [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn enter_text(&self, text: &str) {
+        self.0.enter_text(text)
+    }
+
+    /// Confirms it as Enter does, so [`on_submit`](Self::on_submit) is called with
+    /// the current contents. Does nothing while disabled.
+    ///
+    /// For tests and automation. No key is pressed, so `on_key_down` is not
+    /// called. See [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn submit(&self) {
+        self.0.submit()
+    }
 }
 
 /// A progress bar (`GtkProgressBar`).
@@ -378,6 +400,28 @@ impl SearchInput {
     #[inline]
     pub fn on_search(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_search(f)
+    }
+
+    /// Replaces the contents with `text` the way the user does by selecting
+    /// everything and typing over it, so [`on_change`](Self::on_change) is called
+    /// with the new contents. Does nothing while disabled.
+    ///
+    /// For tests and automation. It goes through each platform's own path for
+    /// typed text; no key is pressed, so `on_key_down` is not called. See
+    /// [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn enter_text(&self, text: &str) {
+        self.0.enter_text(text)
+    }
+
+    /// Confirms it as Enter does, so [`on_search`](Self::on_search) is called with
+    /// the current contents. Does nothing while disabled.
+    ///
+    /// For tests and automation. No key is pressed, so `on_key_down` is not
+    /// called. See [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn search(&self) {
+        self.0.search()
     }
 }
 
@@ -604,6 +648,18 @@ impl TextArea {
         self.0.on_change(f)
     }
 
+    /// Replaces the contents with `text` the way the user does by selecting
+    /// everything and typing over it, so [`on_change`](Self::on_change) is called
+    /// with the new contents. Does nothing while disabled or read-only.
+    ///
+    /// For tests and automation. It goes through each platform's own path for
+    /// typed text; no key is pressed, so `on_key_down` is not called. See
+    /// [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn enter_text(&self, text: &str) {
+        self.0.enter_text(text)
+    }
+
     /// Whether it is read-only. Editable by default.
     ///
     /// While read-only, the text can still be selected and copied, and it still takes
@@ -680,6 +736,28 @@ impl TextInput {
     #[inline]
     pub fn on_submit(&self, f: impl FnMut(&str) + 'static) {
         self.0.on_submit(f)
+    }
+
+    /// Replaces the contents with `text` the way the user does by selecting
+    /// everything and typing over it, so [`on_change`](Self::on_change) is called
+    /// with the new contents. Does nothing while disabled or read-only.
+    ///
+    /// For tests and automation. It goes through each platform's own path for
+    /// typed text; no key is pressed, so `on_key_down` is not called. See
+    /// [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn enter_text(&self, text: &str) {
+        self.0.enter_text(text)
+    }
+
+    /// Confirms it as Enter does, so [`on_submit`](Self::on_submit) is called with
+    /// the current contents. Does nothing while disabled or read-only.
+    ///
+    /// For tests and automation. No key is pressed, so `on_key_down` is not
+    /// called. See [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn submit(&self) {
+        self.0.submit()
     }
 
     /// Whether it is read-only. Editable by default.

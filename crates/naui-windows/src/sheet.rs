@@ -88,6 +88,15 @@ impl Sheet {
         self.0.is_open()
     }
 
+    /// Answers it the way the user does, by clicking its button for `response`
+    /// (UI Automation's Invoke pattern), so `on_response` is called with it (for
+    /// tests and automation). Nothing happens if it has no such button or the
+    /// button is disabled. If it is not open, the answer is kept and given once it
+    /// next opens.
+    pub fn respond(&self, response: DialogResponse) {
+        self.0.respond(response)
+    }
+
     /// Sets the sheet's color theme.
     pub(crate) fn set_theme(&self, theme: Theme) {
         self.0.set_theme(theme)
