@@ -25,7 +25,7 @@
 use std::fmt;
 use std::rc::Rc;
 
-use crate::{Align, Bitmap, Color, EventResponse};
+use crate::{Align, Bitmap, Color, EventResponse, Modifiers};
 
 /// A coordinate (logical pixels). The origin is the top left; right and down are positive.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -1297,10 +1297,19 @@ pub struct PointerEvent {
     /// "natural scrolling", are delivered after reversal (the same direction as page
     /// scrolling).
     pub wheel_y: f64,
+    /// The modifier keys (⇧, Ctrl, ⌥ / Alt, ⌘ / the Windows key / Super) held at
+    /// the time of this event. Set for every phase, including `Move` and `Wheel`.
+    ///
+    /// Each event reports the keys held at its own moment, so a drag that started
+    /// with ⇧ held and continued after ⇧ was let go reports ⇧ on `Down` but not on
+    /// the later `Move`s. Remember the value at `Down` if it should last for the
+    /// whole drag. Use [`Modifiers::primary`] for the platform's primary key (⌘ on
+    /// macOS, Ctrl elsewhere).
+    pub modifiers: Modifiers,
 }
 
 impl PointerEvent {
-    /// Creates an event with no button and no wheel amount.
+    /// Creates an event with no button, no wheel amount and no modifier keys.
     pub fn new(phase: PointerPhase, point: Point) -> Self {
         Self {
             phase,
@@ -1308,12 +1317,19 @@ impl PointerEvent {
             button: None,
             wheel_x: 0.0,
             wheel_y: 0.0,
+            modifiers: Modifiers::default(),
         }
     }
 
     /// Attaches the button that was pressed or released.
     pub fn button(mut self, button: Option<PointerButton>) -> Self {
         self.button = button;
+        self
+    }
+
+    /// Attaches the modifier keys held at the time of the event.
+    pub fn modifiers(mut self, modifiers: Modifiers) -> Self {
+        self.modifiers = modifiers;
         self
     }
 
@@ -1326,6 +1342,7 @@ impl PointerEvent {
             button: None,
             wheel_x,
             wheel_y,
+            modifiers: Modifiers::default(),
         }
     }
 }
@@ -1573,11 +1590,23 @@ mod tests {
             .button(Some(PointerButton::Secondary));
         assert_eq!(down.button, Some(PointerButton::Secondary));
         assert_eq!((down.wheel_x, down.wheel_y), (0.0, 0.0));
+        assert!(down.modifiers.is_empty(), "既定では修飾キーなし");
+        let shift = Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        };
+        let down = down.modifiers(shift);
+        assert_eq!(down.modifiers, shift);
+        assert_eq!(down.button, Some(PointerButton::Secondary), "ボタンは残る");
 
         let wheel = PointerEvent::wheel(Point::new(3.0, 4.0), -1.5, WHEEL_STEP);
         assert_eq!(wheel.phase, PointerPhase::Wheel);
         assert_eq!(wheel.point, Point::new(3.0, 4.0));
         assert_eq!(wheel.button, None);
+        assert_eq!((wheel.wheel_x, wheel.wheel_y), (-1.5, 48.0));
+        assert!(wheel.modifiers.is_empty());
+        let wheel = wheel.modifiers(shift);
+        assert_eq!(wheel.modifiers, shift, "ホイールにも付けられる");
         assert_eq!((wheel.wheel_x, wheel.wheel_y), (-1.5, 48.0));
 
         assert_eq!(

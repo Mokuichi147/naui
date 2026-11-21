@@ -14,15 +14,24 @@
 //! through three things — timeout, the action button and [`Toast::dismiss`] — and
 //! the other three platforms have no × either.
 //!
-//! `DispatcherQueueTimer` counts down until it disappears.
+//! `DispatcherQueueTimer` counts down until it disappears. Which toast is on screen
+//! and which wait is decided by [`naui_core::ToastQueue`], shared with the other
+//! backends.
+//!
+//! One action button goes in `ActionButton`, the place WinUI gives it (right of the
+//! text, or below when narrow). `InfoBar` has room for only one there, so with two or
+//! more they all go in a row in `Content`, which WinUI lays out on its own line
+//! below the text (where WinUI's guidance puts additional buttons). The position is
+//! the `InfoBar`'s alignment in the layer it is overlaid on; `Left` and `Right` are
+//! mirrored by a right-to-left `FlowDirection`, so they are the start and end.
 
 use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
-use naui_core::{Result, ToastSpec};
+use naui_core::{Align, Result, ToastPosition, ToastPriority, ToastQueue, ToastSlot, ToastSpec};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueTimer};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Button, Grid, InfoBar, InfoBarSeverity, TextBlock,
+    Button, Grid, InfoBar, InfoBarSeverity, Orientation as XamlOrientation, StackPanel, TextBlock,
 };
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
 use naui_winui3::Microsoft::UI::Xaml::{
@@ -31,12 +40,27 @@ use naui_winui3::Microsoft::UI::Xaml::{
 use windows::Foundation::TimeSpan;
 use windows_core::{Interface, HSTRING};
 
+use crate::focus_return::FocusReturn;
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 use crate::window::owner_content_layer;
 
-/// The overlay position: 24 away from the bottom center.
+/// The distance from the edges of the layer it is overlaid on.
 const TOAST_MARGIN: f64 = 24.0;
+/// The spacing between action buttons in a row.
+const BUTTON_SPACING: f64 = 8.0;
+/// The space after the row of action buttons, on the end side and below.
+///
+/// `InfoBar` gives `Content` no padding of its own there: with the close button (×)
+/// hidden, its column is empty, so the row would touch the end edge and the bottom
+/// edge. The same 16 px as the start side (the icon's margin) keeps the buttons
+/// inside the surface. A right-to-left `FlowDirection` mirrors it.
+const ROW_MARGIN: Thickness = Thickness {
+    Left: 0.0,
+    Top: 0.0,
+    Right: 16.0,
+    Bottom: 16.0,
+};
 
 /// The overlaid `InfoBar`, with an opaque background.
 ///
@@ -54,26 +78,88 @@ const TOAST_XAML: &str = r##"<InfoBar
 const TICKS_PER_MILLI: i64 = 10_000;
 
 thread_local! {
-    /// The toast showing now. Only one is shown at a time, and a new one replaces it.
-    static CURRENT: RefCell<Option<Toast>> = const { RefCell::new(None) };
+    /// The toast on screen and the ones waiting their turn.
+    static QUEUE: RefCell<ToastQueue<ToastInner>> = const { RefCell::new(ToastQueue::new()) };
 }
+
+/// The slot for one notification closure.
+type Handler<A> = RefCell<Option<Box<dyn FnMut(A)>>>;
 
 struct ToastInner {
     /// The overlaid body.
     native: InfoBar,
-    /// The action button. Attached to `ActionButton` only when it has text.
-    button: Button,
-    /// The action button's text. The `Button`'s content is a `TextBlock` (the same
-    /// construction as other buttons).
-    button_label: TextBlock,
+    /// The action buttons, one per index, with their text (a `TextBlock`, the same
+    /// construction as other buttons). **They only ever grow**: each is created with
+    /// its `Click` handler once and reused, so replacing the buttons from inside
+    /// `on_action` does not drop the handler that is running.
+    buttons: RefCell<Vec<(Button, TextBlock)>>,
+    /// The row in `Content` holding the buttons when there are two or more.
+    row: StackPanel,
     spec: RefCell<ToastSpec>,
     /// Where it is overlaid. Held only while shown.
     layer: RefCell<Option<Grid>>,
     /// The timer for disappearing automatically. Absent if it never disappears.
     timer: RefCell<Option<DispatcherQueueTimer>>,
-    on_action: RefCell<Option<Box<dyn FnMut()>>>,
-    on_dismiss: RefCell<Option<Box<dyn FnMut()>>>,
+    on_action: Handler<usize>,
+    on_dismiss: Handler<()>,
     visible: Cell<bool>,
+    /// Whether the window it is on screen in has been closed ([`window_closing`]).
+    stranded: Cell<bool>,
+    /// Puts focus back where it came from if it is inside when the toast goes away.
+    /// Held only while shown.
+    focus_return: RefCell<Option<FocusReturn>>,
+}
+
+impl ToastSlot for ToastInner {
+    fn present(this: &Rc<Self>) -> bool {
+        let Some(layer) = owner_content_layer() else {
+            return false;
+        };
+        let toast = Toast(this.clone());
+        let Ok(element) = this.native.cast::<UIElement>() else {
+            return false;
+        };
+        toast.place();
+        if layer
+            .Children()
+            .and_then(|children| children.Append(&element))
+            .is_err()
+        {
+            return false;
+        }
+        *this.focus_return.borrow_mut() = FocusReturn::watch(&element, &layer);
+        *this.layer.borrow_mut() = Some(layer);
+        this.stranded.set(false);
+        let _ = this.native.SetIsOpen(true);
+        this.visible.set(true);
+        toast.start_timer();
+        true
+    }
+
+    /// If focus is inside (its action button, reached with Tab), it goes back to where
+    /// it came from instead of WinUI's pick, the top of the window.
+    fn withdraw(this: &Rc<Self>) {
+        // 閉じても外しても WinUI がフォーカスを動かすので、その前に見ておく。
+        let focus = this
+            .focus_return
+            .borrow_mut()
+            .take()
+            .and_then(FocusReturn::release);
+        if let Some(timer) = this.timer.borrow_mut().take() {
+            let _ = timer.Stop();
+        }
+        this.visible.set(false);
+        let _ = this.native.SetIsOpen(false);
+        let layer = this.layer.borrow_mut().take();
+        remove_from(this, layer.as_ref());
+        if let Some(focus) = focus {
+            focus.restore(layer.as_ref());
+        }
+    }
+
+    fn is_stranded(this: &Rc<Self>) -> bool {
+        this.stranded.get()
+    }
 }
 
 /// A transient notification (an overlaid `InfoBar`).
@@ -84,42 +170,107 @@ pub struct Toast(Rc<ToastInner>);
 
 impl Toast {
     pub(crate) fn new(message: &str) -> Result<Self> {
-        let (native, button, button_label) = build_surface()?;
+        let native = build_surface()?;
         native
             .SetMessage(&HSTRING::from(message))
             .map_err(|e| to_error("set the toast text", e))?;
+        let row = StackPanel::new().map_err(|e| to_error("create the toast button row", e))?;
+        row.SetOrientation(XamlOrientation::Horizontal)
+            .and_then(|()| row.SetSpacing(BUTTON_SPACING))
+            .and_then(|()| row.SetMargin(ROW_MARGIN))
+            .map_err(|e| to_error("set the toast button row", e))?;
 
         let this = Self(Rc::new(ToastInner {
             native,
-            button,
-            button_label,
+            buttons: RefCell::new(Vec::new()),
+            row,
             spec: RefCell::new(ToastSpec::new(message)),
             layer: RefCell::new(None),
             timer: RefCell::new(None),
             on_action: RefCell::new(None),
             on_dismiss: RefCell::new(None),
             visible: Cell::new(false),
+            stranded: Cell::new(false),
+            focus_return: RefCell::new(None),
         }));
-        this.install_action_handler()?;
         Ok(this)
     }
 
-    /// Makes clicking the action button notify and dismiss the toast.
-    fn install_action_handler(&self) -> Result<()> {
-        let weak = UiThreadCell::new(Rc::downgrade(&self.0));
-        let handler = RoutedEventHandler::new(move |_sender, _args| {
-            weak.try_with_mut(|weak: &mut Weak<ToastInner>| {
-                if let Some(inner) = weak.upgrade() {
-                    Toast(inner).finish(true);
-                }
+    /// The button for `index`, created with its `Click` handler on first use.
+    fn button(&self, index: usize) -> Option<(Button, TextBlock)> {
+        let mut buttons = self.0.buttons.borrow_mut();
+        while buttons.len() <= index {
+            let i = buttons.len();
+            let button = Button::new().ok()?;
+            let label = TextBlock::new().ok()?;
+            button.SetContent(&label).ok()?;
+            let weak = UiThreadCell::new(Rc::downgrade(&self.0));
+            let handler = RoutedEventHandler::new(move |_sender, _args| {
+                weak.try_with_mut(|weak: &mut Weak<ToastInner>| {
+                    if let Some(inner) = weak.upgrade() {
+                        Toast(inner).finish(Some(i));
+                    }
+                });
+                Ok(())
             });
-            Ok(())
-        });
-        self.0
-            .button
-            .Click(&handler)
-            .map_err(|e| to_error("subscribe to the toast button", e))?;
-        Ok(())
+            button.Click(&handler).ok()?;
+            buttons.push((button, label));
+        }
+        buttons.get(index).cloned()
+    }
+
+    /// Puts the action buttons in place: one in `ActionButton`, two or more in a row
+    /// in `Content`.
+    fn apply_actions(&self, labels: &[String]) {
+        let native = &self.0.native;
+        // ボタンを付け替える前に、両方の置き場から外しておく (親は 1 つだけ)。
+        let _ = native.SetActionButton(None);
+        let _ = native.SetContent(None::<&windows_core::IInspectable>);
+        if let Ok(children) = self.0.row.Children() {
+            let _ = children.Clear();
+        }
+        let buttons: Vec<Button> = labels
+            .iter()
+            .enumerate()
+            .filter_map(|(index, text)| {
+                let (button, label) = self.button(index)?;
+                let _ = label.SetText(&HSTRING::from(text.as_str()));
+                Some(button)
+            })
+            .collect();
+        match buttons.as_slice() {
+            [] => {}
+            [only] => {
+                let _ = native.SetActionButton(only);
+            }
+            many => {
+                if let Ok(children) = self.0.row.Children() {
+                    for button in many {
+                        if let Ok(element) = button.cast::<UIElement>() {
+                            let _ = children.Append(&element);
+                        }
+                    }
+                }
+                let _ = native.SetContent(&self.0.row);
+            }
+        }
+    }
+
+    /// Aligns the `InfoBar` in the layer it is overlaid on.
+    fn place(&self) {
+        let position = self.0.spec.borrow().position();
+        let horizontal = match position.align() {
+            Align::Start => HorizontalAlignment::Left,
+            Align::End => HorizontalAlignment::Right,
+            _ => HorizontalAlignment::Center,
+        };
+        let vertical = if position.is_top() {
+            VerticalAlignment::Top
+        } else {
+            VerticalAlignment::Bottom
+        };
+        let _ = self.0.native.SetHorizontalAlignment(horizontal);
+        let _ = self.0.native.SetVerticalAlignment(vertical);
     }
 
     /// The string to show. Calling it while shown updates it on the spot.
@@ -132,35 +283,25 @@ impl Toast {
         self.0.spec.borrow().message().to_string()
     }
 
-    /// The action button's label. **Passing an empty string removes the button.**
-    pub fn set_action(&self, label: &str) {
-        self.0.spec.borrow_mut().set_action(label);
-        let action = self.0.spec.borrow().action().map(str::to_string);
-        match action {
-            Some(label) => {
-                let _ = self.0.button_label.SetText(&HSTRING::from(label));
-                let _ = self.0.native.SetActionButton(&self.0.button);
-            }
-            None => {
-                let _ = self.0.native.SetActionButton(None);
-            }
-        }
+    /// The action buttons' labels, laid out in this order. **Passing an empty list
+    /// removes the buttons.**
+    ///
+    /// Calling it while shown replaces them on the spot.
+    pub fn set_actions<S: AsRef<str>>(&self, labels: &[S]) {
+        self.0.spec.borrow_mut().set_actions(labels);
+        let labels = self.0.spec.borrow().actions().to_vec();
+        self.apply_actions(&labels);
     }
 
-    /// The action button's label. The empty string if there is no button.
-    pub fn action(&self) -> String {
-        self.0
-            .spec
-            .borrow()
-            .action()
-            .unwrap_or_default()
-            .to_string()
+    /// The action buttons' labels. Empty if there are none.
+    pub fn actions(&self) -> Vec<String> {
+        self.0.spec.borrow().actions().to_vec()
     }
 
     /// Seconds until it disappears automatically. **Passing 0 means it never
     /// disappears automatically.**
     ///
-    /// Takes effect from the next [`show`](Self::show).
+    /// Takes effect from the next time it comes up.
     pub fn set_timeout(&self, seconds: f64) {
         self.0.spec.borrow_mut().set_timeout(seconds);
     }
@@ -169,70 +310,68 @@ impl Toast {
         self.0.spec.borrow().timeout()
     }
 
+    /// How it takes its turn when shown. Takes effect from the next
+    /// [`show`](Self::show).
+    pub fn set_priority(&self, priority: ToastPriority) {
+        self.0.spec.borrow_mut().set_priority(priority);
+    }
+
+    pub fn priority(&self) -> ToastPriority {
+        self.0.spec.borrow().priority()
+    }
+
+    /// Where in the window it appears. Takes effect from the next time it comes up.
+    pub fn set_position(&self, position: ToastPosition) {
+        self.0.spec.borrow_mut().set_position(position);
+    }
+
+    pub fn position(&self) -> ToastPosition {
+        self.0.spec.borrow().position()
+    }
+
     /// The current settings.
     pub fn spec(&self) -> ToastSpec {
         self.0.spec.borrow().clone()
     }
 
-    /// Called when the action button is clicked. Setting it again removes the previous
-    /// one.
+    /// Called with the index of the clicked action button. Setting it again removes
+    /// the previous one.
     ///
     /// Clicking it makes the toast disappear, so `on_dismiss` is called next.
-    pub fn on_action(&self, f: impl FnMut() + 'static) {
+    pub fn on_action(&self, f: impl FnMut(usize) + 'static) {
         *self.0.on_action.borrow_mut() = Some(Box::new(f));
     }
 
     /// Called when it disappears. Setting it again removes the previous one.
     ///
-    /// It is called **when it times out** and **when it is closed by the action
-    /// button**. It is not called when it is closed with [`dismiss`](Self::dismiss) or
-    /// replaced by another toast (the same rule as
+    /// It is called **when it times out** and **when it is closed by an action
+    /// button**. It is not called when it is closed with [`dismiss`](Self::dismiss)
+    /// or put back in the queue by a `High` toast (the same rule as
     /// [`Dialog::close`](crate::Dialog::close): the app's own actions are not
     /// notified).
-    pub fn on_dismiss(&self, f: impl FnMut() + 'static) {
-        *self.0.on_dismiss.borrow_mut() = Some(Box::new(f));
+    pub fn on_dismiss(&self, mut f: impl FnMut() + 'static) {
+        *self.0.on_dismiss.borrow_mut() = Some(Box::new(move |()| f()));
     }
 
-    /// Shows the toast.
-    ///
-    /// **Only one is shown at a time**; if another toast is showing, it is replaced
-    /// (the replaced one's `on_dismiss` is not called). Does nothing if no window has
-    /// been shown yet (there is nowhere to overlay it, the same as `Dialog`).
+    /// Shows the toast: on screen at once, or at the back of the queue (see
+    /// [`naui_core::ToastQueue`]). Dropped if no window has been shown when its turn
+    /// comes (there is nowhere to overlay it, the same as `Dialog`).
     pub fn show(&self) {
-        let Some(layer) = owner_content_layer() else {
-            return;
-        };
-        if let Some(previous) = CURRENT.with(|slot| slot.borrow_mut().take()) {
-            previous.take_down();
-        }
-        let element = match self.0.native.cast::<UIElement>() {
-            Ok(element) => element,
-            Err(_) => return,
-        };
-        if layer
-            .Children()
-            .and_then(|children| children.Append(&element))
-            .is_err()
-        {
-            return;
-        }
-        *self.0.layer.borrow_mut() = Some(layer);
-        let _ = self.0.native.SetIsOpen(true);
-        self.0.visible.set(true);
-        self.start_timer();
-        CURRENT.with(|slot| *slot.borrow_mut() = Some(self.clone()));
+        let priority = self.0.spec.borrow().priority();
+        ToastQueue::show(&QUEUE, &self.0, priority);
     }
 
-    /// Closes the toast being shown. `on_dismiss` is not called.
+    /// Closes the toast, or takes it out of the queue. `on_dismiss` is not called.
     pub fn dismiss(&self) {
-        if !self.is_visible() {
-            return;
-        }
-        self.forget_current();
-        self.take_down();
+        ToastQueue::remove(&QUEUE, &self.0);
     }
 
-    /// Whether it is showing now.
+    /// Whether it is waiting its turn in the queue.
+    pub fn is_queued(&self) -> bool {
+        ToastQueue::is_waiting_in(&QUEUE, &self.0)
+    }
+
+    /// Whether it is on screen now.
     pub fn is_visible(&self) -> bool {
         self.0.visible.get()
     }
@@ -269,7 +408,7 @@ impl Toast {
         >::new(move |_sender, _args| {
             weak.try_with_mut(|weak: &mut Weak<ToastInner>| {
                 if let Some(inner) = weak.upgrade() {
-                    Toast(inner).finish(false);
+                    Toast(inner).finish(None);
                 }
             });
             Ok(())
@@ -280,76 +419,56 @@ impl Toast {
         *self.0.timer.borrow_mut() = Some(timer);
     }
 
-    /// Tells the app it disappeared. `action` is whether the action button closed it.
-    fn finish(&self, action: bool) {
+    /// Tells the app it disappeared by itself. `action` is the index of the action
+    /// button that closed it, if one did.
+    ///
+    /// The next toast in the queue comes up before the app is told.
+    fn finish(&self, action: Option<usize>) {
         if !self.is_visible() {
             return;
         }
-        self.forget_current();
-        self.take_down();
-        if action {
-            emit(&self.0.on_action);
+        ToastQueue::remove(&QUEUE, &self.0);
+        if let Some(index) = action {
+            emit(&self.0.on_action, index);
         }
-        emit(&self.0.on_dismiss);
+        emit(&self.0.on_dismiss, ());
     }
+}
 
-    /// Removes the overlaid element and stops the timer. No notification.
-    fn take_down(&self) {
-        if let Some(timer) = self.0.timer.borrow_mut().take() {
-            let _ = timer.Stop();
-        }
-        self.0.visible.set(false);
-        let _ = self.0.native.SetIsOpen(false);
-        let Ok(element) = self.0.native.cast::<UIElement>() else {
-            return;
-        };
-        // 重ねた先から外す。出したあとにウィンドウが変わっても、
-        // 足した側の入れ物から確実に取れるように覚えておく。
-        let Some(layer) = self.0.layer.borrow_mut().take() else {
-            return;
-        };
-        let Ok(children) = layer.Children() else {
-            return;
-        };
-        let mut index = 0;
-        if children.IndexOf(&element, &mut index).unwrap_or(false) {
-            let _ = children.RemoveAt(index);
-        }
-    }
-
-    /// If "the toast showing now" is this one, vacates that slot.
-    fn forget_current(&self) {
-        CURRENT.with(|slot| {
-            let mine = slot
-                .borrow()
-                .as_ref()
-                .is_some_and(|current| Rc::ptr_eq(&current.0, &self.0));
-            if mine {
-                slot.borrow_mut().take();
-            }
-        });
+/// Takes the overlaid element off `layer`.
+fn remove_from(this: &ToastInner, layer: Option<&Grid>) {
+    let Ok(element) = this.native.cast::<UIElement>() else {
+        return;
+    };
+    // 重ねた先から外す。出したあとにウィンドウが変わっても、
+    // 足した側の入れ物から確実に取れるように覚えておく。
+    let Some(layer) = layer else {
+        return;
+    };
+    let Ok(children) = layer.Children() else {
+        return;
+    };
+    let mut index = 0;
+    if children.IndexOf(&element, &mut index).unwrap_or(false) {
+        let _ = children.RemoveAt(index);
     }
 }
 
 /// Notification. So that setting it again from inside the notification does not
 /// double-borrow, the closure is taken out only for the duration of the call.
-fn emit(slot: &RefCell<Option<Box<dyn FnMut()>>>) {
+fn emit<A>(slot: &Handler<A>, arg: A) {
     let Some(mut f) = slot.borrow_mut().take() else {
         return;
     };
-    f();
+    f(arg);
     let mut slot = slot.borrow_mut();
     if slot.is_none() {
         *slot = Some(f);
     }
 }
 
-/// Creates the overlaid `InfoBar` and the action button.
-///
-/// The action button goes in `ActionButton`, so WinUI decides its layout inside the
-/// `InfoBar` (right of the text, or below when narrow). Making its content a
-/// `TextBlock` is the same construction as other buttons.
-fn build_surface() -> Result<(InfoBar, Button, TextBlock)> {
+/// Creates the overlaid `InfoBar`. Its alignment is set each time it comes up.
+fn build_surface() -> Result<InfoBar> {
     let native = XamlReader::Load(&HSTRING::from(TOAST_XAML))
         .and_then(|element| element.cast::<InfoBar>())
         .map_err(|e| to_error("create the toast", e))?;
@@ -372,11 +491,21 @@ fn build_surface() -> Result<(InfoBar, Button, TextBlock)> {
             })
         })
         .map_err(|e| to_error("set the toast alignment", e))?;
+    Ok(native)
+}
 
-    let button = Button::new().map_err(|e| to_error("create the toast button", e))?;
-    let button_label = TextBlock::new().map_err(|e| to_error("create the toast button text", e))?;
-    button
-        .SetContent(&button_label)
-        .map_err(|e| to_error("place the toast button text", e))?;
-    Ok((native, button, button_label))
+/// Called when the window whose content layer is `layer` is closed with
+/// `Window::close`. A toast on screen there is marked, so that the next `show()`
+/// takes it down instead of waiting behind it (a toast that never disappears by
+/// itself would wait for good).
+///
+/// Closing a window from its close button winds the whole app down, so only
+/// `Window::close` needs this.
+pub(crate) fn window_closing(layer: &Grid) {
+    let Some(shown) = QUEUE.with(|q| q.borrow().shown()) else {
+        return;
+    };
+    if shown.layer.borrow().as_ref() == Some(layer) {
+        shown.stranded.set(true);
+    }
 }
