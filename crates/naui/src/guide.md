@@ -2283,8 +2283,8 @@ list.set_sizing(Sizing::fill_width());
 To expand and collapse nested items while choosing, use [`Tree`].
 
 The difference from `Menu` is the role: `Menu` is **navigation that switches
-screens**, and `List` is **a list for choosing data**. Only `List` has multiple
-selection and scrolling.
+screens**, and `List` is **a list for choosing data**. Only `List` (and `Table` and
+`Tree`, which choose data too) has multiple selection and scrolling.
 
 [`SelectionMode::Multiple`] takes the form "choose while holding ⌘ / Ctrl or
 Shift" on every platform (on WinUI it is mapped to `Extended`, not `Multiple`).
@@ -2506,12 +2506,40 @@ tree.set_sizing(Sizing::new().width(Length::Fill).height(Length::Fixed(220.0)));
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| `Tree` | `TreeView` | `NSOutlineView` + `NSScrollView` | `GtkListBox` + disclosure buttons | `<ul role="tree">` |
+| `Tree` | `TreeView` (multiple selection: `ListView` with `Extended`) | `NSOutlineView` + `NSScrollView` | `GtkListBox` + disclosure buttons | `<ul role="tree">` |
 
-Only one item can be chosen (there is no multiple selection as in `List`).
-`set_selected` / `clear_selection` / `set_expanded` / `expand_all` /
-`collapse_all` do not notify, and `select` / `expand` / `collapse` notify just
-like user actions.
+`set_selected` / `set_selection` / `clear_selection` / `set_expanded` /
+`expand_all` / `collapse_all` do not notify, and `select` / `select_many` /
+`expand` / `collapse` notify just like user actions.
+
+As in `List`, [`SelectionMode::Multiple`] lets several items be chosen while
+holding ⌘ / Ctrl or Shift. **Each item is chosen on its own: choosing a branch
+does not choose its children.** `on_select` keeps passing one path (the first
+chosen item, or an empty path when nothing is chosen), so read
+[`Tree::selection`] inside it for all of them:
+
+```no_run
+# use naui::{Result, SelectionMode, TreeItem, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let tree = ui.tree()?;
+tree.set_items(&[TreeItem::new("src").children(TreeItem::list(["main.rs", "lib.rs"]))]);
+tree.set_selection_mode(SelectionMode::Multiple); // Single by default
+let chosen = tree.clone();
+tree.on_select(move |_first| println!("{:?} were chosen", chosen.selection()));
+tree.set_selection(&[vec![0, 0], vec![0, 1]]); // replace the selection without notifying
+# Ok(())
+# }
+```
+
+Chosen items inside a collapsed branch **stay chosen while hidden**, and show as
+chosen again when it is expanded. The next choice decides what happens to them,
+as for rows off screen in a long `List`: adding or removing with ⌘ / Ctrl keeps
+them, and a plain click or a Shift range chooses anew and drops them.
+[`Tree::selection`] includes them.
+
+WinUI's `TreeView` has only check-box multiple selection, which also chooses a
+branch's descendants, so on Windows a tree with multiple selection is laid out in
+a `ListView` (with the same chevrons and indentation) instead.
 
 Setting [`TreeItem::enabled`] to `false` **makes all its descendants unselectable
 too**. Expansion is remembered per item, so collapsing a parent and expanding it
@@ -3277,7 +3305,7 @@ that notify **like the user's own action**, and checks what the app did:
 | [`PopupMenu`] | `select` | |
 | [`List`] | `select`, `select_many`, `drag_rows` | `set_selected`, `set_selection`, `move_rows` |
 | [`Table`] | `select`, `select_many` | `set_selected`, `set_selection` |
-| [`Tree`] | `select`, `expand`, `collapse` | `set_expanded` |
+| [`Tree`] | `select`, `select_many`, `expand`, `collapse` | `set_selected`, `set_selection`, `set_expanded` |
 | [`Pagination`] | `select`, `go_previous`, `go_next` | `set_page` |
 | [`Toolbar`], [`MenuBar`] | `activate` | |
 | [`ColorPicker`] | `pick` | `set_value` |

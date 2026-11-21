@@ -364,7 +364,7 @@ fn build_dynamic_rows(ui: &Ui, pane: &naui::Stack) -> Result<()> {
     Ok(())
 }
 
-/// Tree の入れ子・開閉・選べない枝・通知。
+/// Tree の入れ子・開閉・選べない枝・複数選択・通知。
 fn build_tree(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
     parts::section(ui, pane, "Tree")?;
 
@@ -392,12 +392,22 @@ fn build_tree(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
             .height(Length::Fixed(200.0)),
     );
 
+    // 通知は先頭の 1 つ。複数選択では、選ばれているものを `selection` で読む。
     tree.on_select({
         let notice = notice.clone();
         let items = items.clone();
-        move |path| match TreeItem::at(&items, path) {
-            Some(item) => notice.show(&format!("Selected: {} {path:?}", item.label)),
-            None => notice.show("Selected: none"),
+        let this = tree.clone();
+        move |_| {
+            let labels: Vec<&str> = this
+                .selection()
+                .iter()
+                .filter_map(|path| TreeItem::at(&items, path))
+                .map(|item| item.label.as_str())
+                .collect();
+            match labels.is_empty() {
+                true => notice.show("Selected: none"),
+                false => notice.show(&format!("Selected: {}", labels.join(" / "))),
+            }
         }
     });
     tree.on_expand({
@@ -433,6 +443,19 @@ fn build_tree(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
     actions.append(&expand_all);
     actions.append(&collapse_all);
     actions.append(&select_deep);
+
+    // 複数選択では ⌘ / Ctrl と Shift で選ぶ。枝を選んでも子は選ばれない。
+    let (mode_row, mode) = parts::choice(ui, "Selection", &["Single", "Multiple"])?;
+    mode.on_select({
+        let tree = tree.clone();
+        move |index| {
+            tree.set_selection_mode(match index {
+                0 => SelectionMode::Single,
+                _ => SelectionMode::Multiple,
+            })
+        }
+    });
+    pane.append(&mode_row);
     pane.append(&actions);
     pane.append(&tree);
     Ok(())

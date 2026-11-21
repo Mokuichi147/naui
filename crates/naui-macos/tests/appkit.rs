@@ -343,6 +343,18 @@ fn main() {
             tree_selection_round_trips,
         ),
         ("ツリーが選べない枝を飛ばす", tree_skips_disabled_branches),
+        (
+            "ツリーの複数選択が NSOutlineView と往復し、閉じた枝の中の選択を覚える",
+            tree_multiple_selection_round_trips,
+        ),
+        (
+            "ツリーの複数選択で ⌘ は隠れた選択を残し、⇧ と修飾なしは選び直す",
+            tree_modifier_keys_decide_hidden_selection,
+        ),
+        (
+            "ツリーの単一選択も閉じた枝の中で覚えている",
+            tree_keeps_a_single_selection_inside_a_collapsed_branch,
+        ),
         ("ツリーの開閉が通知される", tree_expansion_notifies),
         (
             "閉じた枝の中の開閉が保たれる",
@@ -13644,6 +13656,219 @@ fn tree_callback_can_touch_the_tree(ui: &Ui) -> Result<()> {
     assert_eq!(*seen.borrow(), vec![vec![0, 0]], "通知は 1 回だけ");
     assert_eq!(tree.len(), 2, "コールバックの中の差し替えが効くこと");
     assert_eq!(tree.selected(), Some(vec![0]));
+    Ok(())
+}
+
+/// The rows AppKit has selected, from the top.
+fn outline_selected_rows(outline: &objc2_app_kit::NSOutlineView) -> Vec<usize> {
+    let set = outline.selectedRowIndexes();
+    let mut rows = Vec::new();
+    let mut row = set.firstIndex();
+    while row != NSNotFound as usize {
+        rows.push(row);
+        row = set.indexGreaterThanIndex(row);
+    }
+    rows
+}
+
+/// Multiple selection maps to `allowsMultipleSelection`, and items inside a branch
+/// collapsed on the AppKit side stay selected (AppKit itself deselects them).
+fn tree_multiple_selection_round_trips(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+    let outline = tree.native_outline_view();
+    assert_eq!(tree.selection_mode(), SelectionMode::Single);
+    assert!(!outline.allowsMultipleSelection());
+    tree.set_selection_mode(SelectionMode::Multiple);
+    assert!(outline.allowsMultipleSelection());
+
+    let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    tree.on_select({
+        let seen = seen.clone();
+        move |path| seen.borrow_mut().push(path.to_vec())
+    });
+
+    // 閉じた枝の中も、祖先を開いて選ぶ。選べないパスは落とす。
+    tree.set_selection(&[vec![1, 0, 0], vec![0, 1], vec![9], vec![0, 1]]);
+    assert_eq!(tree.selection(), vec![vec![0, 1], vec![1, 0, 0]]);
+    assert_eq!(tree.selected(), Some(vec![0, 1]));
+    // 行は 0 src, 1 main.rs, 2 lib.rs, 3 docs, 4 guide, 5 intro.md。
+    assert_eq!(outline_selected_rows(&outline), vec![2, 5]);
+    assert!(seen.borrow().is_empty(), "set_selection は通知しない");
+
+    // AppKit 側で枝を閉じると AppKit は中の選択を外すが、naui は覚えている。
+    let docs = outline.itemAtRow(3).expect("docs");
+    unsafe { outline.collapseItem(Some(&docs)) };
+    assert_eq!(tree.selection(), vec![vec![0, 1], vec![1, 0, 0]]);
+    assert_eq!(outline_selected_rows(&outline), vec![2]);
+    assert!(
+        seen.borrow().is_empty(),
+        "閉じただけでは選択の通知は起きない"
+    );
+
+    // 開き直すと、中の開閉とともに選択も戻る。
+    unsafe { outline.expandItem(Some(&docs)) };
+    assert_eq!(outline_selected_rows(&outline), vec![2, 5]);
+    assert!(seen.borrow().is_empty());
+
+    // naui から閉じて開いても同じ。
+    tree.collapse(&[1]);
+    tree.expand(&[1]);
+    assert_eq!(tree.selection(), vec![vec![0, 1], vec![1, 0, 0]]);
+    assert_eq!(outline_selected_rows(&outline), vec![2, 5]);
+
+    // 枝を選んでも子は選ばれない。select_many は 1 回だけ通知する。
+    tree.select_many(&[vec![1], vec![0]]);
+    assert_eq!(tree.selection(), vec![vec![0], vec![1]]);
+    assert_eq!(outline_selected_rows(&outline), vec![0, 3]);
+    assert_eq!(*seen.borrow(), vec![vec![0]]);
+    tree.select(&[0, 0]);
+    assert_eq!(tree.selection(), vec![vec![0, 0]]);
+
+    // 単一選択に戻すと選択は外れ、通知しない。
+    tree.set_selection_mode(SelectionMode::Single);
+    assert!(!outline.allowsMultipleSelection());
+    assert!(tree.selection().is_empty());
+    assert!(outline_selected_rows(&outline).is_empty());
+    assert_eq!(seen.borrow().len(), 2);
+    tree.set_selection(&[vec![1], vec![0, 1]]);
+    assert_eq!(
+        tree.selection(),
+        vec![vec![0, 1]],
+        "単一選択では先頭の 1 つだけ"
+    );
+    Ok(())
+}
+
+/// ⌘ adds to an AppKit selection and keeps the items hidden inside collapsed
+/// branches; a ⇧ range and a plain arrow key select anew and drop them, as for rows
+/// outside the window of a long `List` (`keeps_hidden_selection`).
+fn tree_modifier_keys_decide_hidden_selection(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+    let window = ui.window("ツリーの複数選択", 360.0, 300.0)?;
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+    tree.set_sizing(Sizing::fill());
+    tree.set_selection_mode(SelectionMode::Multiple);
+    window.set_child(&tree);
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
+    window.show();
+    let native = window.native_window();
+    // 押下がアプリのアクティブ化に使われないよう、key とアクティブを待つ
+    // (`shown_list_for_events` と同じ)。
+    let ready = |native: &NSWindow| native.isKeyWindow() && app.isActive();
+    for _ in 0..60 {
+        if ready(&native) {
+            break;
+        }
+        pump(0.05);
+        deliver_events(&app);
+    }
+    let outline = tree.native_outline_view();
+    native.makeFirstResponder(Some(&outline));
+    let content_view = native.contentView().expect("contentView");
+    content_view.layoutSubtreeIfNeeded();
+
+    let seen: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    tree.on_select({
+        let seen = seen.clone();
+        move |path| seen.borrow_mut().push(path.to_vec())
+    });
+    let arrows = NSEventModifierFlags::NumericPad | NSEventModifierFlags::Function;
+    // 行は 0 src, 1 main.rs, 2 lib.rs, 3 docs (閉じて guide > intro.md を隠す)。
+    let hide_intro = || {
+        tree.set_selection(&[vec![0, 1], vec![1, 0, 0]]);
+        tree.collapse(&[1]);
+        assert_eq!(outline_selected_rows(&outline), vec![2]);
+    };
+
+    // ⇧ + ↓ は AppKit の範囲を広げるが、naui では選び直しなので隠れた intro.md は外れる。
+    hide_intro();
+    press_key(
+        &app,
+        &native,
+        "\u{F701}",
+        125,
+        NSEventModifierFlags::Shift | arrows,
+    );
+    assert_eq!(
+        outline_selected_rows(&outline),
+        vec![2, 3],
+        "AppKit が範囲を広げること"
+    );
+    assert_eq!(tree.selection(), vec![vec![0, 1], vec![1]], "⇧ は選び直し");
+    assert_eq!(*seen.borrow(), vec![vec![0, 1]]);
+
+    // 修飾なしの ↑ も選び直し。
+    hide_intro();
+    press_key(&app, &native, "\u{F700}", 126, arrows);
+    let picked = tree.selection();
+    assert_eq!(picked.len(), 1, "1 つだけになること: {picked:?}");
+    assert!(!picked.contains(&vec![1, 0, 0]), "隠れた選択も外れること");
+    assert_eq!(seen.borrow().len(), 2);
+    tree.expand(&[1]);
+    assert_eq!(
+        outline_selected_rows(&outline).len(),
+        1,
+        "開いても戻らないこと"
+    );
+
+    // ⌘ のクリックで足すと、隠れた選択は残る。本物の押下が届く環境でだけ確かめる。
+    if ready(&native) {
+        hide_intro();
+        let point = row_center_in_window(&outline, 1);
+        for kind in [NSEventType::LeftMouseDown, NSEventType::LeftMouseUp] {
+            let event = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
+                kind,
+                point,
+                NSEventModifierFlags::Command,
+                0.0,
+                native.windowNumber(),
+                None,
+                0,
+                1,
+                1.0,
+            )
+            .expect("マウスイベント");
+            app.postEvent_atStart(&event, false);
+        }
+        deliver_events(&app);
+        assert_eq!(
+            outline_selected_rows(&outline),
+            vec![1, 2],
+            "⌘ で main.rs を足すこと"
+        );
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0, 0], vec![0, 1], vec![1, 0, 0]],
+            "⌘ では隠れた選択が残ること"
+        );
+    }
+    window.close();
+    Ok(())
+}
+
+/// Single selection also keeps an item inside a collapsed branch (AppKit deselects
+/// it, and used to report an empty selection).
+fn tree_keeps_a_single_selection_inside_a_collapsed_branch(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    tree.set_items(&sample_tree());
+    let seen = Rc::new(Cell::new(0));
+    tree.on_select({
+        let seen = seen.clone();
+        move |_| seen.set(seen.get() + 1)
+    });
+    tree.select(&[0, 1]);
+    let outline = tree.native_outline_view();
+    let src = outline.itemAtRow(0).expect("src");
+    unsafe { outline.collapseItem(Some(&src)) };
+    assert_eq!(tree.selected(), Some(vec![0, 1]), "隠れても選んだまま");
+    unsafe { outline.expandItem(Some(&src)) };
+    assert_eq!(outline.selectedRow(), 2, "開き直すと選択が戻ること");
+    assert_eq!(seen.get(), 1, "開閉で選択の通知は起きない");
     Ok(())
 }
 

@@ -164,12 +164,20 @@ native counterparts for.
       before the dialog opens is kept and clicked from a run-loop block (the main
       queue does not run there when the dialog was opened from a `Tasks` poll),
       so a test answers first and then clicks whatever opens the dialog.
-- [ ] **Multiple selection in `Tree`** (`set_selection_mode` with
-      `SelectionMode`, as `List` has). `Tree` has single selection only.
-      `NSOutlineView`, `GtkListBox` (which `Tree` is built from on GTK) and WinUI's
-      `TreeView` have a multiple selection mode, and the Web's tree is naui's own
-      with `aria-multiselectable`. Whether a selected branch also selects its
-      children differs between them, and is decided first.
+- [x] **Multiple selection in `Tree`** (`set_selection_mode` with
+      `SelectionMode`, as `List` has). Added `set_selection_mode`,
+      `selection_mode`, `selection`, `set_selection` and `select_many`; `selected`
+      and `on_select` keep passing one path (the first selected item). As in
+      `List`, items are picked with ⌘ / Ctrl and Shift, and **selecting a branch
+      does not select its children**: that is how `NSOutlineView` and `GtkListBox`
+      behave, while WinUI's `TreeView` offers only check boxes that also select a
+      branch's descendants (and its parent once all children are). So on Windows a
+      tree with multiple selection is laid out in a `ListView` with `Extended`
+      selection, with `TreeViewItem`'s chevrons and indentation; the Web's tree
+      sets `aria-multiselectable`. Selected items inside a collapsed branch stay
+      selected while hidden on every platform (macOS used to drop them with single
+      selection too), and the next choice keeps them or drops them by the same
+      rule as rows off screen in a long `List`.
 - [x] **Modifier keys in `Canvas`'s pointer notifications.** `PointerEvent`
       has a `modifiers` field (the same `Modifiers` as `KeyEvent`), set on every
       phase that `on_pointer` and `on_wheel` receive: `Down`, `Move` (hover
@@ -284,8 +292,7 @@ planned, and the versions above may change to meet them.
   change what is public rather than add to it are done before v1.0.0. Widgets in
   `Tree` items change `TreeItem`, whose fields are public, so a new field breaks
   apps that build it with a struct literal (more than one action on a toast,
-  which changed `Toast::action` and `on_action`, was done in v0.18.0). Items that only
-  add, such as multiple selection in `Tree`, can also come after.
+  which changed `Toast::action` and `on_action`, was done in v0.18.0).
 - **Public types are reviewed for growth.** Each public struct and enum is
   checked for whether it may gain fields or variants later. Those that may get
   `#[non_exhaustive]`, or private fields with constructors, as `PointerEvent`

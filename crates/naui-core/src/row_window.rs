@@ -306,7 +306,8 @@ pub enum SelectionGesture {
 ///
 /// `previous` is the part of the previous selection that was inside the window, and
 /// `current` is the selection the native control returned. Both must be in
-/// ascending order without duplicates.
+/// ascending order without duplicates. `Tree` passes paths instead of indices, with
+/// "inside the window" meaning "not hidden inside a collapsed branch".
 ///
 /// ```
 /// # use naui_core::{keeps_hidden_selection, SelectionGesture};
@@ -318,9 +319,9 @@ pub enum SelectionGesture {
 /// assert!(keeps_hidden_selection(&[1], &[1, 3], SelectionGesture::Unknown));
 /// assert!(!keeps_hidden_selection(&[1, 3], &[5], SelectionGesture::Unknown));
 /// ```
-pub fn keeps_hidden_selection(
-    previous: &[usize],
-    current: &[usize],
+pub fn keeps_hidden_selection<T: PartialEq>(
+    previous: &[T],
+    current: &[T],
     gesture: SelectionGesture,
 ) -> bool {
     match gesture {

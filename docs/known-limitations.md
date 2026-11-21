@@ -201,8 +201,11 @@ that shape are covered in
     the browser can handle (about 33 million px in Chromium), the mapping between
     the scroll bar position and rows drifts (around 1 million rows for 30 px rows).
     Selection by index and `set_rows` work even with more than that.
-- `Tree` has single selection, and its items can hold only strings. Items are
-  addressed by paths (`&[usize]`), and they cannot be rearranged by dragging.
+- `Tree`'s items can hold only strings. Items are addressed by paths
+  (`&[usize]`), and they cannot be rearranged by dragging. With multiple selection,
+  `on_select` still passes only the first selected item (read `Tree::selection`
+  for all of them), and selecting a branch never selects its children (there is no
+  check-box selection as in WinUI's `TreeView`).
 - Only one `Dialog` can be shown at a time, with at most three buttons: Primary,
   Secondary and Cancel. `Sheet` has the same three buttons, and its cancel button
   cannot be disabled (Esc closes it anyway).
@@ -406,6 +409,12 @@ that shape are covered in
   user picks to the ends.
 - Branches set to `TreeItem::enabled(false)` in a `Tree` can still be expanded and
   collapsed.
+- A `Tree` with `SelectionMode::Multiple` is not a `TreeView` but a `ListView` laid
+  out as a tree (`TreeView`'s own multiple selection is check boxes that also
+  select a branch's descendants). Its rows look like `List` rows, the chevron is a
+  borderless button with `TreeViewItem`'s glyphs, and ← / → expand and collapse as
+  in `TreeView`. Assistive technology is told each row's level and its position
+  among its siblings, but not whether a branch is expanded.
 - `Video` / `Audio` show no standard playback bar. This avoids crashes in some
   Windows App SDK environments (for the same reason, `Tabs` does not use
   `TabView`).
