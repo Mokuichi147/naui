@@ -160,6 +160,10 @@ impl Toast {
     /// happens unless it is on screen ([`is_visible`](Self::is_visible)) and has a
     /// button at `index`.
     ///
+    /// On GTK, `AdwToast`'s own button (a toast with one action) is taken down by
+    /// libadwaita a moment later, so the notifications arrive from the event loop;
+    /// wait for them with [`testing::wait_until`](crate::testing::wait_until).
+    ///
     /// For tests and automation. See [Testing apps](crate::guide#testing-apps).
     #[inline]
     pub fn click_action(&self, index: usize) {

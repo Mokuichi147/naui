@@ -93,6 +93,10 @@ fn main() {
             canvas_reports_wheel,
         ),
         (
+            "send_pointer と send_wheel が on_pointer と on_wheel へそのまま届く",
+            canvas_send_pointer_reaches_the_closures,
+        ),
+        (
             "描画面が Handled で受け終えたら外側の慣性スクロールを取り消す",
             canvas_cancels_outer_kinetic_after_handled,
         ),
@@ -450,6 +454,10 @@ fn main() {
         ),
         ("URL として読めないものは開かない", open_url_rejects_garbage),
         (
+            "check_url は open_url と同じく読み、開かない",
+            check_url_reads_like_open_url,
+        ),
+        (
             "ウィンドウの大きさを読み、変わったら通知する",
             window_reports_its_size,
         ),
@@ -460,6 +468,10 @@ fn main() {
         (
             "閉じる確認で KeepOpen を返すと閉じない",
             window_close_request_can_keep_it_open,
+        ),
+        (
+            "request_close が閉じるボタンと同じく閉じる確認を通す",
+            request_close_asks_like_the_close_button,
         ),
         (
             "ウィンドウの位置は取れず、動かしても何も起きない",
@@ -994,6 +1006,14 @@ fn main() {
         ),
         ("保存ボタンが設定を保つ", file_saver_configuration),
         (
+            "choose がファイル選択の答えと同じく選び、空や無効なら何もしない",
+            file_picker_choose_picks_like_the_dialog,
+        ),
+        (
+            "choose が保存先へ実際に書き、書けなければ on_error を呼ぶ",
+            file_saver_choose_writes_like_the_dialog,
+        ),
+        (
             "ダイアログの設定が AdwAlertDialog へ届く",
             dialog_configuration_reaches_the_alert,
         ),
@@ -1066,6 +1086,10 @@ fn main() {
             toast_closed_from_the_keyboard_leaves_no_freed_focus,
         ),
         (
+            "click_action がトーストのボタンを押し、on_action → on_dismiss の順で届く",
+            toast_click_action_clicks_like_the_user,
+        ),
+        (
             "外さずに別の親へ入れた子は断られ、どちらのコンテナの操作でも動かない",
             moved_child_is_refused_and_left_alone,
         ),
@@ -1085,6 +1109,10 @@ fn main() {
         (
             "落とされたファイルがウィジェットと窓の受け口へ届く",
             file_drop_reaches_the_drop_targets,
+        ),
+        (
+            "drop_files が本物のドロップと同じくウィジェット → 祖先 → 窓へ振り分ける",
+            drop_files_goes_where_a_real_drop_goes,
         ),
         (
             "別スレッドから送った値がラベルへ届く",
@@ -2087,6 +2115,54 @@ fn canvas_reports_wheel(ui: &Ui) -> Result<()> {
             .all(|e| e.phase == PointerPhase::Move),
         "ホイールは on_pointer へは届かないこと: {:?}",
         pointer.borrow()
+    );
+    Ok(())
+}
+
+/// `send_pointer` passes the event to `on_pointer` as given (a wheel event to
+/// `on_wheel`), and `send_wheel` returns `on_wheel`'s answer, `Continue` without
+/// one.
+fn canvas_send_pointer_reaches_the_closures(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    let wheel = naui_core::PointerEvent::wheel(Point::new(5.0, 6.0), 0.0, 40.0);
+    assert_eq!(
+        canvas.send_wheel(wheel),
+        EventResponse::Continue,
+        "受け口なし"
+    );
+    canvas.send_pointer(naui_core::PointerEvent::new(
+        PointerPhase::Move,
+        Point::new(1.0, 1.0),
+    ));
+
+    let (pointers, sink) = recorder::<naui_core::PointerEvent>();
+    canvas.on_pointer(sink);
+    let (wheels, mut sink) = recorder::<naui_core::PointerEvent>();
+    canvas.on_wheel(move |event| {
+        sink(event);
+        EventResponse::Handled
+    });
+    let down = naui_core::PointerEvent::new(PointerPhase::Down, Point::new(12.5, 30.0))
+        .button(Some(naui_core::PointerButton::Secondary))
+        .modifiers(naui_core::Modifiers {
+            shift: true,
+            ..Default::default()
+        });
+    let moved = naui_core::PointerEvent::new(PointerPhase::Move, Point::new(-4.0, 900.0));
+    let up = naui_core::PointerEvent::new(PointerPhase::Up, Point::new(13.0, 31.0))
+        .button(Some(naui_core::PointerButton::Secondary));
+    for event in [down, moved, up] {
+        canvas.send_pointer(event);
+    }
+    assert_eq!(*pointers.borrow(), [down, moved, up], "そのまま届く");
+
+    assert_eq!(canvas.send_wheel(wheel), EventResponse::Handled);
+    canvas.send_pointer(wheel);
+    assert_eq!(*wheels.borrow(), [wheel, wheel], "ホイールは on_wheel へ");
+    assert_eq!(
+        pointers.borrow().len(),
+        3,
+        "ホイールは on_pointer へ届かない"
     );
     Ok(())
 }
@@ -9830,6 +9906,84 @@ fn file_saver_configuration(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// `choose` takes the files as the dialog's answer does: `selection` becomes them
+/// and `on_select` is called. Empty (a cancelled dialog) and a disabled picker change
+/// nothing. The entries arrive as given, without checking the mode.
+fn file_picker_choose_picks_like_the_dialog(ui: &Ui) -> Result<()> {
+    let picker = ui.file_picker("選ぶ")?;
+    let (picked, mut sink) = recorder::<Vec<naui_core::FileEntry>>();
+    picker.on_select(move |files| sink(files.to_vec()));
+    let files = [
+        naui_core::FileEntry::from_path("/tmp/naui 写真.png"),
+        naui_core::FileEntry::from_path("相対/メモ.txt"),
+    ];
+    picker.choose(&files);
+    assert_eq!(picker.selection(), files);
+    assert_eq!(*picked.borrow(), [files.to_vec()], "1 度だけ通知する");
+
+    picker.choose(&[]);
+    assert_eq!(picker.selection(), files, "取り消しは何も変えない");
+    assert_eq!(picked.borrow().len(), 1);
+
+    picker.set_enabled(false);
+    picker.choose(&files[..1]);
+    assert_eq!(picker.selection(), files, "無効なら選ばない");
+    assert_eq!(picked.borrow().len(), 1);
+    Ok(())
+}
+
+/// `choose` writes the contents to the destination as after the dialog, and calls
+/// `on_save` with it; a destination without a path or one that cannot be written
+/// calls `on_error`. A disabled saver does nothing.
+fn file_saver_choose_writes_like_the_dialog(ui: &Ui) -> Result<()> {
+    let dir = std::env::temp_dir().join(format!("naui-gtk-choose-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("一時ディレクトリ");
+    let path = dir.join("書き出し.txt");
+    let _ = std::fs::remove_file(&path);
+
+    let saver = ui.file_saver("保存する")?;
+    saver.set_contents("こんにちは".as_bytes());
+    let (saved, mut sink) = recorder::<naui_core::FileEntry>();
+    saver.on_save(move |entry| sink(entry.clone()));
+    let (errors, mut sink) = recorder::<String>();
+    saver.on_error(move |error| sink(error.context().to_string()));
+
+    let destination = naui_core::FileEntry::from_path(&path);
+    saver.choose(&destination);
+    assert_eq!(
+        std::fs::read(&path).expect("書けていること"),
+        "こんにちは".as_bytes()
+    );
+    assert_eq!(
+        saved.borrow().as_slice(),
+        std::slice::from_ref(&destination)
+    );
+    assert_eq!(saver.destination(), Some(destination.clone()));
+    assert!(errors.borrow().is_empty());
+
+    saver.choose(&naui_core::FileEntry::from_name("名前だけ.txt"));
+    assert_eq!(*errors.borrow(), ["get the save location"], "パスが無い");
+
+    saver.choose(&naui_core::FileEntry::from_path(
+        dir.join("無いフォルダー").join("a.txt"),
+    ));
+    assert_eq!(
+        *errors.borrow(),
+        ["get the save location", "write the file"],
+        "書けない"
+    );
+    assert_eq!(saved.borrow().len(), 1);
+
+    std::fs::remove_file(&path).expect("消せる");
+    saver.set_enabled(false);
+    saver.choose(&destination);
+    assert!(!path.exists(), "無効なら書かない");
+    assert_eq!(saved.borrow().len(), 1);
+    assert_eq!(errors.borrow().len(), 2);
+    let _ = std::fs::remove_dir_all(&dir);
+    Ok(())
+}
+
 /// The toast's settings reach the `AdwToast`, and dismissing removes it. One action
 /// is `AdwToast`'s own button; two or more all follow the text in a custom title.
 fn toast_configuration_reaches_the_native_toast(ui: &Ui) -> Result<()> {
@@ -10182,6 +10336,154 @@ fn toast_closed_from_the_keyboard_leaves_no_freed_focus(ui: &Ui) -> Result<()> {
     }
     window.close();
     Ok(())
+}
+
+/// `click_action` clicks the toast's button the way the user does: `on_action` and
+/// then `on_dismiss`, and the toast is gone. Nothing happens off screen or past the
+/// last button.
+///
+/// One action is the `AdwToast`'s own button, which takes the toast down on the
+/// next idle, so the notifications come from the main loop; two or more are naui's
+/// buttons in the title, which notify before `click_action` returns.
+fn toast_click_action_clicks_like_the_user(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 320.0, 200.0)?;
+    // 窓の中身にも同じ文字のボタンを置き、トーストのボタンと取り違えないことを見る。
+    let content = ui.stack(Orientation::Vertical)?;
+    let decoy = ui.button("元に戻す")?;
+    decoy.on_click(|| panic!("窓の中のボタンは押さない"));
+    content.append(&decoy);
+    window.set_child(&content);
+    window.show();
+    let overlay = window.native_toast_overlay();
+    tick(&overlay);
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    let make = |actions: &[&str]| -> Result<_> {
+        let toast = ui.toast("削除しました")?;
+        toast.set_actions(actions);
+        toast.set_timeout(0.0);
+        toast.on_action({
+            let seen = seen.clone();
+            move |index| seen.borrow_mut().push(format!("action {index}"))
+        });
+        toast.on_dismiss({
+            let seen = seen.clone();
+            move || seen.borrow_mut().push("dismiss".to_string())
+        });
+        Ok(toast)
+    };
+
+    // 操作が 1 つ: AdwToast 自身のボタン。
+    let toast = make(&["元に戻す"])?;
+    toast.click_action(0);
+    assert!(
+        !toast.is_visible() && seen.borrow().is_empty(),
+        "出す前は何もしない"
+    );
+    toast.show();
+    tick(&overlay);
+    toast.click_action(1);
+    spin_until(std::time::Duration::from_millis(200), || false);
+    assert!(toast.is_visible(), "範囲外の番号では何も起きない");
+    assert!(seen.borrow().is_empty());
+
+    // 本物のボタンが押されることを、そのボタンの clicked で確かめる。
+    let native = toast.native_toast().expect("AdwToast");
+    let widget = children(&overlay)
+        .into_iter()
+        .find(|child| child.type_().name() == "AdwToastWidget")
+        .expect("AdwToastWidget");
+    assert_eq!(
+        widget.property::<Option<adw::Toast>>("toast").as_ref(),
+        Some(&native),
+        "toast 属性で自分の AdwToastWidget を見分けられる"
+    );
+    let button = find_labelled_button(&widget, "元に戻す").expect("AdwToast のボタン");
+    let clicked = Rc::new(Cell::new(false));
+    button.connect_clicked({
+        let clicked = clicked.clone();
+        move |_| clicked.set(true)
+    });
+    toast.click_action(0);
+    assert!(clicked.get(), "AdwToast のボタンを押す");
+    spin_until(std::time::Duration::from_secs(2), || !toast.is_visible());
+    assert!(!toast.is_visible(), "押すと消える");
+    assert_eq!(seen.borrow().as_slice(), ["action 0", "dismiss"]);
+    toast.click_action(0);
+    pump();
+    assert_eq!(seen.borrow().len(), 2, "消えたあとは何も起きない");
+
+    // 操作が 2 つ以上: 題の中の naui のボタン。返る前に届く。
+    seen.borrow_mut().clear();
+    let toast = make(&["元に戻す", "開く"])?;
+    toast.show();
+    tick(&overlay);
+    toast.click_action(2);
+    assert!(toast.is_visible(), "範囲外の番号では何も起きない");
+    toast.click_action(1);
+    assert_eq!(seen.borrow().as_slice(), ["action 1", "dismiss"]);
+    assert!(!toast.is_visible());
+
+    // 並んでいる間は画面に出ていないので押せない。
+    seen.borrow_mut().clear();
+    let first = make(&["元に戻す"])?;
+    let second = make(&["やり直す"])?;
+    first.show();
+    second.show();
+    assert!(second.is_queued());
+    second.click_action(0);
+    spin_until(std::time::Duration::from_millis(200), || false);
+    assert!(
+        second.is_queued() && seen.borrow().is_empty(),
+        "並んでいるものは押せない"
+    );
+    first.dismiss();
+    second.dismiss();
+
+    // 前のトーストの on_dismiss の中では、次のトーストは naui の上では出ていても、
+    // AdwToastOverlay がまだ自分の待ち行列に置いていてボタンが無い。そこで押しても
+    // 本来のボタンと同じく、知らせてから消える。
+    seen.borrow_mut().clear();
+    let first = ui.toast("1 つめ")?;
+    first.set_timeout(0.0);
+    let second = make(&["元に戻す"])?;
+    let had_widget = Rc::new(Cell::new(None));
+    first.on_dismiss({
+        let (second, overlay, had_widget) = (second.clone(), overlay.clone(), had_widget.clone());
+        move || {
+            assert!(second.is_visible(), "通知の時点で次が出ている");
+            let native = second.native_toast().expect("AdwToast");
+            had_widget.set(Some(children(&overlay).into_iter().any(|child| {
+                child.type_().name() == "AdwToastWidget"
+                    && child.property::<Option<adw::Toast>>("toast").as_ref() == Some(&native)
+            })));
+            second.click_action(0);
+        }
+    });
+    first.show();
+    second.show();
+    tick(&overlay);
+    first.native_toast().expect("AdwToast").dismiss();
+    assert_eq!(
+        had_widget.get(),
+        Some(false),
+        "ボタンがまだ作られていない場面を確かめている"
+    );
+    spin_until(std::time::Duration::from_secs(2), || !second.is_visible());
+    assert!(!second.is_visible(), "押すと消える");
+    assert_eq!(seen.borrow().as_slice(), ["action 0", "dismiss"]);
+    window.close();
+    Ok(())
+}
+
+/// The first `GtkButton` labelled `label` in `root`'s tree.
+fn find_labelled_button(root: &gtk::Widget, label: &str) -> Option<gtk::Button> {
+    children(root)
+        .into_iter()
+        .find_map(|child| match child.clone().downcast::<gtk::Button>() {
+            Ok(button) if button.label().as_deref() == Some(label) => Some(button),
+            _ => find_labelled_button(&child, label),
+        })
 }
 
 fn dialog_configuration_reaches_the_alert(ui: &Ui) -> Result<()> {
@@ -13143,6 +13445,15 @@ fn open_url_rejects_garbage(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// `check_url` reads a URL as `open_url` does, without opening it.
+fn check_url_reads_like_open_url(ui: &Ui) -> Result<()> {
+    assert!(ui.check_url("https://example.com/help?q=1").is_ok());
+    assert!(ui.check_url("mailto:someone@example.com").is_ok());
+    let error = ui.check_url("これは URL ではない").expect_err("読めない");
+    assert_eq!(error.context(), "open the URL", "open_url と同じ誤り");
+    Ok(())
+}
+
 /// GTK4 has no API for window positions (dropped on X11 too, to match Wayland).
 fn window_position_is_unavailable(ui: &Ui) -> Result<()> {
     let window = ui.window("位置", 320.0, 200.0)?;
@@ -13822,6 +14133,51 @@ fn window_close_request_can_keep_it_open(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// `request_close` goes through `close-request` like the close button: it asks
+/// `on_close_request`, and closes unless the answer is `KeepOpen`. Without
+/// `on_close_request` it closes.
+fn request_close_asks_like_the_close_button(ui: &Ui) -> Result<()> {
+    let window = ui.window("閉じる確認", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    window.show();
+    let answer = Rc::new(Cell::new(naui_core::CloseResponse::KeepOpen));
+    let asked = Rc::new(Cell::new(0));
+    window.on_close_request({
+        let (answer, asked) = (answer.clone(), asked.clone());
+        move || {
+            asked.set(asked.get() + 1);
+            answer.get()
+        }
+    });
+    window.request_close();
+    assert_eq!(asked.get(), 1, "閉じる確認に聞く");
+    assert!(window.is_visible(), "KeepOpen なら開いたまま");
+
+    answer.set(naui_core::CloseResponse::Close);
+    window.request_close();
+    assert_eq!(asked.get(), 2);
+    assert!(!window.is_visible(), "Close なら閉じる");
+
+    // 表示する前の窓には閉じるボタンが無く、`gtk_window_close` も何もしない。
+    let early = ui.window("表示前", 320.0, 200.0)?;
+    early.on_close_request({
+        let asked = asked.clone();
+        move || {
+            asked.set(asked.get() + 1);
+            naui_core::CloseResponse::Close
+        }
+    });
+    early.request_close();
+    assert_eq!(asked.get(), 2, "表示する前は閉じる確認に聞かない");
+
+    let plain = ui.window("確認なし", 320.0, 200.0)?;
+    plain.set_child(&ui.label("中身")?);
+    plain.show();
+    plain.request_close();
+    assert!(!plain.is_visible(), "閉じる確認が無ければ閉じる");
+    Ok(())
+}
+
 fn read_only_and_min_size(ui: &Ui) -> Result<()> {
     let input = ui.text_input("ログ")?;
     input.set_read_only(true);
@@ -14034,6 +14390,74 @@ fn file_drop_reaches_the_drop_targets(ui: &Ui) -> Result<()> {
     assert!(drop_files(&window_target, &["/tmp/別.txt"]));
     assert_eq!(to_window.get(), 1);
     assert_eq!(seen.borrow().len(), 2, "ほかの受け口へは届かない");
+    window.close();
+    Ok(())
+}
+
+/// `drop_files` goes where a real drop goes: the widget's own `on_file_drop`, or
+/// else the nearest ancestor's, or else the window's, through `drop` on naui's
+/// `GtkDropTarget`. The entries arrive as given, even without a path.
+fn drop_files_goes_where_a_real_drop_goes(ui: &Ui) -> Result<()> {
+    let window = ui.window("ファイルの振り分け", 320.0, 200.0)?;
+    let root = ui.stack(Orientation::Vertical)?;
+    let outer = ui.stack(Orientation::Vertical)?;
+    let inner = ui.label("祖先が受ける")?;
+    let own = ui.label("自分で受ける")?;
+    let lonely = ui.label("窓が受ける")?;
+    outer.append(&inner);
+    outer.append(&own);
+    root.append(&outer);
+    root.append(&lonely);
+    window.set_child(&root);
+
+    let files = vec![
+        naui_core::FileEntry::from_path("/tmp/naui 写真.png"),
+        naui_core::FileEntry::from_path("相対/メモ.txt"),
+        naui_core::FileEntry::from_name("名前だけ"),
+    ];
+    // 祖先も窓も受け口を持たないうちは、どこへも届かない (落ちもしない)。
+    lonely.drop_files(&files);
+    window.drop_files(&files);
+
+    let (seen, sink) = recorder::<(&'static str, Vec<naui_core::FileEntry>)>();
+    let sink = Rc::new(RefCell::new(sink));
+    let take = |who: &'static str| {
+        let sink = sink.clone();
+        move |files: &[naui_core::FileEntry]| (sink.borrow_mut())((who, files.to_vec()))
+    };
+    outer.on_file_drop(take("outer"));
+    own.on_file_drop(take("own"));
+    window.on_file_drop(take("window"));
+
+    own.drop_files(&files);
+    inner.drop_files(&files);
+    lonely.drop_files(&files);
+    window.drop_files(&files);
+    outer.drop_files(&[]);
+    let who: Vec<&str> = seen.borrow().iter().map(|(who, _)| *who).collect();
+    assert_eq!(
+        who,
+        ["own", "outer", "window", "window"],
+        "自分 → 受け口を持つ祖先 → 窓の順に探す"
+    );
+    assert!(
+        seen.borrow().iter().all(|(_, got)| *got == files),
+        "渡したとおりに届く (パスの無いもの・相対パスも)"
+    );
+
+    // 本物のドロップは今までどおり GdkFileList から読む (持ち越しが無いこと)。
+    seen.borrow_mut().clear();
+    assert!(drop_files(
+        &file_drop_target(&bin_of(&own)),
+        &["/tmp/本物.txt"]
+    ));
+    assert_eq!(
+        *seen.borrow(),
+        [(
+            "own",
+            vec![naui_core::FileEntry::from_path("/tmp/本物.txt")]
+        )]
+    );
     window.close();
     Ok(())
 }

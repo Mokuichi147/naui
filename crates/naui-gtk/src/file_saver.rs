@@ -149,7 +149,23 @@ impl FileSaver {
                 return;
             }
         };
-        let Some(path) = file.path() else {
+        self.write_to(file.path().as_deref());
+    }
+
+    /// Saves as if the user had chosen `destination` in the dialog, without showing
+    /// it (for tests and automation): the same writing as after the dialog, so the
+    /// contents are written to `destination`'s path and `on_save` (or `on_error` if
+    /// writing fails or it has no path) is called before this returns. Does nothing
+    /// while insensitive.
+    pub fn choose(&self, destination: &FileEntry) {
+        if self.0.native.is_sensitive() {
+            self.write_to(destination.path());
+        }
+    }
+
+    /// Writes the contents to the chosen `path` and notifies.
+    fn write_to(&self, path: Option<&Path>) {
+        let Some(path) = path else {
             self.0.on_error.emit(&Error::new(
                 "get the save location",
                 "could not get the path",
@@ -158,7 +174,7 @@ impl FileSaver {
         };
         // 通知の中からこのウィジェットを触れるよう、借用を手放してから呼ぶ。
         let contents = self.0.contents.borrow().clone();
-        match write_contents(&path, &contents) {
+        match write_contents(path, &contents) {
             Ok(entry) => {
                 *self.0.destination.borrow_mut() = Some(entry.clone());
                 self.0.on_save.emit(&entry);

@@ -35,6 +35,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
+use gtk::glib;
 use naui_core::{ToastPosition, ToastPriority, ToastQueue, ToastSlot, ToastSpec};
 
 use crate::callback::Notifier;
@@ -264,6 +265,55 @@ impl Toast {
         ToastQueue::is_waiting_in(&QUEUE, &self.0)
     }
 
+    /// Clicks the action button at `index` the way the user does (`clicked` on the
+    /// `GtkButton`), so `on_action(index)` and then `on_dismiss` are called (for
+    /// tests and automation). Nothing happens unless it is on screen with a button
+    /// at `index`.
+    ///
+    /// With two or more actions the buttons are naui's own, in the custom title, and
+    /// both notifications arrive before this returns. With one, the button belongs to
+    /// the `AdwToast`'s widget, which notifies `button-clicked` at once but takes the
+    /// toast down on the next idle, so **both notifications arrive later, from the
+    /// main loop**, as after a real click.
+    pub fn click_action(&self, index: usize) {
+        let actions = self.0.spec.borrow().actions().to_vec();
+        let Some(label) = actions.get(index) else {
+            return;
+        };
+        let Some((native, overlay)) = self
+            .0
+            .shown
+            .borrow()
+            .as_ref()
+            .map(|shown| (shown.native.clone(), shown.overlay.clone()))
+        else {
+            return;
+        };
+        let button = if actions.len() >= 2 {
+            native.custom_title().and_then(|title| {
+                children(&title)
+                    .into_iter()
+                    .filter_map(|child| child.downcast::<gtk::Button>().ok())
+                    .nth(index)
+            })
+        } else {
+            toast_widget(&overlay, &native)
+                .and_then(|widget| crate::dialog::find_button(&widget, label))
+        };
+        match button {
+            // クリックの中でトーストが下げられ `shown` を借りるので、借用は手放してある。
+            Some(button) => button.emit_clicked(),
+            // `AdwToastOverlay` がまだ自分の待ち行列に置いていて、ボタンが作られて
+            // いない (前のトーストの `on_dismiss` の中など)。本来のボタンが押された
+            // ときと同じく、知らせてから次の idle で下げる。
+            None if actions.len() == 1 => {
+                native.emit_by_name::<()>("button-clicked", &[]);
+                glib::idle_add_local_once(move || native.dismiss());
+            }
+            None => {}
+        }
+    }
+
     /// The `AdwToast` on screen now. `None` if it is not on screen.
     ///
     /// Public as a backend-specific escape hatch.
@@ -360,4 +410,26 @@ impl Toast {
             .or_else(|| self.0.app.windows().into_iter().next())?;
         crate::window::toast_overlay(&window)
     }
+}
+
+/// The widget `AdwToastOverlay` made for `native` (`AdwToastWidget`, private to
+/// libadwaita, so found by its type name and its `toast` property). `None` while the
+/// overlay still has it in its own queue.
+fn toast_widget(overlay: &adw::ToastOverlay, native: &adw::Toast) -> Option<gtk::Widget> {
+    children(overlay.upcast_ref()).into_iter().find(|child| {
+        child.type_().name() == "AdwToastWidget"
+            && child.find_property("toast").is_some()
+            && child.property::<Option<adw::Toast>>("toast").as_ref() == Some(native)
+    })
+}
+
+/// The direct children of `widget`, in order.
+fn children(widget: &gtk::Widget) -> Vec<gtk::Widget> {
+    let mut children = Vec::new();
+    let mut child = widget.first_child();
+    while let Some(current) = child {
+        child = current.next_sibling();
+        children.push(current);
+    }
+    children
 }

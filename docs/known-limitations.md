@@ -337,11 +337,15 @@ that shape are covered in
   naui asks `on_close_request` and closes the window as `Window::close` does:
   WinUI raises the `AppWindow`'s `Closing` only for the user's own close, and
   naui winds the whole UI down there, which would stop the remaining test cases.
+- On Linux, `Toast::click_action` on a toast with one action clicks the button
+  inside libadwaita's toast widget, found by its private type name; libadwaita
+  takes the toast down a moment later, so `on_action` and `on_dismiss` arrive from
+  the event loop. `Window::request_close` on a window that has not been shown
+  does nothing there (`on_close_request` is not asked).
 - `drop_files` starts from the widget it is called on rather than from a point
   under the pointer, and natively it does not check whether the widget is shown.
   Natively a text field passes the drop on like other widgets, while a real drop
-  onto one is taken as text by the field itself (macOS and Windows) and reaches
-  no `on_file_drop`. On Windows the files of a real drop arrive once they have been
+  onto one is taken as text by the field itself and reaches no `on_file_drop`. On Windows the files of a real drop arrive once they have been
   read, a moment later; `drop_files` delivers them at once.
 - `drop_files` on the Web dispatches a real `drop` event with an empty file per
   entry, so the files arrive named after the entries, with `blob:` URLs and no

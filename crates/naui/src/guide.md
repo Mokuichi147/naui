@@ -3370,8 +3370,9 @@ dialog open (on macOS, with the click that opened a `Dialog` still waiting).
 screen, so `on_action` and then `on_dismiss` are called. [`Window::request_close`]
 acts like the window's close button: `on_close_request` is asked, and the window
 closes unless it answers [`CloseResponse::KeepOpen`]. On the Web, where a window
-inside the page has no close button, it does nothing. Both can take effect a
-moment later on Windows, so wait for them with [`testing::wait_until`]:
+inside the page has no close button, it does nothing. On Linux a toast with a
+single action is taken down by libadwaita a moment after its button is clicked,
+so wait for the notifications with [`testing::wait_until`]:
 
 ```rust,ignore
 app.editor.enter_text("unsaved");
