@@ -108,6 +108,23 @@ impl NumberInput {
             })
         };
         *this.0.text_handler.borrow_mut() = Some(text_handler);
+        // 確定 (`gtk_spin_button_update`) で文字を値へ読む。既定の更新方針
+        // (`GTK_UPDATE_ALWAYS`) は読めなかった文字を strtod の結果 (0) のまま
+        // 使うので、数が 1 つもない文字 (空欄、`-` だけなど) は今の値を返して
+        // 元へ戻す。`GTK_UPDATE_IF_VALID` は範囲外の値も端へ寄せずに戻すので
+        // 使わない。数を含む文字は GTK の読み方に任せる (ロケールの小数点も
+        // 読める)。今の値は GTK が持つ値ではなく、打っている途中に読めた数で
+        // 先へ進んでいる naui の値。
+        {
+            let weak = Rc::downgrade(&this.0);
+            this.0.native.connect_input(move |native| {
+                let inner = weak.upgrade()?;
+                if native.text().chars().any(|c| c.is_ascii_digit()) {
+                    return None;
+                }
+                Some(Ok(inner.value.get()))
+            });
+        }
         this.connect_submit();
         this
     }
@@ -223,7 +240,8 @@ impl NumberInput {
     /// `activate` of the inner `GtkText` (the delegate of `GtkEditable`) is received.
     /// `GtkSpinButton` connects value confirmation (`gtk_spin_button_update`) to the
     /// same signal at creation, so by the time this later-connected handler is called,
-    /// the value is settled (unreadable text has been reverted to the previous value).
+    /// the value is settled (unreadable text has been reverted to the previous value
+    /// by the `input` handler connected in `new`).
     fn connect_submit(&self) {
         let Some(text) = self.0.native.delegate() else {
             return;
