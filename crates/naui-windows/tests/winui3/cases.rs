@@ -756,6 +756,34 @@ const CASES: &[Case] = &[
         "閉じた窓に残ったトーストは次のものに場所を譲る",
         toast_in_a_closed_window_gives_way,
     ),
+    (
+        "トーストの click_action がそのボタンを押して通知し、出ていないときや番号が無いときは何もしない",
+        toast_click_action_presses_the_button,
+    ),
+    (
+        "request_close が on_close_request に聞き、KeepOpen なら残し、それ以外ならその窓だけ閉じる",
+        window_request_close_asks_first,
+    ),
+    (
+        "drop_files が本物のドロップと同じく自分、受け口のある祖先、窓の順に届く",
+        drop_files_goes_where_a_real_drop_would,
+    ),
+    (
+        "Canvas の send_pointer と send_wheel がハンドラへそのまま届き、on_wheel の答えを返す",
+        canvas_send_pointer_reaches_the_handlers,
+    ),
+    (
+        "FilePicker の choose が selection を替えて on_select をその場で呼び、空や無効では何もしない",
+        file_picker_choose_selects_like_the_dialog,
+    ),
+    (
+        "FileSaver の choose が書き込んで on_save を呼び、パスが無いか書けなければ on_error",
+        file_saver_choose_writes_like_the_dialog,
+    ),
+    (
+        "check_url が open_url と同じく読めない URL を断り、読めるものは開かずに通す",
+        check_url_reads_without_opening,
+    ),
 ];
 
 fn sheet_configuration_reaches_the_content_dialog(ui: &Ui) -> Result<()> {
@@ -13327,5 +13355,440 @@ fn toast_in_a_closed_window_gives_way(ui: &Ui) -> Result<()> {
     assert_eq!(dismissed.get(), 0, "外しても通知は届かない");
     next.dismiss();
     new.close();
+    Ok(())
+}
+
+// ------------------------------------------------------- テスト用の操作
+
+/// `click_action` clicks the toast's own button (one in `ActionButton`, two or more
+/// in `Content`), so `on_action` and `on_dismiss` arrive before it returns. Nothing
+/// happens while it is not on screen or for an index without a button, including
+/// one left over from a longer list (the buttons are kept for reuse).
+fn toast_click_action_presses_the_button(ui: &Ui) -> Result<()> {
+    let window = ui.window("トースト", 360.0, 240.0)?;
+    window.set_child(&ui.stack(Orientation::Vertical)?);
+    window.show();
+
+    let toast = ui.toast("削除しました")?;
+    toast.set_timeout(0.0);
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    toast.on_action({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(format!("action {index}"))
+    });
+    toast.on_dismiss({
+        let seen = seen.clone();
+        move || seen.borrow_mut().push("dismiss".to_string())
+    });
+
+    // ボタン 1 つは InfoBar の ActionButton の枠に入る。
+    toast.set_actions(&["元に戻す"]);
+    toast.click_action(0);
+    assert!(seen.borrow().is_empty(), "出す前は何もしない");
+    toast.show();
+    assert!(toast.is_visible());
+    toast.click_action(1);
+    assert!(seen.borrow().is_empty(), "無い番号は何もしない");
+    assert!(toast.is_visible(), "無い番号では消えない");
+    toast.click_action(0);
+    assert_eq!(*seen.borrow(), ["action 0", "dismiss"], "その場で届く");
+    assert!(!toast.is_visible(), "押すと消える");
+    toast.click_action(0);
+    assert_eq!(seen.borrow().len(), 2, "消えた後は何もしない");
+
+    // 2 つ以上は Content の並びに入る。
+    seen.borrow_mut().clear();
+    toast.set_actions(&["元に戻す", "開く"]);
+    toast.show();
+    toast.click_action(1);
+    assert_eq!(*seen.borrow(), ["action 1", "dismiss"]);
+    assert!(!toast.is_visible());
+
+    // 減らした後は、取っておいた 2 つ目のボタンが残っていても押さない。
+    seen.borrow_mut().clear();
+    toast.set_actions(&["元に戻す"]);
+    toast.show();
+    toast.click_action(1);
+    assert!(seen.borrow().is_empty(), "減らした後の古い番号は押さない");
+    assert!(toast.is_visible());
+
+    // on_action の中から出し直しても、1 度しか知らせない。
+    let again = Rc::new(Cell::new(false));
+    toast.on_action({
+        let seen = seen.clone();
+        let toast = toast.clone();
+        let again = again.clone();
+        move |index| {
+            seen.borrow_mut().push(format!("action {index}"));
+            if !again.replace(true) {
+                toast.show();
+            }
+        }
+    });
+    toast.click_action(0);
+    assert_eq!(*seen.borrow(), ["action 0", "dismiss"]);
+    assert!(
+        toast.is_visible(),
+        "on_action の中で出し直したものは出ている"
+    );
+    toast.dismiss();
+    window.close();
+    Ok(())
+}
+
+/// `request_close` asks `on_close_request` as the close button does: `KeepOpen`
+/// leaves it open, anything else closes that window alone (the real close button's
+/// `Closing` winds the whole UI down, which would stop the remaining cases). It does
+/// nothing before the window is shown or after it has closed.
+fn window_request_close_asks_first(ui: &Ui) -> Result<()> {
+    use naui_core::CloseResponse;
+
+    let window = ui.window("閉じる確認", 320.0, 200.0)?;
+    window.set_child(&ui.label("中身")?);
+    let asked = Rc::new(Cell::new(0));
+    let answer = Rc::new(Cell::new(CloseResponse::KeepOpen));
+    window.on_close_request({
+        let asked = asked.clone();
+        let answer = answer.clone();
+        move || {
+            asked.set(asked.get() + 1);
+            answer.get()
+        }
+    });
+    window.show();
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        pump_until(POPOVER_TIMEOUT, || window.is_visible());
+        let shown = window.is_visible();
+        window.request_close();
+        assert_eq!(asked.get(), 1, "閉じる前に聞く");
+        if shown {
+            assert!(window.is_visible(), "KeepOpen なら閉じない");
+        } else {
+            println!("     (窓が見える状態にならない環境なので、残ったことは確かめずに通す)");
+        }
+
+        answer.set(CloseResponse::Close);
+        window.request_close();
+        assert_eq!(asked.get(), 2);
+        assert!(!window.is_visible(), "Close なら閉じる");
+    }));
+    // 途中で落ちても窓を残さない (残すと終わりの `Application::Exit` のあとも終わらない)。
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+
+    // ほかの窓とアプリはそのまま動く (畳まれていれば、ここで窓を作れない)。
+    let other = ui.window("次の窓", 320.0, 200.0)?;
+    other.set_child(&ui.label("まだ動く")?);
+    other.show();
+    other.request_close();
+    let closed = !other.is_visible();
+    other.close();
+    assert!(closed, "on_close_request が無ければ閉じる");
+    Ok(())
+}
+
+/// `drop_files` routes through the same walk as a real drop, starting from the
+/// widget's element: the widget's own `on_file_drop`, else the nearest enclosing
+/// widget's (also through a `ScrollViewer`, whose template may not be applied in
+/// windows nothing draws), else the window's. The files arrive as given.
+fn drop_files_goes_where_a_real_drop_would(ui: &Ui) -> Result<()> {
+    use naui_core::FileEntry;
+
+    let window = ui.window("ファイルの受け取り", 360.0, 320.0)?;
+    let outer = ui.stack(Orientation::Vertical)?;
+    let inner = ui.stack(Orientation::Vertical)?;
+    let own = ui.label("自分で受ける")?;
+    let plain = ui.label("親が受ける")?;
+    let loose = ui.label("窓が受ける")?;
+    let framed = ui.stack(Orientation::Vertical)?;
+    let scroll = ui.scroll()?;
+    let deep = ui.label("スクロールの中")?;
+    inner.append(&own);
+    inner.append(&plain);
+    scroll.set_child(&deep);
+    framed.append(&scroll);
+    outer.append(&inner);
+    outer.append(&loose);
+    outer.append(&framed);
+    window.set_child(&outer);
+
+    let seen = Rc::new(RefCell::new(Vec::<(&'static str, Vec<String>)>::new()));
+    let record = |who: &'static str| {
+        let seen = seen.clone();
+        move |files: &[FileEntry]| {
+            let names = files.iter().map(|file| file.name().to_string()).collect();
+            seen.borrow_mut().push((who, names));
+        }
+    };
+    own.on_file_drop(record("own"));
+    inner.on_file_drop(record("inner"));
+    framed.on_file_drop(record("framed"));
+    window.on_file_drop(record("window"));
+    let stray = ui.label("どこにも無い")?;
+    let files = [
+        FileEntry::from_path(r"C:\naui\a.txt"),
+        FileEntry::from_path(r"C:\naui\b.png"),
+    ];
+    window.show();
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        pump_until(POPOVER_TIMEOUT, || window.is_visible());
+
+        let names = || vec!["a.txt".to_string(), "b.png".to_string()];
+        let delivered = |widget: &dyn Fn(&[FileEntry])| {
+            seen.borrow_mut().clear();
+            widget(&files);
+            seen.borrow().clone()
+        };
+        assert_eq!(
+            delivered(&|files| own.drop_files(files)),
+            [("own", names())],
+            "自分の受け口"
+        );
+        assert_eq!(
+            delivered(&|files| plain.drop_files(files)),
+            [("inner", names())],
+            "受け口のある親"
+        );
+        assert_eq!(
+            delivered(&|files| inner.drop_files(files)),
+            [("inner", names())],
+            "コンテナ自身の受け口"
+        );
+        assert_eq!(
+            delivered(&|files| deep.drop_files(files)),
+            [("framed", names())],
+            "スクロールの中からも親へ"
+        );
+        assert_eq!(
+            delivered(&|files| loose.drop_files(files)),
+            [("window", names())],
+            "誰も受けなければ窓"
+        );
+        assert_eq!(
+            delivered(&|files| outer.drop_files(files)),
+            [("window", names())],
+            "窓の中身そのものも窓へ"
+        );
+        assert_eq!(
+            delivered(&|files| window.drop_files(files)),
+            [("window", names())],
+            "窓へ直接"
+        );
+        assert!(
+            delivered(&|_| own.drop_files(&[])).is_empty(),
+            "空なら何もしない"
+        );
+        assert!(
+            delivered(&|_| window.drop_files(&[])).is_empty(),
+            "窓でも空なら何もしない"
+        );
+
+        // 窓に置いていないウィジェットは、自分の受け口だけが受ける。
+        assert!(
+            delivered(&|files| stray.drop_files(files)).is_empty(),
+            "受け口も窓も無ければ何もしない"
+        );
+        stray.on_file_drop(record("stray"));
+        assert_eq!(
+            delivered(&|files| stray.drop_files(files)),
+            [("stray", names())]
+        );
+    }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+
+    // 受け口の無い窓へは何も届かない。
+    let bare = ui.window("受け口の無い窓", 320.0, 200.0)?;
+    let label = ui.label("中身")?;
+    bare.set_child(&label);
+    bare.show();
+    seen.borrow_mut().clear();
+    bare.drop_files(&files);
+    label.drop_files(&files);
+    let nothing = seen.borrow().is_empty();
+    bare.close();
+    assert!(nothing, "受け口が無ければ何も届かない");
+    Ok(())
+}
+
+/// `send_pointer` and `send_wheel` call the closures directly with the event as
+/// given; a `Wheel` event sent with `send_pointer` goes to `on_wheel`.
+fn canvas_send_pointer_reaches_the_handlers(ui: &Ui) -> Result<()> {
+    use naui_core::{EventResponse, Modifiers, PointerButton, PointerEvent, PointerPhase};
+
+    let canvas = ui.canvas()?;
+    let down = PointerEvent::new(PointerPhase::Down, Point::new(12.0, 34.0))
+        .button(Some(PointerButton::Secondary))
+        .modifiers(Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        });
+    let wheel = PointerEvent::wheel(Point::new(5.0, 6.0), 0.0, 48.0);
+    // ハンドラが無くても何も起きない。
+    canvas.send_pointer(down);
+    assert_eq!(canvas.send_wheel(wheel), EventResponse::Continue);
+
+    let pointers = Rc::new(RefCell::new(Vec::new()));
+    let wheels = Rc::new(RefCell::new(Vec::new()));
+    canvas.on_pointer({
+        let pointers = pointers.clone();
+        move |event| pointers.borrow_mut().push(event)
+    });
+    canvas.on_wheel({
+        let wheels = wheels.clone();
+        move |event| {
+            wheels.borrow_mut().push(event);
+            if event.wheel_y > 0.0 {
+                EventResponse::Handled
+            } else {
+                EventResponse::Continue
+            }
+        }
+    });
+
+    let up = PointerEvent::new(PointerPhase::Up, Point::new(-3.0, 1000.0))
+        .button(Some(PointerButton::Secondary));
+    canvas.send_pointer(down);
+    canvas.send_pointer(up);
+    assert_eq!(*pointers.borrow(), [down, up], "そのまま届く (面の外でも)");
+    assert!(wheels.borrow().is_empty());
+
+    canvas.send_pointer(wheel);
+    assert_eq!(*wheels.borrow(), [wheel], "Wheel は on_wheel へ");
+    assert_eq!(pointers.borrow().len(), 2, "Wheel は on_pointer へ行かない");
+
+    assert_eq!(canvas.send_wheel(wheel), EventResponse::Handled);
+    let back = PointerEvent::wheel(Point::new(5.0, 6.0), 0.0, -48.0);
+    assert_eq!(
+        canvas.send_wheel(back),
+        EventResponse::Continue,
+        "on_wheel の答えを返す"
+    );
+    assert_eq!(wheels.borrow().len(), 3);
+    Ok(())
+}
+
+/// `choose` records the files and calls `on_select` before returning, without a
+/// dialog; an empty list (a cancelled dialog) and a disabled picker do nothing.
+fn file_picker_choose_selects_like_the_dialog(ui: &Ui) -> Result<()> {
+    use naui_core::FileEntry;
+
+    let picker = ui.file_picker("開く")?;
+    let seen = Rc::new(RefCell::new(Vec::<Vec<FileEntry>>::new()));
+    picker.on_select({
+        let seen = seen.clone();
+        move |files| seen.borrow_mut().push(files.to_vec())
+    });
+    let files = vec![
+        FileEntry::from_path(r"C:\naui\a.txt"),
+        FileEntry::from_path(r"C:\naui\b.txt"),
+    ];
+
+    picker.choose(&[]);
+    assert!(seen.borrow().is_empty(), "空は取り消しと同じ");
+    assert!(picker.selection().is_empty());
+
+    picker.choose(&files);
+    assert_eq!(
+        seen.borrow().as_slice(),
+        std::slice::from_ref(&files),
+        "その場で届く"
+    );
+    assert_eq!(picker.selection(), files);
+
+    // 通知の中から selection を読める。
+    let inside = Rc::new(RefCell::new(Vec::new()));
+    picker.on_select({
+        let picker = picker.clone();
+        let inside = inside.clone();
+        move |_| *inside.borrow_mut() = picker.selection()
+    });
+    let one = vec![FileEntry::from_path(r"C:\naui\c.txt")];
+    picker.choose(&one);
+    assert_eq!(*inside.borrow(), one, "通知の前に selection が替わる");
+
+    picker.set_enabled(false);
+    picker.choose(&files);
+    assert_eq!(picker.selection(), one, "無効なら何もしない");
+    Ok(())
+}
+
+/// `choose` writes the contents to the destination's path as after the dialog and
+/// calls `on_save` before returning; no path or a failed write goes to `on_error`.
+fn file_saver_choose_writes_like_the_dialog(ui: &Ui) -> Result<()> {
+    use naui_core::FileEntry;
+
+    let saver = ui.file_saver("保存")?;
+    saver.set_contents(b"naui");
+    let saved = Rc::new(RefCell::new(Vec::<FileEntry>::new()));
+    let errors = Rc::new(Cell::new(0));
+    saver.on_save({
+        let saved = saved.clone();
+        move |entry| saved.borrow_mut().push(entry.clone())
+    });
+    saver.on_error({
+        let errors = errors.clone();
+        move |_| errors.set(errors.get() + 1)
+    });
+
+    let dir = std::env::temp_dir().join(format!("naui-file-saver-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("一時フォルダ");
+    let path = dir.join("保存先.txt");
+    let _ = std::fs::remove_file(&path);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        saver.choose(&FileEntry::from_path(&path));
+        assert_eq!(errors.get(), 0);
+        assert_eq!(saved.borrow().len(), 1, "その場で届く");
+        assert_eq!(saved.borrow()[0].path(), Some(path.as_path()));
+        assert_eq!(std::fs::read(&path).expect("書けた"), b"naui");
+        assert_eq!(
+            saver
+                .destination()
+                .and_then(|d| d.path().map(|p| p.to_path_buf())),
+            Some(path.clone())
+        );
+
+        saver.choose(&FileEntry::from_name("名前だけ.txt"));
+        assert_eq!(errors.get(), 1, "パスが無ければ on_error");
+
+        saver.choose(&FileEntry::from_path(
+            dir.join("無いフォルダ").join("x.txt"),
+        ));
+        assert_eq!(errors.get(), 2, "書けなければ on_error");
+        assert_eq!(saved.borrow().len(), 1);
+
+        saver.set_enabled(false);
+        saver.set_contents(b"changed");
+        saver.choose(&FileEntry::from_path(&path));
+        assert_eq!(
+            std::fs::read(&path).expect("残っている"),
+            b"naui",
+            "無効なら書かない"
+        );
+        assert_eq!(
+            (saved.borrow().len(), errors.get()),
+            (1, 2),
+            "無効なら知らせない"
+        );
+    }));
+    let _ = std::fs::remove_dir_all(&dir);
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// `check_url` reads a URL as `open_url` does and opens nothing.
+fn check_url_reads_without_opening(ui: &Ui) -> Result<()> {
+    assert!(ui.check_url("").is_err());
+    assert!(ui.check_url("   ").is_err());
+    assert!(ui.check_url("not a url").is_err());
+    // 開くなら既定のブラウザが立ち上がる。読むだけなので何も出ない。
+    assert!(ui.check_url("https://example.com/naui").is_ok());
+    assert!(ui.check_url("mailto:someone@example.com").is_ok());
     Ok(())
 }

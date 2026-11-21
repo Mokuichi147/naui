@@ -184,6 +184,27 @@ impl FilePicker {
     pub fn open(&self) {
         show_and_report(&self.0.state, &self.0.handler);
     }
+
+    /// Picks `files` as if the user had chosen them in the dialog, without showing
+    /// it, for tests and automation: `selection` becomes them and `on_select` is
+    /// called with them. An empty `files` is a cancelled dialog and changes nothing.
+    /// Does nothing while disabled. The mode and filters are not checked.
+    ///
+    /// Unlike a choice in the dialog, `on_select` is called before this returns:
+    /// the real one is put off to the next tick only to get clear of the modal
+    /// dialog, and no dialog is shown here.
+    pub fn choose(&self, files: &[FileEntry]) {
+        if files.is_empty() || !self.0.native.IsEnabled().unwrap_or(false) {
+            return;
+        }
+        record(&self.0.state, files);
+        self.0.handler.emit(files);
+    }
+}
+
+/// Records `entries` as what was picked last.
+fn record(state: &SharedState, entries: &[FileEntry]) {
+    state.0.with_mut(|state| state.selection = entries.to_vec());
 }
 
 /// Shows the dialog and, if something was picked, records and notifies it.
@@ -197,7 +218,7 @@ fn show_and_report(state: &SharedState, handler: &SelectionHandler) {
     let Some(entries) = show_dialog(mode, &filters) else {
         return; // 取り消された、またはダイアログを出せなかった。
     };
-    state.0.with_mut(|state| state.selection = entries.clone());
+    record(state, &entries);
 
     // IFileOpenDialog.Show は Button.Click の処理中にモーダルに動く。
     // その直後に MediaPlayerElement の Source を同期設定すると、WinUI の

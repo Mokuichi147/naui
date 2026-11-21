@@ -611,6 +611,19 @@ impl Window {
         self.0.on_close_request.set(f);
     }
 
+    /// Tries to close it as the user does with its close button, for tests and
+    /// automation: [`on_close_request`](Self::on_close_request) is asked, and unless
+    /// it answers `KeepOpen` the window closes as with [`close`](Self::close).
+    ///
+    /// Only this window closes. The real close button goes through the
+    /// `AppWindow`'s `Closing`, which winds the whole UI down; that path is not
+    /// taken here (nor `WM_CLOSE`, which raises it), so a test can go on after it.
+    pub fn request_close(&self) {
+        if self.0.on_close_request.ask() != naui_core::CloseResponse::KeepOpen {
+            self.close();
+        }
+    }
+
     /// The size of the content area (width, height) in logical pixels (DIP).
     ///
     /// As on the other platforms, it excludes the title bar and menu bar. naui extends
@@ -665,6 +678,14 @@ impl Window {
     pub fn on_file_drop(&self, f: impl FnMut(&[naui_core::FileEntry]) + 'static) {
         self.0.on_file_drop.set(f);
         self.ensure_drop_root();
+    }
+
+    /// Drops `files` onto the window where no widget takes them, as the user drops
+    /// files from Explorer, for tests and automation: `on_file_drop` is called with
+    /// them as given. Unlike a real drop, nothing is read first, so it is called on
+    /// the spot. Nothing happens if `files` is empty or there is no `on_file_drop`.
+    pub fn drop_files(&self, files: &[naui_core::FileEntry]) {
+        crate::file_drop::drop_on_window(&self.0.on_file_drop, files);
     }
 
     /// Gives a window without a child an empty root to receive drops on.

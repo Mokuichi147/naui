@@ -542,6 +542,26 @@ impl Canvas {
         }
     }
 
+    /// Delivers `event` to `on_pointer` as given, as if the user had pressed, moved
+    /// or released the pointer, for tests and automation. A `Wheel` event goes to
+    /// `on_wheel` instead, as with [`send_wheel`](Self::send_wheel). The closure is
+    /// called directly: no pointer message is made, so WinUI and the outer views see
+    /// nothing.
+    pub fn send_pointer(&self, event: PointerEvent) {
+        if event.phase == PointerPhase::Wheel {
+            let _ = self.send_wheel(event);
+        } else {
+            self.0.pointer.emit(event);
+        }
+    }
+
+    /// Delivers `event` to `on_wheel` as if the user had turned the wheel, for tests
+    /// and automation, and returns its answer (`Continue` without `on_wheel`). The
+    /// closure is called directly, so nothing scrolls on `Continue`.
+    pub fn send_wheel(&self, event: PointerEvent) -> EventResponse {
+        self.0.wheel.emit(event)
+    }
+
     /// The current size of the surface (width, height). 0 if not laid out yet.
     pub fn size(&self) -> (f64, f64) {
         self.0.actual_size()

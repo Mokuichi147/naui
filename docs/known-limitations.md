@@ -333,7 +333,16 @@ that shape are covered in
   `Continue`, and a right-click opens no context menu.
 - `Window::request_close` does nothing on the Web, where `on_close_request` is
   never called. On macOS it goes through `performClose:`, as ⌘W does, so AppKit
-  plays the alert sound when `on_close_request` keeps the window open.
+  plays the alert sound when `on_close_request` keeps the window open. On Windows
+  naui asks `on_close_request` and closes the window as `Window::close` does:
+  WinUI raises the `AppWindow`'s `Closing` only for the user's own close, and
+  naui winds the whole UI down there, which would stop the remaining test cases.
+- `drop_files` starts from the widget it is called on rather than from a point
+  under the pointer, and natively it does not check whether the widget is shown.
+  Natively a text field passes the drop on like other widgets, while a real drop
+  onto one is taken as text by the field itself (macOS and Windows) and reaches
+  no `on_file_drop`. On Windows the files of a real drop arrive once they have been
+  read, a moment later; `drop_files` delivers them at once.
 - `drop_files` on the Web dispatches a real `drop` event with an empty file per
   entry, so the files arrive named after the entries, with `blob:` URLs and no
   paths, as dropped files do there. Text fields take drops themselves there, so
