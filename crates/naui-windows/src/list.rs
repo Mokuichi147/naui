@@ -39,14 +39,15 @@ use std::sync::Arc;
 
 use naui_core::{
     keeps_row_window, list_row_window, merge_hidden_selection, Align, ListItem, Modifiers,
-    Orientation, Point, Result, RowSource, RowWindow, SelectionGesture, SelectionMode, Sizing,
-    TextColor, TextStyle, ROW_WINDOW_OVERSCAN,
+    Orientation, Point, Result, RowMove, RowSource, RowWindow, SelectionGesture, SelectionMode,
+    Sizing, TextColor, TextStyle, ROW_WINDOW_OVERSCAN,
 };
 use naui_winui3::Microsoft::UI::Xaml::Automation::AutomationProperties;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Border, Control, Grid as XamlGrid, IconElement, ListView, ListViewItem, ListViewSelectionMode,
-    ScrollBarVisibility, ScrollMode, ScrollViewer, ScrollViewerViewChangedEventArgs,
-    SelectionChangedEventHandler, StackPanel, TextBlock,
+    Border, Control, DragItemsCompletedEventArgs, DragItemsStartingEventHandler, Grid as XamlGrid,
+    IconElement, ListView, ListViewBase, ListViewItem, ListViewSelectionMode, ScrollBarVisibility,
+    ScrollMode, ScrollViewer, ScrollViewerViewChangedEventArgs, SelectionChangedEventHandler,
+    StackPanel, TextBlock,
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::{
     ContextRequestedEventArgs, DoubleTappedEventHandler, KeyEventHandler, PointerEventHandler,
@@ -58,6 +59,7 @@ use naui_winui3::Microsoft::UI::Xaml::{
     DependencyObject, FocusState, FrameworkElement, RoutedEventHandler, Thickness, UIElement,
     Visibility,
 };
+use windows::ApplicationModel::DataTransfer::DataPackageOperation;
 use windows::Foundation::{Point as XamlPoint, PropertyValue, TypedEventHandler};
 use windows::System::VirtualKey;
 use windows_core::{IInspectable, Interface, HSTRING};
@@ -684,6 +686,40 @@ struct ListInner {
     row_activate: SelectHandler,
     /// The handler for right-clicks.
     context_menu: ContextMenuHandler,
+    /// Whether the user can drag rows ([`List::set_reorderable`]).
+    reorderable: Cell<bool>,
+    /// The rows being dragged, from `DragItemsStarting` to `DragItemsCompleted`.
+    /// `ListView` moves its items itself on the drop, so the selection it reports in
+    /// between is ignored.
+    dragging: RefCell<Option<Vec<usize>>>,
+    /// The handler told about rows the user moved ([`List::on_reorder`]).
+    reorder: ReorderHandler,
+}
+
+/// The closure told about rows the user moved.
+///
+/// It is taken out only for the duration of the call, so the list can be operated from
+/// inside it.
+#[derive(Default)]
+struct ReorderHandler(RefCell<Option<ReorderCallback>>);
+
+type ReorderCallback = Box<dyn FnMut(&RowMove)>;
+
+impl ReorderHandler {
+    fn set(&self, f: impl FnMut(&RowMove) + 'static) {
+        *self.0.borrow_mut() = Some(Box::new(f));
+    }
+
+    fn emit(&self, moved: &RowMove) {
+        let Some(mut f) = self.0.borrow_mut().take() else {
+            return;
+        };
+        f(moved);
+        let mut slot = self.0.borrow_mut();
+        if slot.is_none() {
+            *slot = Some(f);
+        }
+    }
 }
 
 /// A vertical list of selectable rows (`ListView`).
@@ -774,6 +810,9 @@ impl List {
             hovered,
             row_activate: SelectHandler::new(),
             context_menu: ContextMenuHandler::new(),
+            reorderable: Cell::new(false),
+            dragging: RefCell::new(None),
+            reorder: ReorderHandler::default(),
         }));
 
         // ハンドルを強く持つと購読との間で循環するため、弱参照にする。
@@ -788,7 +827,8 @@ impl List {
             let _ = state.try_with_mut(|weak| {
                 if let Some(inner) = weak.upgrade() {
                     let list = List(inner);
-                    if !list.0.silent.get() {
+                    // ドラッグの間は `ListView` が行を動かしていて、行の番号が合わない。
+                    if !list.0.silent.get() && list.0.dragging.borrow().is_none() {
                         let indices = list.read_native_selection();
                         *list.0.selected.borrow_mut() = indices.clone();
                         list.0.handler.emit(&indices);
@@ -803,6 +843,7 @@ impl List {
             .map_err(|e| to_error("subscribe to the ListView", e))?;
         this.install_wheel_target()?;
         this.install_window_updates()?;
+        this.install_reorder_events()?;
 
         let state = UiThreadCell::new(Rc::downgrade(&this.0));
         let got_focus = RoutedEventHandler::new(move |_, _| {
@@ -1388,6 +1429,9 @@ impl List {
             let _ = state.try_with_mut(|weak| {
                 if let Some(inner) = weak.upgrade() {
                     inner.pointer_row.set(Some(index));
+                    // 新しい押下より前のドラッグは終わっている。完了が届かずに残った
+                    // ドラッグで選択の通知を止めたままにしない。
+                    List(inner).end_drag();
                 }
             });
             Ok(())
@@ -1948,6 +1992,50 @@ impl List {
             .KeyDown(&keyed)
             .map_err(|e| to_error("subscribe to row key presses", e))?;
 
+        // Alt + Shift + 上下は `ListView` 自身の並べ替えの操作。任せると `Items` だけが
+        // 動いて naui の行と食い違うので、naui の並べ替えとして行う。`ListViewItem` が
+        // `KeyDown` より先に受けるので、`PreviewKeyDown` で取る。
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let previewed = KeyEventHandler::new(move |sender, args| {
+            let Some(args) = args.as_ref() else {
+                return Ok(());
+            };
+            let on_row = match (args.OriginalSource(), sender.as_ref()) {
+                (Ok(source), Some(sender)) => &source == sender,
+                _ => false,
+            };
+            // 左右も `ListView` は並べ替えに使う。naui では上下だけにして、左右は止める。
+            let step = match args.Key().unwrap_or(VirtualKey::None) {
+                VirtualKey::Up => Some(-1),
+                VirtualKey::Down => Some(1),
+                VirtualKey::Left | VirtualKey::Right => None,
+                _ => return Ok(()),
+            };
+            let modifiers = crate::keys::modifiers();
+            if !on_row || !modifiers.alt || !modifiers.shift || modifiers.control || modifiers.meta
+            {
+                return Ok(());
+            }
+            let handled = state
+                .try_with_mut(|weak| {
+                    weak.upgrade().is_some_and(|inner| {
+                        let list = List(inner);
+                        match step {
+                            Some(step) => list.move_rows_by_key(index, step),
+                            None => list.is_reorderable(),
+                        }
+                    })
+                })
+                .unwrap_or(false);
+            if handled {
+                let _ = args.SetHandled(true);
+            }
+            Ok(())
+        });
+        native
+            .PreviewKeyDown(&previewed)
+            .map_err(|e| to_error("subscribe to row key presses", e))?;
+
         // Shift クリックの先の行は `SelectionChanged` では分からない。行の余白の押下は
         // `ListViewItem` が止めるので、ポインターが乗った行も覚えておく。
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
@@ -2122,6 +2210,305 @@ impl List {
     /// for empty space without rows.
     pub fn on_context_menu(&self, f: impl FnMut(usize, Point) + 'static) {
         self.0.context_menu.set(f);
+    }
+
+    /// Lets the user rearrange the rows by dragging them within this list. Off by
+    /// default.
+    ///
+    /// This is `ListView`'s own reordering (`CanReorderItems`): the user drags a row, or
+    /// the selection when the row pressed is selected, the rows open a gap where it will
+    /// land, and naui moves the rows when they are dropped ([`List::on_reorder`]). Rows
+    /// that cannot be selected cannot be dragged. Drops from other widgets and other
+    /// apps are refused. The list does not scroll by itself while the pointer is near
+    /// its edge.
+    ///
+    /// Alt + Shift + Up / Down, `ListView`'s own keyboard reordering, moves the focused
+    /// row, with the selection when it is in it, one place the same way.
+    pub fn set_reorderable(&self, reorderable: bool) {
+        self.0.reorderable.set(reorderable);
+        self.apply_reorderable();
+    }
+
+    pub fn is_reorderable(&self) -> bool {
+        self.0.reorderable.get()
+    }
+
+    /// Called after the user moved rows by dragging them ([`List::set_reorderable`]).
+    ///
+    /// The selection has followed the rows ([`List::on_select`] is not called). Move the
+    /// app's data the same way with [`RowMove::apply`]; the rows on screen are built
+    /// again once this returns, and for rows from [`List::set_row_builder`] they read
+    /// it.
+    pub fn on_reorder(&self, f: impl FnMut(&RowMove) + 'static) {
+        self.0.reorder.set(f);
+    }
+
+    /// Moves `rows` into the gap `to` through the same path as the user's drop
+    /// (notifies). Does nothing unless the list is reorderable; rows that cannot be
+    /// selected stay where they are.
+    pub fn drag_rows(&self, rows: &[usize], to: usize) {
+        if self.is_reorderable() {
+            self.drop_rows(rows, to);
+        }
+    }
+
+    /// Moves rows without notifying. The selection stays on the rows it was on.
+    pub fn move_rows(&self, moved: &RowMove) {
+        self.apply_move(moved, false);
+    }
+
+    /// Turns `ListView`'s own reordering on or off.
+    fn apply_reorderable(&self) {
+        let on = self.0.reorderable.get();
+        let list_view = &self.0.list_view;
+        let _ = list_view.SetCanDragItems(on);
+        let _ = list_view.SetCanReorderItems(on);
+        // `AllowDrop` は自分の行のドラッグの間だけ立てる ([`List::end_drag`])。
+        // 途中で切ると `DragItemsCompleted` は来ない。
+        if !on {
+            self.end_drag();
+        }
+    }
+
+    /// Ends the list's own row drag: forgets the rows and stops taking drops.
+    ///
+    /// `AllowDrop` is on only from `DragItemsStarting` to here. With it on, `ListView`
+    /// opens a gap for anything dragged over it, files from Explorer too, though they
+    /// go to `on_file_drop` and never into the list. Those are handled by the window's
+    /// root, which takes them whether or not the list allows drops.
+    fn end_drag(&self) -> Option<Vec<usize>> {
+        let _ = self.0.list_view.SetAllowDrop(false);
+        self.0.dragging.take()
+    }
+
+    /// Follows `ListView`'s own reordering: which rows a drag takes, and where the drop
+    /// put them.
+    ///
+    /// `ListView` moves its `ListViewItem`s itself on the drop (`RemoveAt` and
+    /// `InsertAt` on `Items`) before `DragItemsCompleted`. naui reads where they went,
+    /// moves its rows the same way and builds the rows again from them, so its own
+    /// order and selection stay the source of truth.
+    fn install_reorder_events(&self) -> Result<()> {
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let starting = DragItemsStartingEventHandler::new(move |_, args| {
+            let Some(args) = args.as_ref() else {
+                return Ok(());
+            };
+            let _ = state.try_with_mut(|weak| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let list = List(inner);
+                let rows = args
+                    .Items()
+                    .ok()
+                    .and_then(|items| list.rows_of_contents(items.into_iter()));
+                // 選べない行を含むドラッグは始めない (選べない行は押下も握っている)。
+                let rows = rows.filter(|rows| {
+                    list.is_reorderable() && rows.iter().all(|&row| list.is_selectable(row))
+                });
+                match rows {
+                    Some(rows) => {
+                        list.0.dragging.replace(Some(rows));
+                        // 行を落とせるのは、自分の行を運んでいる間だけ。
+                        let _ = list.0.list_view.SetAllowDrop(true);
+                    }
+                    None => {
+                        let _ = args.SetCancel(true);
+                    }
+                }
+            });
+            Ok(())
+        });
+        self.0
+            .list_view
+            .DragItemsStarting(&starting)
+            .map_err(|e| to_error("subscribe to List drags", e))?;
+
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let completed = TypedEventHandler::new(
+            move |_: windows_core::Ref<'_, ListViewBase>,
+                  args: windows_core::Ref<'_, DragItemsCompletedEventArgs>| {
+                let _ = state.try_with_mut(|weak| {
+                    if let Some(inner) = weak.upgrade() {
+                        List(inner).on_drag_completed(args.as_ref());
+                    }
+                });
+                Ok(())
+            },
+        );
+        self.0
+            .list_view
+            .DragItemsCompleted(&completed)
+            .map_err(|e| to_error("subscribe to List drags", e))?;
+        Ok(())
+    }
+
+    /// The rows whose `ListViewItem`s hold these contents, in ascending order. `None` if
+    /// any of them is not one of this list's built rows.
+    ///
+    /// `ListView` names dragged items by their `Content`, since the items are their own
+    /// containers.
+    fn rows_of_contents(&self, contents: impl Iterator<Item = IInspectable>) -> Option<Vec<usize>> {
+        let start = self.0.built_start.get();
+        let native_rows = self.0.native_rows.borrow();
+        let mut rows = Vec::new();
+        for content in contents {
+            // WinUI のソースでは、自分自身がコンテナの項目は `Content` で渡る。項目その
+            // ものが渡っても受けられるようにしておく。
+            let offset = native_rows.iter().position(|row| {
+                same_object(row, &content)
+                    || row.Content().is_ok_and(|own| same_object(&own, &content))
+            })?;
+            rows.push(start + offset);
+        }
+        rows.sort_unstable();
+        rows.dedup();
+        (!rows.is_empty()).then_some(rows)
+    }
+
+    /// The drag `ListView` started has ended. If it moved its items, the rows move the
+    /// same way.
+    fn on_drag_completed(&self, args: Option<&DragItemsCompletedEventArgs>) {
+        let Some(dragged) = self.end_drag() else {
+            return;
+        };
+        let moved = args
+            .and_then(|args| args.DropResult().ok())
+            .is_some_and(|result| result == DataPackageOperation::Move);
+        let order = self.native_order();
+        let start = self.0.built_start.get();
+        let built: Vec<usize> = (start..start + self.0.native_rows.borrow().len()).collect();
+        match order {
+            Some(order) if moved && order != built => {
+                // 動いた行の塊の前にある、動かなかった行の数から、元の並びの隙間を求める。
+                let first = order.iter().position(|row| dragged.contains(row));
+                let staying_before = first.map_or(0, |first| {
+                    order[..first]
+                        .iter()
+                        .filter(|row| !dragged.contains(row))
+                        .count()
+                });
+                let to = built
+                    .iter()
+                    .filter(|row| !dragged.contains(row))
+                    .nth(staying_before)
+                    .copied()
+                    .unwrap_or(start + built.len());
+                let changed = RowMove::new(dragged.iter().copied(), to)
+                    .within(self.len())
+                    .is_some();
+                if changed {
+                    self.drop_rows(&dragged, to);
+                } else {
+                    // `ListView` の並びと食い違ったままにしない。
+                    self.build_window();
+                }
+            }
+            // 動いていなくても、`ListView` がドラッグの間に選択を変えていることがある。
+            _ => self.write_selection(&self.selection()),
+        }
+    }
+
+    /// The rows in the order `ListView` has their items now, by their numbers before the
+    /// drag. `None` if an item is not one of this list's built rows.
+    fn native_order(&self) -> Option<Vec<usize>> {
+        let items = self.0.list_view.Items().ok()?;
+        let start = self.0.built_start.get();
+        let native_rows = self.0.native_rows.borrow();
+        (0..items.Size().ok()?)
+            .map(|slot| {
+                let item = items.GetAt(slot).ok()?;
+                native_rows
+                    .iter()
+                    .position(|row| same_object(row, &item))
+                    .map(|offset| start + offset)
+            })
+            .collect()
+    }
+
+    /// Alt + Shift + Up or Down on the focused row `focused`: moves it one place, with
+    /// the rest of the selection when it is selected (as a drag takes them), notifies,
+    /// and keeps the focus on it. `false` unless the list is reorderable.
+    ///
+    /// `ListView` does this itself with `CanReorderItems`, but only to its `Items`,
+    /// without `DragItemsStarting` or `DragItemsCompleted`, so naui's rows would not
+    /// follow.
+    fn move_rows_by_key(&self, focused: usize, step: isize) -> bool {
+        if !self.is_reorderable() {
+            return false;
+        }
+        let selection = self.selection();
+        let rows: Vec<usize> = if selection.contains(&focused) {
+            selection
+        } else {
+            vec![focused]
+        };
+        let rows: Vec<usize> = rows
+            .into_iter()
+            .filter(|&row| self.is_selectable(row))
+            .collect();
+        let Ok(position) = rows.binary_search(&focused) else {
+            return true;
+        };
+        // 運ぶ行は、フォーカスのある行が 1 つ上 (下) へ移るように並べて置く。続いた
+        // 行ならその塊が 1 つずれ、離れた行はフォーカスのある行の所へ集まる。
+        let len = self.len();
+        let Some(landed) = focused
+            .checked_add_signed(step)
+            .filter(|&landed| landed >= position && landed - position + rows.len() <= len)
+        else {
+            return true;
+        };
+        // 運ぶ行の塊の前に来る、動かない行の数から、元の並びの隙間を求める。
+        let to = (0..len)
+            .filter(|row| rows.binary_search(row).is_err())
+            .nth(landed - position)
+            .unwrap_or(len);
+        if RowMove::new(rows.iter().copied(), to).within(len).is_none() {
+            return true;
+        }
+        self.drop_rows(&rows, to);
+        self.scroll_to_row(landed);
+        self.focus_built_row(landed, FocusState::Keyboard);
+        true
+    }
+
+    /// Moves the rows the user dropped, and notifies.
+    fn drop_rows(&self, rows: &[usize], to: usize) {
+        let rows = rows.iter().copied().filter(|&row| self.is_selectable(row));
+        self.apply_move(&RowMove::new(rows, to), true);
+    }
+
+    /// Moves the rows and the selection with them, notifies if asked, and builds the
+    /// rows on screen again.
+    ///
+    /// The app moves its data in the notification, and rows from a builder read it, so
+    /// the rows are built only after it. If the app replaced the rows in it, they are
+    /// built already.
+    fn apply_move(&self, moved: &RowMove, notify: bool) {
+        let Some(moved) = moved.within(self.len()) else {
+            return;
+        };
+        self.0.rows.move_rows(&moved);
+        let picked = moved.new_indices(&self.selection());
+        *self.0.selected.borrow_mut() = picked;
+        let remap = |cell: &Cell<Option<usize>>| cell.set(cell.get().map(|i| moved.new_index(i)));
+        remap(&self.0.anchor);
+        remap(&self.0.pointer_row);
+        let generation = self.0.rows.generation();
+        if notify {
+            self.0.reorder.emit(&moved);
+        }
+        if self.0.rows.generation() != generation {
+            return;
+        }
+        // 行を組み立てる関数の中から呼ばれたら、組み立てている側が最初からやり直す。
+        if self.0.rebuilding.get() {
+            self.0.rows.invalidate();
+            return;
+        }
+        self.build_window();
     }
 
     /// The inner `ListView`. Public as a backend-specific escape hatch.
@@ -2487,4 +2874,15 @@ fn row_label(text: &str) -> Result<Label> {
     let label = Label::new(text)?;
     label.set_sizing(Sizing::fill_width());
     Ok(label)
+}
+
+/// Whether two references point at the same COM object (compared by their `IUnknown`).
+fn same_object(a: &impl Interface, b: &impl Interface) -> bool {
+    match (
+        a.cast::<windows_core::IUnknown>(),
+        b.cast::<windows_core::IUnknown>(),
+    ) {
+        (Ok(a), Ok(b)) => a.as_raw() == b.as_raw(),
+        _ => false,
+    }
 }

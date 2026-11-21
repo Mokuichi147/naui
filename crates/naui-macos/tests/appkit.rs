@@ -191,6 +191,18 @@ fn main() {
             list_selection_round_trips,
         ),
         ("リストの複数選択が 0 件にもなる", list_multiple_selection),
+        (
+            "リストの行をドラッグで並べ替えると選択がついてくる",
+            list_drag_rows_moves_rows_and_selection,
+        ),
+        (
+            "リストの行の並べ替えが NSTableView のドラッグ＆ドロップを通る",
+            list_reorder_goes_through_table_drag_and_drop,
+        ),
+        (
+            "組み立てる行のリストも並べ替えられる",
+            list_reorder_with_row_builder,
+        ),
         ("リストが選べない行を飛ばす", list_skips_disabled_rows),
         (
             "行のクリックがクロージャへ届く",
@@ -8994,6 +9006,257 @@ fn list_multiple_selection(ui: &Ui) -> Result<()> {
     list.set_selection(&[1, 2]);
     assert_eq!(list.selection(), vec![1], "単一選択では先頭の 1 件だけ");
     Ok(())
+}
+
+/// The text of each row of a list made from `ListItem`s, as the table shows it.
+fn list_texts(list: &naui_macos::List) -> Vec<String> {
+    let table = list.native_table();
+    (0..table.numberOfRows())
+        .map(|row| {
+            let cell = table
+                .viewAtColumn_row_makeIfNecessary(0, row, true)
+                .expect("行のビューが作られること")
+                .downcast::<objc2_app_kit::NSTableCellView>()
+                .expect("行は NSTableCellView であること");
+            unsafe { cell.textField() }
+                .map(|field| field.stringValue().to_string())
+                .unwrap_or_default()
+        })
+        .collect()
+}
+
+/// `drag_rows` moves the rows like the user's drop: the rows and the selection move,
+/// `on_reorder` is told, `on_select` is not.
+fn list_drag_rows_moves_rows_and_selection(ui: &Ui) -> Result<()> {
+    use naui_core::RowMove;
+
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("東京"),
+        ListItem::new("大阪"),
+        ListItem::new("札幌"),
+        ListItem::new("那覇").enabled(false),
+        ListItem::new("福岡"),
+    ]);
+    list.set_selection_mode(SelectionMode::Multiple);
+    let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
+    let selections = Rc::new(Cell::new(0));
+    list.on_reorder({
+        let moves = moves.clone();
+        move |moved| moves.borrow_mut().push(moved.clone())
+    });
+    list.on_select({
+        let selections = selections.clone();
+        move |_| selections.set(selections.get() + 1)
+    });
+
+    // 並べ替えを許すまでは、ドラッグは何もしない。
+    assert!(!list.is_reorderable());
+    list.drag_rows(&[0], 3);
+    assert!(moves.borrow().is_empty());
+    assert_eq!(list_texts(&list)[0], "東京");
+
+    list.set_reorderable(true);
+    assert!(list.is_reorderable());
+    list.set_selection(&[0, 2]);
+    list.drag_rows(&[0, 2], 5);
+    assert_eq!(list_texts(&list), ["大阪", "那覇", "福岡", "東京", "札幌"]);
+    assert_eq!(*moves.borrow(), vec![RowMove::new([0, 2], 5)]);
+    assert_eq!(list.selection(), vec![3, 4], "選択は動いた行についていく");
+    assert_eq!(
+        selections.get(),
+        0,
+        "選ばれている行は同じなので on_select は来ない"
+    );
+
+    // 選べない行はつかめない。ほかの行といっしょでも、その行だけ残る。
+    list.drag_rows(&[1], 0);
+    assert_eq!(moves.borrow().len(), 1, "選べない行だけなら何も起きない");
+    list.drag_rows(&[1, 4], 0);
+    assert_eq!(list_texts(&list), ["札幌", "大阪", "那覇", "福岡", "東京"]);
+    assert_eq!(moves.borrow()[1], RowMove::new([4], 0));
+    assert_eq!(list.selection(), vec![0, 4]);
+
+    // 自分の場所へ落としても通知しない。
+    list.drag_rows(&[1], 2);
+    assert_eq!(moves.borrow().len(), 2);
+
+    // move_rows は通知せず、並べ替えを許していなくても動かす。
+    list.set_reorderable(false);
+    list.move_rows(&RowMove::new([0], 5));
+    assert_eq!(list_texts(&list), ["大阪", "那覇", "福岡", "東京", "札幌"]);
+    assert_eq!(list.selection(), vec![3, 4]);
+    assert_eq!(moves.borrow().len(), 2);
+    assert_eq!(selections.get(), 0);
+    Ok(())
+}
+
+define_class!(
+    /// Stands in for the `NSDraggingInfo` of a drag of rows: the source of the drag and
+    /// the pasteboard.
+    #[unsafe(super(objc2_foundation::NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiTestRowDraggingInfo"]
+    #[ivars = (Option<Retained<AnyObject>>, Retained<objc2_app_kit::NSPasteboard>)]
+    struct FakeRowDraggingInfo;
+
+    unsafe impl NSObjectProtocol for FakeRowDraggingInfo {}
+
+    impl FakeRowDraggingInfo {
+        #[unsafe(method_id(draggingSource))]
+        fn dragging_source(&self) -> Option<Retained<AnyObject>> {
+            self.ivars().0.clone()
+        }
+
+        #[unsafe(method_id(draggingPasteboard))]
+        fn dragging_pasteboard(&self) -> Retained<objc2_app_kit::NSPasteboard> {
+            self.ivars().1.clone()
+        }
+    }
+);
+
+/// A drag of rows goes through `NSTableView`'s data source: only selectable rows put
+/// something on the pasteboard, only the table's own rows can be dropped (always
+/// between two rows), and the drop moves the rows. A real drag cannot be
+/// synthesized, so the messages AppKit sends are sent directly.
+fn list_reorder_goes_through_table_drag_and_drop(ui: &Ui) -> Result<()> {
+    use naui_core::RowMove;
+    use objc2_app_kit::{NSDragOperation, NSPasteboard, NSTableViewDropOperation};
+    use objc2_foundation::{NSIndexSet, NSInteger};
+
+    let window = ui.window("並べ替え", 320.0, 240.0)?;
+    let list = ui.list()?;
+    list.set_items(&[
+        ListItem::new("一"),
+        ListItem::new("二").enabled(false),
+        ListItem::new("三"),
+        ListItem::new("四"),
+    ]);
+    window.set_child(&list);
+    window.show();
+    pump(0.1);
+
+    let moves: Rc<RefCell<Vec<RowMove>>> = Rc::default();
+    list.on_reorder({
+        let moves = moves.clone();
+        move |moved| moves.borrow_mut().push(moved.clone())
+    });
+    let table = list.native_table();
+    let source = unsafe { table.dataSource() }.expect("データソースがあること");
+    let writer = |row: NSInteger| -> Option<Retained<AnyObject>> {
+        unsafe { msg_send![&*source, tableView: &*table, pasteboardWriterForRow: row] }
+    };
+    assert!(writer(0).is_none(), "並べ替えを許すまでは行をつかめない");
+    assert!(
+        table.registeredDraggedTypes().is_empty(),
+        "並べ替えを許すまではドロップを受けない"
+    );
+
+    list.set_reorderable(true);
+    assert!(writer(0).is_some(), "選べる行はつかめる");
+    assert!(writer(1).is_none(), "選べない行はつかめない");
+    assert_eq!(table.registeredDraggedTypes().len(), 1);
+
+    let mtm = MainThreadMarker::new().expect("main thread");
+    let pasteboard = NSPasteboard::pasteboardWithUniqueName();
+    let info_from = |source: Option<Retained<AnyObject>>| {
+        let info = FakeRowDraggingInfo::alloc(mtm).set_ivars((source, pasteboard.clone()));
+        let info: Retained<FakeRowDraggingInfo> = unsafe { msg_send![super(info), init] };
+        info
+    };
+    let own = info_from(Some(Retained::into_super(Retained::into_super(
+        Retained::into_super(Retained::into_super(Retained::into_super(table.clone()))),
+    ))));
+    let foreign = info_from(None);
+    let validate = |info: &FakeRowDraggingInfo, row: NSInteger| -> NSDragOperation {
+        unsafe {
+            msg_send![&*source, tableView: &*table, validateDrop: info,
+                proposedRow: row, proposedDropOperation: NSTableViewDropOperation::On]
+        }
+    };
+    let accept = |info: &FakeRowDraggingInfo, row: NSInteger| -> bool {
+        unsafe {
+            msg_send![&*source, tableView: &*table, acceptDrop: info,
+                row: row, dropOperation: NSTableViewDropOperation::Above]
+        }
+    };
+
+    // ドラッグが始まる前は、自分の表からでも受けない。
+    assert_eq!(validate(&own, 0), NSDragOperation::None);
+
+    // 3 行目と 4 行目をつかむ。
+    let rows = NSIndexSet::indexSetWithIndexesInRange(objc2_foundation::NSRange::new(2, 2));
+    let no_session: Option<&AnyObject> = None;
+    let _: () = unsafe {
+        msg_send![&*source, tableView: &*table, draggingSession: no_session,
+            willBeginAtPoint: NSPoint::ZERO, forRowIndexes: &*rows]
+    };
+    assert_eq!(
+        validate(&foreign, 0),
+        NSDragOperation::None,
+        "ほかのところからのドラッグは断る"
+    );
+    assert!(!accept(&foreign, 0));
+    // 行の上へ向けたドロップも受ける (行の間へ向け直す)。
+    assert_eq!(validate(&own, 1), NSDragOperation::Move);
+    assert!(accept(&own, 0));
+    let _: () = unsafe {
+        msg_send![&*source, tableView: &*table, draggingSession: no_session,
+            endedAtPoint: NSPoint::ZERO, operation: NSDragOperation::Move]
+    };
+    assert_eq!(list_texts(&list), ["三", "四", "一", "二"]);
+    assert_eq!(*moves.borrow(), vec![RowMove::new([2, 3], 0)]);
+    assert_eq!(
+        validate(&own, 0),
+        NSDragOperation::None,
+        "ドラッグが終わったら受けない"
+    );
+
+    list.set_reorderable(false);
+    assert!(table.registeredDraggedTypes().is_empty());
+    window.close();
+    Ok(())
+}
+
+/// Rows from a builder move too: the app moves its data in `on_reorder`, and the rows
+/// built afterwards read it.
+fn list_reorder_with_row_builder(ui: &Ui) -> Result<()> {
+    let data: Rc<RefCell<Vec<String>>> = Rc::new(RefCell::new(
+        (0..1000).map(|index| format!("行 {index}")).collect(),
+    ));
+    let list = ui.list()?;
+    list.set_row_builder(1000, {
+        let data = data.clone();
+        let ui = ui.clone();
+        move |index| Ok(ListRow::new(&ui.label(&data.borrow()[index])?))
+    });
+    list.on_reorder({
+        let data = data.clone();
+        move |moved| moved.apply(&mut data.borrow_mut())
+    });
+    list.set_reorderable(true);
+    let table = list.native_table();
+    let _ = table.viewAtColumn_row_makeIfNecessary(0, 1, true);
+    list.set_selected(1);
+    list.drag_rows(&[1], 900);
+    assert_eq!(data.borrow()[898], "行 899");
+    assert_eq!(data.borrow()[899], "行 1");
+    assert_eq!(list.selection(), vec![899], "選択は動いた行についていく");
+    list.refresh();
+    let cell = table
+        .viewAtColumn_row_makeIfNecessary(0, 899, true)
+        .expect("動いた先の行が作られること");
+    let label = find_label(&cell).expect("行にラベルがあること");
+    assert_eq!(label, "行 1", "動いた先はアプリのデータから組み立てる");
+    Ok(())
+}
+
+/// The text of the first `NSTextField` inside `view`.
+fn find_label(view: &NSView) -> Option<String> {
+    if let Ok(field) = view.retain().downcast::<NSTextField>() {
+        return Some(field.stringValue().to_string());
+    }
+    view.subviews().iter().find_map(|child| find_label(&child))
 }
 
 /// Rows that cannot be selected are selected neither from code nor natively.

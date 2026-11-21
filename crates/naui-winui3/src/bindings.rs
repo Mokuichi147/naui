@@ -114126,6 +114126,291 @@ pub mod Microsoft {
                 unsafe impl Sync for DatePickerValueChangedEventArgs {}
                 #[repr(transparent)]
                 #[derive(Clone, Debug, Eq, PartialEq)]
+                pub struct DragItemsCompletedEventArgs(windows_core::IUnknown);
+                windows_core::imp::interface_hierarchy!(
+                    DragItemsCompletedEventArgs,
+                    windows_core::IUnknown,
+                    windows_core::IInspectable
+                );
+                impl DragItemsCompletedEventArgs {
+                    pub fn Items(
+                        &self,
+                    ) -> windows_core::Result<
+                        windows_collections::IVectorView<windows_core::IInspectable>,
+                    > {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Items)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn DropResult(
+                        &self,
+                    ) -> windows_core::Result<
+                        windows::ApplicationModel::DataTransfer::DataPackageOperation,
+                    > {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DropResult)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                }
+                impl windows_core::RuntimeType for DragItemsCompletedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_class::<
+                            Self,
+                            IDragItemsCompletedEventArgs,
+                        >();
+                }
+                unsafe impl windows_core::Interface for DragItemsCompletedEventArgs {
+                    type Vtable = <IDragItemsCompletedEventArgs as windows_core::Interface>::Vtable;
+                    const IID: windows_core::GUID =
+                        <IDragItemsCompletedEventArgs as windows_core::Interface>::IID;
+                }
+                impl windows_core::RuntimeName for DragItemsCompletedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.DragItemsCompletedEventArgs";
+                }
+                unsafe impl Send for DragItemsCompletedEventArgs {}
+                unsafe impl Sync for DragItemsCompletedEventArgs {}
+                #[repr(transparent)]
+                #[derive(Clone, Debug, Eq, PartialEq)]
+                pub struct DragItemsStartingEventArgs(windows_core::IUnknown);
+                windows_core::imp::interface_hierarchy!(
+                    DragItemsStartingEventArgs,
+                    windows_core::IUnknown,
+                    windows_core::IInspectable
+                );
+                impl DragItemsStartingEventArgs {
+                    pub fn new() -> windows_core::Result<Self> {
+                        Self::IActivationFactory(|f| f.ActivateInstance::<Self>())
+                    }
+                    fn IActivationFactory<
+                        R,
+                        F: FnOnce(&windows_core::imp::IGenericFactory) -> windows_core::Result<R>,
+                    >(
+                        callback: F,
+                    ) -> windows_core::Result<R> {
+                        static SHARED: windows_core::imp::FactoryCache<
+                            DragItemsStartingEventArgs,
+                            windows_core::imp::IGenericFactory,
+                        > = windows_core::imp::FactoryCache::new();
+                        SHARED.call(callback)
+                    }
+                    pub fn Cancel(&self) -> windows_core::Result<bool> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Cancel)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetCancel(&self, value: bool) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetCancel)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Items(
+                        &self,
+                    ) -> windows_core::Result<
+                        windows_collections::IVector<windows_core::IInspectable>,
+                    > {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Items)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn Data(
+                        &self,
+                    ) -> windows_core::Result<windows::ApplicationModel::DataTransfer::DataPackage>
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Data)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                }
+                impl windows_core::RuntimeType for DragItemsStartingEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_class::<
+                            Self,
+                            IDragItemsStartingEventArgs,
+                        >();
+                }
+                unsafe impl windows_core::Interface for DragItemsStartingEventArgs {
+                    type Vtable = <IDragItemsStartingEventArgs as windows_core::Interface>::Vtable;
+                    const IID: windows_core::GUID =
+                        <IDragItemsStartingEventArgs as windows_core::Interface>::IID;
+                }
+                impl windows_core::RuntimeName for DragItemsStartingEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.DragItemsStartingEventArgs";
+                }
+                unsafe impl Send for DragItemsStartingEventArgs {}
+                unsafe impl Sync for DragItemsStartingEventArgs {}
+                windows_core::imp::define_interface!(
+                    DragItemsStartingEventHandler,
+                    DragItemsStartingEventHandler_Vtbl,
+                    0x55532800_7617_5d67_80bf_b98c0a41b9d6
+                );
+                impl windows_core::RuntimeType for DragItemsStartingEventHandler {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl DragItemsStartingEventHandler {
+                    pub fn new<
+                        F: FnMut(
+                                windows_core::Ref<'_, windows_core::IInspectable>,
+                                windows_core::Ref<'_, DragItemsStartingEventArgs>,
+                            ) -> windows_core::Result<()>
+                            + Send
+                            + 'static,
+                    >(
+                        invoke: F,
+                    ) -> Self {
+                        let com = DragItemsStartingEventHandlerBox {
+                            vtable: &DragItemsStartingEventHandlerBox::<F>::VTABLE,
+                            count: windows_core::imp::RefCount::new(1),
+                            invoke,
+                        };
+                        unsafe { core::mem::transmute(windows_core::imp::Box::new(com)) }
+                    }
+                    pub fn Invoke<P0, P1>(&self, sender: P0, e: P1) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<windows_core::IInspectable>,
+                        P1: windows_core::Param<DragItemsStartingEventArgs>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).Invoke)(
+                                windows_core::Interface::as_raw(this),
+                                sender.param().abi(),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct DragItemsStartingEventHandler_Vtbl {
+                    base__: windows_core::IUnknown_Vtbl,
+                    Invoke: unsafe extern "system" fn(
+                        this: *mut core::ffi::c_void,
+                        sender: *mut core::ffi::c_void,
+                        e: *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT,
+                }
+                #[repr(C)]
+                struct DragItemsStartingEventHandlerBox<
+                    F: FnMut(
+                            windows_core::Ref<'_, windows_core::IInspectable>,
+                            windows_core::Ref<'_, DragItemsStartingEventArgs>,
+                        ) -> windows_core::Result<()>
+                        + Send
+                        + 'static,
+                > {
+                    vtable: *const DragItemsStartingEventHandler_Vtbl,
+                    invoke: F,
+                    count: windows_core::imp::RefCount,
+                }
+                impl<
+                        F: FnMut(
+                                windows_core::Ref<'_, windows_core::IInspectable>,
+                                windows_core::Ref<'_, DragItemsStartingEventArgs>,
+                            ) -> windows_core::Result<()>
+                            + Send
+                            + 'static,
+                    > DragItemsStartingEventHandlerBox<F>
+                {
+                    const VTABLE: DragItemsStartingEventHandler_Vtbl =
+                        DragItemsStartingEventHandler_Vtbl {
+                            base__: windows_core::IUnknown_Vtbl {
+                                QueryInterface: Self::QueryInterface,
+                                AddRef: Self::AddRef,
+                                Release: Self::Release,
+                            },
+                            Invoke: Self::Invoke,
+                        };
+                    unsafe extern "system" fn QueryInterface(
+                        this: *mut core::ffi::c_void,
+                        iid: *const windows_core::GUID,
+                        interface: *mut *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this = this as *mut *mut core::ffi::c_void as *mut Self;
+                            if iid.is_null() || interface.is_null() {
+                                return windows_core::HRESULT(-2147467261);
+                            }
+                            * interface = if * iid == < DragItemsStartingEventHandler as windows_core::Interface >::IID || * iid == < windows_core::IUnknown as windows_core::Interface >::IID || * iid == < windows_core::imp::IAgileObject as windows_core::Interface >::IID { & mut ( * this ) . vtable as * mut _ as _ } else if * iid == < windows_core::imp::IMarshal as windows_core::Interface >::IID { ( * this ) . count . add_ref ( ) ; return windows_core::imp::marshaler ( core::mem::transmute ( & mut ( * this ) . vtable as * mut _ as * mut core::ffi::c_void ) , interface ) ; } else { core::ptr::null_mut ( ) } ;
+                            if (*interface).is_null() {
+                                windows_core::HRESULT(-2147467262)
+                            } else {
+                                (*this).count.add_ref();
+                                windows_core::HRESULT(0)
+                            }
+                        }
+                    }
+                    unsafe extern "system" fn AddRef(this: *mut core::ffi::c_void) -> u32 {
+                        unsafe {
+                            let this = this as *mut *mut core::ffi::c_void as *mut Self;
+                            (*this).count.add_ref()
+                        }
+                    }
+                    unsafe extern "system" fn Release(this: *mut core::ffi::c_void) -> u32 {
+                        unsafe {
+                            let this = this as *mut *mut core::ffi::c_void as *mut Self;
+                            let remaining = (*this).count.release();
+                            if remaining == 0 {
+                                let _ = windows_core::imp::Box::from_raw(this);
+                            }
+                            remaining
+                        }
+                    }
+                    unsafe extern "system" fn Invoke(
+                        this: *mut core::ffi::c_void,
+                        sender: *mut core::ffi::c_void,
+                        e: *mut core::ffi::c_void,
+                    ) -> windows_core::HRESULT {
+                        unsafe {
+                            let this = &mut *(this as *mut *mut core::ffi::c_void as *mut Self);
+                            (this.invoke)(
+                                core::mem::transmute_copy(&sender),
+                                core::mem::transmute_copy(&e),
+                            )
+                            .into()
+                        }
+                    }
+                }
+                #[repr(transparent)]
+                #[derive(Clone, Debug, Eq, PartialEq)]
                 pub struct Expander(windows_core::IUnknown);
                 windows_core::imp::interface_hierarchy!(
                     Expander,
@@ -147045,6 +147330,247 @@ pub mod Microsoft {
                         -> windows_core::HRESULT,
                 }
                 windows_core::imp::define_interface!(
+                    IDragItemsCompletedEventArgs,
+                    IDragItemsCompletedEventArgs_Vtbl,
+                    0xc0138552_f467_5c3e_8af4_593607762844
+                );
+                impl windows_core::RuntimeType for IDragItemsCompletedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for IDragItemsCompletedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.IDragItemsCompletedEventArgs";
+                }
+                pub trait IDragItemsCompletedEventArgs_Impl: windows_core::IUnknownImpl {
+                    fn Items(
+                        &self,
+                    ) -> windows_core::Result<
+                        windows_collections::IVectorView<windows_core::IInspectable>,
+                    >;
+                    fn DropResult(
+                        &self,
+                    ) -> windows_core::Result<
+                        windows::ApplicationModel::DataTransfer::DataPackageOperation,
+                    >;
+                }
+                impl IDragItemsCompletedEventArgs_Vtbl {
+                    pub const fn new<
+                        Identity: IDragItemsCompletedEventArgs_Impl,
+                        const OFFSET: isize,
+                    >() -> Self {
+                        unsafe extern "system" fn Items<
+                            Identity: IDragItemsCompletedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IDragItemsCompletedEventArgs_Impl::Items(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn DropResult<
+                            Identity: IDragItemsCompletedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__ : * mut windows::ApplicationModel::DataTransfer:: DataPackageOperation,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IDragItemsCompletedEventArgs_Impl::DropResult(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                IDragItemsCompletedEventArgs,
+                                OFFSET,
+                            >(),
+                            Items: Items::<Identity, OFFSET>,
+                            DropResult: DropResult::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<IDragItemsCompletedEventArgs as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct IDragItemsCompletedEventArgs_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub Items: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub DropResult: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut windows::ApplicationModel::DataTransfer::DataPackageOperation,
+                    )
+                        -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
+                    IDragItemsStartingEventArgs,
+                    IDragItemsStartingEventArgs_Vtbl,
+                    0xa6938886_20df_558e_ac74_bb5b7f2f7e90
+                );
+                impl windows_core::RuntimeType for IDragItemsStartingEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for IDragItemsStartingEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.IDragItemsStartingEventArgs";
+                }
+                pub trait IDragItemsStartingEventArgs_Impl: windows_core::IUnknownImpl {
+                    fn Cancel(&self) -> windows_core::Result<bool>;
+                    fn SetCancel(&self, value: bool) -> windows_core::Result<()>;
+                    fn Items(
+                        &self,
+                    ) -> windows_core::Result<
+                        windows_collections::IVector<windows_core::IInspectable>,
+                    >;
+                    fn Data(
+                        &self,
+                    ) -> windows_core::Result<windows::ApplicationModel::DataTransfer::DataPackage>;
+                }
+                impl IDragItemsStartingEventArgs_Vtbl {
+                    pub const fn new<
+                        Identity: IDragItemsStartingEventArgs_Impl,
+                        const OFFSET: isize,
+                    >() -> Self {
+                        unsafe extern "system" fn Cancel<
+                            Identity: IDragItemsStartingEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IDragItemsStartingEventArgs_Impl::Cancel(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetCancel<
+                            Identity: IDragItemsStartingEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                IDragItemsStartingEventArgs_Impl::SetCancel(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn Items<
+                            Identity: IDragItemsStartingEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IDragItemsStartingEventArgs_Impl::Items(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn Data<
+                            Identity: IDragItemsStartingEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IDragItemsStartingEventArgs_Impl::Data(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                IDragItemsStartingEventArgs,
+                                OFFSET,
+                            >(),
+                            Cancel: Cancel::<Identity, OFFSET>,
+                            SetCancel: SetCancel::<Identity, OFFSET>,
+                            Items: Items::<Identity, OFFSET>,
+                            Data: Data::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<IDragItemsStartingEventArgs as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct IDragItemsStartingEventArgs_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub Cancel: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut bool,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetCancel: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        bool,
+                    )
+                        -> windows_core::HRESULT,
+                    pub Items: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub Data: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
                     IExpander,
                     IExpander_Vtbl,
                     0xca633942_e584_55c2_b7ee_cffc73c8127a
@@ -153758,7 +154284,21 @@ pub mod Microsoft {
                         value: bool,
                     ) -> windows_core::Result<()>;
                     fn RemoveItemClick(&self, token: i64) -> windows_core::Result<()>;
+                    fn DragItemsStarting(
+                        &self,
+                        handler: windows_core::Ref<'_, DragItemsStartingEventHandler>,
+                    ) -> windows_core::Result<i64>;
                     fn RemoveDragItemsStarting(&self, token: i64) -> windows_core::Result<()>;
+                    fn DragItemsCompleted(
+                        &self,
+                        handler: windows_core::Ref<
+                            '_,
+                            windows::Foundation::TypedEventHandler<
+                                ListViewBase,
+                                DragItemsCompletedEventArgs,
+                            >,
+                        >,
+                    ) -> windows_core::Result<i64>;
                     fn RemoveDragItemsCompleted(&self, token: i64) -> windows_core::Result<()>;
                     fn RemoveContainerContentChanging(
                         &self,
@@ -154164,6 +154704,29 @@ pub mod Microsoft {
                                 IListViewBase_Impl::RemoveItemClick(this, token).into()
                             }
                         }
+                        unsafe extern "system" fn DragItemsStarting<
+                            Identity: IListViewBase_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            handler: *mut core::ffi::c_void,
+                            result__: *mut i64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IListViewBase_Impl::DragItemsStarting(
+                                    this,
+                                    core::mem::transmute_copy(&handler),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
                         unsafe extern "system" fn RemoveDragItemsStarting<
                             Identity: IListViewBase_Impl,
                             const OFFSET: isize,
@@ -154175,6 +154738,29 @@ pub mod Microsoft {
                                 let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
                                     as *const Identity);
                                 IListViewBase_Impl::RemoveDragItemsStarting(this, token).into()
+                            }
+                        }
+                        unsafe extern "system" fn DragItemsCompleted<
+                            Identity: IListViewBase_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            handler: *mut core::ffi::c_void,
+                            result__: *mut i64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match IListViewBase_Impl::DragItemsCompleted(
+                                    this,
+                                    core::mem::transmute_copy(&handler),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
                             }
                         }
                         unsafe extern "system" fn RemoveDragItemsCompleted<
@@ -154521,9 +155107,9 @@ pub mod Microsoft {
                             >,
                             ItemClick: 0,
                             RemoveItemClick: RemoveItemClick::<Identity, OFFSET>,
-                            DragItemsStarting: 0,
+                            DragItemsStarting: DragItemsStarting::<Identity, OFFSET>,
                             RemoveDragItemsStarting: RemoveDragItemsStarting::<Identity, OFFSET>,
-                            DragItemsCompleted: 0,
+                            DragItemsCompleted: DragItemsCompleted::<Identity, OFFSET>,
                             RemoveDragItemsCompleted: RemoveDragItemsCompleted::<Identity, OFFSET>,
                             ContainerContentChanging: 0,
                             RemoveContainerContentChanging: RemoveContainerContentChanging::<
@@ -154694,13 +155280,23 @@ pub mod Microsoft {
                         i64,
                     )
                         -> windows_core::HRESULT,
-                    DragItemsStarting: usize,
+                    pub DragItemsStarting: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut i64,
+                    )
+                        -> windows_core::HRESULT,
                     pub RemoveDragItemsStarting: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         i64,
                     )
                         -> windows_core::HRESULT,
-                    DragItemsCompleted: usize,
+                    pub DragItemsCompleted: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut i64,
+                    )
+                        -> windows_core::HRESULT,
                     pub RemoveDragItemsCompleted:
                         unsafe extern "system" fn(
                             *mut core::ffi::c_void,
@@ -210623,6 +211219,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DragItemsStarting<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<DragItemsStartingEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<IListViewBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DragItemsStarting)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDragItemsStarting(&self, token: i64) -> windows_core::Result<()> {
                         let this = &windows_core::Interface::cast::<IListViewBase>(self)?;
                         unsafe {
@@ -210631,6 +211242,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn DragItemsCompleted<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                ListViewBase,
+                                DragItemsCompletedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<IListViewBase>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DragItemsCompleted)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveDragItemsCompleted(&self, token: i64) -> windows_core::Result<()> {
@@ -215487,6 +216118,21 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DragItemsStarting<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<DragItemsStartingEventHandler>,
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DragItemsStarting)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
                     pub fn RemoveDragItemsStarting(&self, token: i64) -> windows_core::Result<()> {
                         let this = self;
                         unsafe {
@@ -215495,6 +216141,26 @@ pub mod Microsoft {
                                 token,
                             )
                             .ok()
+                        }
+                    }
+                    pub fn DragItemsCompleted<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                ListViewBase,
+                                DragItemsCompletedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DragItemsCompleted)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
                         }
                     }
                     pub fn RemoveDragItemsCompleted(&self, token: i64) -> windows_core::Result<()> {
