@@ -22,8 +22,8 @@ use std::rc::Rc;
 use std::time::{Duration, SystemTime};
 
 use naui::{
-    CloseResponse, MenuItem, MenuShortcut, MenuSpec, Orientation, Padding, Settings, Sizing,
-    TextColor, TextStyle, ToolbarIcon, ToolbarItem, Ui,
+    CloseResponse, MenuItem, MenuSpec, Orientation, Padding, Settings, Shortcut, Sizing, TextColor,
+    TextStyle, ToolbarIcon, ToolbarItem, Ui,
 };
 use naui_app::{Dispatch, Effect, Program};
 use notes_core::{Failure, Notes, Problem, Request, Status};
@@ -252,7 +252,7 @@ impl View {
             MenuSpec::new(
                 tr.get("app-menu-file"),
                 [
-                    MenuItem::new(tr.get("app-new-note")).shortcut(MenuShortcut::new('n')),
+                    MenuItem::new(tr.get("app-new-note")).shortcut(Shortcut::new('n')),
                     MenuItem::separator(),
                     MenuItem::new(tr.get("app-menu-delete-note")),
                 ],
@@ -261,7 +261,7 @@ impl View {
                 tr.get("app-menu-folder"),
                 [
                     MenuItem::new(tr.get("app-menu-new-folder"))
-                        .shortcut(MenuShortcut::new('n').shift(true)),
+                        .shortcut(Shortcut::new('n').shift(true)),
                     MenuItem::new(tr.get("app-menu-rename-folder")),
                     MenuItem::new(tr.get("app-menu-delete-folder")),
                 ],

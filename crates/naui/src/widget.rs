@@ -33,7 +33,7 @@ macro_rules! impl_backend {
     };
 }
 
-/// The shared part of widgets: the [`Widget`] implementation and the eight methods
+/// The shared part of widgets: the [`Widget`] implementation and the ten methods
 /// every widget has.
 macro_rules! impl_widget {
     ($t:ident) => {
@@ -138,6 +138,31 @@ macro_rules! impl_widget {
             #[inline]
             pub fn drop_files(&self, files: &[naui_core::FileEntry]) {
                 self.0.drop_files(files)
+            }
+
+            /// Runs `f` when `shortcut` is pressed while keyboard focus is inside this
+            /// widget (on it or on anything it contains). Giving the same shortcut
+            /// again replaces the closure; [`remove_shortcut`](Self::remove_shortcut)
+            /// takes it away.
+            ///
+            /// The focused widget's `on_key_down` comes first, then the shortcuts of
+            /// the widgets around the focus from the inside out, then the window's
+            /// `on_key_down` and [shortcuts](crate::Window::on_shortcut), then the
+            /// menu bar. A shortcut that fires takes the key, so the focused control
+            /// does not get it. Invalid shortcuts ([`Shortcut::is_valid`]) never fire.
+            /// See [Keyboard shortcuts](crate::guide#keyboard-shortcuts).
+            ///
+            /// [`Shortcut::is_valid`]: naui_core::Shortcut::is_valid
+            #[inline]
+            pub fn on_shortcut(&self, shortcut: naui_core::Shortcut, f: impl FnMut() + 'static) {
+                self.0.on_shortcut(shortcut, f)
+            }
+
+            /// Removes a shortcut given with [`on_shortcut`](Self::on_shortcut).
+            /// Nothing happens if it was not given.
+            #[inline]
+            pub fn remove_shortcut(&self, shortcut: naui_core::Shortcut) {
+                self.0.remove_shortcut(shortcut)
             }
 
             /// Creates a weak reference. Capture it when touching this widget from its own

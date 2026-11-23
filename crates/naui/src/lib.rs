@@ -1,19 +1,21 @@
 #![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 
+#[allow(deprecated)]
+pub use naui_core::MenuShortcut;
 pub use naui_core::{
     accept_attribute, clamp_split_position, days_in_month, default_extension, is_leap_year, media,
     with_default_extension, Align, Bitmap, BitmapData, Breakpoint, ButtonRole, ChannelCloser,
     CloseResponse, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, DrawCommand,
     Error, EventResponse, FileEntry, FileFilter, FilePickerMode, Fit, Gradient, GradientShape,
     GradientStop, GridCell, Ink, Key, KeyEvent, LayoutDirection, Length, ListItem, MenuItem,
-    MenuShortcut, MenuSpec, Modifiers, NavItem, NumberSpec, Orientation, Padding, Paint, Painter,
-    Pane, Path, PathSegment, PlaybackState, Point, PointerButton, PointerEvent, PointerPhase,
-    PopoverPosition, PopupItem, Rect, Result, RichText, RowMove, ScrollMetrics, ScrollPolicy,
-    SelectionMode, Sender, Settings, SidebarItem, SidebarSection, Sizing, Sleep, SortOrder,
-    TableColumn, TableRow, Task, Tasks, TextColor, TextRun, TextStyle, Theme, Time, Timer,
-    ToastPosition, ToastPriority, ToastSpec, ToolbarIcon, ToolbarItem, Track, Transform, TreeItem,
-    WeakWidget, WindowPlacement, WindowState, DEFAULT_GROUP_PADDING, DEFAULT_LIST_PANE_WIDTH,
+    MenuSpec, Modifiers, NavItem, NumberSpec, Orientation, Padding, Paint, Painter, Pane, Path,
+    PathSegment, PlaybackState, Point, PointerButton, PointerEvent, PointerPhase, PopoverPosition,
+    PopupItem, Rect, Result, RichText, RowMove, ScrollMetrics, ScrollPolicy, SelectionMode, Sender,
+    Settings, Shortcut, SidebarItem, SidebarSection, Sizing, Sleep, SortOrder, TableColumn,
+    TableRow, Task, Tasks, TextColor, TextRun, TextStyle, Theme, Time, Timer, ToastPosition,
+    ToastPriority, ToastSpec, ToolbarIcon, ToolbarItem, Track, Transform, TreeItem, WeakWidget,
+    WindowPlacement, WindowState, DEFAULT_GROUP_PADDING, DEFAULT_LIST_PANE_WIDTH,
     DEFAULT_PANES_BREAKPOINT, DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD,
     SHEET_MIN_WIDTH, SIDEBAR_COLLAPSE_CONTENT_WIDTH, SIDEBAR_MIN_WIDTH, WHEEL_STEP,
 };

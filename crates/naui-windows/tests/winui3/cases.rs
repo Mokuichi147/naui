@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use naui_core::{
-    Align, Bitmap, ButtonRole, Color, Gradient, GridCell, LayoutDirection, MenuItem, MenuShortcut,
-    MenuSpec, Orientation, Point, Rect, Result, RichText, ScrollPolicy, SidebarItem,
+    Align, Bitmap, ButtonRole, Color, Gradient, GridCell, LayoutDirection, MenuItem, MenuSpec,
+    Orientation, Point, Rect, Result, RichText, ScrollPolicy, Shortcut, SidebarItem,
     SidebarSection, Sizing, TextColor, TextStyle, Theme, ToolbarIcon, WindowPlacement, WindowState,
     DEFAULT_SIDEBAR_WIDTH,
 };
@@ -5356,10 +5356,10 @@ fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
         MenuSpec::new(
             "ファイル",
             [
-                MenuItem::new("新規").shortcut(MenuShortcut::new('n')),
+                MenuItem::new("新規").shortcut(Shortcut::new('n')),
                 MenuItem::separator(),
                 MenuItem::new("保存")
-                    .shortcut(MenuShortcut::new('s').shift(true))
+                    .shortcut(Shortcut::new('s').shift(true))
                     .enabled(false),
             ],
         ),
@@ -5522,10 +5522,10 @@ fn menu_bar_submenus_and_checks_map_to_native(ui: &Ui) -> Result<()> {
                 [
                     MenuItem::new("拡大"),
                     MenuItem::new("開発")
-                        .shortcut(MenuShortcut::function(12).primary(true).shift(true)),
+                        .shortcut(Shortcut::function(12).primary(true).shift(true)),
                 ],
             ),
-            MenuItem::new("全画面").shortcut(MenuShortcut::function(11)),
+            MenuItem::new("全画面").shortcut(Shortcut::function(11)),
         ],
     )]);
 

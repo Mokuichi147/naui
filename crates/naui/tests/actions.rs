@@ -1,6 +1,6 @@
 //! The testing actions (typing, answering dialogs, a toast's buttons, the close
-//! button, pointer events, choosing and dropping files), run with `naui::testing` on
-//! every platform's real event loop.
+//! button, pointer events, choosing and dropping files, pressing shortcuts), run
+//! with `naui::testing` on every platform's real event loop.
 //!
 //! ```sh
 //! cargo test -p naui --test actions                                   # macOS, Linux, Windows
@@ -16,8 +16,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui::{
-    testing, CloseResponse, DialogButtons, DialogResponse, EventResponse, FileEntry, Modifiers,
-    Orientation, Point, PointerButton, PointerEvent, PointerPhase, Result, Ui, Window,
+    testing, CloseResponse, DialogButtons, DialogResponse, EventResponse, FileEntry, Key, KeyEvent,
+    MenuItem, MenuSpec, Modifiers, Orientation, Point, PointerButton, PointerEvent, PointerPhase,
+    Result, Shortcut, Ui, Window,
 };
 
 naui::test_cases!(
@@ -31,6 +32,7 @@ naui::test_cases!(
     choose_picks_files_without_the_dialog,
     drop_files_goes_where_a_real_drop_would,
     open_url_is_recorded_instead_of_opened,
+    shortcuts_go_from_the_focus_outward,
 );
 
 /// Records every value a notification passes.
@@ -544,5 +546,127 @@ async fn open_url_is_recorded_instead_of_opened(ui: Ui) -> Result<()> {
         assert!(ui.open_url("").is_err());
         assert_eq!(testing::opened_urls(&ui).len(), 2);
     }
+    Ok(())
+}
+
+/// The primary modifier as a platform's keys carry it: ⌘ on macOS, Ctrl elsewhere
+/// (the Web takes either).
+fn primary() -> Modifiers {
+    if cfg!(all(target_os = "macos", not(target_arch = "wasm32"))) {
+        Modifiers {
+            meta: true,
+            ..Modifiers::default()
+        }
+    } else {
+        Modifiers {
+            control: true,
+            ..Modifiers::default()
+        }
+    }
+}
+
+/// A closure that writes `name` into `log`.
+fn note(log: &Rc<RefCell<Vec<&'static str>>>, name: &'static str) -> impl FnMut() + 'static {
+    let log = log.clone();
+    move || log.borrow_mut().push(name)
+}
+
+/// `send_key` delivers a key the way naui does on every platform: the focused
+/// widget's `on_key_down`, the shortcuts of the widgets around the focus from the
+/// inside out, the window's `on_key_down` and shortcuts, then the menu bar.
+async fn shortcuts_go_from_the_focus_outward(ui: Ui) -> Result<()> {
+    let window = shown_window(&ui, "shortcuts")?;
+    let column = ui.stack(Orientation::Vertical)?;
+    let group = ui.stack(Orientation::Vertical)?;
+    let inner = ui.text_input("inner")?;
+    let outside = ui.text_input("outside")?;
+    group.append(&inner);
+    column.append(&group);
+    column.append(&outside);
+    window.set_child(&column);
+
+    let log = Rc::new(RefCell::new(Vec::<&'static str>::new()));
+    let take = || std::mem::take(&mut *log.borrow_mut());
+    let escape = Shortcut::from_key(Key::Escape);
+    let press_escape = KeyEvent::new(Key::Escape, Modifiers::default());
+    inner.on_shortcut(escape, note(&log, "inner"));
+    group.on_shortcut(escape, note(&log, "group"));
+    window.on_shortcut(escape, note(&log, "window"));
+
+    assert!(inner.request_focus(), "the field takes focus");
+    assert_eq!(window.send_key(&press_escape), EventResponse::Handled);
+    assert_eq!(take(), ["inner"], "the innermost shortcut wins");
+    inner.remove_shortcut(escape);
+    window.send_key(&press_escape);
+    assert_eq!(take(), ["group"], "then the next widget out");
+
+    assert!(outside.request_focus());
+    window.send_key(&press_escape);
+    assert_eq!(
+        take(),
+        ["window"],
+        "a widget's shortcut needs the focus inside it"
+    );
+
+    // `on_key_down` comes before the shortcuts at each step.
+    assert!(inner.request_focus());
+    let stop = Rc::new(Cell::new(true));
+    inner.on_key_down({
+        let log = log.clone();
+        let stop = stop.clone();
+        move |event| {
+            log.borrow_mut().push("inner key_down");
+            if event.key == Key::Escape && stop.get() {
+                EventResponse::Handled
+            } else {
+                EventResponse::Continue
+            }
+        }
+    });
+    assert_eq!(window.send_key(&press_escape), EventResponse::Handled);
+    assert_eq!(take(), ["inner key_down"]);
+    stop.set(false);
+    window.send_key(&press_escape);
+    assert_eq!(take(), ["inner key_down", "group"]);
+    group.remove_shortcut(escape);
+    window.on_key_down({
+        let log = log.clone();
+        move |_| {
+            log.borrow_mut().push("window key_down");
+            EventResponse::Continue
+        }
+    });
+    window.send_key(&press_escape);
+    assert_eq!(take(), ["inner key_down", "window key_down", "window"]);
+
+    // The window's shortcuts come before the menu bar's.
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new(
+        "Edit",
+        [MenuItem::new("Mark").shortcut(Shortcut::new('k'))],
+    )]);
+    menu_bar.on_activate({
+        let log = log.clone();
+        move |_| log.borrow_mut().push("menu")
+    });
+    window.set_menu_bar(&menu_bar);
+    assert!(outside.request_focus());
+    let press_k = KeyEvent::new(Key::Character('k'), primary());
+    window.on_shortcut(Shortcut::new('k'), note(&log, "window k"));
+    window.send_key(&press_k);
+    assert_eq!(take(), ["window key_down", "window k"]);
+    window.remove_shortcut(Shortcut::new('k'));
+    assert_eq!(window.send_key(&press_k), EventResponse::Handled);
+    assert_eq!(take(), ["window key_down", "menu"]);
+
+    // A key nobody takes, and one without the primary modifier.
+    let plain_k = KeyEvent::new(Key::Character('k'), Modifiers::default());
+    assert_eq!(window.send_key(&plain_k), EventResponse::Continue);
+    assert_eq!(
+        window.send_key(&KeyEvent::new(Key::F(4), Modifiers::default())),
+        EventResponse::Continue
+    );
+    assert_eq!(take(), ["window key_down", "window key_down"]);
+    window.close();
     Ok(())
 }

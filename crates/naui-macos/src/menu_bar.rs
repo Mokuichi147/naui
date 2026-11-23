@@ -33,7 +33,7 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use naui_core::{ui_strings, MenuHandler, MenuItem, MenuShortcut, MenuSpec};
+use naui_core::{ui_strings, MenuHandler, MenuItem, MenuSpec, Shortcut};
 use objc2::rc::Retained;
 use objc2::runtime::Sel;
 use objc2::{sel, MainThreadMarker, MainThreadOnly};
@@ -117,8 +117,8 @@ fn submenu(
 }
 
 /// Applies a shortcut to an `NSMenuItem`. Invalid shortcuts are left out.
-pub(crate) fn apply_shortcut(native: &NSMenuItem, shortcut: MenuShortcut) {
-    if !shortcut.is_valid() {
+pub(crate) fn apply_shortcut(native: &NSMenuItem, shortcut: Shortcut) {
+    if !shortcut.is_valid_for_menu() {
         return;
     }
     // ⌘ は主修飾キー。⇧ と ⌥ は指定があるときだけ足す。
@@ -438,6 +438,20 @@ impl MenuBar {
         if self.is_item_enabled(path) {
             self.0.choose(path);
         }
+    }
+
+    /// If `event` is the shortcut of an item that can be chosen now, runs it and
+    /// returns `true`. Used by `Window::send_key`; real keys reach the AppKit menu.
+    pub(crate) fn press_shortcut(&self, event: &naui_core::KeyEvent) -> bool {
+        if !self.0.enabled.get() {
+            return false;
+        }
+        let hit = MenuSpec::find_shortcut(&self.0.menus.borrow(), |s| s.matches_event(event));
+        let Some(path) = hit else {
+            return false;
+        };
+        self.0.choose(&path);
+        true
     }
 
     /// Called with the item's path when an item is clicked. Setting it again removes

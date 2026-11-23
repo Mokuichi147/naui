@@ -24,9 +24,9 @@ use std::rc::Rc;
 
 use naui_core::{
     Align, Bitmap, ButtonRole, Color, DialogButtons, DialogResponse, EventResponse, Gradient,
-    GridCell, Key, KeyEvent, LayoutDirection, Length, ListItem, MenuItem, MenuShortcut, MenuSpec,
-    Modifiers, NavItem, Orientation, Padding, Pane, Point, PointerButton, PointerPhase, PopupItem,
-    Rect, Result, RichText, ScrollMetrics, SelectionMode, SidebarItem, SidebarSection, Sizing,
+    GridCell, Key, KeyEvent, LayoutDirection, Length, ListItem, MenuItem, MenuSpec, Modifiers,
+    NavItem, Orientation, Padding, Pane, Point, PointerButton, PointerPhase, PopupItem, Rect,
+    Result, RichText, ScrollMetrics, SelectionMode, Shortcut, SidebarItem, SidebarSection, Sizing,
     TableColumn, TableRow, TextColor, TextRun, TextStyle, Theme, ToastPosition, ToastPriority,
     ToolbarIcon, ToolbarItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
     ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
@@ -5634,7 +5634,7 @@ fn menu_bar_builds_aria_roles_for_each_menu() {
             MenuSpec::new(
                 "ファイル",
                 [
-                    MenuItem::new("新規").shortcut(MenuShortcut::new('n')),
+                    MenuItem::new("新規").shortcut(Shortcut::new('n')),
                     MenuItem::separator(),
                     MenuItem::new("保存").enabled(false),
                 ],
@@ -5768,10 +5768,10 @@ fn menu_bar_shortcuts_reach_the_closure() {
         menu_bar.set_menus(&[MenuSpec::new(
             "ファイル",
             [
-                MenuItem::new("保存").shortcut(MenuShortcut::new('s')),
-                MenuItem::new("別名で保存").shortcut(MenuShortcut::new('s').shift(true)),
+                MenuItem::new("保存").shortcut(Shortcut::new('s')),
+                MenuItem::new("別名で保存").shortcut(Shortcut::new('s').shift(true)),
                 MenuItem::new("閉じる")
-                    .shortcut(MenuShortcut::new('w'))
+                    .shortcut(Shortcut::new('w'))
                     .enabled(false),
             ],
         )]);
@@ -5824,7 +5824,7 @@ fn menu_bar_shortcuts_follow_the_attachment() {
         let menu_bar = ui.menu_bar()?;
         menu_bar.set_menus(&[MenuSpec::new(
             "ファイル",
-            [MenuItem::new("保存").shortcut(MenuShortcut::new('s'))],
+            [MenuItem::new("保存").shortcut(Shortcut::new('s'))],
         )]);
         let seen = Rc::new(Cell::new(0));
         menu_bar.on_activate({
@@ -5921,7 +5921,7 @@ fn menu_bar_shortcuts_reach_only_one_window() {
     with_ui(|ui| {
         let spec = [MenuSpec::new(
             "ファイル",
-            [MenuItem::new("保存").shortcut(MenuShortcut::new('s'))],
+            [MenuItem::new("保存").shortcut(Shortcut::new('s'))],
         )];
 
         let first_window = ui.window("1 つ目", 400.0, 300.0)?;
@@ -6129,13 +6129,13 @@ fn menu_bar_function_keys_reach_the_closure() {
         menu_bar.set_menus(&[MenuSpec::new(
             "表示",
             [
-                MenuItem::new("再読み込み").shortcut(MenuShortcut::function(5)),
+                MenuItem::new("再読み込み").shortcut(Shortcut::function(5)),
                 MenuItem::submenu(
                     "開発",
                     [MenuItem::new("調べる")
-                        .shortcut(MenuShortcut::function(12).primary(true).shift(true))],
+                        .shortcut(Shortcut::function(12).primary(true).shift(true))],
                 ),
-                MenuItem::new("記号").shortcut(MenuShortcut::new('/')),
+                MenuItem::new("記号").shortcut(Shortcut::new('/')),
             ],
         )]);
         let window = ui.window("メニューバー", 400.0, 300.0)?;
@@ -7952,6 +7952,136 @@ fn window_key_down_gets_what_the_widget_left() {
         // どのウィンドウにも属さないところ (<body>) からのキーも受ける。
         key_down(body().as_ref(), "F5", false, false, 116);
         assert_eq!(seen.borrow().last(), Some(&Key::F(5)));
+        window.close();
+        Ok(())
+    });
+}
+
+/// Shortcuts go from the focus outward, then to the window and the menu bar, and a
+/// shortcut that fires takes the key before the control's own listeners.
+#[wasm_bindgen_test]
+fn shortcuts_go_from_the_focus_to_the_menu_bar() {
+    with_ui(|ui| {
+        let window = ui.window("ショートカット", 400.0, 300.0)?;
+        let column = ui.stack(Orientation::Vertical)?;
+        let group = ui.stack(Orientation::Vertical)?;
+        let input = ui.text_input("")?;
+        let search = ui.search_input()?;
+        group.append(&input);
+        column.append(&group);
+        column.append(&search);
+        window.set_child(&column);
+        let menu_bar = ui.menu_bar()?;
+        menu_bar.set_menus(&[MenuSpec::new(
+            "編集",
+            [MenuItem::new("印").shortcut(Shortcut::new('k'))],
+        )]);
+        let log = Rc::new(RefCell::new(Vec::<&str>::new()));
+        menu_bar.on_activate({
+            let log = log.clone();
+            move |_| log.borrow_mut().push("menu")
+        });
+        window.set_menu_bar(&menu_bar);
+        window.show();
+        let note = |name: &'static str| {
+            let log = log.clone();
+            move || log.borrow_mut().push(name)
+        };
+        let take = || std::mem::take(&mut *log.borrow_mut());
+
+        let ctrl_k = Shortcut::new('k');
+        input.on_shortcut(ctrl_k, note("input"));
+        group.on_shortcut(ctrl_k, note("group"));
+        window.on_shortcut(ctrl_k, note("window"));
+        let field: EventTarget = input.native_element().into();
+        assert!(
+            press_shortcut(&field, "k", true, false, false),
+            "ブラウザの既定のショートカットは起こさない"
+        );
+        assert_eq!(take(), ["input"]);
+        input.remove_shortcut(ctrl_k);
+        press_shortcut(&field, "K", true, false, false);
+        assert_eq!(take(), ["group"]);
+        group.remove_shortcut(ctrl_k);
+        window.on_key_down({
+            let log = log.clone();
+            move |_| {
+                log.borrow_mut().push("window key_down");
+                EventResponse::Continue
+            }
+        });
+        press_shortcut(&field, "k", true, false, false);
+        assert_eq!(take(), ["window key_down", "window"], "メニューバーより先");
+        window.remove_shortcut(ctrl_k);
+        press_shortcut(&field, "k", true, false, false);
+        assert_eq!(take(), ["window key_down", "menu"]);
+        window.on_key_down(|_| EventResponse::Continue);
+
+        // 窓のショートカットは、検索欄が自分で拾う Enter より先に受け取る。
+        let searched = Rc::new(Cell::new(0));
+        search.on_search({
+            let searched = searched.clone();
+            move |_| searched.set(searched.get() + 1)
+        });
+        let enter = Shortcut::from_key(Key::Enter);
+        window.on_shortcut(enter, note("enter"));
+        let search_field: EventTarget = search.native_element().into();
+        key_down(&search_field, "Enter", false, false, 13);
+        assert_eq!(take(), ["enter"]);
+        assert_eq!(searched.get(), 0, "ショートカットがキーを取る");
+        window.remove_shortcut(enter);
+        key_down(&search_field, "Enter", false, false, 13);
+        assert_eq!(searched.get(), 1, "外せば検索欄へ届く");
+
+        // どの窓にも属さないところ (<body>) からのキーも窓のショートカットへ届く。
+        window.on_shortcut(Shortcut::function(6), note("F6"));
+        key_down(body().as_ref(), "F6", false, false, 117);
+        assert_eq!(take(), ["F6"]);
+        // 変換中のキーは届かない。
+        key_down(body().as_ref(), "F6", false, true, 229);
+        assert!(take().is_empty());
+
+        // send_key も同じ順に届け、メニューバーまで行く。
+        let primary = Modifiers {
+            control: true,
+            ..Modifiers::default()
+        };
+        assert_eq!(
+            window.send_key(&KeyEvent::new(Key::Character('k'), primary)),
+            EventResponse::Handled
+        );
+        assert_eq!(take(), ["menu"]);
+        window.clear_menu_bar();
+        window.close();
+        Ok(())
+    });
+}
+
+/// Keys pressed in a sheet reach the widgets in it but not the window.
+#[wasm_bindgen_test]
+fn keys_in_a_sheet_do_not_reach_the_window() {
+    with_ui(|ui| {
+        let window = ui.window("シート", 400.0, 300.0)?;
+        window.show();
+        let log = Rc::new(RefCell::new(Vec::<&str>::new()));
+        let note = |name: &'static str| {
+            let log = log.clone();
+            move || log.borrow_mut().push(name)
+        };
+        let f2 = Shortcut::function(2);
+        window.on_shortcut(f2, note("window"));
+        window.on_shortcut(Shortcut::function(3), note("window F3"));
+        let sheet = ui.sheet("確認")?;
+        let field = ui.text_input("")?;
+        field.on_shortcut(f2, note("field"));
+        sheet.set_child(&field);
+        sheet.open();
+        assert!(field.native_element().is_connected());
+        let target: EventTarget = field.native_element().into();
+        key_down(&target, "F2", false, false, 113);
+        key_down(&target, "F3", false, false, 114);
+        assert_eq!(*log.borrow(), ["field"]);
+        sheet.close();
         window.close();
         Ok(())
     });

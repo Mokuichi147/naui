@@ -79,7 +79,7 @@ impl MenuBarInner {
             if entry.is_separator() || entry.is_submenu() {
                 return;
             }
-            if let Some(shortcut) = entry.shortcut.filter(|s| s.is_valid()) {
+            if let Some(shortcut) = entry.shortcut.filter(|s| s.is_valid_for_menu()) {
                 // 右端の表示も、押されたキーの受け取りも GTK4 が行う。
                 self.app
                     .set_accels_for_action(&self.detailed_name(path), &[&shortcut.accelerator()]);
@@ -359,6 +359,20 @@ impl MenuBar {
     pub fn activate(&self, path: &[usize]) {
         if self.is_item_enabled(path) {
             self.0.choose(path);
+        }
+    }
+
+    /// If `event` is the shortcut of an item that can be chosen now, runs it and
+    /// returns `true`. Used by `Window::send_key`; real keys reach the
+    /// `GtkApplication`'s accelerators.
+    pub(crate) fn press_shortcut(&self, event: &naui_core::KeyEvent) -> bool {
+        let hit = MenuSpec::find_shortcut(&self.0.menus.borrow(), |s| s.matches_event(event));
+        match hit {
+            Some(path) if self.is_item_enabled(&path) => {
+                self.0.choose(&path);
+                true
+            }
+            _ => false,
         }
     }
 
