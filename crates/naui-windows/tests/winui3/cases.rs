@@ -28,8 +28,8 @@ use naui_winui3::Microsoft::UI::Xaml::Documents::{Hyperlink, Inline, Run};
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::{BitmapImage, SvgImageSource};
 use naui_winui3::Microsoft::UI::Xaml::Media::SolidColorBrush;
 use naui_winui3::Microsoft::UI::Xaml::{
-    Application, DependencyProperty, FrameworkElement, GridUnitType, HorizontalAlignment,
-    RoutedEventHandler, Style, UIElement, VerticalAlignment, Visibility,
+    Application, DependencyProperty, ElementTheme, FrameworkElement, GridUnitType,
+    HorizontalAlignment, RoutedEventHandler, Style, UIElement, VerticalAlignment, Visibility,
 };
 use windows::Foundation::{IPropertyValue, PropertyValue};
 use windows::Win32::Foundation::E_NOINTERFACE;
@@ -569,6 +569,10 @@ const CASES: &[Case] = &[
     (
         "表示した描画面は物理画素の Composition の面に描かれる",
         canvas_draws_onto_a_composition_surface,
+    ),
+    (
+        "描画面の役割の色が明暗に追従し、切り替えで描き直される",
+        canvas_follows_light_and_dark,
     ),
     (
         "別のウィンドウへ移した描画面は移った先の XamlRoot を見る",
@@ -1750,6 +1754,118 @@ fn canvas_draws_onto_a_composition_surface(ui: &Ui) -> Result<()> {
                 calls.get() > second
             },
             "作り直したデバイスの除去でも描き直すこと"
+        );
+    }));
+    window.close();
+    match outcome {
+        Ok(()) => Ok(()),
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+/// Color roles are read from the theme brushes for the surface's own theme, and
+/// switching the window's theme draws the surface again without `redraw`. The left
+/// half is filled with the text color's role and the right half with a fixed red;
+/// pixels come from the same replay drawn offscreen.
+fn canvas_follows_light_and_dark(ui: &Ui) -> Result<()> {
+    let window = ui.window("描画面の明暗", 200.0, 150.0)?;
+    window.set_theme(Theme::Light)?;
+    let canvas = ui.canvas()?;
+    canvas.set_sizing(Sizing::fixed(60.0, 40.0));
+    type Seen = (bool, (Color, f64), (Color, f64), (Color, f64));
+    let seen: Rc<RefCell<Vec<Seen>>> = Rc::new(RefCell::new(Vec::new()));
+    canvas.on_draw({
+        let seen = seen.clone();
+        move |painter| {
+            seen.borrow_mut().push((
+                painter.is_dark(),
+                painter.role_color(TextColor::Default),
+                painter.role_color(TextColor::Secondary),
+                painter.role_color(TextColor::Danger),
+            ));
+            painter.fill_rect(Rect::new(0.0, 0.0, 30.0, 40.0), TextColor::Default);
+            painter.fill_rect(Rect::new(30.0, 0.0, 30.0, 40.0), Color::rgb(0xff, 0, 0));
+        }
+    });
+    window.set_child(&canvas);
+    window.show();
+    let element = native::<FrameworkElement>(&canvas);
+    let theme_is = |theme: ElementTheme| element.ActualTheme().is_ok_and(|t| t == theme);
+    // 表示して最初に描くまで待ち、最初の表示で積まれた描き直し (大きさや倍率の
+    // 変化) も済ませてから切り替える。そうしないと、切り替えのあとに走った最初の
+    // 描画を、テーマが変わったための描き直しと取り違える。
+    pump_until(CANVAS_TIMEOUT, || {
+        theme_is(ElementTheme::Light) && !seen.borrow().is_empty()
+    });
+    pump_until(Duration::from_millis(500), || false);
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        let brightness = |c: Color| u32::from(c.r) + u32::from(c.g) + u32::from(c.b);
+        // 危険の色はどの環境でも赤系 (アクセントは灰色にもなるので見ない)。
+        let reddish = |c: Color| c.r > c.g.saturating_add(40) && c.r > c.b.saturating_add(40);
+        // 乗算済みの BGRA。
+        let sum = |(b, g, r, _): (u8, u8, u8, u8)| u32::from(r) + u32::from(g) + u32::from(b);
+        let Some(pixels) = canvas.pixels_for_test(60.0, 40.0, 1.0) else {
+            println!("     (Direct2D を使えない環境なので、確かめずに通す)");
+            return;
+        };
+        let light = *seen.borrow().last().expect("描くときに呼ばれること");
+        assert!(
+            reddish(light.3 .0),
+            "明るい外観の危険の色は赤寄り: {light:?}"
+        );
+        assert!(!light.0, "明るいテーマでは is_dark が偽");
+        assert!(
+            brightness(light.1 .0) < 150,
+            "明るいテーマの文字色は暗い: {light:?}"
+        );
+        assert!(
+            light.2 .1 < light.1 .1,
+            "副次の文字色は本文より薄い (アルファが落ちていない): {light:?}"
+        );
+        let left = pixel(&pixels, 15, 20);
+        assert!(
+            sum(left) < 150 && left.3 > 128,
+            "明るいテーマでは役割の色が暗く塗られる: {left:?}"
+        );
+
+        let drawn = seen.borrow().len();
+        window.set_theme(Theme::Dark).expect("テーマ");
+        pump_until(CANVAS_TIMEOUT, || {
+            theme_is(ElementTheme::Dark) && seen.borrow().len() > drawn
+        });
+        assert!(
+            theme_is(ElementTheme::Dark),
+            "面の ActualTheme が暗くなること"
+        );
+        if canvas.size().0 > 0.0 {
+            assert!(
+                seen.borrow().len() > drawn,
+                "テーマが変わると頼まれなくても描き直すこと"
+            );
+        } else {
+            println!("     (面に実寸が付かない環境なので、描き直しは確かめない)");
+        }
+        let pixels = canvas.pixels_for_test(60.0, 40.0, 1.0).expect("画素");
+        let dark = *seen.borrow().last().unwrap();
+        assert!(reddish(dark.3 .0), "暗い外観の危険の色は赤寄り: {dark:?}");
+        assert!(dark.0, "暗いテーマでは is_dark が真");
+        assert!(
+            brightness(dark.1 .0) > 600,
+            "暗いテーマの文字色は明るい: {dark:?}"
+        );
+        assert!(
+            dark.2 .1 < dark.1 .1,
+            "暗いテーマでも副次の文字色は薄い: {dark:?}"
+        );
+        let left = pixel(&pixels, 15, 20);
+        assert!(
+            sum(left) > 600,
+            "暗いテーマでは役割の色が明るく塗られる: {left:?}"
+        );
+        assert_eq!(
+            pixel(&pixels, 45, 20),
+            (0, 0, 0xff, 0xff),
+            "固定の色はテーマで変わらない"
         );
     }));
     window.close();

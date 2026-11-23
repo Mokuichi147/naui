@@ -25,7 +25,9 @@
 use std::fmt;
 use std::rc::Rc;
 
-use crate::{Align, Bitmap, Color, EventResponse, Modifiers};
+use std::cell::RefCell;
+
+use crate::{Align, Bitmap, Color, EventResponse, Modifiers, TextColor};
 
 /// A coordinate (logical pixels). The origin is the top left; right and down are positive.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -636,14 +638,66 @@ impl Gradient {
     }
 }
 
-/// What fills a shape: one color, or a [`Gradient`].
+/// What fills a shape: one color, a [`Gradient`], or a color role that follows the
+/// appearance.
 ///
 /// The fills of [`Painter`] take anything that turns into one, so a [`Color`], a
-/// `Gradient` or a `&Gradient` can be passed as is.
+/// `Gradient`, a `&Gradient` or a [`TextColor`] can be passed as is.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Paint {
     Color(Color),
     Gradient(Gradient),
+    /// The platform's color for the role, in the appearance the surface is drawn in
+    /// (see [`Painter::role_color`]). The `Painter` resolves it when it records the
+    /// fill, so a [`DrawCommand::Fill`] never holds one.
+    Role(TextColor),
+}
+
+impl From<TextColor> for Paint {
+    fn from(role: TextColor) -> Self {
+        Paint::Role(role)
+    }
+}
+
+impl From<Ink> for Paint {
+    fn from(ink: Ink) -> Self {
+        match ink {
+            Ink::Color(color) => Paint::Color(color),
+            Ink::Role(role) => Paint::Role(role),
+        }
+    }
+}
+
+/// The color of a line or of text: a fixed [`Color`], or a color role that follows
+/// the appearance.
+///
+/// The strokes and [`Painter::text`] take anything that turns into one, so a
+/// `Color` or a [`TextColor`] can be passed as is. A role is resolved by the
+/// platform when the `Painter` records the command (see [`Painter::role_color`]),
+/// so after a switch between light and dark the next draw picks up the new color.
+///
+/// ```
+/// # use naui_core::{Painter, Point, TextColor};
+/// let mut painter = Painter::new(200.0, 100.0);
+/// painter.line(Point::new(0.0, 90.0), Point::new(200.0, 90.0), TextColor::Secondary, 1.0);
+/// painter.text("0", Point::new(0.0, 92.0), 11.0, TextColor::Secondary);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Ink {
+    Color(Color),
+    Role(TextColor),
+}
+
+impl From<Color> for Ink {
+    fn from(color: Color) -> Self {
+        Ink::Color(color)
+    }
+}
+
+impl From<TextColor> for Ink {
+    fn from(role: TextColor) -> Self {
+        Ink::Role(role)
+    }
 }
 
 impl From<Color> for Paint {
@@ -681,7 +735,9 @@ pub enum DrawCommand {
     /// platforms).
     ///
     /// A gradient here has at least two stops and covers some area (the `Painter`
-    /// turns one stop into a plain color and leaves out the rest).
+    /// turns one stop into a plain color and leaves out the rest). The paint is never
+    /// [`Paint::Role`]: the `Painter` has already turned it into a color, with the
+    /// role's own opacity multiplied into `opacity`.
     Fill {
         path: Path,
         paint: Paint,
@@ -754,10 +810,58 @@ pub struct Painter {
     commands: Vec<DrawCommand>,
     /// Measures text as the platform draws it. `None` outside a `Canvas`.
     measure: Option<Rc<TextMeasure>>,
+    /// The appearance and the colors of the roles in it. `None` outside a `Canvas`.
+    colors: Option<Rc<RoleColors>>,
 }
 
 /// Measures the width of one line of text at a size, both in logical pixels.
 type TextMeasure = dyn Fn(&str, f64) -> f64;
+
+/// Resolves a color role to a color and an opacity.
+type RoleResolver = dyn Fn(TextColor) -> (Color, f64);
+
+/// What a backend hands the `Painter` about the appearance it draws in.
+struct RoleColors {
+    dark: bool,
+    resolve: Box<RoleResolver>,
+    /// Each role is asked for at most once per draw (on the Web, asking recomputes
+    /// styles). Indexed like [`TextColor::ALL`].
+    resolved: RefCell<[Option<(Color, f64)>; TextColor::ALL.len()]>,
+}
+
+impl RoleColors {
+    fn get(&self, role: TextColor) -> (Color, f64) {
+        let index = TextColor::ALL
+            .iter()
+            .position(|&r| r == role)
+            .unwrap_or_default();
+        if let Some(resolved) = self.resolved.borrow()[index] {
+            return resolved;
+        }
+        let (color, opacity) = (self.resolve)(role);
+        let opacity = if opacity.is_finite() {
+            opacity.clamp(0.0, 1.0)
+        } else {
+            1.0
+        };
+        self.resolved.borrow_mut()[index] = Some((color, opacity));
+        (color, opacity)
+    }
+}
+
+/// The colors of the roles for a painter that is not drawing on a platform: the
+/// light colors naui picks for the Web where it has no system color, and black for
+/// text.
+fn fallback_role_color(role: TextColor) -> (Color, f64) {
+    match role {
+        TextColor::Default => (Color::BLACK, 0.85),
+        TextColor::Secondary => (Color::BLACK, 0.5),
+        TextColor::Accent => (Color::rgb(0x00, 0x7a, 0xff), 1.0),
+        TextColor::Success => (Color::rgb(0x1a, 0x7f, 0x37), 1.0),
+        TextColor::Warning => (Color::rgb(0x9a, 0x67, 0x00), 1.0),
+        TextColor::Danger => (Color::rgb(0xcf, 0x22, 0x2e), 1.0),
+    }
+}
 
 /// What `save` puts aside and `restore` brings back.
 #[derive(Debug, Clone)]
@@ -781,6 +885,7 @@ impl fmt::Debug for Painter {
             .field("saved", &self.saved.len())
             .field("commands", &self.commands)
             .field("measures_text", &self.measure.is_some())
+            .field("dark", &self.is_dark())
             .finish()
     }
 }
@@ -805,6 +910,7 @@ impl Painter {
             saved: Vec::new(),
             commands: Vec::new(),
             measure: None,
+            colors: None,
         }
     }
 
@@ -822,6 +928,68 @@ impl Painter {
         Self {
             measure: Some(Rc::new(measure)),
             ..Self::new(width, height)
+        }
+    }
+
+    /// Tells the painter the appearance it draws in and how the platform colors the
+    /// roles of [`TextColor`] in it.
+    ///
+    /// `resolve` returns a role's color and its opacity (0.0 transparent to 1.0
+    /// opaque; secondary text is usually a translucent text color). It is called at
+    /// most once per role, and only for the roles the drawing uses. Backends pass the
+    /// platform's colors for the surface's appearance; tests can pass their own, for
+    /// example to check how a drawing looks in dark.
+    ///
+    /// ```
+    /// # use naui_core::{Color, Ink, Painter, Point, TextColor};
+    /// let mut painter = Painter::new(100.0, 100.0).with_role_colors(true, |_| (Color::WHITE, 1.0));
+    /// assert!(painter.is_dark());
+    /// assert_eq!(painter.role_color(TextColor::Default), (Color::WHITE, 1.0));
+    /// ```
+    pub fn with_role_colors(
+        mut self,
+        dark: bool,
+        resolve: impl Fn(TextColor) -> (Color, f64) + 'static,
+    ) -> Self {
+        self.colors = Some(Rc::new(RoleColors {
+            dark,
+            resolve: Box::new(resolve),
+            resolved: RefCell::new([None; TextColor::ALL.len()]),
+        }));
+        self
+    }
+
+    /// Whether the surface is drawn in a dark appearance.
+    ///
+    /// Inside `Canvas::on_draw` it is the appearance the surface is shown in (the
+    /// window's theme if one was set, otherwise the system's). A `Canvas` draws again
+    /// by itself when it changes, so a drawing that picks its colors from this (a
+    /// palette for chart series, say) follows the switch without the app watching
+    /// for it. A painter made with [`new`](Self::new) is light.
+    pub fn is_dark(&self) -> bool {
+        self.colors.as_ref().is_some_and(|colors| colors.dark)
+    }
+
+    /// The color and opacity (0.0 to 1.0) the platform gives `role` in the
+    /// appearance the surface is drawn in, the same colors as text in a `Label`.
+    ///
+    /// Drawing commands take a role directly ([`Ink`], [`Paint::Role`]), so this is
+    /// for building other things from it, such as a [`Gradient`] fading out from the
+    /// accent color. Inside `Canvas::on_draw` the platform resolves it each time the
+    /// surface is drawn, so it follows light and dark. A painter made with
+    /// [`new`](Self::new) returns fixed colors for light.
+    pub fn role_color(&self, role: TextColor) -> (Color, f64) {
+        match &self.colors {
+            Some(colors) => colors.get(role),
+            None => fallback_role_color(role),
+        }
+    }
+
+    /// A color and the opacity to multiply into the command's.
+    fn resolve_ink(&self, ink: Ink) -> (Color, f64) {
+        match ink {
+            Ink::Color(color) => (color, 1.0),
+            Ink::Role(role) => self.role_color(role),
         }
     }
 
@@ -1023,6 +1191,10 @@ impl Painter {
         }
         let (paint, opacity) = match paint.into() {
             Paint::Color(color) => (Paint::Color(color), self.state.opacity),
+            Paint::Role(role) => {
+                let (color, opacity) = self.role_color(role);
+                (Paint::Color(color), self.state.opacity * opacity)
+            }
             Paint::Gradient(gradient) => match gradient.stops() {
                 [] => return,
                 _ if !gradient.has_extent() => return,
@@ -1041,16 +1213,17 @@ impl Painter {
     ///
     /// Widths that are 0 or less, infinite or NaN are not drawn (platforms handle them
     /// differently).
-    pub fn stroke_path(&mut self, path: &Path, color: Color, width: f64) {
+    pub fn stroke_path(&mut self, path: &Path, color: impl Into<Ink>, width: f64) {
         if path.is_empty() || !width.is_finite() || width <= 0.0 || self.state.hidden {
             return;
         }
+        let (color, opacity) = self.resolve_ink(color.into());
         self.commands.push(DrawCommand::Stroke {
             path: path.clone(),
             color,
             width,
             dash: self.state.dash.clone(),
-            opacity: self.state.opacity,
+            opacity: self.state.opacity * opacity,
         });
     }
 
@@ -1058,7 +1231,7 @@ impl Painter {
         self.fill_path(&Path::new().rect(rect), paint);
     }
 
-    pub fn stroke_rect(&mut self, rect: Rect, color: Color, width: f64) {
+    pub fn stroke_rect(&mut self, rect: Rect, color: impl Into<Ink>, width: f64) {
         self.stroke_path(&Path::new().rect(rect), color, width);
     }
 
@@ -1066,17 +1239,17 @@ impl Painter {
         self.fill_path(&Path::new().circle(center, radius), paint);
     }
 
-    pub fn stroke_circle(&mut self, center: Point, radius: f64, color: Color, width: f64) {
+    pub fn stroke_circle(&mut self, center: Point, radius: f64, color: impl Into<Ink>, width: f64) {
         self.stroke_path(&Path::new().circle(center, radius), color, width);
     }
 
     /// A straight line between two points.
-    pub fn line(&mut self, from: Point, to: Point, color: Color, width: f64) {
+    pub fn line(&mut self, from: Point, to: Point, color: impl Into<Ink>, width: f64) {
         self.stroke_path(&Path::new().move_to(from).line_to(to), color, width);
     }
 
     /// A polyline. Draws nothing with fewer than two points.
-    pub fn polyline(&mut self, points: &[Point], color: Color, width: f64) {
+    pub fn polyline(&mut self, points: &[Point], color: impl Into<Ink>, width: f64) {
         if points.len() < 2 {
             return;
         }
@@ -1098,17 +1271,18 @@ impl Painter {
     ///
     /// Newlines do not wrap (that is left to how each platform draws). Empty strings
     /// and sizes that are 0 or less, infinite or NaN are not drawn.
-    pub fn text(&mut self, text: &str, at: Point, size: f64, color: Color) {
+    pub fn text(&mut self, text: &str, at: Point, size: f64, color: impl Into<Ink>) {
         if text.is_empty() || !size.is_finite() || size <= 0.0 || self.state.hidden {
             return;
         }
+        let (color, opacity) = self.resolve_ink(color.into());
         self.commands.push(DrawCommand::Text {
             text: text.to_string(),
             at,
             size,
             color,
             align: self.state.text_align,
-            opacity: self.state.opacity,
+            opacity: self.state.opacity * opacity,
         });
     }
 
@@ -1942,5 +2116,75 @@ mod tests {
         assert_eq!(measured.text_width("bad", 7.0), 0.0, "測れない値は 0");
         // 複製しても測り方は残る。
         assert_eq!(measured.clone().text_width("x", 1.0), 2.0);
+    }
+
+    #[test]
+    fn roles_resolve_when_recorded_with_their_opacity() {
+        use std::cell::Cell;
+        let asked = Rc::new(Cell::new(0));
+        let mut painter = Painter::new(100.0, 100.0).with_role_colors(true, {
+            let asked = asked.clone();
+            move |role| {
+                asked.set(asked.get() + 1);
+                match role {
+                    TextColor::Secondary => (Color::WHITE, 0.5),
+                    TextColor::Accent => (Color::rgb(1, 2, 3), f64::NAN),
+                    _ => (Color::WHITE, 1.0),
+                }
+            }
+        });
+        assert!(painter.is_dark());
+        painter.set_opacity(0.5);
+        let path = Path::new().rect(Rect::new(0.0, 0.0, 10.0, 10.0));
+        painter.fill_path(&path, TextColor::Secondary);
+        painter.stroke_path(&path, TextColor::Secondary, 1.0);
+        painter.line(
+            Point::new(0.0, 0.0),
+            Point::new(1.0, 1.0),
+            Color::BLACK,
+            1.0,
+        );
+        painter.text("a", Point::new(0.0, 0.0), 10.0, TextColor::Accent);
+        let opacities: Vec<_> = painter
+            .commands()
+            .iter()
+            .map(|command| match command {
+                DrawCommand::Fill { paint, opacity, .. } => {
+                    assert_eq!(paint, &Paint::Color(Color::WHITE), "役割は色になる");
+                    *opacity
+                }
+                DrawCommand::Stroke { color, opacity, .. }
+                | DrawCommand::Text { color, opacity, .. } => {
+                    assert_ne!(*color, Color::rgb(0, 0, 0xff));
+                    *opacity
+                }
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        // 役割の不透明度は描き手の不透明度に掛かる。NaN は不透明として扱う。
+        assert_eq!(opacities, [0.25, 0.25, 0.5, 0.5]);
+        // 同じ役割は 1 回の描画で 1 回しか聞かない。
+        assert_eq!(asked.get(), 2);
+        assert_eq!(
+            painter.role_color(TextColor::Accent),
+            (Color::rgb(1, 2, 3), 1.0)
+        );
+    }
+
+    #[test]
+    fn a_painter_without_a_platform_is_light() {
+        let mut painter = Painter::new(10.0, 10.0);
+        assert!(!painter.is_dark());
+        assert_eq!(painter.role_color(TextColor::Default), (Color::BLACK, 0.85));
+        assert!(painter.role_color(TextColor::Secondary).1 < 0.85);
+        painter.fill_rect(Rect::new(0.0, 0.0, 1.0, 1.0), Ink::Role(TextColor::Default));
+        assert_eq!(
+            painter.commands(),
+            [DrawCommand::Fill {
+                path: Path::new().rect(Rect::new(0.0, 0.0, 1.0, 1.0)),
+                paint: Paint::Color(Color::BLACK),
+                opacity: 0.85,
+            }]
+        );
     }
 }

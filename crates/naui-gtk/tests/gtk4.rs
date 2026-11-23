@@ -85,6 +85,10 @@ fn main() {
             canvas_draws_the_broader_vocabulary,
         ),
         (
+            "描画面の役割の色が明暗に追従し、切り替えで描き直される",
+            canvas_follows_light_and_dark,
+        ),
+        (
             "描画面がポインターの押下・移動・解放を面の座標で通知する",
             canvas_reports_pointer_events,
         ),
@@ -1769,6 +1773,129 @@ fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
         (50..64).all(|y| !dark(114, y)),
         "右端より右には描かないこと"
     );
+    window.close();
+    Ok(())
+}
+
+/// Color roles are read from the theme at each draw, and switching between light
+/// and dark queues a redraw without `redraw`. The left half is filled with the text
+/// color's role and the right half with a fixed red.
+fn canvas_follows_light_and_dark(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    canvas.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(60.0))
+            .height(Length::Fixed(40.0)),
+    );
+    type Seen = (bool, (Color, f64), (Color, f64), (Color, f64));
+    let (seen, sink) = recorder::<Seen>();
+    canvas.on_draw({
+        let mut sink = sink;
+        move |painter| {
+            sink((
+                painter.is_dark(),
+                painter.role_color(TextColor::Default),
+                painter.role_color(TextColor::Secondary),
+                painter.role_color(TextColor::Danger),
+            ));
+            painter.fill_rect(Rect::new(0.0, 0.0, 30.0, 40.0), TextColor::Default);
+            painter.fill_rect(Rect::new(30.0, 0.0, 30.0, 40.0), Color::rgb(0xff, 0, 0));
+        }
+    });
+
+    let window = ui.window("canvas theme", 120.0, 80.0)?;
+    window.set_theme(Theme::Light)?;
+    window.set_child(&canvas);
+    window.show();
+    let area = canvas.native_area();
+    // `dark` は切り替えてすぐ変わるが、窓の CSS が新しい外観になるのは何フレームか
+    // 後のことがある (Ubuntu 26.04 の libadwaita 1.9 で 10 フレームほど)。そのあいだの
+    // 描画は古い文字色を読むので、面の文字色が求めた側へ移るまで待つ。移れば GTK が
+    // 描き直しを積む。
+    let settle = |dark: bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            tick(&area);
+            let c = area.color();
+            let lit = c.red() + c.green() + c.blue() > 1.5;
+            if lit == dark || std::time::Instant::now() >= deadline {
+                break;
+            }
+        }
+    };
+    settle(false);
+    // 描画をレンダーノードへ取り、cairo の画像へ落として (左の色, 右の色) を読む。
+    let render = || {
+        let snapshot = gtk::Snapshot::new();
+        bin_of(&canvas).snapshot_child(&area, &snapshot);
+        let node = snapshot.to_node().expect("描いたものがあること");
+        let mut surface = gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 60, 40)
+            .expect("画像の生成");
+        let cr = gtk::cairo::Context::new(&surface).expect("コンテキストの生成");
+        node.draw(&cr);
+        drop(cr);
+        surface.flush();
+        let stride = surface.stride() as usize;
+        let data = surface.data().expect("画素の読み出し");
+        // ARGB32 は BGRA の並びで、アルファを掛けた値。
+        let read = |x: usize, y: usize| {
+            let i = y * stride + x * 4;
+            (data[i + 2], data[i + 1], data[i], data[i + 3])
+        };
+        (read(15, 20), read(45, 20))
+    };
+    let brightness = |c: Color| u32::from(c.r) + u32::from(c.g) + u32::from(c.b);
+    // 危険の色はどの環境でも赤系 (アクセントは灰色にもなるので見ない)。
+    let reddish = |c: Color| c.r > c.g.saturating_add(40) && c.r > c.b.saturating_add(40);
+
+    let (left, _) = render();
+    let light = *seen.borrow().last().expect("描くときに呼ばれること");
+    assert!(
+        reddish(light.3 .0),
+        "明るい外観の危険の色は赤寄り: {light:?}"
+    );
+    assert!(!light.0, "明るい外観では is_dark が偽");
+    // libadwaita は rgb(0 0 6 / 80%) だが、Ubuntu の libadwaita は不透明な #3d3d3d。
+    assert!(
+        brightness(light.1 .0) < 300,
+        "明るい外観の文字色は暗い: {light:?}"
+    );
+    assert!(
+        light.2 .1 < light.1 .1,
+        "副次の文字色は本文より薄い (.dim-label の不透明度): {light:?}"
+    );
+    assert!(
+        u32::from(left.0) + u32::from(left.1) + u32::from(left.2) < 300 && left.3 > 128,
+        "明るい外観では役割の色が暗く塗られる: {left:?}"
+    );
+    let drawn = seen.borrow().len();
+
+    // テーマを切り替えるだけで (redraw を呼ばずに) 描き直される。
+    window.set_theme(Theme::Dark)?;
+    settle(true);
+    let (left, right) = render();
+    assert!(
+        seen.borrow().len() > drawn,
+        "外観が変わると描き直されること"
+    );
+    let dark = *seen.borrow().last().unwrap();
+    assert!(reddish(dark.3 .0), "暗い外観の危険の色は赤寄り: {dark:?}");
+    window.set_theme(Theme::System)?;
+    assert!(dark.0, "暗い外観では is_dark が真");
+    assert!(
+        brightness(dark.1 .0) > 600,
+        "暗い外観の文字色は明るい: {dark:?}"
+    );
+    assert!(
+        dark.2 .1 < dark.1 .1,
+        "暗い外観でも副次の文字色は薄い: {dark:?}"
+    );
+    // アルファを掛けた値なので、不透明度の分だけ下がる。
+    assert!(
+        u32::from(left.0) + u32::from(left.1) + u32::from(left.2) > 450,
+        "暗い外観では役割の色が明るく塗られる: {left:?}"
+    );
+    assert_eq!(right, (255, 0, 0, 255), "固定の色は外観で変わらない");
     window.close();
     Ok(())
 }
