@@ -280,7 +280,10 @@ collected in [Known limitations](known-limitations.md).
   a separate `Grid` with the same column definitions to align widths. Only the row
   padding is written with the same value as the header instead of `ListView`'s
   default, to align column positions. Sortable headers are `Button`s with background
-  and border removed (because WinUI has no control for column headers).
+  and border removed (because WinUI has no control for column headers). Each header
+  has a transparent grab area over its trailing edge, built like `SplitView`'s divider
+  (`GridSplitter` is in the Community Toolkit too); dragging it rewrites that column's
+  `ColumnDefinition` as `Pixel` in the header and the rows built.
 - **`Tree`**: A `TreeView`. Items are mapped to `TreeViewNode`s and passed as a
   tree, so indentation, the disclosure chevrons, keyboard operation and the
   selection appearance all come from WinUI. Only the frame is a `Border` with the
@@ -455,7 +458,12 @@ collected in [Known limitations](known-limitations.md).
   removed, which breaks the table. naui calculates the allocation for columns
   without a specified width because AppKit's automatic column resizing cannot
   distribute all leftover space when there are fixed-width columns, leaving the
-  right side of the table empty.
+  right side of the table empty. Every column has `NSTableColumnUserResizingMask`, so
+  AppKit handles dragging the header edges; a width change made while
+  `NSTableHeaderView.resizedColumn` names a column is the user's, and naui then keeps
+  that column at the dragged width and distributes the rest again. Each column's
+  `maxWidth` leaves the others their width (or 40 px), so a drag cannot push the
+  columns past the table.
 - **`Tree`**: An `NSOutlineView` with one column. Multiple selection is
   `allowsMultipleSelection`. AppKit deselects the rows inside a branch when it is
   collapsed, so naui holds the selection itself, ignores the change that collapsing
@@ -621,6 +629,11 @@ collected in [Known limitations](known-limitations.md).
   a `GListModel`), it is built from `GtkListBox` rows laid out horizontally, with
   column widths aligned by a `GtkSizeGroup` per column. Sortable headers are `flat`
   `GtkButton`s, and the direction is shown by an arrow added to the header text.
+  Columns are resized the way `GtkColumnView` does it, with a `GtkGestureDrag` on the
+  header row (in the capture phase, so pressing an edge does not press a sortable
+  header) and the `col-resize` cursor over the edges; the cells already built get the
+  new width on the spot. The cells of a column with a width do not let their natural
+  width decide it (as in a windowed table), so the column is exactly that wide.
 - **`Tree`**: Instead of `GtkTreeExpander` (only for `GtkListView`), it is built
   from `GtkListBox` rows and disclosure buttons. Rows inside collapsed branches are
   only made invisible, so they keep their selection; with `SelectionMode::Multiple`

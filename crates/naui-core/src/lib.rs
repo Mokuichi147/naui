@@ -108,7 +108,7 @@ pub use sidebar::{
     SIDEBAR_MIN_WIDTH,
 };
 pub use split::{clamp_split_position, DEFAULT_SPLIT_POSITION};
-pub use table::{SortOrder, TableColumn, TableRow};
+pub use table::{clamp_column_width, SortOrder, TableColumn, TableRow, MIN_COLUMN_WIDTH};
 pub use task::Task;
 pub use text::{TextColor, TextStyle};
 pub use timer::{Sleep, Timer};
