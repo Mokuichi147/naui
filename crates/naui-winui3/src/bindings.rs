@@ -66706,6 +66706,30 @@ pub mod Microsoft {
                             .ok()
                         }
                     }
+                    pub fn DisplayMode(&self) -> windows_core::Result<CalendarViewDisplayMode> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DisplayMode)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetDisplayMode(
+                        &self,
+                        value: CalendarViewDisplayMode,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetDisplayMode)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
                     pub fn FirstDayOfWeek(
                         &self,
                     ) -> windows_core::Result<windows::Globalization::DayOfWeek>
@@ -70963,6 +70987,6657 @@ pub mod Microsoft {
                 }
                 unsafe impl Send for CalendarDatePicker {}
                 unsafe impl Sync for CalendarDatePicker {}
+                #[repr(transparent)]
+                #[derive(Clone, Debug, Eq, PartialEq)]
+                pub struct CalendarView(windows_core::IUnknown);
+                windows_core::imp::interface_hierarchy!(
+                    CalendarView,
+                    windows_core::IUnknown,
+                    windows_core::IInspectable
+                );
+                windows_core::imp::required_hierarchy!(
+                    CalendarView,
+                    super::super::Composition::IAnimationObject,
+                    super::super::Composition::IVisualElement,
+                    super::super::Composition::IVisualElement2,
+                    Control,
+                    super::FrameworkElement,
+                    super::UIElement,
+                    super::DependencyObject
+                );
+                impl CalendarView {
+                    pub fn CalendarIdentifier(
+                        &self,
+                    ) -> windows_core::Result<windows_core::HSTRING> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CalendarIdentifier)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| core::mem::transmute(result__))
+                        }
+                    }
+                    pub fn SetCalendarIdentifier(
+                        &self,
+                        value: &windows_core::HSTRING,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetCalendarIdentifier)(
+                                windows_core::Interface::as_raw(this),
+                                core::mem::transmute_copy(value),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn DayOfWeekFormat(&self) -> windows_core::Result<windows_core::HSTRING> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DayOfWeekFormat)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| core::mem::transmute(result__))
+                        }
+                    }
+                    pub fn SetDayOfWeekFormat(
+                        &self,
+                        value: &windows_core::HSTRING,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetDayOfWeekFormat)(
+                                windows_core::Interface::as_raw(this),
+                                core::mem::transmute_copy(value),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn IsGroupLabelVisible(&self) -> windows_core::Result<bool> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsGroupLabelVisible)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetIsGroupLabelVisible(&self, value: bool) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetIsGroupLabelVisible)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn DisplayMode(&self) -> windows_core::Result<CalendarViewDisplayMode> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DisplayMode)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetDisplayMode(
+                        &self,
+                        value: CalendarViewDisplayMode,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetDisplayMode)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FirstDayOfWeek(
+                        &self,
+                    ) -> windows_core::Result<windows::Globalization::DayOfWeek>
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FirstDayOfWeek)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetFirstDayOfWeek(
+                        &self,
+                        value: windows::Globalization::DayOfWeek,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFirstDayOfWeek)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn IsOutOfScopeEnabled(&self) -> windows_core::Result<bool> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsOutOfScopeEnabled)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetIsOutOfScopeEnabled(&self, value: bool) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetIsOutOfScopeEnabled)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn IsTodayHighlighted(&self) -> windows_core::Result<bool> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsTodayHighlighted)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetIsTodayHighlighted(&self, value: bool) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetIsTodayHighlighted)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn MaxDate(&self) -> windows_core::Result<windows::Foundation::DateTime> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MaxDate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetMaxDate(
+                        &self,
+                        value: windows::Foundation::DateTime,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetMaxDate)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn MinDate(&self) -> windows_core::Result<windows::Foundation::DateTime> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MinDate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetMinDate(
+                        &self,
+                        value: windows::Foundation::DateTime,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetMinDate)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn NumberOfWeeksInView(&self) -> windows_core::Result<i32> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).NumberOfWeeksInView)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetNumberOfWeeksInView(&self, value: i32) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetNumberOfWeeksInView)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn SelectedDates(
+                        &self,
+                    ) -> windows_core::Result<
+                        windows_collections::IVector<windows::Foundation::DateTime>,
+                    > {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectedDates)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SelectionMode(&self) -> windows_core::Result<CalendarViewSelectionMode> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectionMode)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetSelectionMode(
+                        &self,
+                        value: CalendarViewSelectionMode,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetSelectionMode)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FocusBorderBrush(&self) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FocusBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetFocusBorderBrush<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFocusBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn SelectedHoverBorderBrush(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectedHoverBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetSelectedHoverBorderBrush<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetSelectedHoverBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn SelectedPressedBorderBrush(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectedPressedBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetSelectedPressedBorderBrush<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetSelectedPressedBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn SelectedDisabledBorderBrush(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectedDisabledBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetSelectedDisabledBorderBrush<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetSelectedDisabledBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn SelectedBorderBrush(&self) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectedBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetSelectedBorderBrush<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetSelectedBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn HoverBorderBrush(&self) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HoverBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetHoverBorderBrush<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHoverBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn PressedBorderBrush(&self) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PressedBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetPressedBorderBrush<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetPressedBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn TodaySelectedInnerBorderBrush(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TodaySelectedInnerBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetTodaySelectedInnerBorderBrush<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            ( windows_core::Interface::vtable ( this ) . SetTodaySelectedInnerBorderBrush ) ( windows_core::Interface::as_raw ( this ) , value . param ( ) . abi ( ) , ) . ok ( )
+                        }
+                    }
+                    pub fn BlackoutStrikethroughBrush(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).BlackoutStrikethroughBrush)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetBlackoutStrikethroughBrush<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetBlackoutStrikethroughBrush)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn CalendarItemBorderBrush(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CalendarItemBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetCalendarItemBorderBrush<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetCalendarItemBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn BlackoutBackground(&self) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).BlackoutBackground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetBlackoutBackground<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetBlackoutBackground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OutOfScopeBackground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).OutOfScopeBackground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetOutOfScopeBackground<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetOutOfScopeBackground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn CalendarItemBackground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CalendarItemBackground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetCalendarItemBackground<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetCalendarItemBackground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn CalendarItemHoverBackground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CalendarItemHoverBackground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetCalendarItemHoverBackground<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetCalendarItemHoverBackground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn CalendarItemPressedBackground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CalendarItemPressedBackground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetCalendarItemPressedBackground<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            ( windows_core::Interface::vtable ( this ) . SetCalendarItemPressedBackground ) ( windows_core::Interface::as_raw ( this ) , value . param ( ) . abi ( ) , ) . ok ( )
+                        }
+                    }
+                    pub fn CalendarItemDisabledBackground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CalendarItemDisabledBackground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetCalendarItemDisabledBackground<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this)
+                                .SetCalendarItemDisabledBackground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn TodayBackground(&self) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TodayBackground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetTodayBackground<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetTodayBackground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn TodayBlackoutBackground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TodayBlackoutBackground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetTodayBlackoutBackground<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetTodayBlackoutBackground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn TodayHoverBackground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TodayHoverBackground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetTodayHoverBackground<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetTodayHoverBackground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn TodayPressedBackground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TodayPressedBackground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetTodayPressedBackground<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetTodayPressedBackground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn TodayDisabledBackground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TodayDisabledBackground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetTodayDisabledBackground<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetTodayDisabledBackground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn PressedForeground(&self) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PressedForeground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetPressedForeground<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetPressedForeground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn TodayForeground(&self) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TodayForeground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetTodayForeground<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetTodayForeground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn BlackoutForeground(&self) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).BlackoutForeground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetBlackoutForeground<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetBlackoutForeground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn TodayBlackoutForeground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TodayBlackoutForeground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetTodayBlackoutForeground<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetTodayBlackoutForeground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn SelectedForeground(&self) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectedForeground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetSelectedForeground<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetSelectedForeground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn SelectedHoverForeground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectedHoverForeground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetSelectedHoverForeground<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetSelectedHoverForeground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn SelectedPressedForeground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectedPressedForeground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetSelectedPressedForeground<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetSelectedPressedForeground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn SelectedDisabledForeground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectedDisabledForeground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetSelectedDisabledForeground<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetSelectedDisabledForeground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OutOfScopeForeground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).OutOfScopeForeground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetOutOfScopeForeground<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetOutOfScopeForeground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OutOfScopeHoverForeground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).OutOfScopeHoverForeground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetOutOfScopeHoverForeground<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetOutOfScopeHoverForeground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OutOfScopePressedForeground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).OutOfScopePressedForeground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetOutOfScopePressedForeground<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetOutOfScopePressedForeground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn CalendarItemForeground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CalendarItemForeground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetCalendarItemForeground<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetCalendarItemForeground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn DisabledForeground(&self) -> windows_core::Result<super::Media::Brush> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DisabledForeground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetDisabledForeground<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetDisabledForeground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn DayItemFontSize(&self) -> windows_core::Result<f64> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DayItemFontSize)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetDayItemFontSize(&self, value: f64) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetDayItemFontSize)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn DayItemFontStyle(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontStyle> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DayItemFontStyle)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetDayItemFontStyle(
+                        &self,
+                        value: windows::UI::Text::FontStyle,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetDayItemFontStyle)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn DayItemFontWeight(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontWeight> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DayItemFontWeight)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetDayItemFontWeight(
+                        &self,
+                        value: windows::UI::Text::FontWeight,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetDayItemFontWeight)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn TodayFontWeight(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontWeight> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TodayFontWeight)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetTodayFontWeight(
+                        &self,
+                        value: windows::UI::Text::FontWeight,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetTodayFontWeight)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FirstOfMonthLabelFontSize(&self) -> windows_core::Result<f64> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FirstOfMonthLabelFontSize)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetFirstOfMonthLabelFontSize(
+                        &self,
+                        value: f64,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFirstOfMonthLabelFontSize)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FirstOfMonthLabelFontStyle(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontStyle> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FirstOfMonthLabelFontStyle)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetFirstOfMonthLabelFontStyle(
+                        &self,
+                        value: windows::UI::Text::FontStyle,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFirstOfMonthLabelFontStyle)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FirstOfMonthLabelFontWeight(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontWeight> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FirstOfMonthLabelFontWeight)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetFirstOfMonthLabelFontWeight(
+                        &self,
+                        value: windows::UI::Text::FontWeight,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFirstOfMonthLabelFontWeight)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn MonthYearItemFontSize(&self) -> windows_core::Result<f64> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MonthYearItemFontSize)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetMonthYearItemFontSize(&self, value: f64) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetMonthYearItemFontSize)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn MonthYearItemFontStyle(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontStyle> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MonthYearItemFontStyle)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetMonthYearItemFontStyle(
+                        &self,
+                        value: windows::UI::Text::FontStyle,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetMonthYearItemFontStyle)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn MonthYearItemFontWeight(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontWeight> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MonthYearItemFontWeight)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetMonthYearItemFontWeight(
+                        &self,
+                        value: windows::UI::Text::FontWeight,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetMonthYearItemFontWeight)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FirstOfYearDecadeLabelFontSize(&self) -> windows_core::Result<f64> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FirstOfYearDecadeLabelFontSize)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetFirstOfYearDecadeLabelFontSize(
+                        &self,
+                        value: f64,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this)
+                                .SetFirstOfYearDecadeLabelFontSize)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FirstOfYearDecadeLabelFontStyle(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontStyle> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FirstOfYearDecadeLabelFontStyle)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetFirstOfYearDecadeLabelFontStyle(
+                        &self,
+                        value: windows::UI::Text::FontStyle,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this)
+                                .SetFirstOfYearDecadeLabelFontStyle)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FirstOfYearDecadeLabelFontWeight(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontWeight> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            ( windows_core::Interface::vtable ( this ) . FirstOfYearDecadeLabelFontWeight ) ( windows_core::Interface::as_raw ( this ) , & mut result__ ) . map ( || result__ )
+                        }
+                    }
+                    pub fn SetFirstOfYearDecadeLabelFontWeight(
+                        &self,
+                        value: windows::UI::Text::FontWeight,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this)
+                                .SetFirstOfYearDecadeLabelFontWeight)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn DayItemMargin(&self) -> windows_core::Result<super::Thickness> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DayItemMargin)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetDayItemMargin(
+                        &self,
+                        value: super::Thickness,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetDayItemMargin)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn MonthYearItemMargin(&self) -> windows_core::Result<super::Thickness> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MonthYearItemMargin)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetMonthYearItemMargin(
+                        &self,
+                        value: super::Thickness,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetMonthYearItemMargin)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FirstOfMonthLabelMargin(
+                        &self,
+                    ) -> windows_core::Result<super::Thickness> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FirstOfMonthLabelMargin)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetFirstOfMonthLabelMargin(
+                        &self,
+                        value: super::Thickness,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFirstOfMonthLabelMargin)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FirstOfYearDecadeLabelMargin(
+                        &self,
+                    ) -> windows_core::Result<super::Thickness> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FirstOfYearDecadeLabelMargin)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetFirstOfYearDecadeLabelMargin(
+                        &self,
+                        value: super::Thickness,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFirstOfYearDecadeLabelMargin)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn HorizontalDayItemAlignment(
+                        &self,
+                    ) -> windows_core::Result<super::HorizontalAlignment> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HorizontalDayItemAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetHorizontalDayItemAlignment(
+                        &self,
+                        value: super::HorizontalAlignment,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHorizontalDayItemAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn VerticalDayItemAlignment(
+                        &self,
+                    ) -> windows_core::Result<super::VerticalAlignment> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).VerticalDayItemAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetVerticalDayItemAlignment(
+                        &self,
+                        value: super::VerticalAlignment,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetVerticalDayItemAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn HorizontalFirstOfMonthLabelAlignment(
+                        &self,
+                    ) -> windows_core::Result<super::HorizontalAlignment> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .HorizontalFirstOfMonthLabelAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetHorizontalFirstOfMonthLabelAlignment(
+                        &self,
+                        value: super::HorizontalAlignment,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this)
+                                .SetHorizontalFirstOfMonthLabelAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn VerticalFirstOfMonthLabelAlignment(
+                        &self,
+                    ) -> windows_core::Result<super::VerticalAlignment> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .VerticalFirstOfMonthLabelAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetVerticalFirstOfMonthLabelAlignment(
+                        &self,
+                        value: super::VerticalAlignment,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this)
+                                .SetVerticalFirstOfMonthLabelAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn CalendarItemBorderThickness(
+                        &self,
+                    ) -> windows_core::Result<super::Thickness> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CalendarItemBorderThickness)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetCalendarItemBorderThickness(
+                        &self,
+                        value: super::Thickness,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetCalendarItemBorderThickness)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn CalendarViewDayItemStyle(&self) -> windows_core::Result<super::Style> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CalendarViewDayItemStyle)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetCalendarViewDayItemStyle<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Style>,
+                    {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetCalendarViewDayItemStyle)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn CalendarItemCornerRadius(
+                        &self,
+                    ) -> windows_core::Result<super::CornerRadius> {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CalendarItemCornerRadius)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetCalendarItemCornerRadius(
+                        &self,
+                        value: super::CornerRadius,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetCalendarItemCornerRadius)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveCalendarViewDayItemChanging(
+                        &self,
+                        token: i64,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this)
+                                .RemoveCalendarViewDayItemChanging)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn SelectedDatesChanged<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                CalendarView,
+                                CalendarViewSelectedDatesChangedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectedDatesChanged)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveSelectedDatesChanged(
+                        &self,
+                        token: i64,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveSelectedDatesChanged)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn SetDisplayDate(
+                        &self,
+                        date: windows::Foundation::DateTime,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetDisplayDate)(
+                                windows_core::Interface::as_raw(this),
+                                date,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn SetYearDecadeDisplayDimensions(
+                        &self,
+                        columns: i32,
+                        rows: i32,
+                    ) -> windows_core::Result<()> {
+                        let this = self;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetYearDecadeDisplayDimensions)(
+                                windows_core::Interface::as_raw(this),
+                                columns,
+                                rows,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn new() -> windows_core::Result<CalendarView> {
+                        Self::ICalendarViewFactory(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CreateInstance)(
+                                windows_core::Interface::as_raw(this),
+                                core::ptr::null_mut(),
+                                &mut core::ptr::null_mut(),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn CalendarIdentifierProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CalendarIdentifierProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn DayOfWeekFormatProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DayOfWeekFormatProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn IsGroupLabelVisibleProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsGroupLabelVisibleProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn DisplayModeProperty() -> windows_core::Result<super::DependencyProperty>
+                    {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DisplayModeProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn FirstDayOfWeekProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FirstDayOfWeekProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn IsOutOfScopeEnabledProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsOutOfScopeEnabledProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn IsTodayHighlightedProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsTodayHighlightedProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn MaxDateProperty() -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MaxDateProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn MinDateProperty() -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MinDateProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn NumberOfWeeksInViewProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).NumberOfWeeksInViewProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn SelectedDatesProperty() -> windows_core::Result<super::DependencyProperty>
+                    {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectedDatesProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn SelectionModeProperty() -> windows_core::Result<super::DependencyProperty>
+                    {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectionModeProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn TemplateSettingsProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TemplateSettingsProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn FocusBorderBrushProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FocusBorderBrushProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn SelectedHoverBorderBrushProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            ( windows_core::Interface::vtable ( this ) . SelectedHoverBorderBrushProperty ) ( windows_core::Interface::as_raw ( this ) , & mut result__ ) . and_then ( || windows_core::Type::from_abi ( result__ ) )
+                        })
+                    }
+                    pub fn SelectedPressedBorderBrushProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .SelectedPressedBorderBrushProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn SelectedDisabledBorderBrushProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .SelectedDisabledBorderBrushProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn SelectedBorderBrushProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectedBorderBrushProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn HoverBorderBrushProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HoverBorderBrushProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn PressedBorderBrushProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PressedBorderBrushProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn TodaySelectedInnerBorderBrushProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .TodaySelectedInnerBorderBrushProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn BlackoutStrikethroughBrushProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .BlackoutStrikethroughBrushProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn CalendarItemBorderBrushProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CalendarItemBorderBrushProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn BlackoutBackgroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).BlackoutBackgroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn OutOfScopeBackgroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).OutOfScopeBackgroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn CalendarItemBackgroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CalendarItemBackgroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn CalendarItemHoverBackgroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .CalendarItemHoverBackgroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn CalendarItemPressedBackgroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .CalendarItemPressedBackgroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn CalendarItemDisabledBackgroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .CalendarItemDisabledBackgroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn TodayBackgroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TodayBackgroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn TodayBlackoutBackgroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TodayBlackoutBackgroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn TodayHoverBackgroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TodayHoverBackgroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn TodayPressedBackgroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TodayPressedBackgroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn TodayDisabledBackgroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TodayDisabledBackgroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn PressedForegroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PressedForegroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn TodayForegroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TodayForegroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn BlackoutForegroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).BlackoutForegroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn TodayBlackoutForegroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TodayBlackoutForegroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn SelectedForegroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectedForegroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn SelectedHoverForegroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SelectedHoverForegroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn SelectedPressedForegroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .SelectedPressedForegroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn SelectedDisabledForegroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .SelectedDisabledForegroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn OutOfScopeForegroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).OutOfScopeForegroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn OutOfScopeHoverForegroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .OutOfScopeHoverForegroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn OutOfScopePressedForegroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .OutOfScopePressedForegroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn CalendarItemForegroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CalendarItemForegroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn DisabledForegroundProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DisabledForegroundProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn DayItemFontFamilyProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DayItemFontFamilyProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn DayItemFontSizeProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DayItemFontSizeProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn DayItemFontStyleProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DayItemFontStyleProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn DayItemFontWeightProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DayItemFontWeightProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn TodayFontWeightProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TodayFontWeightProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn FirstOfMonthLabelFontFamilyProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .FirstOfMonthLabelFontFamilyProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn FirstOfMonthLabelFontSizeProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .FirstOfMonthLabelFontSizeProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn FirstOfMonthLabelFontStyleProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .FirstOfMonthLabelFontStyleProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn FirstOfMonthLabelFontWeightProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .FirstOfMonthLabelFontWeightProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn MonthYearItemFontFamilyProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MonthYearItemFontFamilyProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn MonthYearItemFontSizeProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MonthYearItemFontSizeProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn MonthYearItemFontStyleProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MonthYearItemFontStyleProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn MonthYearItemFontWeightProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MonthYearItemFontWeightProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn FirstOfYearDecadeLabelFontFamilyProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .FirstOfYearDecadeLabelFontFamilyProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn FirstOfYearDecadeLabelFontSizeProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .FirstOfYearDecadeLabelFontSizeProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn FirstOfYearDecadeLabelFontStyleProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .FirstOfYearDecadeLabelFontStyleProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn FirstOfYearDecadeLabelFontWeightProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .FirstOfYearDecadeLabelFontWeightProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn DayItemMarginProperty() -> windows_core::Result<super::DependencyProperty>
+                    {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DayItemMarginProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn MonthYearItemMarginProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MonthYearItemMarginProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn FirstOfMonthLabelMarginProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FirstOfMonthLabelMarginProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn FirstOfYearDecadeLabelMarginProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .FirstOfYearDecadeLabelMarginProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn HorizontalDayItemAlignmentProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .HorizontalDayItemAlignmentProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn VerticalDayItemAlignmentProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            ( windows_core::Interface::vtable ( this ) . VerticalDayItemAlignmentProperty ) ( windows_core::Interface::as_raw ( this ) , & mut result__ ) . and_then ( || windows_core::Type::from_abi ( result__ ) )
+                        })
+                    }
+                    pub fn HorizontalFirstOfMonthLabelAlignmentProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .HorizontalFirstOfMonthLabelAlignmentProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn VerticalFirstOfMonthLabelAlignmentProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .VerticalFirstOfMonthLabelAlignmentProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn CalendarItemBorderThicknessProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .CalendarItemBorderThicknessProperty)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        })
+                    }
+                    pub fn CalendarViewDayItemStyleProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            ( windows_core::Interface::vtable ( this ) . CalendarViewDayItemStyleProperty ) ( windows_core::Interface::as_raw ( this ) , & mut result__ ) . and_then ( || windows_core::Type::from_abi ( result__ ) )
+                        })
+                    }
+                    pub fn CalendarItemCornerRadiusProperty(
+                    ) -> windows_core::Result<super::DependencyProperty> {
+                        Self::ICalendarViewStatics(|this| unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            ( windows_core::Interface::vtable ( this ) . CalendarItemCornerRadiusProperty ) ( windows_core::Interface::as_raw ( this ) , & mut result__ ) . and_then ( || windows_core::Type::from_abi ( result__ ) )
+                        })
+                    }
+                    pub fn IsFocusEngagementEnabled(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsFocusEngagementEnabled)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetIsFocusEngagementEnabled(
+                        &self,
+                        value: bool,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetIsFocusEngagementEnabled)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn IsFocusEngaged(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsFocusEngaged)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetIsFocusEngaged(&self, value: bool) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetIsFocusEngaged)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FontSize(&self) -> windows_core::Result<f64> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FontSize)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetFontSize(&self, value: f64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFontSize)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FontWeight(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontWeight> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FontWeight)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetFontWeight(
+                        &self,
+                        value: windows::UI::Text::FontWeight,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFontWeight)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FontStyle(&self) -> windows_core::Result<windows::UI::Text::FontStyle> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FontStyle)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetFontStyle(
+                        &self,
+                        value: windows::UI::Text::FontStyle,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFontStyle)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FontStretch(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontStretch> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FontStretch)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetFontStretch(
+                        &self,
+                        value: windows::UI::Text::FontStretch,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFontStretch)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn CharacterSpacing(&self) -> windows_core::Result<i32> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CharacterSpacing)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetCharacterSpacing(&self, value: i32) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetCharacterSpacing)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Foreground(&self) -> windows_core::Result<super::Media::Brush> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Foreground)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetForeground<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetForeground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn IsTextScaleFactorEnabled(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsTextScaleFactorEnabled)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetIsTextScaleFactorEnabled(
+                        &self,
+                        value: bool,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetIsTextScaleFactorEnabled)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn IsEnabled(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsEnabled)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetIsEnabled(&self, value: bool) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetIsEnabled)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Padding(&self) -> windows_core::Result<super::Thickness> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Padding)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetPadding(&self, value: super::Thickness) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetPadding)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn HorizontalContentAlignment(
+                        &self,
+                    ) -> windows_core::Result<super::HorizontalAlignment> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HorizontalContentAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetHorizontalContentAlignment(
+                        &self,
+                        value: super::HorizontalAlignment,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHorizontalContentAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn VerticalContentAlignment(
+                        &self,
+                    ) -> windows_core::Result<super::VerticalAlignment> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).VerticalContentAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetVerticalContentAlignment(
+                        &self,
+                        value: super::VerticalAlignment,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetVerticalContentAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Background(&self) -> windows_core::Result<super::Media::Brush> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Background)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetBackground<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetBackground)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn BorderThickness(&self) -> windows_core::Result<super::Thickness> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).BorderThickness)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetBorderThickness(
+                        &self,
+                        value: super::Thickness,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetBorderThickness)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn BorderBrush(&self) -> windows_core::Result<super::Media::Brush> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).BorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetBorderBrush<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetBorderBrush)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn DefaultStyleResourceUri(
+                        &self,
+                    ) -> windows_core::Result<windows::Foundation::Uri> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DefaultStyleResourceUri)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetDefaultStyleResourceUri<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<windows::Foundation::Uri>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetDefaultStyleResourceUri)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn CornerRadius(&self) -> windows_core::Result<super::CornerRadius> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CornerRadius)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetCornerRadius(
+                        &self,
+                        value: super::CornerRadius,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetCornerRadius)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveFocusEngaged(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveFocusEngaged)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveFocusDisengaged(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveFocusDisengaged)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveIsEnabledChanged(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveIsEnabledChanged)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveFocusEngagement(&self) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveFocusEngagement)(
+                                windows_core::Interface::as_raw(this),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn ApplyTemplate(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<IControl>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ApplyTemplate)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn OnPointerEntered<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::PointerRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnPointerEntered)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnPointerPressed<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::PointerRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnPointerPressed)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnPointerMoved<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::PointerRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnPointerMoved)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnPointerReleased<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::PointerRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnPointerReleased)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnPointerExited<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::PointerRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnPointerExited)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnPointerCaptureLost<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::PointerRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnPointerCaptureLost)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnPointerCanceled<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::PointerRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnPointerCanceled)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnPointerWheelChanged<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::PointerRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnPointerWheelChanged)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::TappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDoubleTapped<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnKeyUp<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::KeyRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnKeyUp)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnKeyDown<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::KeyRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnKeyDown)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnPreviewKeyDown<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::KeyRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnPreviewKeyDown)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnPreviewKeyUp<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::KeyRoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnPreviewKeyUp)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnGotFocus<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::RoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnGotFocus)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnLostFocus<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::RoutedEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnLostFocus)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDragEnter<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DragEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDragEnter)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDragLeave<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DragEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDragLeave)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDragOver<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DragEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDragOver)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn OnDrop<P0>(&self, e: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DragEventArgs>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDrop)(
+                                windows_core::Interface::as_raw(this),
+                                e.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn DefaultStyleKey(
+                        &self,
+                    ) -> windows_core::Result<windows_core::IInspectable> {
+                        let this = &windows_core::Interface::cast::<IControlProtected>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DefaultStyleKey)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetDefaultStyleKey<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<windows_core::IInspectable>,
+                    {
+                        let this = &windows_core::Interface::cast::<IControlProtected>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetDefaultStyleKey)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn GetTemplateChild(
+                        &self,
+                        childname: &windows_core::HSTRING,
+                    ) -> windows_core::Result<super::DependencyObject> {
+                        let this = &windows_core::Interface::cast::<IControlProtected>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).GetTemplateChild)(
+                                windows_core::Interface::as_raw(this),
+                                core::mem::transmute_copy(childname),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn GetValue<P0>(
+                        &self,
+                        dp: P0,
+                    ) -> windows_core::Result<windows_core::IInspectable>
+                    where
+                        P0: windows_core::Param<super::DependencyProperty>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IDependencyObject>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).GetValue)(
+                                windows_core::Interface::as_raw(this),
+                                dp.param().abi(),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetValue<P0, P1>(&self, dp: P0, value: P1) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DependencyProperty>,
+                        P1: windows_core::Param<windows_core::IInspectable>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IDependencyObject>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetValue)(
+                                windows_core::Interface::as_raw(this),
+                                dp.param().abi(),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn ClearValue<P0>(&self, dp: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DependencyProperty>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IDependencyObject>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).ClearValue)(
+                                windows_core::Interface::as_raw(this),
+                                dp.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn ReadLocalValue<P0>(
+                        &self,
+                        dp: P0,
+                    ) -> windows_core::Result<windows_core::IInspectable>
+                    where
+                        P0: windows_core::Param<super::DependencyProperty>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IDependencyObject>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ReadLocalValue)(
+                                windows_core::Interface::as_raw(this),
+                                dp.param().abi(),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn GetAnimationBaseValue<P0>(
+                        &self,
+                        dp: P0,
+                    ) -> windows_core::Result<windows_core::IInspectable>
+                    where
+                        P0: windows_core::Param<super::DependencyProperty>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IDependencyObject>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).GetAnimationBaseValue)(
+                                windows_core::Interface::as_raw(this),
+                                dp.param().abi(),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn UnregisterPropertyChangedCallback<P0>(
+                        &self,
+                        dp: P0,
+                        token: i64,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DependencyProperty>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IDependencyObject>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this)
+                                .UnregisterPropertyChangedCallback)(
+                                windows_core::Interface::as_raw(this),
+                                dp.param().abi(),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Dispatcher(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Core::CoreDispatcher>
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IDependencyObject>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Dispatcher)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn DispatcherQueue(
+                        &self,
+                    ) -> windows_core::Result<super::super::Dispatching::DispatcherQueue>
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IDependencyObject>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DispatcherQueue)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn Resources(&self) -> windows_core::Result<super::ResourceDictionary> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Resources)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetResources<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::ResourceDictionary>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetResources)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Tag(&self) -> windows_core::Result<windows_core::IInspectable> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Tag)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetTag<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<windows_core::IInspectable>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetTag)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Language(&self) -> windows_core::Result<windows_core::HSTRING> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Language)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| core::mem::transmute(result__))
+                        }
+                    }
+                    pub fn SetLanguage(
+                        &self,
+                        value: &windows_core::HSTRING,
+                    ) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetLanguage)(
+                                windows_core::Interface::as_raw(this),
+                                core::mem::transmute_copy(value),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn ActualWidth(&self) -> windows_core::Result<f64> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ActualWidth)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn ActualHeight(&self) -> windows_core::Result<f64> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ActualHeight)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn Width(&self) -> windows_core::Result<f64> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Width)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetWidth(&self, value: f64) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetWidth)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Height(&self) -> windows_core::Result<f64> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Height)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetHeight(&self, value: f64) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHeight)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn MinWidth(&self) -> windows_core::Result<f64> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MinWidth)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetMinWidth(&self, value: f64) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetMinWidth)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn MaxWidth(&self) -> windows_core::Result<f64> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MaxWidth)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetMaxWidth(&self, value: f64) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetMaxWidth)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn MinHeight(&self) -> windows_core::Result<f64> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MinHeight)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetMinHeight(&self, value: f64) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetMinHeight)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn MaxHeight(&self) -> windows_core::Result<f64> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MaxHeight)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetMaxHeight(&self, value: f64) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetMaxHeight)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn HorizontalAlignment(
+                        &self,
+                    ) -> windows_core::Result<super::HorizontalAlignment> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).HorizontalAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetHorizontalAlignment(
+                        &self,
+                        value: super::HorizontalAlignment,
+                    ) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetHorizontalAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn VerticalAlignment(
+                        &self,
+                    ) -> windows_core::Result<super::VerticalAlignment> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).VerticalAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetVerticalAlignment(
+                        &self,
+                        value: super::VerticalAlignment,
+                    ) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetVerticalAlignment)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Margin(&self) -> windows_core::Result<super::Thickness> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Margin)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetMargin(&self, value: super::Thickness) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetMargin)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Name(&self) -> windows_core::Result<windows_core::HSTRING> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Name)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| core::mem::transmute(result__))
+                        }
+                    }
+                    pub fn SetName(
+                        &self,
+                        value: &windows_core::HSTRING,
+                    ) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetName)(
+                                windows_core::Interface::as_raw(this),
+                                core::mem::transmute_copy(value),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn BaseUri(&self) -> windows_core::Result<windows::Foundation::Uri> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).BaseUri)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn DataContext(&self) -> windows_core::Result<windows_core::IInspectable> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DataContext)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetDataContext<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<windows_core::IInspectable>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetDataContext)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn AllowFocusOnInteraction(&self) -> windows_core::Result<bool> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).AllowFocusOnInteraction)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetAllowFocusOnInteraction(
+                        &self,
+                        value: bool,
+                    ) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetAllowFocusOnInteraction)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FocusVisualMargin(&self) -> windows_core::Result<super::Thickness> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FocusVisualMargin)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetFocusVisualMargin(
+                        &self,
+                        value: super::Thickness,
+                    ) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFocusVisualMargin)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FocusVisualSecondaryThickness(
+                        &self,
+                    ) -> windows_core::Result<super::Thickness> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FocusVisualSecondaryThickness)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetFocusVisualSecondaryThickness(
+                        &self,
+                        value: super::Thickness,
+                    ) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            ( windows_core::Interface::vtable ( this ) . SetFocusVisualSecondaryThickness ) ( windows_core::Interface::as_raw ( this ) , value , ) . ok ( )
+                        }
+                    }
+                    pub fn FocusVisualPrimaryThickness(
+                        &self,
+                    ) -> windows_core::Result<super::Thickness> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FocusVisualPrimaryThickness)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetFocusVisualPrimaryThickness(
+                        &self,
+                        value: super::Thickness,
+                    ) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFocusVisualPrimaryThickness)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FocusVisualSecondaryBrush(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FocusVisualSecondaryBrush)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetFocusVisualSecondaryBrush<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFocusVisualSecondaryBrush)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FocusVisualPrimaryBrush(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FocusVisualPrimaryBrush)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetFocusVisualPrimaryBrush<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Media::Brush>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFocusVisualPrimaryBrush)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn AllowFocusWhenDisabled(&self) -> windows_core::Result<bool> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).AllowFocusWhenDisabled)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetAllowFocusWhenDisabled(
+                        &self,
+                        value: bool,
+                    ) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetAllowFocusWhenDisabled)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Style(&self) -> windows_core::Result<super::Style> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Style)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetStyle<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Style>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetStyle)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Parent(&self) -> windows_core::Result<super::DependencyObject> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Parent)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn FlowDirection(&self) -> windows_core::Result<super::FlowDirection> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FlowDirection)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetFlowDirection(
+                        &self,
+                        value: super::FlowDirection,
+                    ) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetFlowDirection)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RequestedTheme(&self) -> windows_core::Result<super::ElementTheme> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).RequestedTheme)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetRequestedTheme(
+                        &self,
+                        value: super::ElementTheme,
+                    ) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetRequestedTheme)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn IsLoaded(&self) -> windows_core::Result<bool> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsLoaded)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn ActualTheme(&self) -> windows_core::Result<super::ElementTheme> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ActualTheme)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn Loaded<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::RoutedEventHandler>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Loaded)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveLoaded(&self, token: i64) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveLoaded)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Unloaded<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::RoutedEventHandler>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Unloaded)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveUnloaded(&self, token: i64) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveUnloaded)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveDataContextChanged(&self, token: i64) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveDataContextChanged)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn SizeChanged<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::SizeChangedEventHandler>,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).SizeChanged)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveSizeChanged(&self, token: i64) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveSizeChanged)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn LayoutUpdated<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::EventHandler<windows_core::IInspectable>,
+                        >,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).LayoutUpdated)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveLayoutUpdated(&self, token: i64) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveLayoutUpdated)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Loading<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::FrameworkElement,
+                                windows_core::IInspectable,
+                            >,
+                        >,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Loading)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveLoading(&self, token: i64) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveLoading)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn ActualThemeChanged<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::FrameworkElement,
+                                windows_core::IInspectable,
+                            >,
+                        >,
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ActualThemeChanged)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveActualThemeChanged(&self, token: i64) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveActualThemeChanged)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveEffectiveViewportChanged(
+                        &self,
+                        token: i64,
+                    ) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveEffectiveViewportChanged)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FindName(
+                        &self,
+                        name: &windows_core::HSTRING,
+                    ) -> windows_core::Result<windows_core::IInspectable> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IFrameworkElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FindName)(
+                                windows_core::Interface::as_raw(this),
+                                core::mem::transmute_copy(name),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn MeasureOverride(
+                        &self,
+                        availablesize: windows::Foundation::Size,
+                    ) -> windows_core::Result<windows::Foundation::Size> {
+                        let this = &windows_core::Interface::cast::<
+                            super::IFrameworkElementOverrides,
+                        >(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).MeasureOverride)(
+                                windows_core::Interface::as_raw(this),
+                                availablesize,
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn ArrangeOverride(
+                        &self,
+                        finalsize: windows::Foundation::Size,
+                    ) -> windows_core::Result<windows::Foundation::Size> {
+                        let this = &windows_core::Interface::cast::<
+                            super::IFrameworkElementOverrides,
+                        >(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ArrangeOverride)(
+                                windows_core::Interface::as_raw(this),
+                                finalsize,
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn OnApplyTemplate(&self) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<
+                            super::IFrameworkElementOverrides,
+                        >(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnApplyTemplate)(
+                                windows_core::Interface::as_raw(this),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn GoToElementStateCore(
+                        &self,
+                        statename: &windows_core::HSTRING,
+                        usetransitions: bool,
+                    ) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<
+                            super::IFrameworkElementOverrides,
+                        >(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).GoToElementStateCore)(
+                                windows_core::Interface::as_raw(this),
+                                core::mem::transmute_copy(statename),
+                                usetransitions,
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn InvalidateViewport(&self) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<
+                            super::IFrameworkElementProtected,
+                        >(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).InvalidateViewport)(
+                                windows_core::Interface::as_raw(this),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn DesiredSize(&self) -> windows_core::Result<windows::Foundation::Size> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DesiredSize)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn AllowDrop(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).AllowDrop)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetAllowDrop(&self, value: bool) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetAllowDrop)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Opacity(&self) -> windows_core::Result<f64> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Opacity)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetOpacity(&self, value: f64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetOpacity)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RenderTransformOrigin(
+                        &self,
+                    ) -> windows_core::Result<windows::Foundation::Point> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).RenderTransformOrigin)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetRenderTransformOrigin(
+                        &self,
+                        value: windows::Foundation::Point,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetRenderTransformOrigin)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn IsHitTestVisible(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsHitTestVisible)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetIsHitTestVisible(&self, value: bool) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetIsHitTestVisible)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Visibility(&self) -> windows_core::Result<super::Visibility> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Visibility)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetVisibility(
+                        &self,
+                        value: super::Visibility,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetVisibility)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RenderSize(&self) -> windows_core::Result<windows::Foundation::Size> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).RenderSize)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn UseLayoutRounding(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).UseLayoutRounding)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetUseLayoutRounding(&self, value: bool) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetUseLayoutRounding)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn IsTapEnabled(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsTapEnabled)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetIsTapEnabled(&self, value: bool) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetIsTapEnabled)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn IsDoubleTapEnabled(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsDoubleTapEnabled)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetIsDoubleTapEnabled(&self, value: bool) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetIsDoubleTapEnabled)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn CanDrag(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CanDrag)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetCanDrag(&self, value: bool) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetCanDrag)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn IsRightTapEnabled(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsRightTapEnabled)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetIsRightTapEnabled(&self, value: bool) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetIsRightTapEnabled)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn IsHoldingEnabled(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsHoldingEnabled)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetIsHoldingEnabled(&self, value: bool) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetIsHoldingEnabled)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn PointerCaptures(
+                        &self,
+                    ) -> windows_core::Result<windows_collections::IVectorView<super::Input::Pointer>>
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PointerCaptures)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn ContextFlyout(&self) -> windows_core::Result<Primitives::FlyoutBase> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextFlyout)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetContextFlyout<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<Primitives::FlyoutBase>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetContextFlyout)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn CanBeScrollAnchor(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CanBeScrollAnchor)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetCanBeScrollAnchor(&self, value: bool) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetCanBeScrollAnchor)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn ExitDisplayModeOnAccessKeyInvoked(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .ExitDisplayModeOnAccessKeyInvoked)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetExitDisplayModeOnAccessKeyInvoked(
+                        &self,
+                        value: bool,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this)
+                                .SetExitDisplayModeOnAccessKeyInvoked)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn IsAccessKeyScope(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsAccessKeyScope)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetIsAccessKeyScope(&self, value: bool) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetIsAccessKeyScope)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn AccessKeyScopeOwner(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyObject> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).AccessKeyScopeOwner)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetAccessKeyScopeOwner<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DependencyObject>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetAccessKeyScopeOwner)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn AccessKey(&self) -> windows_core::Result<windows_core::HSTRING> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).AccessKey)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| core::mem::transmute(result__))
+                        }
+                    }
+                    pub fn SetAccessKey(
+                        &self,
+                        value: &windows_core::HSTRING,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetAccessKey)(
+                                windows_core::Interface::as_raw(this),
+                                core::mem::transmute_copy(value),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn KeyTipHorizontalOffset(&self) -> windows_core::Result<f64> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).KeyTipHorizontalOffset)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetKeyTipHorizontalOffset(
+                        &self,
+                        value: f64,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetKeyTipHorizontalOffset)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn KeyTipVerticalOffset(&self) -> windows_core::Result<f64> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).KeyTipVerticalOffset)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetKeyTipVerticalOffset(&self, value: f64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetKeyTipVerticalOffset)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn KeyTipTarget(&self) -> windows_core::Result<super::DependencyObject> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).KeyTipTarget)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetKeyTipTarget<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DependencyObject>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetKeyTipTarget)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn KeyboardAcceleratorPlacementTarget(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyObject> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this)
+                                .KeyboardAcceleratorPlacementTarget)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetKeyboardAcceleratorPlacementTarget<P0>(
+                        &self,
+                        value: P0,
+                    ) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DependencyObject>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this)
+                                .SetKeyboardAcceleratorPlacementTarget)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Translation(&self) -> windows_core::Result<windows_numerics::Vector3> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Translation)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetTranslation(
+                        &self,
+                        value: windows_numerics::Vector3,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetTranslation)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Rotation(&self) -> windows_core::Result<f32> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Rotation)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetRotation(&self, value: f32) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetRotation)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Scale(&self) -> windows_core::Result<windows_numerics::Vector3> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Scale)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetScale(
+                        &self,
+                        value: windows_numerics::Vector3,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetScale)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn TransformMatrix(
+                        &self,
+                    ) -> windows_core::Result<windows_numerics::Matrix4x4> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TransformMatrix)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetTransformMatrix(
+                        &self,
+                        value: windows_numerics::Matrix4x4,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetTransformMatrix)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn CenterPoint(&self) -> windows_core::Result<windows_numerics::Vector3> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CenterPoint)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetCenterPoint(
+                        &self,
+                        value: windows_numerics::Vector3,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetCenterPoint)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RotationAxis(&self) -> windows_core::Result<windows_numerics::Vector3> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).RotationAxis)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetRotationAxis(
+                        &self,
+                        value: windows_numerics::Vector3,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetRotationAxis)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn ActualOffset(&self) -> windows_core::Result<windows_numerics::Vector3> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ActualOffset)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn ActualSize(&self) -> windows_core::Result<windows_numerics::Vector2> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ActualSize)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn XamlRoot(&self) -> windows_core::Result<super::XamlRoot> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).XamlRoot)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetXamlRoot<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::XamlRoot>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetXamlRoot)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RasterizationScale(&self) -> windows_core::Result<f64> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).RasterizationScale)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetRasterizationScale(&self, value: f64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetRasterizationScale)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FocusState(&self) -> windows_core::Result<super::FocusState> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).FocusState)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn UseSystemFocusVisuals(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).UseSystemFocusVisuals)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetUseSystemFocusVisuals(
+                        &self,
+                        value: bool,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetUseSystemFocusVisuals)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn XYFocusLeft(&self) -> windows_core::Result<super::DependencyObject> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).XYFocusLeft)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetXYFocusLeft<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DependencyObject>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetXYFocusLeft)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn XYFocusRight(&self) -> windows_core::Result<super::DependencyObject> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).XYFocusRight)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetXYFocusRight<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DependencyObject>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetXYFocusRight)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn XYFocusUp(&self) -> windows_core::Result<super::DependencyObject> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).XYFocusUp)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetXYFocusUp<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DependencyObject>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetXYFocusUp)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn XYFocusDown(&self) -> windows_core::Result<super::DependencyObject> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).XYFocusDown)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn SetXYFocusDown<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::DependencyObject>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetXYFocusDown)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn IsTabStop(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).IsTabStop)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetIsTabStop(&self, value: bool) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetIsTabStop)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn TabIndex(&self) -> windows_core::Result<i32> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TabIndex)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn SetTabIndex(&self, value: i32) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).SetTabIndex)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn KeyUp<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::KeyEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).KeyUp)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveKeyUp(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveKeyUp)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn KeyDown<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::KeyEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).KeyDown)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveKeyDown(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveKeyDown)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn GotFocus<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::RoutedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).GotFocus)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveGotFocus(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveGotFocus)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn LostFocus<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::RoutedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).LostFocus)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveLostFocus(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveLostFocus)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveDragStarting(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveDragStarting)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveDropCompleted(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveDropCompleted)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveCharacterReceived(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveCharacterReceived)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn DragEnter<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::DragEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DragEnter)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveDragEnter(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveDragEnter)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn DragLeave<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::DragEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DragLeave)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveDragLeave(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveDragLeave)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn DragOver<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::DragEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DragOver)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveDragOver(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveDragOver)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Drop<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::DragEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Drop)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveDrop(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveDrop)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn PointerPressed<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::PointerEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PointerPressed)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemovePointerPressed(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemovePointerPressed)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn PointerMoved<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::PointerEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PointerMoved)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemovePointerMoved(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemovePointerMoved)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn PointerReleased<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::PointerEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PointerReleased)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemovePointerReleased(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemovePointerReleased)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn PointerEntered<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::PointerEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PointerEntered)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemovePointerEntered(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemovePointerEntered)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn PointerExited<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::PointerEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PointerExited)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemovePointerExited(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemovePointerExited)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn PointerCaptureLost<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::PointerEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PointerCaptureLost)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemovePointerCaptureLost(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemovePointerCaptureLost)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn PointerCanceled<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::PointerEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PointerCanceled)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemovePointerCanceled(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemovePointerCanceled)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn PointerWheelChanged<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::PointerEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PointerWheelChanged)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemovePointerWheelChanged(
+                        &self,
+                        token: i64,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemovePointerWheelChanged)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Tapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::TappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Tapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveTapped(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveTapped)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn DoubleTapped<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::DoubleTappedEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).DoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveDoubleTapped(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveDoubleTapped)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveHolding(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveHolding)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn ContextRequested<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::Input::ContextRequestedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveContextRequested(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveContextRequested)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn ContextCanceled<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<
+                            windows::Foundation::TypedEventHandler<
+                                super::UIElement,
+                                super::RoutedEventArgs,
+                            >,
+                        >,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).ContextCanceled)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemoveContextCanceled(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveContextCanceled)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveRightTapped(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveRightTapped)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveManipulationStarting(
+                        &self,
+                        token: i64,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveManipulationStarting)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveManipulationInertiaStarting(
+                        &self,
+                        token: i64,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this)
+                                .RemoveManipulationInertiaStarting)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveManipulationStarted(
+                        &self,
+                        token: i64,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveManipulationStarted)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveManipulationDelta(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveManipulationDelta)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveManipulationCompleted(
+                        &self,
+                        token: i64,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveManipulationCompleted)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveAccessKeyDisplayRequested(
+                        &self,
+                        token: i64,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveAccessKeyDisplayRequested)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveAccessKeyDisplayDismissed(
+                        &self,
+                        token: i64,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveAccessKeyDisplayDismissed)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveAccessKeyInvoked(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveAccessKeyInvoked)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveProcessKeyboardAccelerators(
+                        &self,
+                        token: i64,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this)
+                                .RemoveProcessKeyboardAccelerators)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveGettingFocus(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveGettingFocus)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveLosingFocus(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveLosingFocus)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveNoFocusCandidateFound(
+                        &self,
+                        token: i64,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveNoFocusCandidateFound)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn PreviewKeyDown<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::KeyEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PreviewKeyDown)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemovePreviewKeyDown(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemovePreviewKeyDown)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn PreviewKeyUp<P0>(&self, handler: P0) -> windows_core::Result<i64>
+                    where
+                        P0: windows_core::Param<super::Input::KeyEventHandler>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).PreviewKeyUp)(
+                                windows_core::Interface::as_raw(this),
+                                handler.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn RemovePreviewKeyUp(&self, token: i64) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemovePreviewKeyUp)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn RemoveBringIntoViewRequested(
+                        &self,
+                        token: i64,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).RemoveBringIntoViewRequested)(
+                                windows_core::Interface::as_raw(this),
+                                token,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Measure(
+                        &self,
+                        availablesize: windows::Foundation::Size,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).Measure)(
+                                windows_core::Interface::as_raw(this),
+                                availablesize,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Arrange(
+                        &self,
+                        finalrect: windows::Foundation::Rect,
+                    ) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).Arrange)(
+                                windows_core::Interface::as_raw(this),
+                                finalrect,
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn CapturePointer<P0>(&self, value: P0) -> windows_core::Result<bool>
+                    where
+                        P0: windows_core::Param<super::Input::Pointer>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CapturePointer)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn ReleasePointerCapture<P0>(&self, value: P0) -> windows_core::Result<()>
+                    where
+                        P0: windows_core::Param<super::Input::Pointer>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).ReleasePointerCapture)(
+                                windows_core::Interface::as_raw(this),
+                                value.param().abi(),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn ReleasePointerCaptures(&self) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).ReleasePointerCaptures)(
+                                windows_core::Interface::as_raw(this),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn TransformToVisual<P0>(
+                        &self,
+                        visual: P0,
+                    ) -> windows_core::Result<super::Media::GeneralTransform>
+                    where
+                        P0: windows_core::Param<super::UIElement>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).TransformToVisual)(
+                                windows_core::Interface::as_raw(this),
+                                visual.param().abi(),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn InvalidateMeasure(&self) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).InvalidateMeasure)(
+                                windows_core::Interface::as_raw(this),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn InvalidateArrange(&self) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).InvalidateArrange)(
+                                windows_core::Interface::as_raw(this),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn UpdateLayout(&self) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).UpdateLayout)(
+                                windows_core::Interface::as_raw(this),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn CancelDirectManipulations(&self) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).CancelDirectManipulations)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn StartDragAsync<P0>(
+                        &self,
+                        pointerpoint: P0,
+                    ) -> windows_core::Result<
+                        windows_future::IAsyncOperation<
+                            windows::ApplicationModel::DataTransfer::DataPackageOperation,
+                        >,
+                    >
+                    where
+                        P0: windows_core::Param<super::super::Input::PointerPoint>,
+                    {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).StartDragAsync)(
+                                windows_core::Interface::as_raw(this),
+                                pointerpoint.param().abi(),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn StartBringIntoView(&self) -> windows_core::Result<()> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).StartBringIntoView)(
+                                windows_core::Interface::as_raw(this),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn Focus(&self, value: super::FocusState) -> windows_core::Result<bool> {
+                        let this = &windows_core::Interface::cast::<super::IUIElement>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).Focus)(
+                                windows_core::Interface::as_raw(this),
+                                value,
+                                &mut result__,
+                            )
+                            .map(|| result__)
+                        }
+                    }
+                    pub fn OnDisconnectVisualChildren(&self) -> windows_core::Result<()> {
+                        let this =
+                            &windows_core::Interface::cast::<super::IUIElementOverrides>(self)?;
+                        unsafe {
+                            (windows_core::Interface::vtable(this).OnDisconnectVisualChildren)(
+                                windows_core::Interface::as_raw(this),
+                            )
+                            .ok()
+                        }
+                    }
+                    pub fn FindSubElementsForTouchTargeting(
+                        &self,
+                        point: windows::Foundation::Point,
+                        boundingrect: windows::Foundation::Rect,
+                    ) -> windows_core::Result<
+                        windows_collections::IIterable<
+                            windows_collections::IIterable<windows::Foundation::Point>,
+                        >,
+                    > {
+                        let this =
+                            &windows_core::Interface::cast::<super::IUIElementOverrides>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            ( windows_core::Interface::vtable ( this ) . FindSubElementsForTouchTargeting ) ( windows_core::Interface::as_raw ( this ) , point , boundingrect , & mut result__ ) . and_then ( || windows_core::Type::from_abi ( result__ ) )
+                        }
+                    }
+                    pub fn GetChildrenInTabFocusOrder(
+                        &self,
+                    ) -> windows_core::Result<windows_collections::IIterable<super::DependencyObject>>
+                    {
+                        let this =
+                            &windows_core::Interface::cast::<super::IUIElementOverrides>(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).GetChildrenInTabFocusOrder)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn GetVisualInternal(
+                        &self,
+                    ) -> windows_core::Result<super::super::Composition::Visual>
+                    {
+                        let this = &windows_core::Interface::cast::<
+                            super::super::Composition::IVisualElement2,
+                        >(self)?;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).GetVisualInternal)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    fn ICalendarViewFactory<
+                        R,
+                        F: FnOnce(&ICalendarViewFactory) -> windows_core::Result<R>,
+                    >(
+                        callback: F,
+                    ) -> windows_core::Result<R> {
+                        static SHARED: windows_core::imp::FactoryCache<
+                            CalendarView,
+                            ICalendarViewFactory,
+                        > = windows_core::imp::FactoryCache::new();
+                        SHARED.call(callback)
+                    }
+                    fn ICalendarViewStatics<
+                        R,
+                        F: FnOnce(&ICalendarViewStatics) -> windows_core::Result<R>,
+                    >(
+                        callback: F,
+                    ) -> windows_core::Result<R> {
+                        static SHARED: windows_core::imp::FactoryCache<
+                            CalendarView,
+                            ICalendarViewStatics,
+                        > = windows_core::imp::FactoryCache::new();
+                        SHARED.call(callback)
+                    }
+                }
+                impl windows_core::RuntimeType for CalendarView {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_class::<Self, ICalendarView>();
+                }
+                unsafe impl windows_core::Interface for CalendarView {
+                    type Vtable = <ICalendarView as windows_core::Interface>::Vtable;
+                    const IID: windows_core::GUID = <ICalendarView as windows_core::Interface>::IID;
+                }
+                impl windows_core::RuntimeName for CalendarView {
+                    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.CalendarView";
+                }
+                unsafe impl Send for CalendarView {}
+                unsafe impl Sync for CalendarView {}
+                #[repr(transparent)]
+                #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+                pub struct CalendarViewDisplayMode(pub i32);
+                impl CalendarViewDisplayMode {
+                    pub const Month: Self = Self(0i32);
+                    pub const Year: Self = Self(1i32);
+                    pub const Decade: Self = Self(2i32);
+                }
+                impl windows_core::TypeKind for CalendarViewDisplayMode {
+                    type TypeKind = windows_core::CopyType;
+                }
+                impl windows_core::RuntimeType for CalendarViewDisplayMode {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::from_slice(
+                            b"enum(Microsoft.UI.Xaml.Controls.CalendarViewDisplayMode;i4)",
+                        );
+                }
+                #[repr(transparent)]
+                #[derive(Clone, Debug, Eq, PartialEq)]
+                pub struct CalendarViewSelectedDatesChangedEventArgs(windows_core::IUnknown);
+                windows_core::imp::interface_hierarchy!(
+                    CalendarViewSelectedDatesChangedEventArgs,
+                    windows_core::IUnknown,
+                    windows_core::IInspectable
+                );
+                impl CalendarViewSelectedDatesChangedEventArgs {
+                    pub fn AddedDates(
+                        &self,
+                    ) -> windows_core::Result<
+                        windows_collections::IVectorView<windows::Foundation::DateTime>,
+                    > {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).AddedDates)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                    pub fn RemovedDates(
+                        &self,
+                    ) -> windows_core::Result<
+                        windows_collections::IVectorView<windows::Foundation::DateTime>,
+                    > {
+                        let this = self;
+                        unsafe {
+                            let mut result__ = core::mem::zeroed();
+                            (windows_core::Interface::vtable(this).RemovedDates)(
+                                windows_core::Interface::as_raw(this),
+                                &mut result__,
+                            )
+                            .and_then(|| windows_core::Type::from_abi(result__))
+                        }
+                    }
+                }
+                impl windows_core::RuntimeType for CalendarViewSelectedDatesChangedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_class::<
+                            Self,
+                            ICalendarViewSelectedDatesChangedEventArgs,
+                        >();
+                }
+                unsafe impl windows_core::Interface for CalendarViewSelectedDatesChangedEventArgs {
+                    type Vtable = < ICalendarViewSelectedDatesChangedEventArgs as windows_core::Interface >::Vtable ;
+                    const IID :windows_core::GUID = < ICalendarViewSelectedDatesChangedEventArgs as windows_core::Interface >::IID ;
+                }
+                impl windows_core::RuntimeName for CalendarViewSelectedDatesChangedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.CalendarViewSelectedDatesChangedEventArgs";
+                }
+                unsafe impl Send for CalendarViewSelectedDatesChangedEventArgs {}
+                unsafe impl Sync for CalendarViewSelectedDatesChangedEventArgs {}
+                #[repr(transparent)]
+                #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+                pub struct CalendarViewSelectionMode(pub i32);
+                impl CalendarViewSelectionMode {
+                    pub const None: Self = Self(0i32);
+                    pub const Single: Self = Self(1i32);
+                    pub const Multiple: Self = Self(2i32);
+                }
+                impl windows_core::TypeKind for CalendarViewSelectionMode {
+                    type TypeKind = windows_core::CopyType;
+                }
+                impl windows_core::RuntimeType for CalendarViewSelectionMode {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::from_slice(
+                            b"enum(Microsoft.UI.Xaml.Controls.CalendarViewSelectionMode;i4)",
+                        );
+                }
                 #[repr(transparent)]
                 #[derive(Clone, Debug, Eq, PartialEq)]
                 pub struct Canvas(windows_core::IUnknown);
@@ -133926,6 +140601,11 @@ pub mod Microsoft {
                     ) -> windows_core::Result<()>;
                     fn IsTodayHighlighted(&self) -> windows_core::Result<bool>;
                     fn SetIsTodayHighlighted(&self, value: bool) -> windows_core::Result<()>;
+                    fn DisplayMode(&self) -> windows_core::Result<CalendarViewDisplayMode>;
+                    fn SetDisplayMode(
+                        &self,
+                        value: CalendarViewDisplayMode,
+                    ) -> windows_core::Result<()>;
                     fn FirstDayOfWeek(
                         &self,
                     ) -> windows_core::Result<windows::Globalization::DayOfWeek>;
@@ -134376,6 +141056,38 @@ pub mod Microsoft {
                                 ICalendarDatePicker_Impl::SetIsTodayHighlighted(this, value).into()
                             }
                         }
+                        unsafe extern "system" fn DisplayMode<
+                            Identity: ICalendarDatePicker_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut CalendarViewDisplayMode,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarDatePicker_Impl::DisplayMode(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetDisplayMode<
+                            Identity: ICalendarDatePicker_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: CalendarViewDisplayMode,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarDatePicker_Impl::SetDisplayMode(this, value).into()
+                            }
+                        }
                         unsafe extern "system" fn FirstDayOfWeek<
                             Identity: ICalendarDatePicker_Impl,
                             const OFFSET: isize,
@@ -134711,8 +141423,8 @@ pub mod Microsoft {
                             SetMaxDate: SetMaxDate::<Identity, OFFSET>,
                             IsTodayHighlighted: IsTodayHighlighted::<Identity, OFFSET>,
                             SetIsTodayHighlighted: SetIsTodayHighlighted::<Identity, OFFSET>,
-                            DisplayMode: 0,
-                            SetDisplayMode: 0,
+                            DisplayMode: DisplayMode::<Identity, OFFSET>,
+                            SetDisplayMode: SetDisplayMode::<Identity, OFFSET>,
                             FirstDayOfWeek: FirstDayOfWeek::<Identity, OFFSET>,
                             SetFirstDayOfWeek: SetFirstDayOfWeek::<Identity, OFFSET>,
                             DayOfWeekFormat: DayOfWeekFormat::<Identity, OFFSET>,
@@ -134861,8 +141573,16 @@ pub mod Microsoft {
                         bool,
                     )
                         -> windows_core::HRESULT,
-                    DisplayMode: usize,
-                    SetDisplayMode: usize,
+                    pub DisplayMode: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut CalendarViewDisplayMode,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetDisplayMode: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        CalendarViewDisplayMode,
+                    )
+                        -> windows_core::HRESULT,
                     pub FirstDayOfWeek: unsafe extern "system" fn(
                         *mut core::ffi::c_void,
                         *mut windows::Globalization::DayOfWeek,
@@ -135603,6 +142323,6557 @@ pub mod Microsoft {
                             *mut *mut core::ffi::c_void,
                         ) -> windows_core::HRESULT,
                     pub IsGroupLabelVisibleProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
+                    ICalendarView,
+                    ICalendarView_Vtbl,
+                    0xe786081e_b680_56ab_bfbb_52d5b17c365e
+                );
+                impl windows_core::RuntimeType for ICalendarView {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for ICalendarView {
+                    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.ICalendarView";
+                }
+                pub trait ICalendarView_Impl: windows_core::IUnknownImpl {
+                    fn CalendarIdentifier(&self) -> windows_core::Result<windows_core::HSTRING>;
+                    fn SetCalendarIdentifier(
+                        &self,
+                        value: &windows_core::HSTRING,
+                    ) -> windows_core::Result<()>;
+                    fn DayOfWeekFormat(&self) -> windows_core::Result<windows_core::HSTRING>;
+                    fn SetDayOfWeekFormat(
+                        &self,
+                        value: &windows_core::HSTRING,
+                    ) -> windows_core::Result<()>;
+                    fn IsGroupLabelVisible(&self) -> windows_core::Result<bool>;
+                    fn SetIsGroupLabelVisible(&self, value: bool) -> windows_core::Result<()>;
+                    fn DisplayMode(&self) -> windows_core::Result<CalendarViewDisplayMode>;
+                    fn SetDisplayMode(
+                        &self,
+                        value: CalendarViewDisplayMode,
+                    ) -> windows_core::Result<()>;
+                    fn FirstDayOfWeek(
+                        &self,
+                    ) -> windows_core::Result<windows::Globalization::DayOfWeek>;
+                    fn SetFirstDayOfWeek(
+                        &self,
+                        value: windows::Globalization::DayOfWeek,
+                    ) -> windows_core::Result<()>;
+                    fn IsOutOfScopeEnabled(&self) -> windows_core::Result<bool>;
+                    fn SetIsOutOfScopeEnabled(&self, value: bool) -> windows_core::Result<()>;
+                    fn IsTodayHighlighted(&self) -> windows_core::Result<bool>;
+                    fn SetIsTodayHighlighted(&self, value: bool) -> windows_core::Result<()>;
+                    fn MaxDate(&self) -> windows_core::Result<windows::Foundation::DateTime>;
+                    fn SetMaxDate(
+                        &self,
+                        value: &windows::Foundation::DateTime,
+                    ) -> windows_core::Result<()>;
+                    fn MinDate(&self) -> windows_core::Result<windows::Foundation::DateTime>;
+                    fn SetMinDate(
+                        &self,
+                        value: &windows::Foundation::DateTime,
+                    ) -> windows_core::Result<()>;
+                    fn NumberOfWeeksInView(&self) -> windows_core::Result<i32>;
+                    fn SetNumberOfWeeksInView(&self, value: i32) -> windows_core::Result<()>;
+                    fn SelectedDates(
+                        &self,
+                    ) -> windows_core::Result<
+                        windows_collections::IVector<windows::Foundation::DateTime>,
+                    >;
+                    fn SelectionMode(&self) -> windows_core::Result<CalendarViewSelectionMode>;
+                    fn SetSelectionMode(
+                        &self,
+                        value: CalendarViewSelectionMode,
+                    ) -> windows_core::Result<()>;
+                    fn FocusBorderBrush(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetFocusBorderBrush(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn SelectedHoverBorderBrush(&self)
+                        -> windows_core::Result<super::Media::Brush>;
+                    fn SetSelectedHoverBorderBrush(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn SelectedPressedBorderBrush(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush>;
+                    fn SetSelectedPressedBorderBrush(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn SelectedDisabledBorderBrush(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush>;
+                    fn SetSelectedDisabledBorderBrush(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn SelectedBorderBrush(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetSelectedBorderBrush(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn HoverBorderBrush(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetHoverBorderBrush(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn PressedBorderBrush(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetPressedBorderBrush(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn TodaySelectedInnerBorderBrush(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush>;
+                    fn SetTodaySelectedInnerBorderBrush(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn BlackoutStrikethroughBrush(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush>;
+                    fn SetBlackoutStrikethroughBrush(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn CalendarItemBorderBrush(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetCalendarItemBorderBrush(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn BlackoutBackground(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetBlackoutBackground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn OutOfScopeBackground(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetOutOfScopeBackground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn CalendarItemBackground(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetCalendarItemBackground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn CalendarItemHoverBackground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush>;
+                    fn SetCalendarItemHoverBackground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn CalendarItemPressedBackground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush>;
+                    fn SetCalendarItemPressedBackground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn CalendarItemDisabledBackground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush>;
+                    fn SetCalendarItemDisabledBackground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn TodayBackground(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetTodayBackground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn TodayBlackoutBackground(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetTodayBlackoutBackground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn TodayHoverBackground(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetTodayHoverBackground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn TodayPressedBackground(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetTodayPressedBackground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn TodayDisabledBackground(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetTodayDisabledBackground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn PressedForeground(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetPressedForeground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn TodayForeground(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetTodayForeground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn BlackoutForeground(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetBlackoutForeground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn TodayBlackoutForeground(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetTodayBlackoutForeground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn SelectedForeground(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetSelectedForeground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn SelectedHoverForeground(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetSelectedHoverForeground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn SelectedPressedForeground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush>;
+                    fn SetSelectedPressedForeground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn SelectedDisabledForeground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush>;
+                    fn SetSelectedDisabledForeground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn OutOfScopeForeground(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetOutOfScopeForeground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn OutOfScopeHoverForeground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush>;
+                    fn SetOutOfScopeHoverForeground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn OutOfScopePressedForeground(
+                        &self,
+                    ) -> windows_core::Result<super::Media::Brush>;
+                    fn SetOutOfScopePressedForeground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn CalendarItemForeground(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetCalendarItemForeground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn DisabledForeground(&self) -> windows_core::Result<super::Media::Brush>;
+                    fn SetDisabledForeground(
+                        &self,
+                        value: windows_core::Ref<'_, super::Media::Brush>,
+                    ) -> windows_core::Result<()>;
+                    fn DayItemFontSize(&self) -> windows_core::Result<f64>;
+                    fn SetDayItemFontSize(&self, value: f64) -> windows_core::Result<()>;
+                    fn DayItemFontStyle(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontStyle>;
+                    fn SetDayItemFontStyle(
+                        &self,
+                        value: windows::UI::Text::FontStyle,
+                    ) -> windows_core::Result<()>;
+                    fn DayItemFontWeight(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontWeight>;
+                    fn SetDayItemFontWeight(
+                        &self,
+                        value: &windows::UI::Text::FontWeight,
+                    ) -> windows_core::Result<()>;
+                    fn TodayFontWeight(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontWeight>;
+                    fn SetTodayFontWeight(
+                        &self,
+                        value: &windows::UI::Text::FontWeight,
+                    ) -> windows_core::Result<()>;
+                    fn FirstOfMonthLabelFontSize(&self) -> windows_core::Result<f64>;
+                    fn SetFirstOfMonthLabelFontSize(&self, value: f64) -> windows_core::Result<()>;
+                    fn FirstOfMonthLabelFontStyle(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontStyle>;
+                    fn SetFirstOfMonthLabelFontStyle(
+                        &self,
+                        value: windows::UI::Text::FontStyle,
+                    ) -> windows_core::Result<()>;
+                    fn FirstOfMonthLabelFontWeight(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontWeight>;
+                    fn SetFirstOfMonthLabelFontWeight(
+                        &self,
+                        value: &windows::UI::Text::FontWeight,
+                    ) -> windows_core::Result<()>;
+                    fn MonthYearItemFontSize(&self) -> windows_core::Result<f64>;
+                    fn SetMonthYearItemFontSize(&self, value: f64) -> windows_core::Result<()>;
+                    fn MonthYearItemFontStyle(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontStyle>;
+                    fn SetMonthYearItemFontStyle(
+                        &self,
+                        value: windows::UI::Text::FontStyle,
+                    ) -> windows_core::Result<()>;
+                    fn MonthYearItemFontWeight(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontWeight>;
+                    fn SetMonthYearItemFontWeight(
+                        &self,
+                        value: &windows::UI::Text::FontWeight,
+                    ) -> windows_core::Result<()>;
+                    fn FirstOfYearDecadeLabelFontSize(&self) -> windows_core::Result<f64>;
+                    fn SetFirstOfYearDecadeLabelFontSize(
+                        &self,
+                        value: f64,
+                    ) -> windows_core::Result<()>;
+                    fn FirstOfYearDecadeLabelFontStyle(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontStyle>;
+                    fn SetFirstOfYearDecadeLabelFontStyle(
+                        &self,
+                        value: windows::UI::Text::FontStyle,
+                    ) -> windows_core::Result<()>;
+                    fn FirstOfYearDecadeLabelFontWeight(
+                        &self,
+                    ) -> windows_core::Result<windows::UI::Text::FontWeight>;
+                    fn SetFirstOfYearDecadeLabelFontWeight(
+                        &self,
+                        value: &windows::UI::Text::FontWeight,
+                    ) -> windows_core::Result<()>;
+                    fn DayItemMargin(&self) -> windows_core::Result<super::Thickness>;
+                    fn SetDayItemMargin(
+                        &self,
+                        value: &super::Thickness,
+                    ) -> windows_core::Result<()>;
+                    fn MonthYearItemMargin(&self) -> windows_core::Result<super::Thickness>;
+                    fn SetMonthYearItemMargin(
+                        &self,
+                        value: &super::Thickness,
+                    ) -> windows_core::Result<()>;
+                    fn FirstOfMonthLabelMargin(&self) -> windows_core::Result<super::Thickness>;
+                    fn SetFirstOfMonthLabelMargin(
+                        &self,
+                        value: &super::Thickness,
+                    ) -> windows_core::Result<()>;
+                    fn FirstOfYearDecadeLabelMargin(
+                        &self,
+                    ) -> windows_core::Result<super::Thickness>;
+                    fn SetFirstOfYearDecadeLabelMargin(
+                        &self,
+                        value: &super::Thickness,
+                    ) -> windows_core::Result<()>;
+                    fn HorizontalDayItemAlignment(
+                        &self,
+                    ) -> windows_core::Result<super::HorizontalAlignment>;
+                    fn SetHorizontalDayItemAlignment(
+                        &self,
+                        value: super::HorizontalAlignment,
+                    ) -> windows_core::Result<()>;
+                    fn VerticalDayItemAlignment(
+                        &self,
+                    ) -> windows_core::Result<super::VerticalAlignment>;
+                    fn SetVerticalDayItemAlignment(
+                        &self,
+                        value: super::VerticalAlignment,
+                    ) -> windows_core::Result<()>;
+                    fn HorizontalFirstOfMonthLabelAlignment(
+                        &self,
+                    ) -> windows_core::Result<super::HorizontalAlignment>;
+                    fn SetHorizontalFirstOfMonthLabelAlignment(
+                        &self,
+                        value: super::HorizontalAlignment,
+                    ) -> windows_core::Result<()>;
+                    fn VerticalFirstOfMonthLabelAlignment(
+                        &self,
+                    ) -> windows_core::Result<super::VerticalAlignment>;
+                    fn SetVerticalFirstOfMonthLabelAlignment(
+                        &self,
+                        value: super::VerticalAlignment,
+                    ) -> windows_core::Result<()>;
+                    fn CalendarItemBorderThickness(&self)
+                        -> windows_core::Result<super::Thickness>;
+                    fn SetCalendarItemBorderThickness(
+                        &self,
+                        value: &super::Thickness,
+                    ) -> windows_core::Result<()>;
+                    fn CalendarViewDayItemStyle(&self) -> windows_core::Result<super::Style>;
+                    fn SetCalendarViewDayItemStyle(
+                        &self,
+                        value: windows_core::Ref<'_, super::Style>,
+                    ) -> windows_core::Result<()>;
+                    fn CalendarItemCornerRadius(&self)
+                        -> windows_core::Result<super::CornerRadius>;
+                    fn SetCalendarItemCornerRadius(
+                        &self,
+                        value: &super::CornerRadius,
+                    ) -> windows_core::Result<()>;
+                    fn RemoveCalendarViewDayItemChanging(
+                        &self,
+                        token: i64,
+                    ) -> windows_core::Result<()>;
+                    fn SelectedDatesChanged(
+                        &self,
+                        handler: windows_core::Ref<
+                            '_,
+                            windows::Foundation::TypedEventHandler<
+                                CalendarView,
+                                CalendarViewSelectedDatesChangedEventArgs,
+                            >,
+                        >,
+                    ) -> windows_core::Result<i64>;
+                    fn RemoveSelectedDatesChanged(&self, token: i64) -> windows_core::Result<()>;
+                    fn SetDisplayDate(
+                        &self,
+                        date: &windows::Foundation::DateTime,
+                    ) -> windows_core::Result<()>;
+                    fn SetYearDecadeDisplayDimensions(
+                        &self,
+                        columns: i32,
+                        rows: i32,
+                    ) -> windows_core::Result<()>;
+                }
+                impl ICalendarView_Vtbl {
+                    pub const fn new<Identity: ICalendarView_Impl, const OFFSET: isize>() -> Self {
+                        unsafe extern "system" fn CalendarIdentifier<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::CalendarIdentifier(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetCalendarIdentifier<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetCalendarIdentifier(
+                                    this,
+                                    core::mem::transmute(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn DayOfWeekFormat<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::DayOfWeekFormat(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetDayOfWeekFormat<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetDayOfWeekFormat(
+                                    this,
+                                    core::mem::transmute(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn IsGroupLabelVisible<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::IsGroupLabelVisible(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetIsGroupLabelVisible<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetIsGroupLabelVisible(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn DisplayMode<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut CalendarViewDisplayMode,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::DisplayMode(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetDisplayMode<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: CalendarViewDisplayMode,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetDisplayMode(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn FirstDayOfWeek<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut windows::Globalization::DayOfWeek,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::FirstDayOfWeek(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetFirstDayOfWeek<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: windows::Globalization::DayOfWeek,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetFirstDayOfWeek(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn IsOutOfScopeEnabled<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::IsOutOfScopeEnabled(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetIsOutOfScopeEnabled<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetIsOutOfScopeEnabled(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn IsTodayHighlighted<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::IsTodayHighlighted(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetIsTodayHighlighted<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: bool,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetIsTodayHighlighted(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn MaxDate<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut windows::Foundation::DateTime,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::MaxDate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetMaxDate<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: windows::Foundation::DateTime,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetMaxDate(this, core::mem::transmute(&value))
+                                    .into()
+                            }
+                        }
+                        unsafe extern "system" fn MinDate<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut windows::Foundation::DateTime,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::MinDate(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetMinDate<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: windows::Foundation::DateTime,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetMinDate(this, core::mem::transmute(&value))
+                                    .into()
+                            }
+                        }
+                        unsafe extern "system" fn NumberOfWeeksInView<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut i32,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::NumberOfWeeksInView(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetNumberOfWeeksInView<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: i32,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetNumberOfWeeksInView(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn SelectedDates<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::SelectedDates(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SelectionMode<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut CalendarViewSelectionMode,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::SelectionMode(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetSelectionMode<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: CalendarViewSelectionMode,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetSelectionMode(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn FocusBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::FocusBorderBrush(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetFocusBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetFocusBorderBrush(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn SelectedHoverBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::SelectedHoverBorderBrush(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetSelectedHoverBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetSelectedHoverBorderBrush(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn SelectedPressedBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::SelectedPressedBorderBrush(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetSelectedPressedBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetSelectedPressedBorderBrush(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn SelectedDisabledBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::SelectedDisabledBorderBrush(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetSelectedDisabledBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetSelectedDisabledBorderBrush(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn SelectedBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::SelectedBorderBrush(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetSelectedBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetSelectedBorderBrush(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn HoverBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::HoverBorderBrush(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetHoverBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetHoverBorderBrush(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn PressedBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::PressedBorderBrush(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetPressedBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetPressedBorderBrush(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn TodaySelectedInnerBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::TodaySelectedInnerBorderBrush(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetTodaySelectedInnerBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetTodaySelectedInnerBorderBrush(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn BlackoutStrikethroughBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::BlackoutStrikethroughBrush(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetBlackoutStrikethroughBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetBlackoutStrikethroughBrush(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn CalendarItemBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::CalendarItemBorderBrush(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetCalendarItemBorderBrush<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetCalendarItemBorderBrush(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn BlackoutBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::BlackoutBackground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetBlackoutBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetBlackoutBackground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn OutOfScopeBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::OutOfScopeBackground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetOutOfScopeBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetOutOfScopeBackground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn CalendarItemBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::CalendarItemBackground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetCalendarItemBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetCalendarItemBackground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn CalendarItemHoverBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::CalendarItemHoverBackground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetCalendarItemHoverBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetCalendarItemHoverBackground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn CalendarItemPressedBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::CalendarItemPressedBackground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetCalendarItemPressedBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetCalendarItemPressedBackground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn CalendarItemDisabledBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::CalendarItemDisabledBackground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetCalendarItemDisabledBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetCalendarItemDisabledBackground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn TodayBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::TodayBackground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetTodayBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetTodayBackground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn TodayBlackoutBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::TodayBlackoutBackground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetTodayBlackoutBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetTodayBlackoutBackground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn TodayHoverBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::TodayHoverBackground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetTodayHoverBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetTodayHoverBackground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn TodayPressedBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::TodayPressedBackground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetTodayPressedBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetTodayPressedBackground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn TodayDisabledBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::TodayDisabledBackground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetTodayDisabledBackground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetTodayDisabledBackground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn PressedForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::PressedForeground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetPressedForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetPressedForeground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn TodayForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::TodayForeground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetTodayForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetTodayForeground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn BlackoutForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::BlackoutForeground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetBlackoutForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetBlackoutForeground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn TodayBlackoutForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::TodayBlackoutForeground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetTodayBlackoutForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetTodayBlackoutForeground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn SelectedForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::SelectedForeground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetSelectedForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetSelectedForeground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn SelectedHoverForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::SelectedHoverForeground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetSelectedHoverForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetSelectedHoverForeground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn SelectedPressedForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::SelectedPressedForeground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetSelectedPressedForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetSelectedPressedForeground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn SelectedDisabledForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::SelectedDisabledForeground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetSelectedDisabledForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetSelectedDisabledForeground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn OutOfScopeForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::OutOfScopeForeground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetOutOfScopeForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetOutOfScopeForeground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn OutOfScopeHoverForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::OutOfScopeHoverForeground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetOutOfScopeHoverForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetOutOfScopeHoverForeground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn OutOfScopePressedForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::OutOfScopePressedForeground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetOutOfScopePressedForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetOutOfScopePressedForeground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn CalendarItemForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::CalendarItemForeground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetCalendarItemForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetCalendarItemForeground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn DisabledForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::DisabledForeground(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetDisabledForeground<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetDisabledForeground(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn DayItemFontSize<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut f64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::DayItemFontSize(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetDayItemFontSize<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: f64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetDayItemFontSize(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn DayItemFontStyle<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut windows::UI::Text::FontStyle,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::DayItemFontStyle(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetDayItemFontStyle<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: windows::UI::Text::FontStyle,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetDayItemFontStyle(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn DayItemFontWeight<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut windows::UI::Text::FontWeight,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::DayItemFontWeight(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetDayItemFontWeight<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: windows::UI::Text::FontWeight,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetDayItemFontWeight(
+                                    this,
+                                    core::mem::transmute(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn TodayFontWeight<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut windows::UI::Text::FontWeight,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::TodayFontWeight(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetTodayFontWeight<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: windows::UI::Text::FontWeight,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetTodayFontWeight(
+                                    this,
+                                    core::mem::transmute(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfMonthLabelFontSize<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut f64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::FirstOfMonthLabelFontSize(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetFirstOfMonthLabelFontSize<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: f64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetFirstOfMonthLabelFontSize(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfMonthLabelFontStyle<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut windows::UI::Text::FontStyle,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::FirstOfMonthLabelFontStyle(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetFirstOfMonthLabelFontStyle<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: windows::UI::Text::FontStyle,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetFirstOfMonthLabelFontStyle(this, value)
+                                    .into()
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfMonthLabelFontWeight<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut windows::UI::Text::FontWeight,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::FirstOfMonthLabelFontWeight(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetFirstOfMonthLabelFontWeight<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: windows::UI::Text::FontWeight,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetFirstOfMonthLabelFontWeight(
+                                    this,
+                                    core::mem::transmute(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn MonthYearItemFontSize<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut f64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::MonthYearItemFontSize(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetMonthYearItemFontSize<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: f64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetMonthYearItemFontSize(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn MonthYearItemFontStyle<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut windows::UI::Text::FontStyle,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::MonthYearItemFontStyle(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetMonthYearItemFontStyle<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: windows::UI::Text::FontStyle,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetMonthYearItemFontStyle(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn MonthYearItemFontWeight<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut windows::UI::Text::FontWeight,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::MonthYearItemFontWeight(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetMonthYearItemFontWeight<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: windows::UI::Text::FontWeight,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetMonthYearItemFontWeight(
+                                    this,
+                                    core::mem::transmute(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfYearDecadeLabelFontSize<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut f64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::FirstOfYearDecadeLabelFontSize(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetFirstOfYearDecadeLabelFontSize<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: f64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetFirstOfYearDecadeLabelFontSize(this, value)
+                                    .into()
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfYearDecadeLabelFontStyle<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut windows::UI::Text::FontStyle,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::FirstOfYearDecadeLabelFontStyle(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetFirstOfYearDecadeLabelFontStyle<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: windows::UI::Text::FontStyle,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetFirstOfYearDecadeLabelFontStyle(this, value)
+                                    .into()
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfYearDecadeLabelFontWeight<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut windows::UI::Text::FontWeight,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::FirstOfYearDecadeLabelFontWeight(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetFirstOfYearDecadeLabelFontWeight<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: windows::UI::Text::FontWeight,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetFirstOfYearDecadeLabelFontWeight(
+                                    this,
+                                    core::mem::transmute(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn DayItemMargin<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut super::Thickness,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::DayItemMargin(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetDayItemMargin<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: super::Thickness,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetDayItemMargin(
+                                    this,
+                                    core::mem::transmute(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn MonthYearItemMargin<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut super::Thickness,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::MonthYearItemMargin(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetMonthYearItemMargin<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: super::Thickness,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetMonthYearItemMargin(
+                                    this,
+                                    core::mem::transmute(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfMonthLabelMargin<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut super::Thickness,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::FirstOfMonthLabelMargin(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetFirstOfMonthLabelMargin<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: super::Thickness,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetFirstOfMonthLabelMargin(
+                                    this,
+                                    core::mem::transmute(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfYearDecadeLabelMargin<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut super::Thickness,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::FirstOfYearDecadeLabelMargin(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetFirstOfYearDecadeLabelMargin<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: super::Thickness,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetFirstOfYearDecadeLabelMargin(
+                                    this,
+                                    core::mem::transmute(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn HorizontalDayItemAlignment<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut super::HorizontalAlignment,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::HorizontalDayItemAlignment(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetHorizontalDayItemAlignment<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: super::HorizontalAlignment,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetHorizontalDayItemAlignment(this, value)
+                                    .into()
+                            }
+                        }
+                        unsafe extern "system" fn VerticalDayItemAlignment<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut super::VerticalAlignment,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::VerticalDayItemAlignment(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetVerticalDayItemAlignment<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: super::VerticalAlignment,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetVerticalDayItemAlignment(this, value).into()
+                            }
+                        }
+                        unsafe extern "system" fn HorizontalFirstOfMonthLabelAlignment<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut super::HorizontalAlignment,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::HorizontalFirstOfMonthLabelAlignment(this)
+                                {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetHorizontalFirstOfMonthLabelAlignment<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: super::HorizontalAlignment,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetHorizontalFirstOfMonthLabelAlignment(
+                                    this, value,
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn VerticalFirstOfMonthLabelAlignment<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut super::VerticalAlignment,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::VerticalFirstOfMonthLabelAlignment(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetVerticalFirstOfMonthLabelAlignment<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: super::VerticalAlignment,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetVerticalFirstOfMonthLabelAlignment(
+                                    this, value,
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn CalendarItemBorderThickness<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut super::Thickness,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::CalendarItemBorderThickness(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetCalendarItemBorderThickness<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: super::Thickness,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetCalendarItemBorderThickness(
+                                    this,
+                                    core::mem::transmute(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn CalendarViewDayItemStyle<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::CalendarViewDayItemStyle(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetCalendarViewDayItemStyle<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetCalendarViewDayItemStyle(
+                                    this,
+                                    core::mem::transmute_copy(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn CalendarItemCornerRadius<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut super::CornerRadius,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::CalendarItemCornerRadius(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SetCalendarItemCornerRadius<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            value: super::CornerRadius,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetCalendarItemCornerRadius(
+                                    this,
+                                    core::mem::transmute(&value),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn RemoveCalendarViewDayItemChanging<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            token: i64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::RemoveCalendarViewDayItemChanging(this, token)
+                                    .into()
+                            }
+                        }
+                        unsafe extern "system" fn SelectedDatesChanged<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            handler: *mut core::ffi::c_void,
+                            result__: *mut i64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarView_Impl::SelectedDatesChanged(
+                                    this,
+                                    core::mem::transmute_copy(&handler),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn RemoveSelectedDatesChanged<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            token: i64,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::RemoveSelectedDatesChanged(this, token).into()
+                            }
+                        }
+                        unsafe extern "system" fn SetDisplayDate<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            date: windows::Foundation::DateTime,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetDisplayDate(
+                                    this,
+                                    core::mem::transmute(&date),
+                                )
+                                .into()
+                            }
+                        }
+                        unsafe extern "system" fn SetYearDecadeDisplayDimensions<
+                            Identity: ICalendarView_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            columns: i32,
+                            rows: i32,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                ICalendarView_Impl::SetYearDecadeDisplayDimensions(
+                                    this, columns, rows,
+                                )
+                                .into()
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                ICalendarView,
+                                OFFSET,
+                            >(),
+                            CalendarIdentifier: CalendarIdentifier::<Identity, OFFSET>,
+                            SetCalendarIdentifier: SetCalendarIdentifier::<Identity, OFFSET>,
+                            DayOfWeekFormat: DayOfWeekFormat::<Identity, OFFSET>,
+                            SetDayOfWeekFormat: SetDayOfWeekFormat::<Identity, OFFSET>,
+                            IsGroupLabelVisible: IsGroupLabelVisible::<Identity, OFFSET>,
+                            SetIsGroupLabelVisible: SetIsGroupLabelVisible::<Identity, OFFSET>,
+                            DisplayMode: DisplayMode::<Identity, OFFSET>,
+                            SetDisplayMode: SetDisplayMode::<Identity, OFFSET>,
+                            FirstDayOfWeek: FirstDayOfWeek::<Identity, OFFSET>,
+                            SetFirstDayOfWeek: SetFirstDayOfWeek::<Identity, OFFSET>,
+                            IsOutOfScopeEnabled: IsOutOfScopeEnabled::<Identity, OFFSET>,
+                            SetIsOutOfScopeEnabled: SetIsOutOfScopeEnabled::<Identity, OFFSET>,
+                            IsTodayHighlighted: IsTodayHighlighted::<Identity, OFFSET>,
+                            SetIsTodayHighlighted: SetIsTodayHighlighted::<Identity, OFFSET>,
+                            MaxDate: MaxDate::<Identity, OFFSET>,
+                            SetMaxDate: SetMaxDate::<Identity, OFFSET>,
+                            MinDate: MinDate::<Identity, OFFSET>,
+                            SetMinDate: SetMinDate::<Identity, OFFSET>,
+                            NumberOfWeeksInView: NumberOfWeeksInView::<Identity, OFFSET>,
+                            SetNumberOfWeeksInView: SetNumberOfWeeksInView::<Identity, OFFSET>,
+                            SelectedDates: SelectedDates::<Identity, OFFSET>,
+                            SelectionMode: SelectionMode::<Identity, OFFSET>,
+                            SetSelectionMode: SetSelectionMode::<Identity, OFFSET>,
+                            TemplateSettings: 0,
+                            FocusBorderBrush: FocusBorderBrush::<Identity, OFFSET>,
+                            SetFocusBorderBrush: SetFocusBorderBrush::<Identity, OFFSET>,
+                            SelectedHoverBorderBrush: SelectedHoverBorderBrush::<Identity, OFFSET>,
+                            SetSelectedHoverBorderBrush: SetSelectedHoverBorderBrush::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SelectedPressedBorderBrush: SelectedPressedBorderBrush::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetSelectedPressedBorderBrush: SetSelectedPressedBorderBrush::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SelectedDisabledBorderBrush: SelectedDisabledBorderBrush::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetSelectedDisabledBorderBrush: SetSelectedDisabledBorderBrush::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SelectedBorderBrush: SelectedBorderBrush::<Identity, OFFSET>,
+                            SetSelectedBorderBrush: SetSelectedBorderBrush::<Identity, OFFSET>,
+                            HoverBorderBrush: HoverBorderBrush::<Identity, OFFSET>,
+                            SetHoverBorderBrush: SetHoverBorderBrush::<Identity, OFFSET>,
+                            PressedBorderBrush: PressedBorderBrush::<Identity, OFFSET>,
+                            SetPressedBorderBrush: SetPressedBorderBrush::<Identity, OFFSET>,
+                            TodaySelectedInnerBorderBrush: TodaySelectedInnerBorderBrush::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetTodaySelectedInnerBorderBrush: SetTodaySelectedInnerBorderBrush::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            BlackoutStrikethroughBrush: BlackoutStrikethroughBrush::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetBlackoutStrikethroughBrush: SetBlackoutStrikethroughBrush::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            CalendarItemBorderBrush: CalendarItemBorderBrush::<Identity, OFFSET>,
+                            SetCalendarItemBorderBrush: SetCalendarItemBorderBrush::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            BlackoutBackground: BlackoutBackground::<Identity, OFFSET>,
+                            SetBlackoutBackground: SetBlackoutBackground::<Identity, OFFSET>,
+                            OutOfScopeBackground: OutOfScopeBackground::<Identity, OFFSET>,
+                            SetOutOfScopeBackground: SetOutOfScopeBackground::<Identity, OFFSET>,
+                            CalendarItemBackground: CalendarItemBackground::<Identity, OFFSET>,
+                            SetCalendarItemBackground: SetCalendarItemBackground::<Identity, OFFSET>,
+                            CalendarItemHoverBackground: CalendarItemHoverBackground::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetCalendarItemHoverBackground: SetCalendarItemHoverBackground::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            CalendarItemPressedBackground: CalendarItemPressedBackground::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetCalendarItemPressedBackground: SetCalendarItemPressedBackground::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            CalendarItemDisabledBackground: CalendarItemDisabledBackground::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetCalendarItemDisabledBackground: SetCalendarItemDisabledBackground::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            TodayBackground: TodayBackground::<Identity, OFFSET>,
+                            SetTodayBackground: SetTodayBackground::<Identity, OFFSET>,
+                            TodayBlackoutBackground: TodayBlackoutBackground::<Identity, OFFSET>,
+                            SetTodayBlackoutBackground: SetTodayBlackoutBackground::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            TodayHoverBackground: TodayHoverBackground::<Identity, OFFSET>,
+                            SetTodayHoverBackground: SetTodayHoverBackground::<Identity, OFFSET>,
+                            TodayPressedBackground: TodayPressedBackground::<Identity, OFFSET>,
+                            SetTodayPressedBackground: SetTodayPressedBackground::<Identity, OFFSET>,
+                            TodayDisabledBackground: TodayDisabledBackground::<Identity, OFFSET>,
+                            SetTodayDisabledBackground: SetTodayDisabledBackground::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            PressedForeground: PressedForeground::<Identity, OFFSET>,
+                            SetPressedForeground: SetPressedForeground::<Identity, OFFSET>,
+                            TodayForeground: TodayForeground::<Identity, OFFSET>,
+                            SetTodayForeground: SetTodayForeground::<Identity, OFFSET>,
+                            BlackoutForeground: BlackoutForeground::<Identity, OFFSET>,
+                            SetBlackoutForeground: SetBlackoutForeground::<Identity, OFFSET>,
+                            TodayBlackoutForeground: TodayBlackoutForeground::<Identity, OFFSET>,
+                            SetTodayBlackoutForeground: SetTodayBlackoutForeground::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SelectedForeground: SelectedForeground::<Identity, OFFSET>,
+                            SetSelectedForeground: SetSelectedForeground::<Identity, OFFSET>,
+                            SelectedHoverForeground: SelectedHoverForeground::<Identity, OFFSET>,
+                            SetSelectedHoverForeground: SetSelectedHoverForeground::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SelectedPressedForeground: SelectedPressedForeground::<Identity, OFFSET>,
+                            SetSelectedPressedForeground: SetSelectedPressedForeground::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SelectedDisabledForeground: SelectedDisabledForeground::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetSelectedDisabledForeground: SetSelectedDisabledForeground::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            OutOfScopeForeground: OutOfScopeForeground::<Identity, OFFSET>,
+                            SetOutOfScopeForeground: SetOutOfScopeForeground::<Identity, OFFSET>,
+                            OutOfScopeHoverForeground: OutOfScopeHoverForeground::<Identity, OFFSET>,
+                            SetOutOfScopeHoverForeground: SetOutOfScopeHoverForeground::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            OutOfScopePressedForeground: OutOfScopePressedForeground::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetOutOfScopePressedForeground: SetOutOfScopePressedForeground::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            CalendarItemForeground: CalendarItemForeground::<Identity, OFFSET>,
+                            SetCalendarItemForeground: SetCalendarItemForeground::<Identity, OFFSET>,
+                            DisabledForeground: DisabledForeground::<Identity, OFFSET>,
+                            SetDisabledForeground: SetDisabledForeground::<Identity, OFFSET>,
+                            DayItemFontFamily: 0,
+                            SetDayItemFontFamily: 0,
+                            DayItemFontSize: DayItemFontSize::<Identity, OFFSET>,
+                            SetDayItemFontSize: SetDayItemFontSize::<Identity, OFFSET>,
+                            DayItemFontStyle: DayItemFontStyle::<Identity, OFFSET>,
+                            SetDayItemFontStyle: SetDayItemFontStyle::<Identity, OFFSET>,
+                            DayItemFontWeight: DayItemFontWeight::<Identity, OFFSET>,
+                            SetDayItemFontWeight: SetDayItemFontWeight::<Identity, OFFSET>,
+                            TodayFontWeight: TodayFontWeight::<Identity, OFFSET>,
+                            SetTodayFontWeight: SetTodayFontWeight::<Identity, OFFSET>,
+                            FirstOfMonthLabelFontFamily: 0,
+                            SetFirstOfMonthLabelFontFamily: 0,
+                            FirstOfMonthLabelFontSize: FirstOfMonthLabelFontSize::<Identity, OFFSET>,
+                            SetFirstOfMonthLabelFontSize: SetFirstOfMonthLabelFontSize::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            FirstOfMonthLabelFontStyle: FirstOfMonthLabelFontStyle::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetFirstOfMonthLabelFontStyle: SetFirstOfMonthLabelFontStyle::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            FirstOfMonthLabelFontWeight: FirstOfMonthLabelFontWeight::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetFirstOfMonthLabelFontWeight: SetFirstOfMonthLabelFontWeight::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            MonthYearItemFontFamily: 0,
+                            SetMonthYearItemFontFamily: 0,
+                            MonthYearItemFontSize: MonthYearItemFontSize::<Identity, OFFSET>,
+                            SetMonthYearItemFontSize: SetMonthYearItemFontSize::<Identity, OFFSET>,
+                            MonthYearItemFontStyle: MonthYearItemFontStyle::<Identity, OFFSET>,
+                            SetMonthYearItemFontStyle: SetMonthYearItemFontStyle::<Identity, OFFSET>,
+                            MonthYearItemFontWeight: MonthYearItemFontWeight::<Identity, OFFSET>,
+                            SetMonthYearItemFontWeight: SetMonthYearItemFontWeight::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            FirstOfYearDecadeLabelFontFamily: 0,
+                            SetFirstOfYearDecadeLabelFontFamily: 0,
+                            FirstOfYearDecadeLabelFontSize: FirstOfYearDecadeLabelFontSize::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetFirstOfYearDecadeLabelFontSize: SetFirstOfYearDecadeLabelFontSize::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            FirstOfYearDecadeLabelFontStyle: FirstOfYearDecadeLabelFontStyle::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetFirstOfYearDecadeLabelFontStyle: SetFirstOfYearDecadeLabelFontStyle::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            FirstOfYearDecadeLabelFontWeight: FirstOfYearDecadeLabelFontWeight::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetFirstOfYearDecadeLabelFontWeight:
+                                SetFirstOfYearDecadeLabelFontWeight::<Identity, OFFSET>,
+                            DayItemMargin: DayItemMargin::<Identity, OFFSET>,
+                            SetDayItemMargin: SetDayItemMargin::<Identity, OFFSET>,
+                            MonthYearItemMargin: MonthYearItemMargin::<Identity, OFFSET>,
+                            SetMonthYearItemMargin: SetMonthYearItemMargin::<Identity, OFFSET>,
+                            FirstOfMonthLabelMargin: FirstOfMonthLabelMargin::<Identity, OFFSET>,
+                            SetFirstOfMonthLabelMargin: SetFirstOfMonthLabelMargin::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            FirstOfYearDecadeLabelMargin: FirstOfYearDecadeLabelMargin::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetFirstOfYearDecadeLabelMargin: SetFirstOfYearDecadeLabelMargin::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            HorizontalDayItemAlignment: HorizontalDayItemAlignment::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetHorizontalDayItemAlignment: SetHorizontalDayItemAlignment::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            VerticalDayItemAlignment: VerticalDayItemAlignment::<Identity, OFFSET>,
+                            SetVerticalDayItemAlignment: SetVerticalDayItemAlignment::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            HorizontalFirstOfMonthLabelAlignment:
+                                HorizontalFirstOfMonthLabelAlignment::<Identity, OFFSET>,
+                            SetHorizontalFirstOfMonthLabelAlignment:
+                                SetHorizontalFirstOfMonthLabelAlignment::<Identity, OFFSET>,
+                            VerticalFirstOfMonthLabelAlignment: VerticalFirstOfMonthLabelAlignment::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetVerticalFirstOfMonthLabelAlignment:
+                                SetVerticalFirstOfMonthLabelAlignment::<Identity, OFFSET>,
+                            CalendarItemBorderThickness: CalendarItemBorderThickness::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetCalendarItemBorderThickness: SetCalendarItemBorderThickness::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            CalendarViewDayItemStyle: CalendarViewDayItemStyle::<Identity, OFFSET>,
+                            SetCalendarViewDayItemStyle: SetCalendarViewDayItemStyle::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            CalendarItemCornerRadius: CalendarItemCornerRadius::<Identity, OFFSET>,
+                            SetCalendarItemCornerRadius: SetCalendarItemCornerRadius::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            CalendarViewDayItemChanging: 0,
+                            RemoveCalendarViewDayItemChanging: RemoveCalendarViewDayItemChanging::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SelectedDatesChanged: SelectedDatesChanged::<Identity, OFFSET>,
+                            RemoveSelectedDatesChanged: RemoveSelectedDatesChanged::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SetDisplayDate: SetDisplayDate::<Identity, OFFSET>,
+                            SetYearDecadeDisplayDimensions: SetYearDecadeDisplayDimensions::<
+                                Identity,
+                                OFFSET,
+                            >,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<ICalendarView as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct ICalendarView_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub CalendarIdentifier: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetCalendarIdentifier: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub DayOfWeekFormat: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetDayOfWeekFormat: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub IsGroupLabelVisible: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut bool,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetIsGroupLabelVisible: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        bool,
+                    )
+                        -> windows_core::HRESULT,
+                    pub DisplayMode: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut CalendarViewDisplayMode,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetDisplayMode: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        CalendarViewDisplayMode,
+                    )
+                        -> windows_core::HRESULT,
+                    pub FirstDayOfWeek: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut windows::Globalization::DayOfWeek,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetFirstDayOfWeek: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        windows::Globalization::DayOfWeek,
+                    )
+                        -> windows_core::HRESULT,
+                    pub IsOutOfScopeEnabled: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut bool,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetIsOutOfScopeEnabled: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        bool,
+                    )
+                        -> windows_core::HRESULT,
+                    pub IsTodayHighlighted: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut bool,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetIsTodayHighlighted: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        bool,
+                    )
+                        -> windows_core::HRESULT,
+                    pub MaxDate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut windows::Foundation::DateTime,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetMaxDate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        windows::Foundation::DateTime,
+                    )
+                        -> windows_core::HRESULT,
+                    pub MinDate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut windows::Foundation::DateTime,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetMinDate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        windows::Foundation::DateTime,
+                    )
+                        -> windows_core::HRESULT,
+                    pub NumberOfWeeksInView: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut i32,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetNumberOfWeeksInView: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        i32,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SelectedDates: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SelectionMode: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut CalendarViewSelectionMode,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetSelectionMode: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        CalendarViewSelectionMode,
+                    )
+                        -> windows_core::HRESULT,
+                    TemplateSettings: usize,
+                    pub FocusBorderBrush: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetFocusBorderBrush: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SelectedHoverBorderBrush:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SetSelectedHoverBorderBrush:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SelectedPressedBorderBrush:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SetSelectedPressedBorderBrush:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SelectedDisabledBorderBrush:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SetSelectedDisabledBorderBrush:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SelectedBorderBrush: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetSelectedBorderBrush: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub HoverBorderBrush: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetHoverBorderBrush: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub PressedBorderBrush: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetPressedBorderBrush: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub TodaySelectedInnerBorderBrush:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SetTodaySelectedInnerBorderBrush:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub BlackoutStrikethroughBrush:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SetBlackoutStrikethroughBrush:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub CalendarItemBorderBrush: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetCalendarItemBorderBrush:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub BlackoutBackground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetBlackoutBackground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub OutOfScopeBackground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetOutOfScopeBackground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub CalendarItemBackground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetCalendarItemBackground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub CalendarItemHoverBackground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SetCalendarItemHoverBackground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub CalendarItemPressedBackground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SetCalendarItemPressedBackground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub CalendarItemDisabledBackground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SetCalendarItemDisabledBackground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub TodayBackground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetTodayBackground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub TodayBlackoutBackground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetTodayBlackoutBackground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub TodayHoverBackground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetTodayHoverBackground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub TodayPressedBackground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetTodayPressedBackground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub TodayDisabledBackground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetTodayDisabledBackground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub PressedForeground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetPressedForeground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub TodayForeground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetTodayForeground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub BlackoutForeground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetBlackoutForeground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub TodayBlackoutForeground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetTodayBlackoutForeground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SelectedForeground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetSelectedForeground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SelectedHoverForeground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetSelectedHoverForeground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SelectedPressedForeground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SetSelectedPressedForeground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SelectedDisabledForeground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SetSelectedDisabledForeground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub OutOfScopeForeground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetOutOfScopeForeground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub OutOfScopeHoverForeground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SetOutOfScopeHoverForeground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub OutOfScopePressedForeground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SetOutOfScopePressedForeground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub CalendarItemForeground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetCalendarItemForeground:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub DisabledForeground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetDisabledForeground: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    DayItemFontFamily: usize,
+                    SetDayItemFontFamily: usize,
+                    pub DayItemFontSize: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut f64,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetDayItemFontSize: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        f64,
+                    )
+                        -> windows_core::HRESULT,
+                    pub DayItemFontStyle: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut windows::UI::Text::FontStyle,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetDayItemFontStyle: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        windows::UI::Text::FontStyle,
+                    )
+                        -> windows_core::HRESULT,
+                    pub DayItemFontWeight: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut windows::UI::Text::FontWeight,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetDayItemFontWeight: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        windows::UI::Text::FontWeight,
+                    )
+                        -> windows_core::HRESULT,
+                    pub TodayFontWeight: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut windows::UI::Text::FontWeight,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetTodayFontWeight: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        windows::UI::Text::FontWeight,
+                    )
+                        -> windows_core::HRESULT,
+                    FirstOfMonthLabelFontFamily: usize,
+                    SetFirstOfMonthLabelFontFamily: usize,
+                    pub FirstOfMonthLabelFontSize:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut f64,
+                        ) -> windows_core::HRESULT,
+                    pub SetFirstOfMonthLabelFontSize:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            f64,
+                        ) -> windows_core::HRESULT,
+                    pub FirstOfMonthLabelFontStyle:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut windows::UI::Text::FontStyle,
+                        ) -> windows_core::HRESULT,
+                    pub SetFirstOfMonthLabelFontStyle:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            windows::UI::Text::FontStyle,
+                        ) -> windows_core::HRESULT,
+                    pub FirstOfMonthLabelFontWeight:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut windows::UI::Text::FontWeight,
+                        ) -> windows_core::HRESULT,
+                    pub SetFirstOfMonthLabelFontWeight:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            windows::UI::Text::FontWeight,
+                        ) -> windows_core::HRESULT,
+                    MonthYearItemFontFamily: usize,
+                    SetMonthYearItemFontFamily: usize,
+                    pub MonthYearItemFontSize: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut f64,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetMonthYearItemFontSize:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            f64,
+                        ) -> windows_core::HRESULT,
+                    pub MonthYearItemFontStyle: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut windows::UI::Text::FontStyle,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetMonthYearItemFontStyle:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            windows::UI::Text::FontStyle,
+                        ) -> windows_core::HRESULT,
+                    pub MonthYearItemFontWeight: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut windows::UI::Text::FontWeight,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetMonthYearItemFontWeight:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            windows::UI::Text::FontWeight,
+                        ) -> windows_core::HRESULT,
+                    FirstOfYearDecadeLabelFontFamily: usize,
+                    SetFirstOfYearDecadeLabelFontFamily: usize,
+                    pub FirstOfYearDecadeLabelFontSize:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut f64,
+                        ) -> windows_core::HRESULT,
+                    pub SetFirstOfYearDecadeLabelFontSize:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            f64,
+                        ) -> windows_core::HRESULT,
+                    pub FirstOfYearDecadeLabelFontStyle:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut windows::UI::Text::FontStyle,
+                        ) -> windows_core::HRESULT,
+                    pub SetFirstOfYearDecadeLabelFontStyle:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            windows::UI::Text::FontStyle,
+                        ) -> windows_core::HRESULT,
+                    pub FirstOfYearDecadeLabelFontWeight:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut windows::UI::Text::FontWeight,
+                        ) -> windows_core::HRESULT,
+                    pub SetFirstOfYearDecadeLabelFontWeight:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            windows::UI::Text::FontWeight,
+                        ) -> windows_core::HRESULT,
+                    pub DayItemMargin: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut super::Thickness,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetDayItemMargin: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        super::Thickness,
+                    )
+                        -> windows_core::HRESULT,
+                    pub MonthYearItemMargin: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut super::Thickness,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetMonthYearItemMargin: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        super::Thickness,
+                    )
+                        -> windows_core::HRESULT,
+                    pub FirstOfMonthLabelMargin: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut super::Thickness,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetFirstOfMonthLabelMargin:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            super::Thickness,
+                        ) -> windows_core::HRESULT,
+                    pub FirstOfYearDecadeLabelMargin:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut super::Thickness,
+                        ) -> windows_core::HRESULT,
+                    pub SetFirstOfYearDecadeLabelMargin:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            super::Thickness,
+                        ) -> windows_core::HRESULT,
+                    pub HorizontalDayItemAlignment:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut super::HorizontalAlignment,
+                        ) -> windows_core::HRESULT,
+                    pub SetHorizontalDayItemAlignment:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            super::HorizontalAlignment,
+                        ) -> windows_core::HRESULT,
+                    pub VerticalDayItemAlignment:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut super::VerticalAlignment,
+                        ) -> windows_core::HRESULT,
+                    pub SetVerticalDayItemAlignment:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            super::VerticalAlignment,
+                        ) -> windows_core::HRESULT,
+                    pub HorizontalFirstOfMonthLabelAlignment:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut super::HorizontalAlignment,
+                        ) -> windows_core::HRESULT,
+                    pub SetHorizontalFirstOfMonthLabelAlignment:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            super::HorizontalAlignment,
+                        ) -> windows_core::HRESULT,
+                    pub VerticalFirstOfMonthLabelAlignment:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut super::VerticalAlignment,
+                        ) -> windows_core::HRESULT,
+                    pub SetVerticalFirstOfMonthLabelAlignment:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            super::VerticalAlignment,
+                        ) -> windows_core::HRESULT,
+                    pub CalendarItemBorderThickness:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut super::Thickness,
+                        ) -> windows_core::HRESULT,
+                    pub SetCalendarItemBorderThickness:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            super::Thickness,
+                        ) -> windows_core::HRESULT,
+                    pub CalendarViewDayItemStyle:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SetCalendarViewDayItemStyle:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub CalendarItemCornerRadius:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut super::CornerRadius,
+                        ) -> windows_core::HRESULT,
+                    pub SetCalendarItemCornerRadius:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            super::CornerRadius,
+                        ) -> windows_core::HRESULT,
+                    CalendarViewDayItemChanging: usize,
+                    pub RemoveCalendarViewDayItemChanging:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            i64,
+                        ) -> windows_core::HRESULT,
+                    pub SelectedDatesChanged: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut i64,
+                    )
+                        -> windows_core::HRESULT,
+                    pub RemoveSelectedDatesChanged:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            i64,
+                        ) -> windows_core::HRESULT,
+                    pub SetDisplayDate: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        windows::Foundation::DateTime,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SetYearDecadeDisplayDimensions:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            i32,
+                            i32,
+                        ) -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
+                    ICalendarViewFactory,
+                    ICalendarViewFactory_Vtbl,
+                    0x2f31d1eb_8229_517c_b3a6_5a5f28724e8f
+                );
+                impl windows_core::RuntimeType for ICalendarViewFactory {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for ICalendarViewFactory {
+                    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.ICalendarViewFactory";
+                }
+                pub trait ICalendarViewFactory_Impl: windows_core::IUnknownImpl {
+                    fn CreateInstance(
+                        &self,
+                        baseInterface: windows_core::Ref<'_, windows_core::IInspectable>,
+                        innerInterface: windows_core::OutRef<'_, windows_core::IInspectable>,
+                    ) -> windows_core::Result<CalendarView>;
+                }
+                impl ICalendarViewFactory_Vtbl {
+                    pub const fn new<Identity: ICalendarViewFactory_Impl, const OFFSET: isize>(
+                    ) -> Self {
+                        unsafe extern "system" fn CreateInstance<
+                            Identity: ICalendarViewFactory_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            baseinterface: *mut core::ffi::c_void,
+                            innerinterface: *mut *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewFactory_Impl::CreateInstance(
+                                    this,
+                                    core::mem::transmute_copy(&baseinterface),
+                                    core::mem::transmute_copy(&innerinterface),
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                ICalendarViewFactory,
+                                OFFSET,
+                            >(),
+                            CreateInstance: CreateInstance::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<ICalendarViewFactory as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct ICalendarViewFactory_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub CreateInstance: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
+                    ICalendarViewSelectedDatesChangedEventArgs,
+                    ICalendarViewSelectedDatesChangedEventArgs_Vtbl,
+                    0x675f688f_bc30_59f6_83c4_140bd053a09a
+                );
+                impl windows_core::RuntimeType for ICalendarViewSelectedDatesChangedEventArgs {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for ICalendarViewSelectedDatesChangedEventArgs {
+                    const NAME: &'static str =
+                        "Microsoft.UI.Xaml.Controls.ICalendarViewSelectedDatesChangedEventArgs";
+                }
+                pub trait ICalendarViewSelectedDatesChangedEventArgs_Impl:
+                    windows_core::IUnknownImpl
+                {
+                    fn AddedDates(
+                        &self,
+                    ) -> windows_core::Result<
+                        windows_collections::IVectorView<windows::Foundation::DateTime>,
+                    >;
+                    fn RemovedDates(
+                        &self,
+                    ) -> windows_core::Result<
+                        windows_collections::IVectorView<windows::Foundation::DateTime>,
+                    >;
+                }
+                impl ICalendarViewSelectedDatesChangedEventArgs_Vtbl {
+                    pub const fn new<
+                        Identity: ICalendarViewSelectedDatesChangedEventArgs_Impl,
+                        const OFFSET: isize,
+                    >() -> Self {
+                        unsafe extern "system" fn AddedDates<
+                            Identity: ICalendarViewSelectedDatesChangedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewSelectedDatesChangedEventArgs_Impl::AddedDates(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn RemovedDates<
+                            Identity: ICalendarViewSelectedDatesChangedEventArgs_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewSelectedDatesChangedEventArgs_Impl::RemovedDates(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                ICalendarViewSelectedDatesChangedEventArgs,
+                                OFFSET,
+                            >(),
+                            AddedDates: AddedDates::<Identity, OFFSET>,
+                            RemovedDates: RemovedDates::<Identity, OFFSET>,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == & < ICalendarViewSelectedDatesChangedEventArgs as windows_core::Interface >::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct ICalendarViewSelectedDatesChangedEventArgs_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub AddedDates: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub RemovedDates: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                }
+                windows_core::imp::define_interface!(
+                    ICalendarViewStatics,
+                    ICalendarViewStatics_Vtbl,
+                    0x9553e6fc_e4da_57d4_9472_7f8ed5ff7219
+                );
+                impl windows_core::RuntimeType for ICalendarViewStatics {
+                    const SIGNATURE: windows_core::imp::ConstBuffer =
+                        windows_core::imp::ConstBuffer::for_interface::<Self>();
+                }
+                impl windows_core::RuntimeName for ICalendarViewStatics {
+                    const NAME: &'static str = "Microsoft.UI.Xaml.Controls.ICalendarViewStatics";
+                }
+                pub trait ICalendarViewStatics_Impl: windows_core::IUnknownImpl {
+                    fn CalendarIdentifierProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn DayOfWeekFormatProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn IsGroupLabelVisibleProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn DisplayModeProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn FirstDayOfWeekProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn IsOutOfScopeEnabledProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn IsTodayHighlightedProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn MaxDateProperty(&self) -> windows_core::Result<super::DependencyProperty>;
+                    fn MinDateProperty(&self) -> windows_core::Result<super::DependencyProperty>;
+                    fn NumberOfWeeksInViewProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn SelectedDatesProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn SelectionModeProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn TemplateSettingsProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn FocusBorderBrushProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn SelectedHoverBorderBrushProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn SelectedPressedBorderBrushProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn SelectedDisabledBorderBrushProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn SelectedBorderBrushProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn HoverBorderBrushProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn PressedBorderBrushProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn TodaySelectedInnerBorderBrushProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn BlackoutStrikethroughBrushProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn CalendarItemBorderBrushProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn BlackoutBackgroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn OutOfScopeBackgroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn CalendarItemBackgroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn CalendarItemHoverBackgroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn CalendarItemPressedBackgroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn CalendarItemDisabledBackgroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn TodayBackgroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn TodayBlackoutBackgroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn TodayHoverBackgroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn TodayPressedBackgroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn TodayDisabledBackgroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn PressedForegroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn TodayForegroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn BlackoutForegroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn TodayBlackoutForegroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn SelectedForegroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn SelectedHoverForegroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn SelectedPressedForegroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn SelectedDisabledForegroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn OutOfScopeForegroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn OutOfScopeHoverForegroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn OutOfScopePressedForegroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn CalendarItemForegroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn DisabledForegroundProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn DayItemFontFamilyProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn DayItemFontSizeProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn DayItemFontStyleProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn DayItemFontWeightProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn TodayFontWeightProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn FirstOfMonthLabelFontFamilyProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn FirstOfMonthLabelFontSizeProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn FirstOfMonthLabelFontStyleProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn FirstOfMonthLabelFontWeightProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn MonthYearItemFontFamilyProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn MonthYearItemFontSizeProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn MonthYearItemFontStyleProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn MonthYearItemFontWeightProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn FirstOfYearDecadeLabelFontFamilyProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn FirstOfYearDecadeLabelFontSizeProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn FirstOfYearDecadeLabelFontStyleProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn FirstOfYearDecadeLabelFontWeightProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn DayItemMarginProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn MonthYearItemMarginProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn FirstOfMonthLabelMarginProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn FirstOfYearDecadeLabelMarginProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn HorizontalDayItemAlignmentProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn VerticalDayItemAlignmentProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn HorizontalFirstOfMonthLabelAlignmentProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn VerticalFirstOfMonthLabelAlignmentProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn CalendarItemBorderThicknessProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn CalendarViewDayItemStyleProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                    fn CalendarItemCornerRadiusProperty(
+                        &self,
+                    ) -> windows_core::Result<super::DependencyProperty>;
+                }
+                impl ICalendarViewStatics_Vtbl {
+                    pub const fn new<Identity: ICalendarViewStatics_Impl, const OFFSET: isize>(
+                    ) -> Self {
+                        unsafe extern "system" fn CalendarIdentifierProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::CalendarIdentifierProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn DayOfWeekFormatProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::DayOfWeekFormatProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn IsGroupLabelVisibleProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::IsGroupLabelVisibleProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn DisplayModeProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::DisplayModeProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn FirstDayOfWeekProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::FirstDayOfWeekProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn IsOutOfScopeEnabledProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::IsOutOfScopeEnabledProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn IsTodayHighlightedProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::IsTodayHighlightedProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn MaxDateProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::MaxDateProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn MinDateProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::MinDateProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn NumberOfWeeksInViewProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::NumberOfWeeksInViewProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SelectedDatesProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::SelectedDatesProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SelectionModeProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::SelectionModeProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn TemplateSettingsProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::TemplateSettingsProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn FocusBorderBrushProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::FocusBorderBrushProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SelectedHoverBorderBrushProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::SelectedHoverBorderBrushProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SelectedPressedBorderBrushProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::SelectedPressedBorderBrushProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SelectedDisabledBorderBrushProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::SelectedDisabledBorderBrushProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SelectedBorderBrushProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::SelectedBorderBrushProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn HoverBorderBrushProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::HoverBorderBrushProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn PressedBorderBrushProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::PressedBorderBrushProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn TodaySelectedInnerBorderBrushProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl:: TodaySelectedInnerBorderBrushProperty ( this , ) { Ok ( ok__ ) => { result__ . write ( core::mem::transmute_copy ( & ok__ ) ) ; core::mem::forget ( ok__ ) ; windows_core::HRESULT ( 0 ) } Err ( err ) => err . into ( ) }
+                            }
+                        }
+                        unsafe extern "system" fn BlackoutStrikethroughBrushProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::BlackoutStrikethroughBrushProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn CalendarItemBorderBrushProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::CalendarItemBorderBrushProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn BlackoutBackgroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::BlackoutBackgroundProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn OutOfScopeBackgroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::OutOfScopeBackgroundProperty(this)
+                                {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn CalendarItemBackgroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::CalendarItemBackgroundProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn CalendarItemHoverBackgroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::CalendarItemHoverBackgroundProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn CalendarItemPressedBackgroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl:: CalendarItemPressedBackgroundProperty ( this , ) { Ok ( ok__ ) => { result__ . write ( core::mem::transmute_copy ( & ok__ ) ) ; core::mem::forget ( ok__ ) ; windows_core::HRESULT ( 0 ) } Err ( err ) => err . into ( ) }
+                            }
+                        }
+                        unsafe extern "system" fn CalendarItemDisabledBackgroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl:: CalendarItemDisabledBackgroundProperty ( this , ) { Ok ( ok__ ) => { result__ . write ( core::mem::transmute_copy ( & ok__ ) ) ; core::mem::forget ( ok__ ) ; windows_core::HRESULT ( 0 ) } Err ( err ) => err . into ( ) }
+                            }
+                        }
+                        unsafe extern "system" fn TodayBackgroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::TodayBackgroundProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn TodayBlackoutBackgroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::TodayBlackoutBackgroundProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn TodayHoverBackgroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::TodayHoverBackgroundProperty(this)
+                                {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn TodayPressedBackgroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::TodayPressedBackgroundProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn TodayDisabledBackgroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::TodayDisabledBackgroundProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn PressedForegroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::PressedForegroundProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn TodayForegroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::TodayForegroundProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn BlackoutForegroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::BlackoutForegroundProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn TodayBlackoutForegroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::TodayBlackoutForegroundProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SelectedForegroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::SelectedForegroundProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SelectedHoverForegroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::SelectedHoverForegroundProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SelectedPressedForegroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::SelectedPressedForegroundProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn SelectedDisabledForegroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::SelectedDisabledForegroundProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn OutOfScopeForegroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::OutOfScopeForegroundProperty(this)
+                                {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn OutOfScopeHoverForegroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::OutOfScopeHoverForegroundProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn OutOfScopePressedForegroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::OutOfScopePressedForegroundProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn CalendarItemForegroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::CalendarItemForegroundProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn DisabledForegroundProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::DisabledForegroundProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn DayItemFontFamilyProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::DayItemFontFamilyProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn DayItemFontSizeProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::DayItemFontSizeProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn DayItemFontStyleProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::DayItemFontStyleProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn DayItemFontWeightProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::DayItemFontWeightProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn TodayFontWeightProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::TodayFontWeightProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfMonthLabelFontFamilyProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::FirstOfMonthLabelFontFamilyProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfMonthLabelFontSizeProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::FirstOfMonthLabelFontSizeProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfMonthLabelFontStyleProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::FirstOfMonthLabelFontStyleProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfMonthLabelFontWeightProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::FirstOfMonthLabelFontWeightProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn MonthYearItemFontFamilyProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::MonthYearItemFontFamilyProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn MonthYearItemFontSizeProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::MonthYearItemFontSizeProperty(this)
+                                {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn MonthYearItemFontStyleProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::MonthYearItemFontStyleProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn MonthYearItemFontWeightProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::MonthYearItemFontWeightProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfYearDecadeLabelFontFamilyProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl:: FirstOfYearDecadeLabelFontFamilyProperty ( this , ) { Ok ( ok__ ) => { result__ . write ( core::mem::transmute_copy ( & ok__ ) ) ; core::mem::forget ( ok__ ) ; windows_core::HRESULT ( 0 ) } Err ( err ) => err . into ( ) }
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfYearDecadeLabelFontSizeProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl:: FirstOfYearDecadeLabelFontSizeProperty ( this , ) { Ok ( ok__ ) => { result__ . write ( core::mem::transmute_copy ( & ok__ ) ) ; core::mem::forget ( ok__ ) ; windows_core::HRESULT ( 0 ) } Err ( err ) => err . into ( ) }
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfYearDecadeLabelFontStyleProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl:: FirstOfYearDecadeLabelFontStyleProperty ( this , ) { Ok ( ok__ ) => { result__ . write ( core::mem::transmute_copy ( & ok__ ) ) ; core::mem::forget ( ok__ ) ; windows_core::HRESULT ( 0 ) } Err ( err ) => err . into ( ) }
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfYearDecadeLabelFontWeightProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl:: FirstOfYearDecadeLabelFontWeightProperty ( this , ) { Ok ( ok__ ) => { result__ . write ( core::mem::transmute_copy ( & ok__ ) ) ; core::mem::forget ( ok__ ) ; windows_core::HRESULT ( 0 ) } Err ( err ) => err . into ( ) }
+                            }
+                        }
+                        unsafe extern "system" fn DayItemMarginProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::DayItemMarginProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn MonthYearItemMarginProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::MonthYearItemMarginProperty(this) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfMonthLabelMarginProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::FirstOfMonthLabelMarginProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn FirstOfYearDecadeLabelMarginProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl:: FirstOfYearDecadeLabelMarginProperty ( this , ) { Ok ( ok__ ) => { result__ . write ( core::mem::transmute_copy ( & ok__ ) ) ; core::mem::forget ( ok__ ) ; windows_core::HRESULT ( 0 ) } Err ( err ) => err . into ( ) }
+                            }
+                        }
+                        unsafe extern "system" fn HorizontalDayItemAlignmentProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::HorizontalDayItemAlignmentProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn VerticalDayItemAlignmentProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::VerticalDayItemAlignmentProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn HorizontalFirstOfMonthLabelAlignmentProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl:: HorizontalFirstOfMonthLabelAlignmentProperty ( this , ) { Ok ( ok__ ) => { result__ . write ( core::mem::transmute_copy ( & ok__ ) ) ; core::mem::forget ( ok__ ) ; windows_core::HRESULT ( 0 ) } Err ( err ) => err . into ( ) }
+                            }
+                        }
+                        unsafe extern "system" fn VerticalFirstOfMonthLabelAlignmentProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl:: VerticalFirstOfMonthLabelAlignmentProperty ( this , ) { Ok ( ok__ ) => { result__ . write ( core::mem::transmute_copy ( & ok__ ) ) ; core::mem::forget ( ok__ ) ; windows_core::HRESULT ( 0 ) } Err ( err ) => err . into ( ) }
+                            }
+                        }
+                        unsafe extern "system" fn CalendarItemBorderThicknessProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::CalendarItemBorderThicknessProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn CalendarViewDayItemStyleProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::CalendarViewDayItemStyleProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        unsafe extern "system" fn CalendarItemCornerRadiusProperty<
+                            Identity: ICalendarViewStatics_Impl,
+                            const OFFSET: isize,
+                        >(
+                            this: *mut core::ffi::c_void,
+                            result__: *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT {
+                            unsafe {
+                                let this: &Identity = &*((this as *const *const ()).offset(OFFSET)
+                                    as *const Identity);
+                                match ICalendarViewStatics_Impl::CalendarItemCornerRadiusProperty(
+                                    this,
+                                ) {
+                                    Ok(ok__) => {
+                                        result__.write(core::mem::transmute_copy(&ok__));
+                                        core::mem::forget(ok__);
+                                        windows_core::HRESULT(0)
+                                    }
+                                    Err(err) => err.into(),
+                                }
+                            }
+                        }
+                        Self {
+                            base__: windows_core::IInspectable_Vtbl::new::<
+                                Identity,
+                                ICalendarViewStatics,
+                                OFFSET,
+                            >(),
+                            CalendarIdentifierProperty: CalendarIdentifierProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            DayOfWeekFormatProperty: DayOfWeekFormatProperty::<Identity, OFFSET>,
+                            IsGroupLabelVisibleProperty: IsGroupLabelVisibleProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            DisplayModeProperty: DisplayModeProperty::<Identity, OFFSET>,
+                            FirstDayOfWeekProperty: FirstDayOfWeekProperty::<Identity, OFFSET>,
+                            IsOutOfScopeEnabledProperty: IsOutOfScopeEnabledProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            IsTodayHighlightedProperty: IsTodayHighlightedProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            MaxDateProperty: MaxDateProperty::<Identity, OFFSET>,
+                            MinDateProperty: MinDateProperty::<Identity, OFFSET>,
+                            NumberOfWeeksInViewProperty: NumberOfWeeksInViewProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SelectedDatesProperty: SelectedDatesProperty::<Identity, OFFSET>,
+                            SelectionModeProperty: SelectionModeProperty::<Identity, OFFSET>,
+                            TemplateSettingsProperty: TemplateSettingsProperty::<Identity, OFFSET>,
+                            FocusBorderBrushProperty: FocusBorderBrushProperty::<Identity, OFFSET>,
+                            SelectedHoverBorderBrushProperty: SelectedHoverBorderBrushProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SelectedPressedBorderBrushProperty: SelectedPressedBorderBrushProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SelectedDisabledBorderBrushProperty:
+                                SelectedDisabledBorderBrushProperty::<Identity, OFFSET>,
+                            SelectedBorderBrushProperty: SelectedBorderBrushProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            HoverBorderBrushProperty: HoverBorderBrushProperty::<Identity, OFFSET>,
+                            PressedBorderBrushProperty: PressedBorderBrushProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            TodaySelectedInnerBorderBrushProperty:
+                                TodaySelectedInnerBorderBrushProperty::<Identity, OFFSET>,
+                            BlackoutStrikethroughBrushProperty: BlackoutStrikethroughBrushProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            CalendarItemBorderBrushProperty: CalendarItemBorderBrushProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            BlackoutBackgroundProperty: BlackoutBackgroundProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            OutOfScopeBackgroundProperty: OutOfScopeBackgroundProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            CalendarItemBackgroundProperty: CalendarItemBackgroundProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            CalendarItemHoverBackgroundProperty:
+                                CalendarItemHoverBackgroundProperty::<Identity, OFFSET>,
+                            CalendarItemPressedBackgroundProperty:
+                                CalendarItemPressedBackgroundProperty::<Identity, OFFSET>,
+                            CalendarItemDisabledBackgroundProperty:
+                                CalendarItemDisabledBackgroundProperty::<Identity, OFFSET>,
+                            TodayBackgroundProperty: TodayBackgroundProperty::<Identity, OFFSET>,
+                            TodayBlackoutBackgroundProperty: TodayBlackoutBackgroundProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            TodayHoverBackgroundProperty: TodayHoverBackgroundProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            TodayPressedBackgroundProperty: TodayPressedBackgroundProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            TodayDisabledBackgroundProperty: TodayDisabledBackgroundProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            PressedForegroundProperty: PressedForegroundProperty::<Identity, OFFSET>,
+                            TodayForegroundProperty: TodayForegroundProperty::<Identity, OFFSET>,
+                            BlackoutForegroundProperty: BlackoutForegroundProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            TodayBlackoutForegroundProperty: TodayBlackoutForegroundProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SelectedForegroundProperty: SelectedForegroundProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SelectedHoverForegroundProperty: SelectedHoverForegroundProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SelectedPressedForegroundProperty: SelectedPressedForegroundProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            SelectedDisabledForegroundProperty: SelectedDisabledForegroundProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            OutOfScopeForegroundProperty: OutOfScopeForegroundProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            OutOfScopeHoverForegroundProperty: OutOfScopeHoverForegroundProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            OutOfScopePressedForegroundProperty:
+                                OutOfScopePressedForegroundProperty::<Identity, OFFSET>,
+                            CalendarItemForegroundProperty: CalendarItemForegroundProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            DisabledForegroundProperty: DisabledForegroundProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            DayItemFontFamilyProperty: DayItemFontFamilyProperty::<Identity, OFFSET>,
+                            DayItemFontSizeProperty: DayItemFontSizeProperty::<Identity, OFFSET>,
+                            DayItemFontStyleProperty: DayItemFontStyleProperty::<Identity, OFFSET>,
+                            DayItemFontWeightProperty: DayItemFontWeightProperty::<Identity, OFFSET>,
+                            TodayFontWeightProperty: TodayFontWeightProperty::<Identity, OFFSET>,
+                            FirstOfMonthLabelFontFamilyProperty:
+                                FirstOfMonthLabelFontFamilyProperty::<Identity, OFFSET>,
+                            FirstOfMonthLabelFontSizeProperty: FirstOfMonthLabelFontSizeProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            FirstOfMonthLabelFontStyleProperty: FirstOfMonthLabelFontStyleProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            FirstOfMonthLabelFontWeightProperty:
+                                FirstOfMonthLabelFontWeightProperty::<Identity, OFFSET>,
+                            MonthYearItemFontFamilyProperty: MonthYearItemFontFamilyProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            MonthYearItemFontSizeProperty: MonthYearItemFontSizeProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            MonthYearItemFontStyleProperty: MonthYearItemFontStyleProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            MonthYearItemFontWeightProperty: MonthYearItemFontWeightProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            FirstOfYearDecadeLabelFontFamilyProperty:
+                                FirstOfYearDecadeLabelFontFamilyProperty::<Identity, OFFSET>,
+                            FirstOfYearDecadeLabelFontSizeProperty:
+                                FirstOfYearDecadeLabelFontSizeProperty::<Identity, OFFSET>,
+                            FirstOfYearDecadeLabelFontStyleProperty:
+                                FirstOfYearDecadeLabelFontStyleProperty::<Identity, OFFSET>,
+                            FirstOfYearDecadeLabelFontWeightProperty:
+                                FirstOfYearDecadeLabelFontWeightProperty::<Identity, OFFSET>,
+                            DayItemMarginProperty: DayItemMarginProperty::<Identity, OFFSET>,
+                            MonthYearItemMarginProperty: MonthYearItemMarginProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            FirstOfMonthLabelMarginProperty: FirstOfMonthLabelMarginProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            FirstOfYearDecadeLabelMarginProperty:
+                                FirstOfYearDecadeLabelMarginProperty::<Identity, OFFSET>,
+                            HorizontalDayItemAlignmentProperty: HorizontalDayItemAlignmentProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            VerticalDayItemAlignmentProperty: VerticalDayItemAlignmentProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            HorizontalFirstOfMonthLabelAlignmentProperty:
+                                HorizontalFirstOfMonthLabelAlignmentProperty::<Identity, OFFSET>,
+                            VerticalFirstOfMonthLabelAlignmentProperty:
+                                VerticalFirstOfMonthLabelAlignmentProperty::<Identity, OFFSET>,
+                            CalendarItemBorderThicknessProperty:
+                                CalendarItemBorderThicknessProperty::<Identity, OFFSET>,
+                            CalendarViewDayItemStyleProperty: CalendarViewDayItemStyleProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                            CalendarItemCornerRadiusProperty: CalendarItemCornerRadiusProperty::<
+                                Identity,
+                                OFFSET,
+                            >,
+                        }
+                    }
+                    pub fn matches(iid: &windows_core::GUID) -> bool {
+                        iid == &<ICalendarViewStatics as windows_core::Interface>::IID
+                    }
+                }
+                #[repr(C)]
+                #[doc(hidden)]
+                pub struct ICalendarViewStatics_Vtbl {
+                    pub base__: windows_core::IInspectable_Vtbl,
+                    pub CalendarIdentifierProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub DayOfWeekFormatProperty: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub IsGroupLabelVisibleProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub DisplayModeProperty: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub FirstDayOfWeekProperty: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub IsOutOfScopeEnabledProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub IsTodayHighlightedProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub MaxDateProperty: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub MinDateProperty: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub NumberOfWeeksInViewProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SelectedDatesProperty: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub SelectionModeProperty: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub TemplateSettingsProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub FocusBorderBrushProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SelectedHoverBorderBrushProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SelectedPressedBorderBrushProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SelectedDisabledBorderBrushProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SelectedBorderBrushProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub HoverBorderBrushProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub PressedBorderBrushProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub TodaySelectedInnerBorderBrushProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub BlackoutStrikethroughBrushProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub CalendarItemBorderBrushProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub BlackoutBackgroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub OutOfScopeBackgroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub CalendarItemBackgroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub CalendarItemHoverBackgroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub CalendarItemPressedBackgroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub CalendarItemDisabledBackgroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub TodayBackgroundProperty: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub TodayBlackoutBackgroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub TodayHoverBackgroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub TodayPressedBackgroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub TodayDisabledBackgroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub PressedForegroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub TodayForegroundProperty: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub BlackoutForegroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub TodayBlackoutForegroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SelectedForegroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SelectedHoverForegroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SelectedPressedForegroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub SelectedDisabledForegroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub OutOfScopeForegroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub OutOfScopeHoverForegroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub OutOfScopePressedForegroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub CalendarItemForegroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub DisabledForegroundProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub DayItemFontFamilyProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub DayItemFontSizeProperty: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub DayItemFontStyleProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub DayItemFontWeightProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub TodayFontWeightProperty: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub FirstOfMonthLabelFontFamilyProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub FirstOfMonthLabelFontSizeProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub FirstOfMonthLabelFontStyleProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub FirstOfMonthLabelFontWeightProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub MonthYearItemFontFamilyProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub MonthYearItemFontSizeProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub MonthYearItemFontStyleProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub MonthYearItemFontWeightProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub FirstOfYearDecadeLabelFontFamilyProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub FirstOfYearDecadeLabelFontSizeProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub FirstOfYearDecadeLabelFontStyleProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub FirstOfYearDecadeLabelFontWeightProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub DayItemMarginProperty: unsafe extern "system" fn(
+                        *mut core::ffi::c_void,
+                        *mut *mut core::ffi::c_void,
+                    )
+                        -> windows_core::HRESULT,
+                    pub MonthYearItemMarginProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub FirstOfMonthLabelMarginProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub FirstOfYearDecadeLabelMarginProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub HorizontalDayItemAlignmentProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub VerticalDayItemAlignmentProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub HorizontalFirstOfMonthLabelAlignmentProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub VerticalFirstOfMonthLabelAlignmentProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub CalendarItemBorderThicknessProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub CalendarViewDayItemStyleProperty:
+                        unsafe extern "system" fn(
+                            *mut core::ffi::c_void,
+                            *mut *mut core::ffi::c_void,
+                        ) -> windows_core::HRESULT,
+                    pub CalendarItemCornerRadiusProperty:
                         unsafe extern "system" fn(
                             *mut core::ffi::c_void,
                             *mut *mut core::ffi::c_void,
