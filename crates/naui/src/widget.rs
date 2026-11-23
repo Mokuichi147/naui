@@ -1,19 +1,144 @@
-//! The trait shared by widgets, and macros for creating the wrapper types.
+//! The traits shared by widgets, and macros for creating the wrapper types.
 
 use crate::sys;
+use naui_core::{FileEntry, Sizing};
 
 pub(crate) mod sealed {
     pub trait Sealed {}
 }
 
+/// A closure given to `on_file_drop`, as a trait object.
+pub(crate) type FileDropFn = Box<dyn FnMut(&[FileEntry])>;
+
 /// The common interface implemented by naui's widgets.
 ///
-/// Methods that put children into containers ([`Stack::append`](crate::Stack::append)
-/// and others) take it as `&dyn Widget`. It cannot be implemented outside naui.
-pub trait Widget: sealed::Sealed + 'static {
+/// It cannot be implemented outside naui. Containers take children as
+/// [`&dyn AsWidget`](AsWidget), which every `Widget` implements, so a `&dyn Widget`
+/// can be passed as it is. To pass a type of your own, implement [`AsWidget`] for it.
+pub trait Widget: AsWidget + sealed::Sealed + 'static {
     /// The wrapped backend widget. Used when putting it into a container.
     #[doc(hidden)]
     fn as_backend(&self) -> &dyn sys::Widget;
+}
+
+/// Something that can be put into a container: a naui widget, or a type of your
+/// own that holds one.
+///
+/// Methods that put children into containers ([`Stack::append`](crate::Stack::append),
+/// [`Window::set_child`](crate::Window::set_child) and others) take it as
+/// `&dyn AsWidget`. Every naui widget implements it, returning itself. A type
+/// made outside naui (a composition of widgets, a view in an app's own crate)
+/// implements it by returning the widget it places: the outermost container it
+/// built, usually. Then it can be passed as `stack.append(&tag)` rather than
+/// handing out the widget inside at every call.
+///
+/// ```no_run
+/// # use naui::{AsWidget, Orientation, Result, Ui, Widget};
+/// /// A label with a button that removes it.
+/// struct Tag {
+///     root: naui::Stack,
+///     remove: naui::Button,
+/// }
+///
+/// impl Tag {
+///     fn new(ui: &Ui, text: &str) -> Result<Tag> {
+///         let root = ui.stack(Orientation::Horizontal)?;
+///         let remove = ui.button("×")?;
+///         root.append(&ui.label(text)?);
+///         root.append(&remove);
+///         Ok(Tag { root, remove })
+///     }
+/// }
+///
+/// impl AsWidget for Tag {
+///     fn as_widget(&self) -> &dyn Widget {
+///         &self.root
+///     }
+/// }
+///
+/// # fn build(ui: &Ui, stack: &naui::Stack) -> Result<()> {
+/// let tag = Tag::new(ui, "Rust")?;
+/// stack.append(&tag);
+/// tag.set_tooltip(Some("A tag")); // reaches `tag.root`
+/// # Ok(())
+/// # }
+/// ```
+///
+/// The container holds the widget returned, not the value implementing this:
+/// it keeps a reference to the widget as it does when the widget is passed
+/// directly, and the value can be dropped or moved afterwards. Return the same
+/// widget each time, so that the methods below reach the widget that was placed.
+///
+/// The other methods are the operations every widget has, and by default reach the
+/// widget returned by [`as_widget`](Self::as_widget). On naui's own widgets each
+/// type's method of the same name is called, with the same result. They are
+/// provided for types of your own, and for `&dyn Widget` values, which have no
+/// methods of their own to call; override one only to do more than pass it on.
+/// [`downgrade`](crate::Button::downgrade) is not among them, since it names the
+/// widget's own type: keep a weak reference to the inner widget instead.
+pub trait AsWidget {
+    /// The widget placed in the container.
+    fn as_widget(&self) -> &dyn Widget;
+
+    /// Sets the size of the widget. Each call discards the previous setting. See
+    /// [`Button::set_sizing`](crate::Button::set_sizing).
+    fn set_sizing(&self, sizing: Sizing) {
+        self.as_widget().set_sizing(sizing)
+    }
+
+    /// Whether the widget is shown. Shown by default. See
+    /// [`Button::set_visible`](crate::Button::set_visible).
+    fn set_visible(&self, visible: bool) {
+        self.as_widget().set_visible(visible)
+    }
+
+    /// The visibility set with [`set_visible`](Self::set_visible). Stays `true` even
+    /// if a parent is hidden.
+    fn is_visible(&self) -> bool {
+        self.as_widget().is_visible()
+    }
+
+    /// Moves keyboard focus into the widget. `true` if it moved. See
+    /// [`Button::request_focus`](crate::Button::request_focus).
+    fn request_focus(&self) -> bool {
+        self.as_widget().request_focus()
+    }
+
+    /// The description shown when the pointer hovers over the widget. `None`
+    /// removes it.
+    fn set_tooltip(&self, text: Option<&str>) {
+        self.as_widget().set_tooltip(text)
+    }
+
+    /// The name reported to screen readers. `None` removes it (the visible text is
+    /// used). See [`Button::set_accessible_label`](crate::Button::set_accessible_label).
+    fn set_accessible_label(&self, text: Option<&str>) {
+        self.as_widget().set_accessible_label(text)
+    }
+
+    /// Called with the files dropped onto the widget from the OS. See
+    /// [`Button::on_file_drop`](crate::Button::on_file_drop).
+    ///
+    /// Not callable on a `&dyn Widget` or `&dyn AsWidget`; call it on the widget
+    /// or on your own type.
+    fn on_file_drop(&self, f: impl FnMut(&[FileEntry]) + 'static)
+    where
+        Self: Sized,
+    {
+        self.on_file_drop_boxed(Box::new(f))
+    }
+
+    /// [`on_file_drop`](Self::on_file_drop) through a trait object.
+    #[doc(hidden)]
+    fn on_file_drop_boxed(&self, f: FileDropFn) {
+        self.as_widget().on_file_drop_boxed(f)
+    }
+
+    /// Drops `files` onto the widget the way the user drops files from the OS. See
+    /// [`Button::drop_files`](crate::Button::drop_files).
+    fn drop_files(&self, files: &[FileEntry]) {
+        self.as_widget().drop_files(files)
+    }
 }
 
 /// The shared part of types that are not widgets (`Window`, `ListRow` and others).
@@ -45,6 +170,51 @@ macro_rules! impl_widget {
             #[inline]
             fn as_backend(&self) -> &dyn crate::sys::Widget {
                 &self.0
+            }
+        }
+
+        // 既定のメソッドは as_widget() へ転送するので、ここで同じ名前の
+        // メソッドへ向け直す (向け直さないと自分へ転送し続ける)。
+        impl crate::AsWidget for $t {
+            #[inline]
+            fn as_widget(&self) -> &dyn crate::Widget {
+                self
+            }
+            #[inline]
+            fn set_sizing(&self, sizing: naui_core::Sizing) {
+                $t::set_sizing(self, sizing)
+            }
+            #[inline]
+            fn set_visible(&self, visible: bool) {
+                $t::set_visible(self, visible)
+            }
+            #[inline]
+            fn is_visible(&self) -> bool {
+                $t::is_visible(self)
+            }
+            #[inline]
+            fn request_focus(&self) -> bool {
+                $t::request_focus(self)
+            }
+            #[inline]
+            fn set_tooltip(&self, text: Option<&str>) {
+                $t::set_tooltip(self, text)
+            }
+            #[inline]
+            fn set_accessible_label(&self, text: Option<&str>) {
+                $t::set_accessible_label(self, text)
+            }
+            #[inline]
+            fn on_file_drop(&self, f: impl FnMut(&[naui_core::FileEntry]) + 'static) {
+                $t::on_file_drop(self, f)
+            }
+            #[inline]
+            fn on_file_drop_boxed(&self, f: crate::widget::FileDropFn) {
+                $t::on_file_drop(self, f)
+            }
+            #[inline]
+            fn drop_files(&self, files: &[naui_core::FileEntry]) {
+                $t::drop_files(self, files)
             }
         }
 

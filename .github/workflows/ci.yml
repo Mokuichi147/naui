@@ -384,9 +384,9 @@ jobs:
           [ -x "$driver" ] || { echo "chromedriver が見つかりません: $driver" >&2; exit 1; }
           CHROMEDRIVER="$driver" WASM_BINDGEN_TEST_DRIVER_TIMEOUT=30 \
             cargo test --target wasm32-unknown-unknown -p naui-web -p signup
-          # naui のテスト用の操作は naui::testing で回す (単体テストは Web では走らせない)。
+          # naui のテスト用の操作と、自前の型を AsWidget で渡す経路は naui::testing で回す (単体テストは Web では走らせない)。
           CHROMEDRIVER="$driver" WASM_BINDGEN_TEST_DRIVER_TIMEOUT=30 \
-            cargo test --target wasm32-unknown-unknown -p naui --test actions
+            cargo test --target wasm32-unknown-unknown -p naui --test actions --test as_widget
           # グラフを本物の <canvas> に描かせる (単体テストはネイティブで走る)。
           CHROMEDRIVER="$driver" WASM_BINDGEN_TEST_DRIVER_TIMEOUT=30 \
             cargo test --target wasm32-unknown-unknown -p naui-charts --test ui
@@ -397,9 +397,9 @@ jobs:
           [ -x "$driver" ] || { echo "geckodriver が見つかりません: $driver" >&2; exit 1; }
           GECKODRIVER="$driver" WASM_BINDGEN_TEST_DRIVER_TIMEOUT=30 \
             cargo test --target wasm32-unknown-unknown -p naui-web -p signup
-          # naui のテスト用の操作は naui::testing で回す (単体テストは Web では走らせない)。
+          # naui のテスト用の操作と、自前の型を AsWidget で渡す経路は naui::testing で回す (単体テストは Web では走らせない)。
           GECKODRIVER="$driver" WASM_BINDGEN_TEST_DRIVER_TIMEOUT=30 \
-            cargo test --target wasm32-unknown-unknown -p naui --test actions
+            cargo test --target wasm32-unknown-unknown -p naui --test actions --test as_widget
           # グラフを本物の <canvas> に描かせる (単体テストはネイティブで走る)。
           GECKODRIVER="$driver" WASM_BINDGEN_TEST_DRIVER_TIMEOUT=30 \
             cargo test --target wasm32-unknown-unknown -p naui-charts --test ui

@@ -1,5 +1,5 @@
 use crate::sys;
-use crate::Widget;
+use crate::AsWidget;
 use naui_core::{DialogButtons, DialogResponse};
 
 /// A modal dialog holding any widget as its content, with buttons by role.
@@ -34,8 +34,8 @@ impl Sheet {
     /// [`set_sizing`](crate::Label::set_sizing) has nothing to fill. Give a fixed size
     /// or a minimum to make it larger.
     #[inline]
-    pub fn set_child(&self, child: &dyn Widget) {
-        self.0.set_child(child.as_backend())
+    pub fn set_child(&self, child: &dyn AsWidget) {
+        self.0.set_child(child.as_widget().as_backend())
     }
 
     /// The buttons to show. With none specified, only "OK" is shown.

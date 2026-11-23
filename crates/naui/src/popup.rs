@@ -1,5 +1,5 @@
 use crate::sys;
-use crate::Widget;
+use crate::AsWidget;
 use naui_core::PopupItem;
 
 /// A popup (context) menu shown on right-click.
@@ -34,15 +34,15 @@ impl PopupMenu {
     /// Makes this menu appear on right-click on the widget. It can be attached to any
     /// number of widgets.
     #[inline]
-    pub fn attach(&self, widget: &dyn Widget) {
-        self.0.attach(widget.as_backend())
+    pub fn attach(&self, widget: &dyn AsWidget) {
+        self.0.attach(widget.as_widget().as_backend())
     }
 
     /// Shows it from code. The position is in logical pixels from the top left of
     /// `widget`.
     #[inline]
-    pub fn open_at(&self, widget: &dyn Widget, x: f64, y: f64) {
-        self.0.open_at(widget.as_backend(), x, y)
+    pub fn open_at(&self, widget: &dyn AsWidget, x: f64, y: f64) {
+        self.0.open_at(widget.as_widget().as_backend(), x, y)
     }
 
     #[inline]
