@@ -1,0 +1,25 @@
+[package]
+name = "naui-charts"
+description = "Line, bar and scatter charts for naui, drawn on its Canvas with each platform's 2D API and colored to follow light and dark"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords = ["gui", "chart", "plot", "naui"]
+categories = ["gui", "visualization"]
+readme = "README.md"
+
+[dependencies]
+naui.workspace = true
+
+# naui::test_cases! が書く入口を使う。本物の Canvas に描かせるテストで、
+# macOS と GTK は UI をメインスレッドからしか触れず、WinUI 3 は 1 プロセスで
+# 1 度しか始められないので、Rust 標準のテストハーネスは使わない。
+[[test]]
+name = "ui"
+harness = false
+
+# Web ではケースごとに #[wasm_bindgen_test] をブラウザで走らせる。
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"

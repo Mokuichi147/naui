@@ -1670,6 +1670,9 @@ are converted to sRGB before the components are read.
 drawn on a [`Canvas`]. Write what to draw to the [`Painter`] inside the closure
 passed to [`on_draw`](Canvas::on_draw), and call [`redraw`](Canvas::redraw) when
 you want it redrawn. When the surface's size changes, naui redraws it.
+For line, bar and scatter charts, the separate crate
+[naui-charts](https://crates.io/crates/naui-charts) draws them on a `Canvas`
+with axes, ticks and a legend that follow light and dark.
 
 ```no_run
 # use naui::{Color, Point, Rect, Result, Sizing, TextColor, Ui};

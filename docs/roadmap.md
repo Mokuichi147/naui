@@ -153,11 +153,19 @@ need investigating first but are not heavy.
       Done with both: strokes, fills and text take a role, which the platform
       resolves when it is recorded (`Ink`, `Paint::Role`), `Painter::is_dark`
       tells the appearance, and the surface draws itself again when it changes.
-- [ ] *(drawing)* **`naui-charts`.** Line, bar and scatter charts in a separate
+- [x] *(drawing)* **`naui-charts`.** Line, bar and scatter charts in a separate
       crate drawing on `Canvas`. What it waited on, clipping so that plot areas
       do not draw outside their bounds and text width measurement for laying out
       axis labels, was released in v0.17.0, and Windows's `Canvas` keeps up with
       charts of many points since v0.15.0.
+      Done as `crates/naui-charts`: line, bar and scatter series (mixed in one
+      chart), categories or a numeric x axis, ticks at steps of 1, 2, 2.5 and 5,
+      axis titles and a legend. Axes and text take the roles of `TextColor`, and
+      series a fixed palette with its own colors for light and dark. Lines with
+      many points keep four per pixel column and crowded dots are thinned, so
+      100,000 points stay one command per series. `ChartView` hands out the
+      `Canvas` inside it (`root()`) until containers take types made outside
+      naui. Tooltips and zooming are left for later.
 - [x] *(adaptive)* **`Flow`** (a container that wraps its children onto new lines).
       `GtkFlowBox` and CSS `flex-wrap` exist, but WinUI only has
       `VariableSizedWrapGrid` with fixed-size cells (`WrapPanel` is in the

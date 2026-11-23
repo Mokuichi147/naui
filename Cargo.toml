@@ -9,6 +9,7 @@ members = [
     "crates/naui-gtk",
     "crates/naui",
     "crates/naui-app",
+    "crates/naui-charts",
     "examples/counter",
     "examples/i18n",
     "examples/todo",
@@ -23,6 +24,7 @@ members = [
     "examples/notes/screens/editor",
     "examples/signup",
     "examples/gallery",
+    "examples/charts",
 ]
 exclude = ["tools/winui3-bindgen"]
 
@@ -42,6 +44,7 @@ naui-winui3 = { path = "crates/naui-winui3", version = "0.18.0" }
 naui-gtk = { path = "crates/naui-gtk", version = "0.18.0" }
 naui = { path = "crates/naui", version = "0.18.0" }
 naui-app = { path = "crates/naui-app", version = "0.18.0" }
+naui-charts = { path = "crates/naui-charts", version = "0.18.0" }
 
 [profile.release]
 opt-level = 3
