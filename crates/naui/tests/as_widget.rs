@@ -322,17 +322,20 @@ async fn own_types_go_into_sheets_dialogs_and_popovers(ui: Ui) -> Result<()> {
         // 答えた時点で中身が並べ終わっていることを見る。
         dialog.respond(DialogResponse::Primary);
         dialog.open();
+        testing::wait_until(&ui, || size_when_answered.borrow().is_some()).await?;
+        let answered = size_when_answered.borrow().unwrap();
+        assert!(
+            answered.0 > 0.0,
+            "Dialog::set_child: the content was laid out ({answered:?})"
+        );
     } else {
+        // ほかの環境は開いている間に見る。答えが届く頃には閉じて、中身の大きさは
+        // 0 に戻っていることがある (Web)。
         dialog.open();
         wait_laid_out(&ui, "dialog", &[("Dialog::set_child", c.clone())]).await?;
         dialog.respond(DialogResponse::Primary);
+        testing::wait_until(&ui, || size_when_answered.borrow().is_some()).await?;
     }
-    testing::wait_until(&ui, || size_when_answered.borrow().is_some()).await?;
-    let answered = size_when_answered.borrow().unwrap();
-    assert!(
-        answered.0 > 0.0,
-        "Dialog::set_child: the content was laid out ({answered:?})"
-    );
     testing::settle(&ui).await;
 
     // Popover: 中身と、開く起点の両方が自前の型。
