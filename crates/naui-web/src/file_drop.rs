@@ -159,6 +159,46 @@ impl FileDrop {
     }
 }
 
+/// A `DataTransfer` holding an empty file named after each entry, as a drag or a
+/// file dialog would hand over (for `drop_files` and `FilePicker::choose`). `None`
+/// if the browser cannot make one.
+pub(crate) fn data_transfer_of(files: &[FileEntry]) -> Option<DataTransfer> {
+    let data = DataTransfer::new().ok()?;
+    let items = data.items();
+    for entry in files {
+        // 中身は持たせない。名前だけが本物と同じ経路で届けばよい。
+        let file =
+            web_sys::File::new_with_str_sequence(&js_sys::Array::new(), entry.name()).ok()?;
+        items.add_with_file(&file).ok()?;
+    }
+    Some(data)
+}
+
+/// Drops `files` onto `element` the way the user drops files from the OS, for
+/// `drop_files` (tests and automation): a `drop` event carrying them is dispatched
+/// at `element` and bubbles, so the innermost target at or above it takes it, as a
+/// real drop would. Does nothing if `files` is empty.
+///
+/// Each entry becomes an empty file with its name, so the receiver gets a `blob:`
+/// URL and no path, as with a real drop. Runs synchronously: the receiver is called
+/// before this returns. The event is not trusted (`isTrusted` is false). No
+/// `dragenter` / `dragover` is sent first: the targets decide on `drop` alone.
+pub(crate) fn dispatch_drop(element: &EventTarget, files: &[FileEntry]) {
+    if files.is_empty() {
+        return;
+    }
+    let Some(data) = data_transfer_of(files) else {
+        return;
+    };
+    let init = web_sys::DragEventInit::new();
+    init.set_bubbles(true);
+    init.set_cancelable(true);
+    init.set_data_transfer(Some(&data));
+    if let Ok(event) = DragEvent::new_with_event_init_dict("drop", &init) {
+        let _ = element.dispatch_event(&event);
+    }
+}
+
 /// The drag event, when a target should take it: it carries files and is not
 /// aimed at a text field.
 fn taken_here(event: &Event) -> Option<&DragEvent> {

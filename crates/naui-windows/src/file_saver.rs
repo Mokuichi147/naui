@@ -210,6 +210,42 @@ impl FileSaver {
     pub fn open(&self) {
         show_and_report(&self.0.state, &self.0.on_save, &self.0.on_error);
     }
+
+    /// Saves as if the user had chosen `destination` in the dialog, without showing
+    /// it, for tests and automation: the contents are written to its path as after
+    /// a real choice, and `on_save` is called (or `on_error` if writing fails or it
+    /// has no path). Does nothing while disabled.
+    ///
+    /// The write is synchronous, as after the dialog. Unlike a choice in the
+    /// dialog, the notification is called before this returns: the real one is put
+    /// off to the next tick only to get clear of the modal dialog, and no dialog is
+    /// shown here.
+    pub fn choose(&self, destination: &FileEntry) {
+        if !self.0.native.IsEnabled().unwrap_or(false) {
+            return;
+        }
+        let Some(path) = destination.path() else {
+            self.0.on_error.emit(&Error::new(
+                "write the file",
+                format!("{} has no path", destination.name()),
+            ));
+            return;
+        };
+        let contents = self.0.state.0.with_mut(|state| state.contents.clone());
+        match save(&self.0.state, path, &contents) {
+            Ok(entry) => self.0.on_save.emit(&entry),
+            Err(e) => self.0.on_error.emit(&e),
+        }
+    }
+}
+
+/// Writes `contents` to `path` and records it as where they were last written.
+fn save(state: &SharedState, path: &Path, contents: &[u8]) -> Result<FileEntry> {
+    let entry = write_contents(path, contents)?;
+    state
+        .0
+        .with_mut(|state| state.destination = Some(entry.clone()));
+    Ok(entry)
 }
 
 /// The dialog's result. Cancellation is kept separate from failure.
@@ -236,14 +272,10 @@ fn show_and_report(state: &SharedState, on_save: &Handler<FileEntry>, on_error: 
         Outcome::Cancelled => return,
         Outcome::Failed(e) => return notify(on_error, e),
     };
-    let entry = match write_contents(&path, &contents) {
-        Ok(entry) => entry,
-        Err(e) => return notify(on_error, e),
-    };
-    state
-        .0
-        .with_mut(|state| state.destination = Some(entry.clone()));
-    notify(on_save, entry);
+    match save(state, &path, &contents) {
+        Ok(entry) => notify(on_save, entry),
+        Err(e) => notify(on_error, e),
+    }
 }
 
 /// Sends the notification to the next UI tick before calling it.

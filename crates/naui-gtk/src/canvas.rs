@@ -10,6 +10,13 @@
 //! Text is created from the widget's Pango context, so the typeface is the theme's
 //! UI font, with only the size replaced by the command's `size`.
 //!
+//! Color roles are read the way a `Label` shows them: the surface's own color (the
+//! text color it inherits from the window) for body text, the same with
+//! `.dim-label`'s opacity for the secondary role, and for the rest the color of a
+//! label carrying the role's style class (`.accent`, `.error` and so on). Light or dark comes from the display's
+//! `AdwStyleManager`, whose `dark`, `high-contrast` and `accent-color` changes
+//! queue a redraw.
+//!
 //! Pointer notifications come from three controllers. `GtkGestureClick` gives
 //! presses and releases (the button comes from `current_button`: 1 for left, 2 for
 //! middle, 3 for right, 8 and 9 for the side buttons), `GtkGestureDrag` gives
@@ -43,9 +50,9 @@ use gtk::cairo;
 use gtk::pango;
 use gtk::prelude::*;
 use naui_core::{
-    text_baseline_offset, Align, Bitmap, BitmapData, DrawCommand, EventResponse, Gradient,
+    text_baseline_offset, Align, Bitmap, BitmapData, Color, DrawCommand, EventResponse, Gradient,
     GradientShape, Paint, Painter, Path, PathSegment, Point, PointerButton, PointerEvent,
-    PointerPhase, Rect, WheelHandler, WHEEL_STEP,
+    PointerPhase, Rect, TextColor, WheelHandler, WHEEL_STEP,
 };
 
 use crate::bin::SizeBin;
@@ -62,6 +69,18 @@ struct CanvasInner {
     draw: Rc<DrawSlot>,
     pointer: Rc<Notifier<PointerEvent>>,
     wheel: Rc<WheelHandler>,
+    /// The style manager whose changes redraw the surface, and the subscriptions.
+    theme: (adw::StyleManager, Vec<gtk::glib::SignalHandlerId>),
+}
+
+impl Drop for CanvasInner {
+    fn drop(&mut self) {
+        // `AdwStyleManager` はアプリの間ずっと生きるので、外さないと接続が残り続ける。
+        let (manager, handlers) = &mut self.theme;
+        for handler in handlers.drain(..) {
+            manager.disconnect(handler);
+        }
+    }
 }
 
 /// A surface the app draws on itself (`GtkDrawingArea`).
@@ -84,11 +103,14 @@ impl Canvas {
             let draw = draw.clone();
             move |area, cr, width, height| {
                 let measured = area.clone();
+                let dark = adw::StyleManager::for_display(&area.display()).is_dark();
+                let colored = area.clone();
                 let mut painter = Painter::with_text_measure(
                     f64::from(width),
                     f64::from(height),
                     move |text, size| text_width(&text_layout(&measured, text, size)),
-                );
+                )
+                .with_role_colors(dark, move |role| role_color(&colored, role));
                 let Some(mut f) = draw.borrow_mut().take() else {
                     return;
                 };
@@ -225,12 +247,29 @@ impl Canvas {
         });
         native.add_controller(scroll);
 
+        // 明暗やアクセント色が変わったら描き直す。既定のマネージャーは display を
+        // 持たず、通知が CSS の読み替えより先に届く (`Label` と同じ理由)。
+        let manager = adw::StyleManager::for_display(&native.display());
+        // `accent-color` は libadwaita 1.6 から。無い版では通知が来ないだけ。
+        let handlers = ["dark", "high-contrast", "accent-color"]
+            .into_iter()
+            .map(|property| {
+                let area = native.downgrade();
+                manager.connect_notify_local(Some(property), move |_, _| {
+                    if let Some(area) = area.upgrade() {
+                        area.queue_draw();
+                    }
+                })
+            })
+            .collect();
+
         Self(Rc::new(CanvasInner {
             native,
             bin,
             draw,
             pointer,
             wheel,
+            theme: (manager, handlers),
         }))
     }
 
@@ -273,6 +312,29 @@ impl Canvas {
         self.0.wheel.set(f);
     }
 
+    /// Delivers `event` to `on_pointer` as given, as if the user had pressed, moved
+    /// or released the pointer (for tests and automation). An event whose phase is
+    /// `Wheel` goes to `on_wheel` instead, as with [`send_wheel`](Self::send_wheel).
+    ///
+    /// GTK4 cannot make input events, so naui's handler is called directly, before
+    /// this returns. No controller sees it.
+    pub fn send_pointer(&self, event: PointerEvent) {
+        if event.phase == PointerPhase::Wheel {
+            self.send_wheel(event);
+        } else {
+            self.0.pointer.emit(event);
+        }
+    }
+
+    /// Delivers `event` to `on_wheel` as if the user had turned the wheel, and
+    /// returns its answer (`Continue` without `on_wheel`), for tests and automation.
+    ///
+    /// GTK4 cannot make input events, so naui's handler is called directly, before
+    /// this returns. Nothing scrolls on `Continue`.
+    pub fn send_wheel(&self, event: PointerEvent) -> EventResponse {
+        self.0.wheel.emit(event)
+    }
+
     /// The current size of the surface (width, height). 0 if not laid out yet.
     pub fn size(&self) -> (f64, f64) {
         (
@@ -304,6 +366,38 @@ fn cancel_ancestor_kinetic(widget: &gtk::Widget) {
         }
         next = ancestor.parent();
     }
+}
+
+/// The color and opacity of `role` as a label shows it in the theme now.
+///
+/// Body text and `.dim-label` take the color they inherit, so those are read from
+/// `area` itself, which is inside the window (a widget outside one inherits
+/// nothing and comes out white); `.dim-label` changes the opacity of the whole
+/// widget rather than its color. The other classes set a color of their own, read
+/// from a label carrying the class.
+fn role_color(area: &gtk::DrawingArea, role: TextColor) -> (Color, f64) {
+    let color = match role {
+        TextColor::Default | TextColor::Secondary => area.color(),
+        _ => {
+            let probe = gtk::Label::new(None);
+            if let Some(class) = role.style_class() {
+                probe.add_css_class(class);
+            }
+            probe.color()
+        }
+    };
+    let mut opacity = f64::from(color.alpha());
+    if role == TextColor::Secondary {
+        opacity *= f64::from(crate::widgets::DIM_OPACITY_PERCENT) / 100.0;
+    }
+    (
+        Color::from_unit(
+            f64::from(color.red()),
+            f64::from(color.green()),
+            f64::from(color.blue()),
+        ),
+        opacity,
+    )
 }
 
 /// Converts a GDK button number into a button.
@@ -342,6 +436,8 @@ fn replay(area: &gtk::DrawingArea, cr: &cairo::Context, commands: &[DrawCommand]
                         let (r, g, b) = color.to_unit();
                         cr.set_source_rgba(r, g, b, *opacity);
                     }
+                    // `Painter` は役割を色にしてから記録する。
+                    Paint::Role(_) => {}
                     Paint::Gradient(gradient) => {
                         let _ = cr.set_source(gradient_pattern(gradient, *opacity));
                     }

@@ -23,6 +23,7 @@ mod expander;
 mod file_drop;
 mod file_picker;
 mod file_saver;
+mod flow;
 mod focus;
 mod group;
 mod handover;
@@ -83,6 +84,7 @@ pub use editable_combo_box::EditableComboBox;
 pub use expander::Expander;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
+pub use flow::Flow;
 pub use group::{Group, Separator};
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::{List, ListRow};
@@ -215,6 +217,11 @@ impl Ui {
     /// A container that positions children by row and column.
     pub fn grid(&self) -> Result<Grid> {
         Grid::new(&self.0.document)
+    }
+
+    /// A container that wraps its children onto new lines.
+    pub fn flow(&self) -> Result<Flow> {
+        Flow::new(&self.0.document)
     }
 
     /// A container that scrolls when its contents overflow.
@@ -587,6 +594,25 @@ impl Ui {
         Ok(())
     }
 
+    /// Reads `url` the way [`open_url`](Self::open_url) does, without opening
+    /// anything: `Err` if `window.open` would throw for it, that is, if it cannot be
+    /// parsed as a URL, relative to the document's base URL. A blocked tab is not
+    /// checked (nothing is opened).
+    #[doc(hidden)]
+    pub fn check_url(&self, url: &str) -> Result<()> {
+        // `window.open` は文書の基準 URL で URL を読み、読めなければ
+        // SyntaxError を投げる。同じ読み方で確かめる。
+        let base = self
+            .0
+            .document
+            .base_uri()
+            .map_err(|e| to_error("open the URL", e))?
+            .ok_or_else(|| Error::new("open the URL", "the document has no base URL"))?;
+        web_sys::Url::new_with_base(url, &base)
+            .map(|_| ())
+            .map_err(|e| to_error("open the URL", e))
+    }
+
     /// Browsers have no concept of quitting an app, so this does nothing.
     pub fn quit(&self) {}
 }
@@ -708,5 +734,10 @@ pub(crate) fn apply_theme(document: &Document, theme: Theme) -> Result<()> {
     };
     root.style()
         .set_property("color-scheme", value)
-        .map_err(|e| to_error("set color-scheme", e))
+        .map_err(|e| to_error("set color-scheme", e))?;
+    // `prefers-color-scheme` は変わらないので、描画面へは自前のイベントで知らせる。
+    if let Ok(event) = web_sys::Event::new(canvas::THEME_CHANGE_EVENT) {
+        let _ = document.dispatch_event(&event);
+    }
+    Ok(())
 }

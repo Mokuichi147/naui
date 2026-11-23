@@ -52,4 +52,22 @@ impl FilePicker {
     pub fn open(&self) {
         self.0.open()
     }
+
+    /// Picks `files` as if the user had clicked the button and chosen them in the
+    /// dialog, without showing it: [`selection`](Self::selection) becomes them and
+    /// [`on_select`](Self::on_select) is called. An empty `files` is a cancelled
+    /// dialog and changes nothing. Does nothing while disabled.
+    ///
+    /// Natively the entries arrive as given; the mode and filters are not checked.
+    /// On the Web they arrive as the browser delivers chosen files: an empty file
+    /// named after each entry, with a `blob:` URL and no path (in folder mode, the
+    /// first entry with its name only).
+    ///
+    /// For tests and automation. Call it instead of clicking the button: a click
+    /// shows the real dialog, which a test cannot answer. See
+    /// [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn choose(&self, files: &[FileEntry]) {
+        self.0.choose(files)
+    }
 }

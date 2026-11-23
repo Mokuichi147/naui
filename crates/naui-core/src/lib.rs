@@ -26,6 +26,7 @@ mod datetime;
 mod dialog;
 mod direction;
 mod file;
+mod flow;
 mod focus;
 mod grid;
 mod group;
@@ -61,8 +62,8 @@ pub use button::ButtonRole;
 #[doc(hidden)]
 pub use canvas::text_baseline_offset;
 pub use canvas::{
-    DrawCommand, Gradient, GradientShape, GradientStop, Paint, Painter, Path, PathSegment, Point,
-    PointerButton, PointerEvent, PointerPhase, Rect, Transform, WheelHandler, WHEEL_STEP,
+    DrawCommand, Gradient, GradientShape, GradientStop, Ink, Paint, Painter, Path, PathSegment,
+    Point, PointerButton, PointerEvent, PointerPhase, Rect, Transform, WheelHandler, WHEEL_STEP,
 };
 pub use channel::{ChannelCloser, Sender};
 pub use color::Color;
@@ -74,6 +75,9 @@ pub use direction::{app_layout_direction, set_app_layout_direction, LayoutDirect
 pub use file::{
     accept_attribute, default_extension, with_default_extension, FileEntry, FileFilter,
     FilePickerMode,
+};
+pub use flow::{
+    flow_line_tops, flow_minimum_width, flow_natural_width, FlowItem, FlowLayout, FlowSlot,
 };
 pub use focus::{FocusHandler, FocusOwner};
 pub use grid::{allocate_tracks, distribute_fill, TrackRequest};

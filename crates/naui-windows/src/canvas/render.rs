@@ -487,6 +487,8 @@ impl Renderer {
                                 gradient_fill = gradient_brush(context, gradient, *opacity)?;
                                 &gradient_fill
                             }
+                            // `Painter` は役割を色にしてから記録する。
+                            Paint::Role(_) => continue,
                         };
                         // 棒グラフや点の印に多い長方形は、ジオメトリを作らずに塗る。
                         if let Some(rect) = axis_aligned_rect(path) {

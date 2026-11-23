@@ -8,7 +8,7 @@ use naui_core::{
     CloseHandler, CloseResponse, Rect, Result, StateHandler, Theme, WindowPlacement, WindowState,
 };
 use objc2::rc::Retained;
-use objc2::runtime::{NSObjectProtocol, ProtocolObject};
+use objc2::runtime::{AnyObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, DefinedClass, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAppearance, NSAppearanceCustomization, NSAppearanceNameAqua, NSAppearanceNameDarkAqua,
@@ -329,6 +329,14 @@ impl Window {
         self.0.on_close_request.set(f);
     }
 
+    /// Tries to close it with `performClose:`, the same path as the close button and
+    /// ⌘W: `on_close_request` is asked (through `windowShouldClose:`), and it closes
+    /// unless the answer is `KeepOpen` (AppKit then plays the alert sound, as for
+    /// ⌘W). For tests and automation.
+    pub fn request_close(&self) {
+        self.0.native.performClose(None);
+    }
+
     /// The size of the content area (width, height) in logical pixels, excluding the
     /// title bar and toolbar.
     ///
@@ -409,6 +417,13 @@ impl Window {
     /// do not arrive. Setting it again replaces the previous closure.
     pub fn on_file_drop(&self, f: impl FnMut(&[naui_core::FileEntry]) + 'static) {
         self.0.on_file_drop.set(f);
+    }
+
+    /// Drops `files` onto the window where no widget takes them, so `on_file_drop`
+    /// is called with them. Nothing happens if `files` is empty. For tests and
+    /// automation.
+    pub fn drop_files(&self, files: &[naui_core::FileEntry]) {
+        crate::file_drop::drop_onto_window(&self.0.on_file_drop, files);
     }
 
     /// Notified of keys pressed inside this window.
@@ -1141,6 +1156,18 @@ pub(crate) fn overlay_host(window: &NSWindow) -> Option<Retained<NSView>> {
             .map(|item| item.viewController(mtm).view()),
         None => window.contentView(),
     }
+}
+
+/// The `on_file_drop` closure of the naui window `window`. `None` if it is not a
+/// window naui created.
+pub(crate) fn file_drop_handler_of(window: &NSWindow) -> Option<Rc<FileDropHandler>> {
+    let delegate = window.delegate()?;
+    let delegate: &AnyObject = delegate.as_ref();
+    let delegate = delegate.downcast_ref::<WindowDelegate>()?;
+    delegate
+        .ivars()
+        .upgrade()
+        .map(|inner| inner.on_file_drop.clone())
 }
 
 /// The frontmost of the windows naui created. `None` if there are none.

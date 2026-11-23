@@ -76,6 +76,10 @@ fn main() {
             respond_answers_like_the_user,
         ),
         (
+            "トーストのボタン・閉じるボタン・Canvas・ファイルの選択とドロップをテストから操作できる",
+            remaining_actions_reach_the_app,
+        ),
+        (
             "チェックボックスが反転し新しい値を通知する",
             checkbox_toggle,
         ),
@@ -106,6 +110,10 @@ fn main() {
         (
             "描画面の切り抜き・回転・グラデーション・画像・文字幅が AppKit で効く",
             canvas_draws_the_broader_vocabulary,
+        ),
+        (
+            "描画面の役割の色が明暗に追従し、切り替えで描き直される",
+            canvas_follows_light_and_dark,
         ),
         (
             "描画面がマウスの押下・移動・解放を面の座標で通知する",
@@ -548,6 +556,22 @@ fn main() {
         (
             "ウィンドウの大きさを変えても Fill の列は重みを保ち、ウィンドウを押し広げない",
             grid_fill_weights_follow_the_window,
+        ),
+        (
+            "Flow は幅が尽きたら次の行へ折り返し、高さが幅に従う",
+            flow_wraps_onto_new_lines,
+        ),
+        (
+            "Flow はウィンドウを広げずに折り返し、ウィンドウの幅に追従する",
+            flow_follows_the_window_without_widening_it,
+        ),
+        (
+            "Flow の行の残りは Fill の子が受け取り、なければ揃えで置く",
+            flow_shares_the_room_left_in_a_line,
+        ),
+        (
+            "Flow の子を足し、差し込み、外せる",
+            flow_inserts_and_removes_children,
         ),
         (
             "上限付きと上限なしの Fill の行・列は、狭いときウィンドウを押し広げない",
@@ -1444,6 +1468,193 @@ fn typing_notifies_like_the_user(ui: &Ui) -> Result<()> {
 /// `respond` clicks the dialog's or sheet's button for the role. Given before it
 /// opens, it is kept and given right after it opens: inside `Dialog::open`'s modal
 /// loop on macOS, which is why a click that opens a dialog returns answered.
+/// `Toast::click_action`, `Window::request_close`, `Canvas::send_pointer` /
+/// `send_wheel`, `FilePicker::choose`, `FileSaver::choose` and `drop_files` reach the
+/// app's closures as the user's own actions do.
+fn remaining_actions_reach_the_app(ui: &Ui) -> Result<()> {
+    use naui_core::{CloseResponse, FileEntry, PointerEvent};
+
+    let window = ui.window("残りの操作", 360.0, 240.0)?;
+    let column = ui.stack(Orientation::Vertical)?;
+    let outer = ui.stack(Orientation::Vertical)?;
+    let inner = ui.label("ここへ落とす")?;
+    let plain = ui.label("受け取らない")?;
+    outer.append(&inner);
+    outer.append(&plain);
+    let canvas = ui.canvas()?;
+    let picker = ui.file_picker("開く…")?;
+    let saver = ui.file_saver("保存…")?;
+    column.append(&outer);
+    column.append(&canvas);
+    column.append(&picker);
+    column.append(&saver);
+    window.set_child(&column);
+    window.show();
+    pump(0.1);
+
+    // トースト: 出ているときだけ、押したボタンの番号のあとに消えた通知が届く。
+    let toast = ui.toast("削除しました")?;
+    toast.set_actions(&["元に戻す", "開く"]);
+    toast.set_timeout(0.0);
+    let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+    toast.on_action({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(format!("action {index}"))
+    });
+    toast.on_dismiss({
+        let seen = seen.clone();
+        move || seen.borrow_mut().push("dismiss".to_string())
+    });
+    toast.click_action(0);
+    assert!(seen.borrow().is_empty(), "出ていなければ押せない");
+    toast.show();
+    toast.click_action(2);
+    assert!(seen.borrow().is_empty(), "無い番号は押せない");
+    assert!(toast.is_visible());
+    toast.click_action(1);
+    assert_eq!(*seen.borrow(), ["action 1", "dismiss"]);
+    assert!(!toast.is_visible());
+
+    // Canvas: 渡したイベントがそのまま届き、ホイールは答えが返る。
+    let (pointers, sink) = recorder::<PointerEvent>();
+    canvas.on_pointer(sink);
+    let down = PointerEvent::new(PointerPhase::Down, Point::new(10.0, 20.0))
+        .button(Some(PointerButton::Secondary))
+        .modifiers(Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        });
+    canvas.send_pointer(down);
+    canvas.send_pointer(PointerEvent::new(
+        PointerPhase::Move,
+        Point::new(30.0, 40.0),
+    ));
+    assert_eq!(
+        *pointers.borrow(),
+        [
+            down,
+            PointerEvent::new(PointerPhase::Move, Point::new(30.0, 40.0))
+        ]
+    );
+    let wheel = PointerEvent::wheel(Point::new(5.0, 5.0), 0.0, 12.0);
+    assert_eq!(
+        canvas.send_wheel(wheel),
+        EventResponse::Continue,
+        "受け口が無ければ Continue"
+    );
+    let (wheels, mut sink) = recorder::<PointerEvent>();
+    canvas.on_wheel(move |event| {
+        sink(event);
+        EventResponse::Handled
+    });
+    assert_eq!(canvas.send_wheel(wheel), EventResponse::Handled);
+    canvas.send_pointer(wheel);
+    assert_eq!(
+        *wheels.borrow(),
+        [wheel, wheel],
+        "Wheel の段は on_wheel へ回る"
+    );
+    assert_eq!(pointers.borrow().len(), 2);
+
+    // ファイルの選択: パネルを出さずに選んだことになる。空と無効中は何もしない。
+    let (picks, mut sink) = recorder::<Vec<FileEntry>>();
+    picker.on_select(move |files| sink(files.to_vec()));
+    let files = [
+        FileEntry::from_path("/tmp/naui 写真.png"),
+        FileEntry::from_path("/tmp/メモ.txt"),
+    ];
+    picker.choose(&files);
+    assert_eq!(*picks.borrow(), [files.to_vec()]);
+    assert_eq!(picker.selection(), files);
+    picker.choose(&[]);
+    picker.set_enabled(false);
+    picker.choose(&files[..1]);
+    assert_eq!(picks.borrow().len(), 1);
+    assert_eq!(picker.selection(), files);
+
+    // 保存先の選択: 中身を実際に書く。path の無いものは on_error。
+    let (saves, mut sink) = recorder::<FileEntry>();
+    saver.on_save(move |entry| sink(entry.clone()));
+    let (errors, mut sink) = recorder::<String>();
+    saver.on_error(move |error| sink(error.context().to_string()));
+    saver.set_contents("中身".as_bytes());
+    let path = std::env::temp_dir().join("naui-choose-保存.txt");
+    let _ = std::fs::remove_file(&path);
+    saver.choose(&FileEntry::from_path(&path));
+    assert_eq!(
+        std::fs::read(&path).ok().as_deref(),
+        Some("中身".as_bytes())
+    );
+    assert_eq!(saves.borrow().len(), 1);
+    assert_eq!(
+        saver
+            .destination()
+            .and_then(|e| e.path().map(|p| p.to_path_buf())),
+        Some(path.clone())
+    );
+    saver.choose(&FileEntry::from_name("名前だけ.txt"));
+    assert_eq!(errors.borrow().len(), 1, "path が無ければ書けない");
+    saver.set_enabled(false);
+    saver.choose(&FileEntry::from_path(&path));
+    assert_eq!(saves.borrow().len(), 1, "無効中は何もしない");
+    let _ = std::fs::remove_file(&path);
+
+    // ドロップ: 自分 → 受け口のある祖先 → 窓 の順に届く。
+    let (to_inner, mut sink) = recorder::<Vec<FileEntry>>();
+    inner.on_file_drop(move |files| sink(files.to_vec()));
+    let (to_outer, mut sink) = recorder::<Vec<FileEntry>>();
+    outer.on_file_drop(move |files| sink(files.to_vec()));
+    let (to_window, mut sink) = recorder::<Vec<FileEntry>>();
+    canvas.drop_files(&files);
+    assert!(
+        to_outer.borrow().is_empty(),
+        "受け口の無い枝からは窓へ (窓にも無ければ捨てる)"
+    );
+    window.on_file_drop(move |files| sink(files.to_vec()));
+    inner.drop_files(&files);
+    assert_eq!(*to_inner.borrow(), [files.to_vec()]);
+    plain.drop_files(&files[..1]);
+    assert_eq!(
+        *to_outer.borrow(),
+        [files[..1].to_vec()],
+        "受け口の無いウィジェットは祖先へ"
+    );
+    canvas.drop_files(&files);
+    window.drop_files(&files[1..]);
+    assert_eq!(*to_window.borrow(), [files.to_vec(), files[1..].to_vec()]);
+    inner.drop_files(&[]);
+    window.drop_files(&[]);
+    assert_eq!(to_inner.borrow().len(), 1, "空のドロップは届かない");
+    assert_eq!(to_window.borrow().len(), 2);
+
+    // 閉じるボタン: on_close_request に聞いてから閉じる。
+    let answers = Rc::new(RefCell::new(vec![
+        CloseResponse::KeepOpen,
+        CloseResponse::Close,
+    ]));
+    let asked = Rc::new(Cell::new(0));
+    window.on_close_request({
+        let answers = answers.clone();
+        let asked = asked.clone();
+        move || {
+            asked.set(asked.get() + 1);
+            answers.borrow_mut().remove(0)
+        }
+    });
+    window.request_close();
+    assert_eq!(asked.get(), 1);
+    assert!(window.is_visible(), "KeepOpen なら開いたまま");
+    window.request_close();
+    assert_eq!(asked.get(), 2);
+    assert!(!window.is_visible(), "Close なら閉じる");
+
+    let bare = ui.window("受け口なし", 200.0, 120.0)?;
+    bare.show();
+    bare.request_close();
+    assert!(!bare.is_visible(), "on_close_request が無ければ閉じる");
+    Ok(())
+}
+
 fn respond_answers_like_the_user(ui: &Ui) -> Result<()> {
     let dialog = ui.dialog("消しますか")?;
     dialog.set_buttons(
@@ -1822,6 +2033,121 @@ fn canvas_text_top_is_the_em_box(ui: &Ui) -> Result<()> {
         "baseline は em box の上端から大きさの 0.8 倍ほど下: 上端から {depth} (H は {top}..{baseline})"
     );
     assert!(top >= 9.0, "H の上は em box の中: {top}");
+    window.close();
+    Ok(())
+}
+
+/// Color roles are resolved from the view's effective appearance at each draw, and
+/// switching the window's theme draws the surface again without `redraw`. The left
+/// half is filled with the text color's role and the right half with a fixed red.
+fn canvas_follows_light_and_dark(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    canvas.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(60.0))
+            .height(Length::Fixed(40.0)),
+    );
+    type Seen = (bool, (Color, f64), (Color, f64), (Color, f64));
+    let seen: Rc<RefCell<Vec<Seen>>> = Rc::new(RefCell::new(Vec::new()));
+    canvas.on_draw({
+        let seen = seen.clone();
+        move |painter| {
+            seen.borrow_mut().push((
+                painter.is_dark(),
+                painter.role_color(TextColor::Default),
+                painter.role_color(TextColor::Secondary),
+                painter.role_color(TextColor::Danger),
+            ));
+            painter.fill_rect(Rect::new(0.0, 0.0, 30.0, 40.0), TextColor::Default);
+            painter.fill_rect(Rect::new(30.0, 0.0, 30.0, 40.0), Color::rgb(0xff, 0, 0));
+        }
+    });
+
+    let window = ui.window("canvas theme", 120.0, 80.0)?;
+    window.set_theme(Theme::Light)?;
+    window.set_child(&canvas);
+    window.show();
+    let view = canvas.native_view();
+    view.layoutSubtreeIfNeeded();
+    let bounds = view.bounds();
+    let bitmap = view
+        .bitmapImageRepForCachingDisplayInRect(bounds)
+        .expect("ビットマップを用意できること");
+    let scale = bitmap.pixelsWide() as f64 / bounds.size.width;
+    let read = |x: f64, y: f64| -> (Color, f64) {
+        let color = bitmap
+            .colorAtX_y((x * scale) as isize, (y * scale) as isize)
+            .expect("画素が読めること");
+        let srgb = color
+            .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
+            .expect("sRGB へ変換できること");
+        (
+            Color::from_unit(
+                srgb.redComponent(),
+                srgb.greenComponent(),
+                srgb.blueComponent(),
+            ),
+            srgb.alphaComponent(),
+        )
+    };
+    let brightness = |c: Color| u32::from(c.r) + u32::from(c.g) + u32::from(c.b);
+    // 危険の色はどの環境でも赤系 (アクセントは灰色にもなるので見ない)。
+    let reddish = |c: Color| c.r > c.g.saturating_add(40) && c.r > c.b.saturating_add(40);
+
+    view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
+    let light = *seen.borrow().last().expect("描くときに呼ばれること");
+    assert!(
+        reddish(light.3 .0),
+        "明るい外観の危険の色は赤寄り: {light:?}"
+    );
+    assert!(!light.0, "明るい外観では is_dark が偽");
+    assert!(
+        brightness(light.1 .0) < 150,
+        "明るい外観の文字色は暗い: {light:?}"
+    );
+    assert!(
+        light.2 .1 < light.1 .1,
+        "副次の文字色は本文より薄い (アルファが落ちていない): {light:?}"
+    );
+    let (left, alpha) = read(15.0, 20.0);
+    assert!(
+        brightness(left) < 150 && alpha > 0.5,
+        "明るい外観では役割の色が暗く塗られる: {left} {alpha}"
+    );
+    let drawn = seen.borrow().len();
+
+    // テーマを切り替えるだけで (redraw を呼ばずに) 描き直される。
+    window.set_theme(Theme::Dark)?;
+    pump_until(2.0, || {
+        view.displayIfNeeded();
+        seen.borrow().len() > drawn
+    });
+    assert!(
+        seen.borrow().len() > drawn,
+        "外観が変わると描き直されること"
+    );
+    let dark = *seen.borrow().last().unwrap();
+    assert!(reddish(dark.3 .0), "暗い外観の危険の色は赤寄り: {dark:?}");
+    assert!(dark.0, "暗い外観では is_dark が真");
+    assert!(
+        brightness(dark.1 .0) > 600,
+        "暗い外観の文字色は明るい: {dark:?}"
+    );
+    assert!(
+        dark.2 .1 < dark.1 .1,
+        "暗い外観でも副次の文字色は薄い: {dark:?}"
+    );
+    view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
+    let (left, _) = read(15.0, 20.0);
+    assert!(
+        brightness(left) > 600,
+        "暗い外観では役割の色が明るく塗られる: {left}"
+    );
+    let (right, _) = read(45.0, 20.0);
+    assert!(
+        right.r > 180 && right.g < 120 && right.b < 120,
+        "固定の色は外観で変わらない: {right}"
+    );
     window.close();
     Ok(())
 }
@@ -15245,6 +15571,226 @@ fn frames_in(root: &NSView, size: NSSize, views: &[Retained<NSView>]) -> Vec<(f6
 
 fn close_to(actual: f64, expected: f64) -> bool {
     (actual - expected).abs() <= 1.0
+}
+
+fn fixed_box(ui: &Ui, width: f64, height: f64) -> Result<naui_macos::Stack> {
+    let child = ui.stack(Orientation::Vertical)?;
+    child.set_sizing(Sizing::fixed(width, height));
+    Ok(child)
+}
+
+/// Children go on a line while they fit and wrap onto the next one otherwise; the
+/// intrinsic height is the height of the lines at the flow's width.
+fn flow_wraps_onto_new_lines(ui: &Ui) -> Result<()> {
+    let flow = ui.flow()?;
+    flow.set_spacing(10.0, 5.0);
+    let boxes: Vec<naui_macos::Stack> = (0..3)
+        .map(|_| fixed_box(ui, 100.0, 20.0))
+        .collect::<Result<_>>()?;
+    for child in &boxes {
+        flow.append(child);
+    }
+    let views: Vec<Retained<NSView>> = boxes.iter().map(|b| b.native_view()).collect();
+    let root = flow.native_view();
+
+    let frames = frames_in(&root, NSSize::new(250.0, 45.0), &views);
+    assert_eq!(frames[0], (0.0, 0.0, 100.0, 20.0), "{frames:?}");
+    assert_eq!(frames[1], (110.0, 0.0, 100.0, 20.0), "{frames:?}");
+    assert_eq!(frames[2], (0.0, 25.0, 100.0, 20.0), "{frames:?}");
+    let size = root.intrinsicContentSize();
+    assert_eq!(
+        (size.width, size.height),
+        (320.0, 45.0),
+        "幅は 1 行に並べた幅、高さは今の幅での高さ"
+    );
+    for (width, height) in [(400.0, 20.0), (150.0, 70.0)] {
+        root.setFrameSize(NSSize::new(width, 100.0));
+        root.layoutSubtreeIfNeeded();
+        assert_eq!(root.intrinsicContentSize().height, height, "幅 {width}");
+    }
+
+    // 隠した子は場所も間隔も取らない。
+    boxes[1].set_visible(false);
+    let frames = frames_in(&root, NSSize::new(250.0, 45.0), &views);
+    assert_eq!(frames[2], (110.0, 0.0, 100.0, 20.0), "{frames:?}");
+    boxes[1].set_visible(true);
+
+    // 余白の内側に並べ、右から左では行が右から始まる (start は右側)。
+    flow.set_padding(Padding {
+        start: 7.0,
+        end: 3.0,
+        ..Padding::all(4.0)
+    });
+    root.setUserInterfaceLayoutDirection(
+        objc2_app_kit::NSUserInterfaceLayoutDirection::RightToLeft,
+    );
+    let frames = frames_in(&root, NSSize::new(260.0, 53.0), &views);
+    assert_eq!(frames[0], (153.0, 4.0, 100.0, 20.0), "{frames:?}");
+    assert_eq!(frames[1], (43.0, 4.0, 100.0, 20.0), "{frames:?}");
+    assert_eq!(frames[2], (153.0, 29.0, 100.0, 20.0), "{frames:?}");
+    Ok(())
+}
+
+/// In a window, a flow wraps instead of widening the window, and its lines follow
+/// the window's width (its height is solved again in the same layout pass).
+fn flow_follows_the_window_without_widening_it(ui: &Ui) -> Result<()> {
+    let root = ui.stack(Orientation::Vertical)?;
+    root.set_sizing(Sizing::fill());
+    root.set_align(Align::Start);
+    root.set_spacing(0.0);
+    let flow = ui.flow()?;
+    flow.set_spacing(10.0, 5.0);
+    let boxes: Vec<naui_macos::Stack> = (0..3)
+        .map(|_| fixed_box(ui, 100.0, 20.0))
+        .collect::<Result<_>>()?;
+    for child in &boxes {
+        flow.append(child);
+    }
+    let below = fixed_box(ui, 30.0, 10.0)?;
+    root.append(&flow);
+    root.append(&below);
+    let window = ui.window("折り返し", 400.0, 200.0)?;
+    window.set_child(&root);
+    window.show();
+    let native_window = window.native_window();
+    let content = native_window
+        .contentView()
+        .expect("コンテンツビューがあること");
+    let mut seen = Vec::new();
+    for width in [400.0, 250.0, 150.0, 400.0] {
+        native_window.setContentSize(NSSize::new(width, 200.0));
+        content.layoutSubtreeIfNeeded();
+        pump(0.05);
+        content.layoutSubtreeIfNeeded();
+        let flow_frame = flow.native_view().frame();
+        let below_frame = below
+            .native_view()
+            .convertRect_toView(below.native_view().bounds(), Some(&content));
+        seen.push((
+            width,
+            content.frame().size.width,
+            flow_frame.size.width,
+            flow_frame.size.height,
+            content.frame().size.height - below_frame.origin.y - below_frame.size.height,
+        ));
+    }
+    window.close();
+    for ((width, window_width, flow_width, height, below_top), expected) in
+        seen.into_iter().zip([20.0, 45.0, 70.0, 20.0])
+    {
+        assert!(
+            (window_width - width).abs() < 0.5,
+            "ウィンドウは広がらない: {width} -> {window_width}"
+        );
+        assert!(
+            flow_width <= width + 0.5,
+            "幅 {width} に収まる: {flow_width}"
+        );
+        assert!(
+            close_to(height, expected),
+            "幅 {width} で高さ {expected}: {height}"
+        );
+        assert!(
+            close_to(below_top, expected),
+            "下の子は Flow のすぐ下: 幅 {width} で {below_top}"
+        );
+    }
+    Ok(())
+}
+
+/// A `Fill` child takes the room left in its line; without one, the alignment
+/// places the line. Within a line, children are centered vertically and `Fill` on
+/// the height stretches to the line.
+fn flow_shares_the_room_left_in_a_line(ui: &Ui) -> Result<()> {
+    let flow = ui.flow()?;
+    flow.set_spacing(10.0, 0.0);
+    let tall = fixed_box(ui, 50.0, 40.0)?;
+    let short = fixed_box(ui, 50.0, 20.0)?;
+    let stretched = ui.stack(Orientation::Vertical)?;
+    stretched.set_sizing(Sizing::fixed(50.0, 0.0).height(Length::Fill));
+    flow.append(&tall);
+    flow.append(&short);
+    flow.append(&stretched);
+    let views = [
+        tall.native_view(),
+        short.native_view(),
+        stretched.native_view(),
+    ];
+    let root = flow.native_view();
+    let size = NSSize::new(300.0, 40.0);
+
+    let frames = frames_in(&root, size, &views);
+    assert_eq!(
+        frames[1],
+        (60.0, 10.0, 50.0, 20.0),
+        "縦は行の中央: {frames:?}"
+    );
+    assert_eq!(
+        frames[2],
+        (120.0, 0.0, 50.0, 40.0),
+        "Fill は行の高さ: {frames:?}"
+    );
+    flow.set_align(Align::End);
+    assert_eq!(frames_in(&root, size, &views)[0].0, 130.0);
+    flow.set_align(Align::Center);
+    assert_eq!(frames_in(&root, size, &views)[0].0, 65.0);
+    flow.set_align(Align::Fill);
+    assert_eq!(
+        frames_in(&root, size, &views)[0],
+        (0.0, 0.0, 50.0, 40.0),
+        "Fill は Start と同じ"
+    );
+
+    // Fill の幅の子があれば、揃えにかかわらずその子が受け取る。上限で止まる。
+    flow.set_align(Align::End);
+    short.set_sizing(Sizing::fixed(0.0, 20.0).width(Length::Fill));
+    let frames = frames_in(&root, size, &views);
+    assert_eq!(frames[0].0, 0.0, "{frames:?}");
+    assert_eq!(frames[1].2, 300.0 - 100.0 - 20.0, "{frames:?}");
+    short.set_sizing(Sizing::fixed(0.0, 20.0).width(Length::Fill).max_width(80.0));
+    let frames = frames_in(&root, size, &views);
+    assert_eq!(frames[1].2, 80.0, "{frames:?}");
+    Ok(())
+}
+
+fn flow_inserts_and_removes_children(ui: &Ui) -> Result<()> {
+    let flow = ui.flow()?;
+    let first = ui.label("一")?;
+    let second = ui.label("二")?;
+    let third = ui.label("三")?;
+    flow.append(&first);
+    flow.append(&third);
+    flow.insert(1, &second);
+    assert_eq!(flow.len(), 3);
+    let root = flow.native_view();
+    let order = |root: &NSView| -> Vec<String> {
+        root.subviews()
+            .iter()
+            .filter_map(|view| view.downcast::<NSTextField>().ok())
+            .map(|field| field.stringValue().to_string())
+            .collect()
+    };
+    assert_eq!(order(&root), ["一", "二", "三"]);
+    // 同じ子をもう一度入れると、その位置へ移る。
+    flow.append(&first);
+    assert_eq!(flow.len(), 3);
+    flow.remove(0);
+    assert_eq!(flow.len(), 2);
+    flow.remove(5);
+    assert_eq!(flow.len(), 2);
+    // 外さずにほかへ入れた子は、新しい親から取り上げない。
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&first);
+    flow.clear();
+    assert!(flow.is_empty());
+    assert!(root.subviews().is_empty(), "{:?}", order(&root));
+    // superview は読むだけ。
+    let parent = unsafe { first.native_view().superview() };
+    assert!(
+        parent.is_some_and(|parent| std::ptr::eq::<NSView>(&*parent, &*stack.native_view())),
+        "Stack に移った子はそのまま"
+    );
+    Ok(())
 }
 
 /// `Fill` columns and rows split the room by weight, as CSS's `fr` (Web) and

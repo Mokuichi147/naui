@@ -269,6 +269,12 @@ impl Window {
         drop(f);
     }
 
+    /// Tries to close it the way the user does with its close button (for tests and
+    /// automation). **It does nothing on the Web**: the user has no way to close a
+    /// window inside the page, so the window stays open and
+    /// [`on_close_request`](Self::on_close_request) is never called.
+    pub fn request_close(&self) {}
+
     /// The size of the content area (width, height) in CSS pixels.
     ///
     /// As on the other platforms, it excludes the menu bar and toolbar rows (their
@@ -288,6 +294,16 @@ impl Window {
     /// Setting it again replaces the previous closure.
     pub fn on_file_drop(&self, f: impl FnMut(&[naui_core::FileEntry]) + 'static) {
         self.0.file_drop.set(&self.0.element, f);
+    }
+
+    /// Drops `files` onto the window where no widget takes them, the way the user
+    /// drops files from the OS (for tests and automation): a `drop` event carrying
+    /// an empty file named after each entry is dispatched at the window's element,
+    /// so [`on_file_drop`](Self::on_file_drop) is called with a `blob:` URL and no
+    /// path for each, before this returns. Nothing happens if `files` is empty or
+    /// the window has no `on_file_drop`.
+    pub fn drop_files(&self, files: &[naui_core::FileEntry]) {
+        crate::file_drop::dispatch_drop(&self.0.element, files);
     }
 
     /// Notified when the size changes. Receives the new [`size`](Self::size).
