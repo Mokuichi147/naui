@@ -81,6 +81,10 @@ fn main() {
             canvas_paints_recorded_commands,
         ),
         (
+            "描画面の文字の上端は em box の上端 (cairo)",
+            canvas_text_top_is_the_em_box,
+        ),
+        (
             "描画面の切り抜き・回転・グラデーション・画像・文字幅が cairo で効く",
             canvas_draws_the_broader_vocabulary,
         ),
@@ -1765,6 +1769,55 @@ fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
         (50..64).all(|y| !dark(114, y)),
         "右端より右には描かないこと"
     );
+    window.close();
+    Ok(())
+}
+
+/// `Painter::text`'s `at.y` is the top of the em box, as on the other platforms:
+/// the baseline of an "H" 40 high drawn from y = 10 comes about 0.8 × 40 lower.
+/// Pango lays a line out from the top of the font's whole ascent, and drawing from
+/// there put the baseline lower still.
+fn canvas_text_top_is_the_em_box(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    canvas.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(120.0))
+            .height(Length::Fixed(80.0)),
+    );
+    canvas.on_draw(|painter| {
+        painter.fill_rect(painter.bounds(), Color::WHITE);
+        painter.text("H", Point::new(10.0, 10.0), 40.0, Color::BLACK);
+    });
+    let window = ui.window("canvas", 200.0, 160.0)?;
+    window.set_child(&canvas);
+    window.show();
+    let area = canvas.native_area();
+    tick(&area);
+
+    let snapshot = gtk::Snapshot::new();
+    bin_of(&canvas).snapshot_child(&area, &snapshot);
+    let node = snapshot.to_node().expect("描いたものがあること");
+    let mut surface =
+        gtk::cairo::ImageSurface::create(gtk::cairo::Format::ARgb32, 120, 80).expect("画像の生成");
+    let cr = gtk::cairo::Context::new(&surface).expect("コンテキストの生成");
+    node.draw(&cr);
+    drop(cr);
+    surface.flush();
+    let stride = surface.stride() as usize;
+    let data = surface.data().expect("画素の読み出し");
+    let dark = |x: usize, y: usize| {
+        let i = y * stride + x * 4;
+        u32::from(data[i]) + u32::from(data[i + 1]) + u32::from(data[i + 2]) < 384
+    };
+    let inked: Vec<usize> = (0..80).filter(|&y| (0..120).any(|x| dark(x, y))).collect();
+    let (top, bottom) = (inked[0], inked[inked.len() - 1]);
+    let depth = (bottom + 1) as f64 - 10.0;
+    assert!(
+        (28.8..=35.2).contains(&depth),
+        "baseline は em box の上端から大きさの 0.8 倍ほど下: 上端から {depth} (H は {top}..={bottom})"
+    );
+    assert!(top >= 9, "H の上は em box の中: {top}");
+    drop(data);
     window.close();
     Ok(())
 }

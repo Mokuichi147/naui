@@ -16,8 +16,8 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use naui_core::{
-    Align, Bitmap, BitmapData, Color, DrawCommand, Gradient, GradientShape, Paint, Path,
-    PathSegment, Point, Rect, Transform,
+    text_baseline_offset, Align, Bitmap, BitmapData, Color, DrawCommand, Gradient, GradientShape,
+    Paint, Path, PathSegment, Point, Rect, Transform,
 };
 use naui_winui3::Microsoft::UI::Composition::{CompositionGraphicsDevice, Compositor};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
@@ -55,8 +55,9 @@ use windows::Win32::Graphics::Direct3D11::{
 };
 use windows::Win32::Graphics::DirectWrite::{
     DWriteCreateFactory, IDWriteFactory, IDWriteTextFormat, DWRITE_FACTORY_TYPE_SHARED,
-    DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_WEIGHT_NORMAL,
-    DWRITE_TEXT_METRICS, DWRITE_WORD_WRAPPING_NO_WRAP,
+    DWRITE_FONT_METRICS, DWRITE_FONT_STRETCH_NORMAL, DWRITE_FONT_STYLE_NORMAL,
+    DWRITE_FONT_WEIGHT_NORMAL, DWRITE_LINE_METRICS, DWRITE_TEXT_METRICS,
+    DWRITE_WORD_WRAPPING_NO_WRAP,
 };
 use windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM;
 use windows::Win32::Graphics::Dxgi::{
@@ -241,6 +242,9 @@ pub(super) struct Renderer {
     /// The typeface name (UTF-16, NUL-terminated) and the locale used for text.
     font_family: HSTRING,
     locale: HSTRING,
+    /// How far the baseline sits below the top of the em box, as a share of the
+    /// size ([`em_ascent`]).
+    em_ascent: f64,
     /// One `CompositionGraphicsDevice` per `Compositor`.
     graphics: Vec<(Compositor, CompositionGraphicsDevice)>,
     /// Text formats by size (`f32` bits). Sizes repeat within a drawing.
@@ -343,13 +347,15 @@ impl Renderer {
         let devices = Devices::new(&factory, next_generation())?;
         // SAFETY: 共有のファクトリを取るだけ。
         let dwrite: IDWriteFactory = unsafe { DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED)? };
-        let font_family = HSTRING::from(pick_font_family(&dwrite));
+        let family = pick_font_family(&dwrite);
+        let em_ascent = em_ascent(&dwrite, family);
         Ok(Self {
             factory,
             devices,
             dwrite,
-            font_family,
+            font_family: HSTRING::from(family),
             locale: user_locale(),
+            em_ascent,
             graphics: Vec::new(),
             formats: HashMap::new(),
         })
@@ -543,9 +549,16 @@ impl Renderer {
                             f64::from(metrics.widthIncludingTrailingWhitespace),
                             *align,
                         );
+                        // レイアウトは行の上端 (フォントの ascent 全体の上) から
+                        // 描かれるので、baseline が em box の上端から決まった
+                        // 深さに来るよう上へずらす。
+                        let mut lines = [DWRITE_LINE_METRICS::default()];
+                        let mut count = 0;
+                        layout.GetLineMetrics(Some(&mut lines), &mut count)?;
+                        let top = at.y + *size * self.em_ascent - f64::from(lines[0].baseline);
                         brush.SetColor(&color_f(*color, *opacity));
                         context.DrawTextLayout(
-                            Vector2::new(finite(left), finite(at.y)),
+                            Vector2::new(finite(left), finite(top)),
                             &layout,
                             &brush,
                             D2D1_DRAW_TEXT_OPTIONS_ENABLE_COLOR_FONT,
@@ -1118,6 +1131,49 @@ fn pick_font_family(dwrite: &IDWriteFactory) -> &'static str {
             })
     };
     found.unwrap_or(FONT_FAMILIES[FONT_FAMILIES.len() - 1])
+}
+
+/// How far the baseline sits below the top of `family`'s em box, as a share of the
+/// text size: its ascent over its ascent plus descent (the two scaled to add up to
+/// the size, as `<canvas>` does for `textBaseline = "top"`).
+///
+/// DirectWrite lays a line out from the top of the font's whole ascent, which for
+/// Segoe UI is about 1.08 times the size, so drawing from there would put text lower
+/// than the other platforms do.
+fn em_ascent(dwrite: &IDWriteFactory, family: &str) -> f64 {
+    let mut collection = None;
+    // SAFETY: システムのフォント一覧から書体を引き、寸法を読むだけ。
+    let metrics = unsafe {
+        dwrite
+            .GetSystemFontCollection(&mut collection, false)
+            .ok()
+            .and(collection)
+            .and_then(|collection| {
+                let mut index = 0;
+                let mut exists = windows_core::BOOL::default();
+                collection
+                    .FindFamilyName(&HSTRING::from(family), &mut index, &mut exists)
+                    .ok()?;
+                if !exists.as_bool() {
+                    return None;
+                }
+                let font = collection
+                    .GetFontFamily(index)
+                    .ok()?
+                    .GetFirstMatchingFont(
+                        DWRITE_FONT_WEIGHT_NORMAL,
+                        DWRITE_FONT_STRETCH_NORMAL,
+                        DWRITE_FONT_STYLE_NORMAL,
+                    )
+                    .ok()?;
+                let mut metrics = DWRITE_FONT_METRICS::default();
+                font.GetMetrics(&mut metrics);
+                Some(metrics)
+            })
+    };
+    let (ascent, descent) =
+        metrics.map_or((0.0, 0.0), |m| (f64::from(m.ascent), f64::from(m.descent)));
+    text_baseline_offset(1.0, ascent, descent)
 }
 
 /// The user's locale name (`ja-JP` and so on). It decides which glyph forms CJK text

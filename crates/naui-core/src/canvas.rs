@@ -1096,6 +1096,13 @@ impl Painter {
     /// [`set_text_align`](Self::set_text_align). `size` is the text size (logical
     /// pixels). The typeface is the platform's standard UI font.
     ///
+    /// The top is the top of the em box: the font's ascent and descent, scaled to add
+    /// up to `size`, so the em box spans `at.y` to `at.y + size` on every platform
+    /// (as with `textBaseline = "top"` on a `<canvas>`). The baseline is about
+    /// 0.8 × `size` below `at.y`, the exact share depending on the font. To center a
+    /// line on `y`, pass `y - size / 2.0`. Accents on capitals and some scripts reach
+    /// above the em box, and are drawn there.
+    ///
     /// Newlines do not wrap (that is left to how each platform draws). Empty strings
     /// and sizes that are 0 or less, infinite or NaN are not drawn.
     pub fn text(&mut self, text: &str, at: Point, size: f64, color: Color) {
@@ -1269,6 +1276,24 @@ impl PointerButton {
 /// When you want to decide "how much per notch", for example for zooming, divide
 /// the amount by this.
 pub const WHEEL_STEP: f64 = 48.0;
+
+/// How far below `at.y` the baseline of [`Painter::text`] goes, for the platforms'
+/// drawing code: the font's `ascent` over its `ascent` plus `descent` (both measured
+/// away from the baseline, in any one unit), times `size`. So the em box, the ascent
+/// and descent scaled to add up to `size`, starts at `at.y`.
+///
+/// When the font gives no usable ascent and descent, the baseline goes 0.8 × `size`
+/// down, about where it lands for the platforms' UI fonts.
+#[doc(hidden)]
+pub fn text_baseline_offset(size: f64, ascent: f64, descent: f64) -> f64 {
+    let total = ascent + descent;
+    let share = if ascent.is_finite() && descent.is_finite() && ascent > 0.0 && descent >= 0.0 {
+        ascent / total
+    } else {
+        0.8
+    };
+    size * share
+}
 
 /// The pointer moved over the drawing surface.
 ///
@@ -1942,5 +1967,20 @@ mod tests {
         assert_eq!(measured.text_width("bad", 7.0), 0.0, "測れない値は 0");
         // 複製しても測り方は残る。
         assert_eq!(measured.clone().text_width("x", 1.0), 2.0);
+    }
+
+    #[test]
+    fn text_baseline_scales_the_ascent_and_descent_to_the_size() {
+        // Segoe UI の寸法 (2048 単位で ascent 2210、descent 514)。
+        let segoe = text_baseline_offset(40.0, 2210.0, 514.0);
+        assert!((segoe - 32.45).abs() < 0.01, "{segoe}");
+        // 単位が違っても比で決まる。
+        assert_eq!(text_baseline_offset(10.0, 0.75, 0.25), 7.5);
+        assert_eq!(text_baseline_offset(10.0, 1.0, 0.0), 10.0);
+        // 測れない寸法では大きさの 0.8 倍。
+        for (ascent, descent) in [(0.0, 0.0), (-1.0, 0.2), (1.0, -0.2), (f64::NAN, 0.2)] {
+            assert_eq!(text_baseline_offset(10.0, ascent, descent), 8.0);
+        }
+        assert_eq!(text_baseline_offset(10.0, f64::INFINITY, 0.2), 8.0);
     }
 }

@@ -33,9 +33,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use naui_core::{
-    Align, Bitmap, BitmapData, Color, DrawCommand, EventResponse, Gradient, GradientShape, Paint,
-    Painter, Path, PathSegment, PointerButton, PointerEvent, PointerPhase, Rect, WheelHandler,
-    WHEEL_STEP,
+    text_baseline_offset, Align, Bitmap, BitmapData, Color, DrawCommand, EventResponse, Gradient,
+    GradientShape, Paint, Painter, Path, PathSegment, PointerButton, PointerEvent, PointerPhase,
+    Rect, WheelHandler, WHEEL_STEP,
 };
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObjectProtocol};
@@ -563,11 +563,13 @@ fn text_width(text: &str, size: f64) -> f64 {
     measured.width
 }
 
-/// Draws one line of text. `at` is the top, and the horizontal position follows
+/// Draws one line of text. `at` is the top of the em box (see
+/// [`Painter::text`](naui_core::Painter::text)), and the horizontal position follows
 /// `align`.
 ///
-/// In an `isFlipped` view, the point given to `drawAtPoint:` is the text's top left,
-/// so only the width is measured for alignment.
+/// In an `isFlipped` view, the point given to `drawAtPoint:` is the top left of the
+/// line, whose baseline is the font's whole ascender below it. That reaches higher
+/// than the em box, so the point is moved up by the difference.
 fn draw_text(
     text: &str,
     at: naui_core::Point,
@@ -590,7 +592,11 @@ fn draw_text(
             }
         }
     };
-    unsafe { string.drawAtPoint_withAttributes(NSPoint::new(x, at.y), Some(&attributes)) };
+    let font = NSFont::systemFontOfSize(size);
+    let (ascender, descender) = (font.ascender(), font.descender());
+    // `descender` は baseline より下を負で表す。
+    let y = at.y + text_baseline_offset(size, ascender, -descender) - ascender;
+    unsafe { string.drawAtPoint_withAttributes(NSPoint::new(x, y), Some(&attributes)) };
 }
 
 fn ns_color(color: Color, opacity: f64) -> Retained<NSColor> {
