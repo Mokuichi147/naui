@@ -35,6 +35,8 @@ that shape are covered in
 | Where a `Toast`'s second and later action buttons go | A row below the text | Next to the first, after the text | Next to the first, after the text | Next to the first, after the text |
 | A `Flow` child wider than the flow | Keeps its width and is cut off, unless it has `Fill` on the width | Keeps its width and is cut off, unless it has `Fill` on the width | Narrowed to the flow, down to its minimum | Narrowed to the flow, down to its `min-content` width |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
+| When a `NativeHost` counts as in a window (`on_attach`) | When XAML loads it (once the window is shown) | Once in the window's view tree | Once in the window's widget tree | Once in the page, reported in a microtask |
+| A view with a parent passed to a `NativeHost` | Refused (`false`) | Moved | Refused (`false`) | Moved |
 
 ## Common
 
@@ -254,6 +256,11 @@ that shape are covered in
   Chromium-based browsers and Firefox deliver them to `on_wheel` as wheel events
   with Ctrl). The amount per wheel notch is normalized to `WHEEL_STEP`, but when a
   browser on the Web passes pixels, the browser's amount is kept.
+- `NativeHost` only places a native view made elsewhere: naui does no GPU setup
+  or drawing, and has no part in keyboard focus, accessibility or pointer input
+  inside the hosted view beyond what the platform does for any child view. Its
+  `scale_factor` before the host is in a window is a guess (1.0 on Windows).
+  `raw-window-handle` is not offered.
 - `on_file_drop` takes only files from the OS. Dragging between widgets (rows from
   one `List` into another, or onto other widgets), dragging out of the app, and
   dropped text or links are not supported. Drops onto text-input widgets go to the
@@ -486,6 +493,11 @@ that shape are covered in
   from a `Label` of the same size. A surface wider or taller in physical pixels
   than the GPU's texture limit (16384, or 2048 to 8192 on older GPUs) is drawn at
   a lower resolution and stretched, so it looks softer.
+- In a right-to-left layout XAML mirrors the element in a `NativeHost`, as it does
+  every element (other platforms do not mirror a hosted view's drawing). A drawing
+  surface sets its own `FlowDirection` to `LeftToRight`. Drawing into a
+  `SwapChainPanel` in a `NativeHost` has been checked only up to placing it: the
+  CI runners give elements no real size, and no swap chain is connected there.
 - Two-finger scrolling on a precision touchpad over a `Canvas` inside a `Scroll`
   does not reach `on_wheel`; the outer `Scroll` moves instead. `ScrollViewer`
   receives touchpad gestures itself, and they do not become wheel notifications
@@ -636,6 +648,11 @@ that shape are covered in
   all options).
 - `NumberInput` (`GtkSpinButton`) does not let characters other than digits, a sign
   and a decimal point be typed.
+- `NativeHost::scale_factor` is GTK's whole-number scale factor (GTK 4.10's
+  `gtk_widget_get_scale_factor`), so a fractional scale such as 125% reads 2.
+  GTK4 has no native child windows, so a GPU surface goes into a `NativeHost` as a
+  widget GTK draws (`GtkGLArea`, or a `GtkPicture` of rendered frames), not as a
+  window of its own.
 - `Spinner` is `AdwSpinner`, which arrived in libadwaita 1.6. With libadwaita 1.5 it
   falls back to `GtkSpinner`, which has the same default size and 64 × 64 drawing
   limit but the older look.
@@ -692,6 +709,9 @@ that shape are covered in
 - A `Canvas` image made with `Bitmap::from_bytes` is decoded by the browser in the
   background, so it is missing from draws until it has loaded; the surface is
   drawn again then. Images made from pixels are drawn at once.
+- `NativeHost::on_attach` is reported from a `MutationObserver` on the document,
+  so it arrives in a microtask after the host joins or leaves the page, not on the
+  spot (`is_attached` reads `isConnected` and is current).
 - `ButtonRole` **does not change the look**. Browsers have no look for primary or
   destructive buttons, so naui only writes the role as the `data-naui-role`
   attribute (`"primary"` / `"destructive"`). An app that wants a look can select

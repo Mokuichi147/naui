@@ -128,7 +128,7 @@ python3 -m http.server 8080
 | Basics & input | `Label`, `Button`, `Checkbox`, `Toggle`, `TextInput`, `TextArea`, `PasswordInput`, `SearchInput`, `NumberInput`, `Slider`, `ProgressBar`, `Spinner` |
 | Data selection | `ComboBox`, `EditableComboBox`, `RadioGroup`, `DatePicker`, `TimePicker`, `ColorPicker`, `List`, `Table`, `Tree` |
 | Files & media | `FilePicker`, `FileSaver`, `Image`, `Video`, `Audio` |
-| Drawing | `Canvas` (line, bar and scatter charts on it: [naui-charts](crates/naui-charts)) |
+| Drawing | `Canvas` (line, bar and scatter charts on it: [naui-charts](crates/naui-charts)), `NativeHost` (a native view made by another crate) |
 | Overlays | `PopupMenu`, `Popover`, `Dialog`, `Sheet`, `Toast` |
 | Navigation | `Tabs`, `Navbar`, `Dock`, `Menu`, `Breadcrumbs`, `Pagination`, `Link` |
 
