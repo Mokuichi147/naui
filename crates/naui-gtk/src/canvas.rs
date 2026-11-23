@@ -312,6 +312,29 @@ impl Canvas {
         self.0.wheel.set(f);
     }
 
+    /// Delivers `event` to `on_pointer` as given, as if the user had pressed, moved
+    /// or released the pointer (for tests and automation). An event whose phase is
+    /// `Wheel` goes to `on_wheel` instead, as with [`send_wheel`](Self::send_wheel).
+    ///
+    /// GTK4 cannot make input events, so naui's handler is called directly, before
+    /// this returns. No controller sees it.
+    pub fn send_pointer(&self, event: PointerEvent) {
+        if event.phase == PointerPhase::Wheel {
+            self.send_wheel(event);
+        } else {
+            self.0.pointer.emit(event);
+        }
+    }
+
+    /// Delivers `event` to `on_wheel` as if the user had turned the wheel, and
+    /// returns its answer (`Continue` without `on_wheel`), for tests and automation.
+    ///
+    /// GTK4 cannot make input events, so naui's handler is called directly, before
+    /// this returns. Nothing scrolls on `Continue`.
+    pub fn send_wheel(&self, event: PointerEvent) -> EventResponse {
+        self.0.wheel.emit(event)
+    }
+
     /// The current size of the surface (width, height). 0 if not laid out yet.
     pub fn size(&self) -> (f64, f64) {
         (

@@ -152,8 +152,24 @@ impl FilePicker {
         let Some(entries) = self.run_panel() else {
             return; // 取り消された。
         };
-        *self.0.selection.borrow_mut() = entries.clone();
-        self.0.on_select.emit(&entries);
+        self.deliver(&entries);
+    }
+
+    /// Picks `files` as if they had been chosen in the panel, without showing it:
+    /// they become the selection and `on_select` is called. Nothing happens if
+    /// `files` is empty (a cancelled panel) or the button is disabled. For tests and
+    /// automation.
+    pub fn choose(&self, files: &[FileEntry]) {
+        if files.is_empty() || !self.0.native.isEnabled() {
+            return;
+        }
+        self.deliver(files);
+    }
+
+    /// What follows a pick in the panel: the selection, then `on_select`.
+    fn deliver(&self, entries: &[FileEntry]) {
+        *self.0.selection.borrow_mut() = entries.to_vec();
+        self.0.on_select.emit(entries);
     }
 
     /// Builds and returns an `NSOpenPanel` reflecting the current settings. **It is not

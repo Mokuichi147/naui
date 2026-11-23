@@ -173,6 +173,19 @@ impl FileSaver {
         }
     }
 
+    /// Saves as if the user had chosen `destination` in the dialog, without showing
+    /// it (for tests and automation). **Nothing is written and no download starts**:
+    /// a page cannot write to a path. `destination` becomes an entry with only its
+    /// name (as given, with no extension added), which becomes
+    /// [`destination`](Self::destination) and is passed to `on_save` before this
+    /// returns, as after a download. Does nothing while disabled.
+    pub fn choose(&self, destination: &FileEntry) {
+        if self.0.element.has_attribute("disabled") {
+            return;
+        }
+        finish(&self.0, destination.name());
+    }
+
     /// Turns the contents into a Blob and hands it to whichever mechanism is
     /// available.
     fn start(&self) -> Result<()> {

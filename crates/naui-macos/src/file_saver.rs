@@ -175,6 +175,23 @@ impl FileSaver {
         self.write_to(&path);
     }
 
+    /// Saves as if `destination` had been chosen in the panel, without showing it:
+    /// the contents are written to its path, and `on_save` (or `on_error`) is called.
+    /// An entry without a path is reported through `on_error`. Nothing happens while
+    /// the button is disabled. For tests and automation.
+    pub fn choose(&self, destination: &FileEntry) {
+        if !self.0.native.isEnabled() {
+            return;
+        }
+        match destination.path() {
+            Some(path) => self.write_to(path),
+            None => self.0.on_error.emit(&Error::new(
+                "get the save location",
+                "the destination has no path",
+            )),
+        }
+    }
+
     /// Builds and returns an `NSSavePanel` reflecting the current settings. **It is not
     /// shown yet.**
     ///

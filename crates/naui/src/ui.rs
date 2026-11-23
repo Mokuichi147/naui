@@ -1,7 +1,7 @@
 use crate::sys;
 use crate::{
     AdaptivePanes, Audio, Breadcrumbs, Button, Canvas, Checkbox, Clipboard, ColorPicker, ComboBox,
-    DatePicker, Dialog, Dock, EditableComboBox, Expander, FilePicker, FileSaver, Grid, Group,
+    DatePicker, Dialog, Dock, EditableComboBox, Expander, FilePicker, FileSaver, Flow, Grid, Group,
     Image, Label, Link, List, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput,
     Popover, PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Separator, Sheet, Sidebar,
     Slider, Spacer, Spinner, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast,
@@ -42,6 +42,13 @@ impl Ui {
     #[inline]
     pub fn grid(&self) -> Result<Grid> {
         self.0.grid().map(Grid)
+    }
+
+    /// A container that lays out its children in a row, wrapping them onto new lines
+    /// when the row runs out of width.
+    #[inline]
+    pub fn flow(&self) -> Result<Flow> {
+        self.0.flow().map(Flow)
     }
 
     /// A container that scrolls when its contents overflow.
@@ -442,8 +449,17 @@ impl Ui {
     ///
     /// GTK4 opens it asynchronously (`GtkUriLauncher`), so what this returns is only
     /// whether it could be read as a URL.
+    ///
+    /// **Inside a test case run by [`test_cases!`](crate::test_cases) nothing is
+    /// opened**: the URL is read as here, and a readable one is recorded for
+    /// [`testing::opened_urls`](crate::testing::opened_urls) instead.
     #[inline]
     pub fn open_url(&self, url: &str) -> Result<()> {
+        if crate::testing::recording_urls() {
+            self.0.check_url(url)?;
+            crate::testing::record_url(url);
+            return Ok(());
+        }
         self.0.open_url(url)
     }
 

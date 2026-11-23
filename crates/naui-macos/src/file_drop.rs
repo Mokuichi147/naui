@@ -17,7 +17,7 @@ use std::rc::Rc;
 use naui_core::FileEntry;
 use objc2::rc::{Retained, Weak};
 use objc2::runtime::{AnyObject, ProtocolObject};
-use objc2::ClassType;
+use objc2::{ClassType, Message};
 use objc2_app_kit::{
     NSDragOperation, NSDraggingInfo, NSPasteboard, NSPasteboardTypeFileURL,
     NSPasteboardURLReadingFileURLsOnlyKey, NSView, NSWindow,
@@ -109,7 +109,16 @@ fn target(
     let frame_view = window
         .contentView()
         .map(|content| unsafe { content.superview() }.unwrap_or(content));
-    let mut view: Option<Retained<NSView>> = frame_view.and_then(|frame| frame.hitTest(location));
+    let view: Option<Retained<NSView>> = frame_view.and_then(|frame| frame.hitTest(location));
+    target_from(view, window_handler)
+}
+
+/// Who takes a drop onto `view`: the nearest widget from `view` outward that has a
+/// closure, or the window's own closure.
+fn target_from(
+    mut view: Option<Retained<NSView>>,
+    window_handler: &Rc<FileDropHandler>,
+) -> Option<Rc<FileDropHandler>> {
     while let Some(current) = view {
         if let Some(handler) = handler_of(&current) {
             return Some(handler);
@@ -117,6 +126,28 @@ fn target(
         view = unsafe { current.superview() };
     }
     window_handler.is_set().then(|| window_handler.clone())
+}
+
+/// Drops `files` onto the widget whose view is `view`, handing them to whoever a
+/// real drop there would reach (see [`target_from`]). For `drop_files`.
+pub(crate) fn drop_onto_view(view: &NSView, files: &[FileEntry]) {
+    if files.is_empty() {
+        return;
+    }
+    let window_handler = view
+        .window()
+        .and_then(|window| crate::window::file_drop_handler_of(&window))
+        .unwrap_or_default();
+    if let Some(handler) = target_from(Some(view.retain()), &window_handler) {
+        handler.emit(files);
+    }
+}
+
+/// Drops `files` onto the window where no widget takes them. For `drop_files`.
+pub(crate) fn drop_onto_window(window_handler: &FileDropHandler, files: &[FileEntry]) {
+    if !files.is_empty() {
+        window_handler.emit(files);
+    }
 }
 
 /// The answer to `draggingEntered:` / `draggingUpdated:`. Copy where something

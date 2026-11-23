@@ -122,6 +122,24 @@ macro_rules! impl_widget {
                 self.0.on_file_drop(f)
             }
 
+            /// Drops `files` onto this widget the way the user drops files from the
+            /// OS. The drop goes where a real one would: to this widget's
+            /// [`on_file_drop`](Self::on_file_drop), or else to the nearest enclosing
+            /// widget that has one, or else to its window's
+            /// [`on_file_drop`](crate::Window::on_file_drop). Nothing happens if
+            /// `files` is empty or nothing takes the drop.
+            ///
+            /// Natively the entries arrive as given. On the Web they arrive as the
+            /// browser delivers dropped files: an empty file named after each entry,
+            /// with a `blob:` URL and no path.
+            ///
+            /// For tests and automation. See
+            /// [Testing apps](crate::guide#testing-apps).
+            #[inline]
+            pub fn drop_files(&self, files: &[naui_core::FileEntry]) {
+                self.0.drop_files(files)
+            }
+
             /// Creates a weak reference. Capture it when touching this widget from its own
             /// notification closures (capturing a `clone()` creates a cycle and it is never
             /// freed).

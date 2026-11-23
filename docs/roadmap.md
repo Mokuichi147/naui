@@ -130,12 +130,16 @@ The rest of the testing actions, the separate crate that `Canvas` is now ready
 for along with the colors it needs in a dark appearance, and adaptive items that
 need investigating first but are not heavy.
 
-- [ ] **The rest of the actions for testing apps:** a `Toast`'s action button,
+- [x] **The rest of the actions for testing apps:** a `Toast`'s action button,
       the window's close button (`on_close_request`), pointer events on a
       `Canvas`, and choosing and dropping files, delivered the way typing and
       answering dialogs are since v0.18.0. Whether a test can also read what the
       app handed to the OS (the URL given to `Ui::open_url`, say) without it
-      really opening is decided with them.
+      really opening is decided with them. `Toast::click_action`,
+      `Window::request_close`, `Canvas::send_pointer` / `send_wheel`,
+      `FilePicker::choose`, `FileSaver::choose` and `drop_files` on widgets and
+      windows deliver them, and inside a test case `Ui::open_url` records the URL
+      for `testing::opened_urls` instead of opening it.
 - [x] **Colors that follow light and dark in `Canvas`.** Widgets follow the
       appearance by themselves, but `Canvas` draws with fixed `Color`s and
       nothing tells the app when the appearance changes, so a drawing made for
@@ -162,14 +166,25 @@ need investigating first but are not heavy.
       100,000 points stay one command per series. `ChartView` hands out the
       `Canvas` inside it (`root()`) until containers take types made outside
       naui. Tooltips and zooming are left for later.
-- [ ] *(adaptive)* **`Flow`** (a container that wraps its children onto new lines).
+- [x] *(adaptive)* **`Flow`** (a container that wraps its children onto new lines).
       `GtkFlowBox` and CSS `flex-wrap` exist, but WinUI only has
       `VariableSizedWrapGrid` with fixed-size cells (`WrapPanel` is in the
       Community Toolkit), and AppKit has nothing besides `NSCollectionView`'s flow
-      layout. Which platforms need naui to lay it out itself is investigated first.
-- [ ] *(adaptive)* **Narrow navigation rail.** Windows is covered by `Sidebar`'s
+      layout. Only the Web wraps natively (`flex-wrap`): `GtkFlowBox` lines its
+      children up in columns and wraps each in a focusable, selectable child, and
+      `AdwWrapBox` needs libadwaita 1.7. So macOS, Linux and Windows break the
+      lines with naui-core's `FlowLayout`, inside the toolkit's own layout pass
+      (`NSView::layout`, a `GtkWidget`'s height-for-width measuring, a derived
+      `Panel`'s `MeasureOverride` / `ArrangeOverride`), with no callback through
+      the app.
+- [x] *(adaptive)* **Narrow navigation rail.** Windows is covered by `Sidebar`'s
       automatic collapsing (`LeftCompact`). Whether the same collapsing covers
       macOS, GTK and the Web is checked first; if it does, nothing new is needed.
+      It does: only WinUI's `NavigationView` has a strip of icons. AppKit's
+      sidebar item, libadwaita's split views and `AdwSidebar` (1.9) have no
+      icon-only state, so naui hides the whole pane there and on the Web, and no
+      new API is added. The difference is written in `Sidebar`'s documentation and
+      the known limitations.
 
 ## v0.20.0
 

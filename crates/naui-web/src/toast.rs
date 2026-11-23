@@ -303,6 +303,28 @@ impl Toast {
         ToastQueue::is_waiting_in(&QUEUE, &self.0)
     }
 
+    /// Clicks its action button at `index` the way the user does (`click()` on that
+    /// `<button>`), so `on_action` is called with `index` and the toast disappears,
+    /// calling `on_dismiss`, before this returns (for tests and automation). Nothing
+    /// happens unless it is on screen and has a button at `index`.
+    pub fn click_action(&self, index: usize) {
+        if !self.is_visible() {
+            return;
+        }
+        let Ok(index) = u32::try_from(index) else {
+            return;
+        };
+        let button = self
+            .0
+            .buttons
+            .children()
+            .item(index)
+            .and_then(|button| button.dyn_into::<HtmlElement>().ok());
+        if let Some(button) = button {
+            button.click();
+        }
+    }
+
     /// The toast's element. A backend-specific escape hatch.
     pub fn native_element(&self) -> Element {
         self.0.element.clone().unchecked_into()

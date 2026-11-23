@@ -24,8 +24,9 @@
 //! It is collapsed and expanded with the `NavigationView`'s standard pane toggle
 //! button (hamburger). Following Windows conventions, collapsing turns the pane into
 //! **a thin strip of icons only** (`IsPaneOpen` false; the button stays in the strip
-//! so it can be reopened). Items without icons show nothing while collapsed. The
-//! back button and the settings item are not shown.
+//! so it can be reopened). An item without an icon shows only the first letters of
+//! its label there, cut off with an ellipsis. The back button and the settings item
+//! are not shown.
 //!
 //! Collapsing when the window narrows is the `NavigationView`'s own
 //! (`PaneDisplayMode::Auto`). Below `ExpandedModeThresholdWidth` it switches to the

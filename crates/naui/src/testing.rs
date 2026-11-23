@@ -41,6 +41,7 @@
 //! See [Testing apps](crate::guide#testing-apps) for setting up the test target and
 //! for what differs between platforms.
 
+use std::cell::RefCell;
 use std::future::Future;
 use std::pin::Pin;
 use std::time::Duration;
@@ -144,6 +145,52 @@ pub async fn resize(ui: &Ui, window: &Window, width: f64, height: f64) -> Result
     })
 }
 
+thread_local! {
+    /// The URLs given to [`Ui::open_url`] in the running case. `None` outside the
+    /// cases that [`test_cases!`](crate::test_cases) runs, where URLs really open.
+    static OPENED_URLS: RefCell<Option<Vec<String>>> = const { RefCell::new(None) };
+}
+
+/// The URLs the running case has given to [`Ui::open_url`], oldest first.
+///
+/// Inside the cases that [`test_cases!`](crate::test_cases) runs, `open_url` opens
+/// nothing: it reads the URL as it does when opening (returning `Err` for one it
+/// cannot read), and records a readable one here instead, so a test neither opens
+/// the browser nor loses sight of what the app asked for. Each case starts with
+/// none.
+///
+/// Only `Ui::open_url` is recorded. [`Link::click`](crate::Link::click) opens
+/// nothing either, and a link the user clicks inside a label is not recorded.
+///
+/// ```ignore
+/// app.help.click();
+/// assert_eq!(testing::opened_urls(&ui), ["https://example.com/help"]);
+/// ```
+pub fn opened_urls(ui: &Ui) -> Vec<String> {
+    let _ = ui;
+    OPENED_URLS.with(|urls| urls.borrow().clone().unwrap_or_default())
+}
+
+/// Starts a case: from here `Ui::open_url` records instead of opening, starting
+/// with none.
+fn start_recording_urls() {
+    OPENED_URLS.with(|urls| *urls.borrow_mut() = Some(Vec::new()));
+}
+
+/// Whether `Ui::open_url` records instead of opening (inside a test case).
+pub(crate) fn recording_urls() -> bool {
+    OPENED_URLS.with(|urls| urls.borrow().is_some())
+}
+
+/// Records a URL given to `Ui::open_url` inside a test case.
+pub(crate) fn record_url(url: &str) {
+    OPENED_URLS.with(|urls| {
+        if let Some(urls) = urls.borrow_mut().as_mut() {
+            urls.push(url.to_string());
+        }
+    });
+}
+
 /// Runs `cases` in order and reports like `cargo test`. **Native only**; the Web
 /// runs each case as its own `#[wasm_bindgen_test]`.
 ///
@@ -202,6 +249,7 @@ pub fn run(cases: &[Case]) -> std::process::ExitCode {
                     let _ = std::io::stdout().flush();
                     // panic はここで止めて、残りのケースへ進む。naui の `Tasks` も
                     // poll の panic を止めるが、そうすると残りのケースごと捨てられる。
+                    start_recording_urls();
                     let mut future = case(ui.clone());
                     let outcome = std::future::poll_fn(|cx| {
                         match catch_unwind(AssertUnwindSafe(|| future.as_mut().poll(cx))) {
@@ -348,6 +396,7 @@ pub async fn run_in_browser(name: &str, case: fn(Ui) -> CaseFuture) {
     })
     .unwrap_or_else(|error| panic!("{name}: could not start the UI for testing: {error}"));
     let ui = ui.expect("run_for_test calls its closure");
+    start_recording_urls();
     if let Err(error) = case(ui).await {
         panic!("{name}: {error}");
     }

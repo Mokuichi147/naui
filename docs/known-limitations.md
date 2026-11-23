@@ -33,6 +33,7 @@ that shape are covered in
 | Images written to the clipboard (`set_image`) | PNG (and a bitmap without transparency for apps that read no PNG), kept after the app quits | PNG and TIFF, kept after the app quits | Offered by the app while it runs (unless a clipboard manager keeps it) | `image/png` only, inside a user action (Firefox 127 and later) |
 | Where a `Toast` appears (`ToastPosition`) | Any of the six | Any of the six | Always the bottom center | Any of the six |
 | Where a `Toast`'s second and later action buttons go | A row below the text | Next to the first, after the text | Next to the first, after the text | Next to the first, after the text |
+| A `Flow` child wider than the flow | Keeps its width and is cut off, unless it has `Fill` on the width | Keeps its width and is cut off, unless it has `Fill` on the width | Narrowed to the flow, down to its minimum | Narrowed to the flow, down to its `min-content` width |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
 
 ## Common
@@ -115,6 +116,14 @@ that shape are covered in
 
 - `SplitView` has only two panes and one divider. To split into three or more,
   nest them. There is no setting to collapse a pane (hide it at width 0).
+- `Flow` lays its children out in rows only: there is no vertical flow that wraps
+  into columns, which would need a height to wrap in. Each line is packed on its
+  own, so children are not lined up in columns (use a `Grid` for that), and
+  `set_align(Align::Fill)` is the same as `Start`: only `Fill` on a child's width
+  widens it to fill its line. On Windows and macOS a child is measured once at its
+  natural width, so one wider than the flow is not narrowed (its text does not
+  wrap) unless it has `Fill` on the width; Linux narrows it to its minimum and the
+  Web to its `min-content` width.
 - `AdaptivePanes` has two panes, a list and its detail, and the list's width is
   fixed: the user cannot drag the boundary (`TwoPaneView` and
   `AdwNavigationSplitView` have no divider to drag). For three panes, attach a
@@ -267,6 +276,16 @@ that shape are covered in
   the size on the Web (the size requested with `set_size`, not the browser's;
   fullscreen is refused outside a user action). naui does not store the placement
   itself: the app writes its text form to its own settings.
+- **A window can be made smaller than content placed with `Fill`**, which is then
+  cut off. A `Fill` child and a `Track::Fill` column or row never decide the
+  window's minimum, and a `Scroll` filling the window is no exception, even in a
+  direction it does not scroll. Linux stops at what the rest of the window needs
+  (the header bar and content that is not `Fill`); Windows and the Web do not take
+  any minimum from the content. On macOS it has not been checked on a real device;
+  there the content of a `Scroll` is held to the visible width by a required
+  constraint in a direction it does not scroll, so the window may stop at that
+  content's width instead. Set a minimum with `Window::set_min_size` or the
+  child's `min_width` / `min_height`.
 
 ### naui-app
 
@@ -321,10 +340,44 @@ that shape are covered in
 
 ### Testing apps
 
-- Not every user action has a method that acts like it. A `Toast`'s action
-  button, the window's close button (`on_close_request`), pointer events on a
-  `Canvas`, choosing files and dropping them have none yet. Test the code behind
-  them directly.
+- Not every user action has a method that acts like it (pressing keys for
+  `on_key_down`, for example). The native file dialogs themselves cannot be
+  answered: `FilePicker::choose` and `FileSaver::choose` stand in for clicking the button
+  and choosing in the dialog, without showing it, so a test that clicks the
+  button instead shows the real dialog and waits for a person to answer it (on
+  macOS `open` does not return until then). They do not check the picker's mode
+  or filters.
+- `Canvas::send_pointer` and `send_wheel` make no native event: the event goes to
+  `on_pointer` or `on_wheel` as given, so an outer scroll view does not scroll on
+  `Continue`, and a right-click opens no context menu.
+- `Window::request_close` does nothing on the Web, where `on_close_request` is
+  never called. On macOS it goes through `performClose:`, as ⌘W does, so AppKit
+  plays the alert sound when `on_close_request` keeps the window open. On Windows
+  naui asks `on_close_request` and closes the window as `Window::close` does:
+  WinUI raises the `AppWindow`'s `Closing` only for the user's own close, and
+  naui winds the whole UI down there, which would stop the remaining test cases.
+- On Linux, `Toast::click_action` on a toast with one action clicks the button
+  inside libadwaita's toast widget, found by its private type name; libadwaita
+  takes the toast down a moment later, so `on_action` and `on_dismiss` arrive from
+  the event loop. `Window::request_close` on a window that has not been shown
+  does nothing there (`on_close_request` is not asked).
+- `drop_files` starts from the widget it is called on rather than from a point
+  under the pointer, and natively it does not check whether the widget is shown.
+  Natively a text field passes the drop on like other widgets, while a real drop
+  onto one is taken as text by the field itself and reaches no `on_file_drop`. On Windows the files of a real drop arrive once they have been
+  read, a moment later; `drop_files` delivers them at once.
+- `drop_files` on the Web dispatches a real `drop` event with an empty file per
+  entry, so the files arrive named after the entries, with `blob:` URLs and no
+  paths, as dropped files do there. Text fields take drops themselves there, so
+  `drop_files` onto one reaches no `on_file_drop`, and the widgets inside a
+  `Dialog` or `Sheet` do not pass a drop on to the window, as with real drops.
+  `FilePicker::choose` on the Web goes through the file input the same way, except
+  in folder mode, where a made-up file cannot stand for a folder: the first entry
+  arrives with its name only. `FileSaver::choose` on the Web writes nothing and
+  starts no download; `on_save` gets an entry with the name only.
+- Inside a test case `Ui::open_url` opens nothing and records the URL for
+  `testing::opened_urls` instead. Links the user clicks inside a `Label` are not
+  recorded (no method clicks them).
 - `enter_text`, `submit` and `search` press no key: `on_key_down` is not called,
   so an `on_key_down` that stops Enter does not stop `submit`, and nothing goes
   through an IME. `enter_text` replaces the whole text at once, so `on_change` is
@@ -370,6 +423,12 @@ that shape are covered in
   collapses on macOS only below `SIDEBAR_MIN_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH`
   (it first narrows to its minimum width), and elsewhere below its own width plus
   `SIDEBAR_COLLAPSE_CONTENT_WIDTH`.
+- A collapsed `Sidebar` becomes a strip of icons (a navigation rail) only on
+  Windows, where an item without an icon shows only the first letters of its
+  label, cut off with an ellipsis. AppKit and libadwaita have
+  no icon-only state, so macOS, Linux and the Web hide the whole pane. Opening it
+  while narrow lays it over the content on Windows, widens the window on macOS
+  (outside full screen), and keeps it beside the content on Linux and the Web.
 
 ## Windows
 

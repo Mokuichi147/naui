@@ -1,6 +1,6 @@
 use crate::sys;
 use crate::Widget;
-use naui_core::{GridCell, Padding, ScrollMetrics, ScrollPolicy, Track};
+use naui_core::{Align, GridCell, Padding, ScrollMetrics, ScrollPolicy, Track};
 
 /// A container that positions children by row and column (`GtkGrid`).
 #[derive(Clone)]
@@ -73,6 +73,107 @@ impl Grid {
     #[inline]
     pub fn rows(&self) -> usize {
         self.0.rows()
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// A container that lays out its children in a row and wraps them onto new lines
+/// when the row runs out of width, as text wraps (CSS `flex-wrap`).
+///
+/// Each line is packed on its own: the children are not lined up in columns. A
+/// child goes on the current line while it fits at its natural width and starts the
+/// next line otherwise. A child wider than the flow gets a line of its own; with
+/// `Fill` on the width it is narrowed to the flow's width. On Linux and the Web any
+/// child is narrowed, down to its minimum; on Windows and macOS one without `Fill`
+/// keeps its width and is cut off.
+///
+/// Within a line the children are centered vertically; one with `Fill` on the
+/// height is stretched to the line's height, and one with `Fill` on the width takes
+/// the room left in its line (shared evenly with the other `Fill` children of that
+/// line). Lines start on the left, or on the right in a right-to-left layout.
+///
+/// The flow's height follows its width, so give it the width to wrap in: `Fill` on
+/// the width, or a parent that stretches it. With its width fitting its content
+/// (`Auto`) it is as wide as its children on one line, as far as its parent allows.
+///
+/// Only the Web has a native container that wraps children like this. Elsewhere
+/// naui measures the children and places them itself, in the toolkit's own layout
+/// pass (a `GtkWidget`'s measuring, an `NSView`'s `layout`, a WinUI `Panel`'s
+/// `MeasureOverride` / `ArrangeOverride`), so the lines follow every resize without
+/// a round trip through the app.
+///
+/// ```no_run
+/// # use naui::{Result, Sizing, Ui};
+/// # fn build(ui: &Ui) -> Result<()> {
+/// let tags = ui.flow()?;
+/// tags.set_sizing(Sizing::fill_width());
+/// tags.set_spacing(8.0, 8.0);
+/// for name in ["Rust", "GTK", "AppKit", "WinUI", "Web"] {
+///     tags.append(&ui.button(name)?);
+/// }
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Clone)]
+pub struct Flow(pub(crate) sys::Flow);
+
+impl_widget!(Flow);
+
+impl Flow {
+    /// The spacing between children within a line (`column`) and between lines
+    /// (`row`), in the same order as [`Grid::set_spacing`].
+    #[inline]
+    pub fn set_spacing(&self, column: f64, row: f64) {
+        self.0.set_spacing(column, row)
+    }
+
+    #[inline]
+    pub fn set_padding(&self, padding: Padding) {
+        self.0.set_padding(padding)
+    }
+
+    /// Where the children of a line sit when the line has room left. The default is
+    /// [`Align::Start`].
+    ///
+    /// `Center` and `End` move the whole line. `Fill` is the same as `Start`: to
+    /// widen children so that they fill their line, give them `Fill` on the width. A
+    /// line with such a child gives the room to it, whatever the alignment.
+    #[inline]
+    pub fn set_align(&self, align: Align) {
+        self.0.set_align(align)
+    }
+
+    #[inline]
+    pub fn append(&self, child: &dyn Widget) {
+        self.0.append(child.as_backend())
+    }
+
+    /// Inserts a child at the given position. If `index` is at least the current
+    /// count, it is appended at the end.
+    #[inline]
+    pub fn insert(&self, index: usize, child: &dyn Widget) {
+        self.0.insert(index, child.as_backend())
+    }
+
+    /// Removes the child at the given position. Does nothing if out of range.
+    #[inline]
+    pub fn remove(&self, index: usize) {
+        self.0.remove(index)
+    }
+
+    /// Removes every child.
+    #[inline]
+    pub fn clear(&self) {
+        self.0.clear()
     }
 
     #[inline]

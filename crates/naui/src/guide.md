@@ -57,6 +57,7 @@ Each container also has ways to reduce what has been placed.
 | --- | --- |
 | Children of a `Stack` | [`insert`](Stack::insert) / [`remove`](Stack::remove) / [`clear`](Stack::clear) |
 | Cells of a `Grid` | [`replace`](Grid::replace) / [`remove`](Grid::remove) / [`clear`](Grid::clear) |
+| Children of a `Flow` | [`insert`](Flow::insert) / [`remove`](Flow::remove) / [`clear`](Flow::clear) |
 | Tabs of `Tabs` | [`remove_tab`](Tabs::remove_tab) / [`clear`](Tabs::clear) |
 | Lists, tables, trees, navigation | Replace everything with `set_items` / `set_rows` |
 | Single-content widgets (`Scroll` / `Expander` / `SplitView` / `Window`) | Replace with `set_child` and the like |
@@ -309,12 +310,13 @@ the language it chose, so that the layout follows it on every platform.
 
 ## Layout and size
 
-Layout uses these nine:
+Layout uses these ten:
 
 | API | Purpose |
 | --- | --- |
 | [`Stack`] | Lays out children vertically or horizontally |
 | [`Grid`] | Places children by row and column |
+| [`Flow`] | Lays children out in a row, wrapping onto new lines when it runs out of width |
 | [`Scroll`] | Scrolls content that overflows |
 | [`Spacer`] | Takes the parent's leftover space |
 | [`Separator`] | Draws a thin line between controls |
@@ -379,6 +381,14 @@ The content of a [`Scroll`] is **never smaller than the visible area**: it
 matches the visible area in a direction that does not scroll, and grows past it in
 one that does. So while the content fits, a `Fill` child inside takes the leftover
 space, as it would outside a `Scroll`.
+
+A `Fill` child, and a [`Track::Fill`] column or row, **never decides how narrow (or
+short) the window can get**: the parent decides its size. A page that fills the
+window, a `Scroll` included, can therefore be made narrower than what is inside it,
+and whatever does not fit is cut off; in a direction the `Scroll` does not scroll,
+it cannot be reached at all. Where that matters, set a minimum with
+[`Window::set_min_size`] or with [`Sizing::min_width`] / [`Sizing::min_height`] on
+the child, or let the `Scroll` scroll in that direction.
 
 An `Auto` height on a [`List`] follows all its rows, so every row is built. To scroll
 many rows within a limited area, specify `Fixed` or `Fill`; do so for any list that
@@ -2185,6 +2195,11 @@ narrow lays it over the content.
 | Windows | `NavigationView`'s pane collapse button | A narrow strip of icons only |
 | Web | `<button aria-expanded>` at the start of the toolbar row (a row with just the button if there is no toolbar) | The whole pane is hidden |
 
+The strip of icons (a navigation rail) is WinUI's own: AppKit's sidebar item and
+libadwaita's split views have no icon-only state, so naui does not add one to the
+others. Give items icons: without one, the Windows strip shows only the first
+letters of the label, cut off with an ellipsis.
+
 Icons use the same kinds as [`ToolbarIcon`] and are mapped to the platform's
 standard icons. `set_selected` / `clear_selection` do not notify, while `select`
 and the user's choices do (the same as other navigation).
@@ -3366,7 +3381,11 @@ that notify **like the user's own action**, and checks what the app did:
 | [`NumberInput`] | `enter_text`, `submit` | `set_value` |
 | [`EditableComboBox`] | `enter_text` (and `select`) | `set_text` |
 | [`Dialog`], [`Sheet`] | `respond` | `close` |
-| [`Window`] | [`testing::resize`] | |
+| [`Toast`] | `click_action` | `dismiss` |
+| [`Canvas`] | `send_pointer`, `send_wheel` | |
+| [`FilePicker`], [`FileSaver`] | `choose` | |
+| Every widget | `drop_files` | |
+| [`Window`] | `request_close`, `drop_files`, [`testing::resize`] | `close` |
 
 `click` goes through each platform's own path for a click (`performClick` on
 macOS, the `clicked` / `activate` signals on Linux, UI Automation's Invoke and
@@ -3410,6 +3429,55 @@ testing::wait_until(&ui, || app.status.text() == "The form is cleared").await?;
 
 A role without a button, or with a disabled one, clicks nothing and leaves the
 dialog open (on macOS, with the click that opened a `Dialog` still waiting).
+
+[`Toast::click_action`] clicks one of a toast's action buttons while it is on
+screen, so `on_action` and then `on_dismiss` are called. [`Window::request_close`]
+acts like the window's close button: `on_close_request` is asked, and the window
+closes unless it answers [`CloseResponse::KeepOpen`]. On the Web, where a window
+inside the page has no close button, it does nothing. On Linux a toast with a
+single action is taken down by libadwaita a moment after its button is clicked,
+so wait for the notifications with [`testing::wait_until`]:
+
+```rust,ignore
+app.delete.click();
+app.undo_toast.click_action(0);
+testing::wait_until(&ui, || app.list.len() == 3).await?;
+
+app.editor.enter_text("unsaved");
+app.window.request_close();
+assert!(app.window.is_visible(), "asked to save first");
+```
+
+[`Canvas::send_pointer`] and [`Canvas::send_wheel`] hand a [`PointerEvent`] to
+`on_pointer` and `on_wheel` exactly as given, so a drag is a `Down`, some `Move`s
+and an `Up`. No native event is made: GTK and WinUI cannot synthesize one, and
+handing the app the event it would receive is the same on every platform.
+
+The file dialogs cannot be answered from a test, so [`FilePicker::choose`] and
+[`FileSaver::choose`] stand in for clicking the button and choosing in the dialog;
+the dialog is not shown. `FilePicker::choose` makes the files the selection and
+calls `on_select` (an empty list is a cancelled dialog). `FileSaver::choose`
+writes the contents to the chosen path and calls `on_save` or `on_error`; on the
+Web nothing is written and no download starts. `drop_files` drops files from the
+OS onto a widget or a window, and the drop goes where a real one would: to the
+widget's `on_file_drop`, the nearest enclosing widget's, or the window's. On the
+Web the files arrive as the browser delivers them, named after the entries given,
+with `blob:` URLs and no paths, so compare names:
+
+```rust,ignore
+app.photo.drop_files(&[FileEntry::from_path("/tmp/photo.png")]);
+testing::wait_until(&ui, || app.caption.text() == "photo.png").await?;
+```
+
+Inside a test case [`Ui::open_url`] opens nothing. It reads the URL as it does
+when opening and records it, and [`testing::opened_urls`] returns what the case
+has asked to open, so a test checks what the app hands the OS without a browser
+opening:
+
+```rust,ignore
+app.help.click();
+assert_eq!(testing::opened_urls(&ui), ["https://example.com/help"]);
+```
 
 ### Setting up the tests
 

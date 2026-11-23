@@ -8,7 +8,7 @@ use naui::{
 
 use crate::parts::{self, Notice};
 
-/// Stack、Grid、Spacer、Separator、Group、Expander、SplitView、AdaptivePanes、Scroll の配置特性と、
+/// Stack、Grid、Flow、Spacer、Separator、Group、Expander、SplitView、AdaptivePanes、Scroll の配置特性と、
 /// 表示・非表示、フォーカス、ツールチップ。
 ///
 /// 並べ方の違いが目で見えるよう、マスや端にはボタンを置く。ボタンの文字が
@@ -111,6 +111,8 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     }
     pane.append(&grid);
 
+    build_flow(ui, &pane)?;
+
     // 余った幅を吸収し、後ろの要素を端へ押す。
     parts::section(ui, &pane, "Spacer")?;
     let spacer_example = ui.stack(Orientation::Horizontal)?;
@@ -208,6 +210,88 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     build_adaptive_panes(ui, &pane, notice)?;
     build_scroll(ui, &pane)?;
     Ok(pane)
+}
+
+/// 子を横に並べ、幅が尽きたら次の行へ折り返す。窓を狭めると行が増える。
+///
+/// 末尾の欄は幅の Fill なので、その行の残りを受け取る。揃えは Fill の子の
+/// いない行だけに効く。
+fn build_flow(ui: &Ui, pane: &naui::Stack) -> Result<()> {
+    parts::section(ui, pane, "Flow")?;
+    let tags = ui.flow()?;
+    tags.set_spacing(8.0, 8.0);
+    tags.set_sizing(Sizing::fill_width());
+    let names = [
+        "Rust",
+        "AppKit",
+        "GTK4",
+        "libadwaita",
+        "WinUI 3",
+        "Web",
+        "Accessibility",
+        "Layout",
+        "Dark mode",
+        "Right to left",
+    ];
+    for name in names {
+        tags.append(&ui.button(name)?);
+    }
+    let note = ui.text_input("")?;
+    note.set_placeholder("Fills the rest of its line");
+    note.set_sizing(Sizing::new().width(Length::Fill).min_width(160.0));
+    tags.append(&note);
+
+    let controls = parts::row(ui)?;
+    let add = ui.button("Add tag")?;
+    let count = Rc::new(Cell::new(0));
+    add.on_click({
+        let ui = ui.clone();
+        let tags = tags.clone();
+        let count = count.clone();
+        move || {
+            count.set(count.get() + 1);
+            let Ok(tag) = ui.button(&format!("Tag {}", count.get())) else {
+                return;
+            };
+            // 入力欄の手前へ足す。
+            tags.insert(tags.len().saturating_sub(1), &tag);
+        }
+    });
+    let remove = ui.button("Remove tag")?;
+    remove.on_click({
+        let tags = tags.clone();
+        move || {
+            if tags.len() > 1 {
+                tags.remove(tags.len() - 2);
+            }
+        }
+    });
+    let align = ui.button("Align: Start")?;
+    align.set_tooltip(Some("set_align on the flow above"));
+    align.on_click({
+        let tags = tags.clone();
+        let align = align.downgrade();
+        let current = Cell::new(0);
+        move || {
+            let next = (current.get() + 1) % 3;
+            current.set(next);
+            let (value, title) = [
+                (Align::Start, "Align: Start"),
+                (Align::Center, "Align: Center"),
+                (Align::End, "Align: End"),
+            ][next];
+            tags.set_align(value);
+            if let Some(align) = align.upgrade() {
+                align.set_text(title);
+            }
+        }
+    });
+    controls.append(&add);
+    controls.append(&remove);
+    controls.append(&align);
+    pane.append(&controls);
+    pane.append(&tags);
+    Ok(())
 }
 
 /// 一覧と詳細。窓を狭めると 1 区画になり、一覧で選ぶと詳細へ移り、戻るボタンで
