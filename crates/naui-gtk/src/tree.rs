@@ -15,17 +15,24 @@
 //! destroyed by a rebuild, so rows need not be discarded in the middle of a signal.
 //! Selection, keyboard navigation and scrolling are done by `GtkListBox` and
 //! `GtkScrolledWindow` (GTK4 skips invisible rows).
+//!
+//! Items made from widgets ([`TreeRow`]) follow the same rules as `List` rows
+//! ([`crate::handover`]): the tree takes each widget when it is handed over, and a new
+//! row puts it in itself only if it has no parent and no other owner took it since.
+//! The widget goes in a cell right of the expander button, marked so that the tree
+//! knows its own cells when the widget is handed over again.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use gtk::glib;
 use gtk::prelude::*;
 use naui_core::{SelectionMode, Sizing, TreeItem};
 
-use crate::bin::SizeBin;
+use crate::bin::{Placement, SizeBin};
 use crate::callback::{ExpandNotifier, SelectionNotifier};
+use crate::handover::Owner;
 use crate::widgets::{impl_widget, without_signal, Widget};
 
 /// The indentation per level (logical pixels).
@@ -40,12 +47,131 @@ const ICON_COLLAPSED: &str = "pan-end-symbolic";
 /// The icon when expanded.
 const ICON_EXPANDED: &str = "pan-down-symbolic";
 
+/// The style class marking the cell that holds an item's widget.
+const CELL_CLASS: &str = "naui-tree-cell";
+
+/// The widgets of items made from [`TreeRow`]s, by path.
+type Contents = HashMap<Vec<usize>, Box<dyn Widget>>;
+
+/// One item to put in a tree, with a widget as its content.
+///
+/// [`TreeItem`] is a convenience API for trees that need only strings. To combine
+/// icons, several labels, check boxes, buttons and so on, build the content with
+/// `Grid` / `Stack` and wrap it in this type.
+///
+/// ```no_run
+/// # use naui_gtk::{TreeRow, Widget};
+/// # fn row(folder: &dyn Widget, file: &dyn Widget) {
+/// let row = TreeRow::new(folder)
+///     .expanded(true)
+///     .child(TreeRow::new(file).selectable(false));
+/// # let _ = row;
+/// # }
+/// ```
+pub struct TreeRow {
+    content: Box<dyn Widget>,
+    selectable: bool,
+    expanded: bool,
+    children: Vec<TreeRow>,
+}
+
+impl Clone for TreeRow {
+    fn clone(&self) -> Self {
+        Self {
+            content: self.content.boxed_clone(),
+            selectable: self.selectable,
+            expanded: self.expanded,
+            children: self.children.clone(),
+        }
+    }
+}
+
+impl TreeRow {
+    /// Uses a widget as the content of one item. By default the item can be selected,
+    /// starts collapsed and has no children.
+    pub fn new(content: &dyn Widget) -> Self {
+        Self {
+            content: content.boxed_clone(),
+            selectable: true,
+            expanded: false,
+            children: Vec::new(),
+        }
+    }
+
+    /// Set to `false` for items where only the controls inside are operated.
+    ///
+    /// Its descendants cannot be selected either, as with [`TreeItem::enabled`]. The row
+    /// is not dimmed, and the controls inside keep working.
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        self.selectable = selectable;
+        self
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.selectable
+    }
+
+    /// Sets whether it is shown expanded from the start (collapsed by default).
+    pub fn expanded(mut self, expanded: bool) -> Self {
+        self.expanded = expanded;
+        self
+    }
+
+    pub fn is_expanded(&self) -> bool {
+        self.expanded
+    }
+
+    /// Replaces the child items.
+    pub fn children(mut self, children: impl IntoIterator<Item = TreeRow>) -> Self {
+        self.children = children.into_iter().collect();
+        self
+    }
+
+    /// Adds one child item.
+    pub fn child(mut self, child: TreeRow) -> Self {
+        self.children.push(child);
+        self
+    }
+
+    /// Whether the item has no children (cannot be expanded).
+    pub fn is_leaf(&self) -> bool {
+        self.children.is_empty()
+    }
+
+    /// The shape of the rows as items without text: selection and expansion are
+    /// handled by the same code as for [`TreeItem`]s.
+    fn skeleton(rows: &[TreeRow]) -> Vec<TreeItem> {
+        rows.iter()
+            .map(|row| {
+                TreeItem::new("")
+                    .enabled(row.selectable)
+                    .expanded(row.expanded)
+                    .children(TreeRow::skeleton(&row.children))
+            })
+            .collect()
+    }
+
+    /// Collects the widgets by path.
+    fn collect(rows: &[TreeRow], path: &mut Vec<usize>, out: &mut Contents) {
+        for (index, row) in rows.iter().enumerate() {
+            path.push(index);
+            out.insert(path.clone(), row.content.boxed_clone());
+            TreeRow::collect(&row.children, path, out);
+            path.pop();
+        }
+    }
+}
+
 struct TreeInner {
     native: gtk::ListBox,
     /// `GtkListBox` does not scroll by itself, so it is placed in a scroll area.
     _scroller: gtk::ScrolledWindow,
     bin: SizeBin,
     items: RefCell<Vec<TreeItem>>,
+    /// The widgets of items made from [`TreeRow`]s, by path. Empty for text items.
+    contents: RefCell<Contents>,
+    /// The mark this tree leaves on the widgets it takes ([`crate::handover`]).
+    owner: Owner,
     /// The paths of the items made into rows. Depth-first (parents first), in the same
     /// order as the `GtkListBox` rows. Invisible rows stay here too.
     rows: RefCell<Vec<Vec<usize>>>,
@@ -90,6 +216,8 @@ impl Tree {
             _scroller: scroller,
             bin,
             items: RefCell::new(Vec::new()),
+            contents: RefCell::new(Contents::new()),
+            owner: Owner::new(),
             rows: RefCell::new(Vec::new()),
             twisties: RefCell::new(Vec::new()),
             expanded: RefCell::new(HashSet::new()),
@@ -116,6 +244,31 @@ impl Tree {
     ///
     /// Expansion returns to what [`TreeItem::expanded`] says.
     pub fn set_items(&self, items: &[TreeItem]) {
+        self.load(items, Contents::new());
+    }
+
+    /// Rebuilds the items with widgets as their content. Paths change meaning, so the
+    /// selection is cleared.
+    ///
+    /// Expansion returns to what [`TreeRow::expanded`] says. Each widget is taken if it
+    /// has no parent or is in one of this tree's rows; a widget still in another
+    /// container is refused and its row stays empty, as for `List` rows
+    /// ([`crate::handover`]).
+    pub fn set_rows(&self, rows: &[TreeRow]) {
+        let mut contents = Contents::new();
+        TreeRow::collect(rows, &mut Vec::new(), &mut contents);
+        // 古い行がまだあるうちに引き取る (自分の行の中にあれば引き取れる)。
+        for content in contents.values() {
+            let bin = content.size_bin();
+            let in_own_cell = bin.parent().is_some_and(|cell| self.is_own_cell(&cell));
+            self.0.owner.claim(&bin, in_own_cell, "Tree");
+        }
+        self.load(&TreeRow::skeleton(rows), contents);
+    }
+
+    /// Replaces the items and their widgets, and builds the rows anew.
+    fn load(&self, items: &[TreeItem], contents: Contents) {
+        *self.0.contents.borrow_mut() = contents;
         {
             let mut stored = self.0.items.borrow_mut();
             stored.clear();
@@ -282,6 +435,18 @@ impl Tree {
         let mut twisties = Vec::with_capacity(paths.len());
         without_signal(&self.0.native, &self.0.handler, || {
             while let Some(row) = self.0.native.first_child() {
+                // 中身を先に放す。続けて組み立てる行へ同じ中身を入れるため、古い行に
+                // 親として残っていると入れられない。行が書いた広げ方も消す
+                // (`Placement::Loose` は作ったときと同じ)。たどるのは自分のセルだけで、
+                // アプリがよそへ移した中身には触れない。
+                if let Some(cell) = cell_of(&row) {
+                    while let Some(content) = cell.first_child() {
+                        cell.remove(&content);
+                        if let Ok(content) = content.downcast::<SizeBin>() {
+                            content.set_placement(Placement::Loose);
+                        }
+                    }
+                }
                 self.0.native.remove(&row);
             }
             for path in &paths {
@@ -339,25 +504,56 @@ impl Tree {
             Some(twisty)
         };
 
-        // 文字は `List` と同じ組み方 (補助があれば 2 行目に小さく出す)。
-        let content = crate::list::item_content(&item.label, item.detail.as_deref());
-        let content = content.size_bin();
-        // 開閉ボタンの右はぜんぶ文字の領域。`SizeBin` の既定は中身の大きさに
-        // 合わせるので、そのままでは行の残り幅を使わず、長い文字が切られない。
-        content.apply_sizing(Sizing::fill_width());
-        // 開閉ボタンと縦中央でそろえる。`apply_sizing` は縦の寄せ方も書くので、
-        // そのあとに指定する。
-        content.set_valign(gtk::Align::Center);
-        // 選べない項目は文字だけを淡くする。行ごと無効にすると、
-        // 中の開閉ボタンまで押せなくなるため。
-        content.set_sensitive(selectable);
-        line.append(&content);
+        let widget = self.0.contents.borrow().get(path).map(|w| w.size_bin());
+        match widget {
+            // ウィジェットの項目は、開閉ボタンの右のセルに置く。置いてよいのは、
+            // どこにも無く、ほかの持ち主が後から引き取っていないときだけ。
+            // そうでなければセルは空のままにし、中身には何も書かない。
+            // 淡くもしない (中のコントロールは選べない項目でも動く)。
+            Some(content) => {
+                let cell = gtk::Box::new(gtk::Orientation::Vertical, 0);
+                cell.add_css_class(CELL_CLASS);
+                // 開閉ボタンの右の残り幅をぜんぶ使い、縦は中身の高さで中央にそろえる。
+                cell.set_hexpand(true);
+                cell.set_valign(gtk::Align::Center);
+                if self.0.owner.may_place(&content) {
+                    content.set_placement(Placement::FillParent);
+                    cell.append(&content);
+                }
+                line.append(&cell);
+            }
+            None => {
+                // 文字は `List` と同じ組み方 (補助があれば 2 行目に小さく出す)。
+                let content = crate::list::item_content(&item.label, item.detail.as_deref());
+                let content = content.size_bin();
+                // 開閉ボタンの右はぜんぶ文字の領域。`SizeBin` の既定は中身の大きさに
+                // 合わせるので、そのままでは行の残り幅を使わず、長い文字が切られない。
+                content.apply_sizing(Sizing::fill_width());
+                // 開閉ボタンと縦中央でそろえる。`apply_sizing` は縦の寄せ方も書くので、
+                // そのあとに指定する。
+                content.set_valign(gtk::Align::Center);
+                // 選べない項目は文字だけを淡くする。行ごと無効にすると、
+                // 中の開閉ボタンまで押せなくなるため。
+                content.set_sensitive(selectable);
+                line.append(&content);
+            }
+        }
 
         let row = crate::row::new();
         row.set_child(Some(&line));
         row.set_selectable(selectable);
         row.set_activatable(selectable);
         Some((row, twisty))
+    }
+
+    /// Whether `widget` is the cell of one of this tree's rows.
+    fn is_own_cell(&self, widget: &gtk::Widget) -> bool {
+        widget.has_css_class(CELL_CLASS)
+            && widget
+                .parent()
+                .and_then(|line| line.parent())
+                .and_then(|row| row.parent())
+                .is_some_and(|list| list == *self.0.native.upcast_ref::<gtk::Widget>())
     }
 
     // --------------------------------------------------------- 状態の反映
@@ -514,4 +710,14 @@ impl Tree {
         let actual = self.selected().unwrap_or_default();
         self.0.on_select.emit(&actual);
     }
+}
+
+/// The cell holding an item's widget in a row of a tree, if the row has one.
+fn cell_of(row: &gtk::Widget) -> Option<gtk::Box> {
+    let row = row.downcast_ref::<gtk::ListBoxRow>()?;
+    let cell = row.child()?.last_child()?;
+    cell.has_css_class(CELL_CLASS)
+        .then_some(cell)?
+        .downcast()
+        .ok()
 }

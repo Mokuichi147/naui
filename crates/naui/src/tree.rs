@@ -1,4 +1,5 @@
 use crate::sys;
+use crate::Widget;
 use naui_core::{SelectionMode, TreeItem};
 
 /// A list whose nested items can be expanded and collapsed. It scrolls by itself.
@@ -16,6 +17,8 @@ use naui_core::{SelectionMode, TreeItem};
 /// collapsed stay selected while hidden. Adding or removing items with ⌘ / Ctrl keeps
 /// them; a plain click or a Shift range selects anew and drops them, as for rows off
 /// screen in a long `List`.
+///
+/// Items hold either strings ([`Tree::set_items`]) or widgets ([`Tree::set_rows`]).
 #[derive(Clone)]
 pub struct Tree(pub(crate) sys::Tree);
 
@@ -28,6 +31,35 @@ impl Tree {
     #[inline]
     pub fn set_items(&self, items: &[TreeItem]) {
         self.0.set_items(items)
+    }
+
+    /// Rebuilds the items with widgets as their content. Paths change meaning, so the
+    /// selection is cleared.
+    ///
+    /// Expansion returns to what [`TreeRow::expanded`] says. Pass widgets that are in
+    /// no other container, as for [`List::set_rows`](crate::List::set_rows) (the
+    /// guide's section on moving widgets explains why). A widget already in this tree
+    /// can be passed again. If the app moves a widget elsewhere afterwards, the tree
+    /// leaves it alone and its row stays empty.
+    ///
+    /// Controls inside a row receive their own clicks and keys: pressing one neither
+    /// selects the item nor expands or collapses it. Every row is built when it is
+    /// passed, including those inside collapsed branches.
+    ///
+    /// ```no_run
+    /// # use naui::{Tree, TreeRow, Ui};
+    /// # fn fill(ui: &Ui, tree: &Tree) -> naui::Result<()> {
+    /// let src = TreeRow::new(&ui.label("src")?)
+    ///     .expanded(true)
+    ///     .child(TreeRow::new(&ui.checkbox("main.rs")?));
+    /// tree.set_rows(&[src]);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[inline]
+    pub fn set_rows(&self, rows: &[TreeRow]) {
+        self.0
+            .set_rows(&rows.iter().map(|row| row.0.clone()).collect::<Vec<_>>())
     }
 
     /// The total number of items, descendants included.
@@ -172,5 +204,83 @@ impl Tree {
     #[inline]
     pub fn on_expand(&self, f: impl FnMut(&[usize], bool) + 'static) {
         self.0.on_expand(f)
+    }
+}
+
+/// One item to put in a tree, with a widget as its content.
+///
+/// [`TreeItem`] is a convenience API for trees that need only strings. Items that
+/// combine icons, several labels, check boxes, buttons and so on are built with
+/// `Grid` / `Stack` and wrapped in a `TreeRow`, as rows of a [`List`](crate::List)
+/// are wrapped in a [`ListRow`](crate::ListRow).
+///
+/// ```no_run
+/// # use naui::{TreeRow, Widget};
+/// # fn row(folder: &dyn Widget, file: &dyn Widget) {
+/// let row = TreeRow::new(folder)
+///     .expanded(true)
+///     .child(TreeRow::new(file).selectable(false));
+/// # let _ = row;
+/// # }
+/// ```
+#[derive(Clone)]
+pub struct TreeRow(pub(crate) sys::TreeRow);
+
+impl_backend!(TreeRow);
+
+impl TreeRow {
+    /// Uses a widget as the content of one item. By default the item can be selected,
+    /// starts collapsed and has no children.
+    #[inline]
+    pub fn new(content: &dyn Widget) -> Self {
+        Self(sys::TreeRow::new(content.as_backend()))
+    }
+
+    /// Set to `false` for items where only the controls inside are operated.
+    ///
+    /// As with [`TreeItem::enabled`], its descendants cannot be selected either
+    /// ([`TreeItem::selectable`]), and the branch can still be expanded and collapsed.
+    /// Unlike `TreeItem::enabled(false)`, the row is not dimmed and the controls inside
+    /// keep working.
+    #[inline]
+    pub fn selectable(self, selectable: bool) -> Self {
+        Self(self.0.selectable(selectable))
+    }
+
+    #[inline]
+    pub fn is_selectable(&self) -> bool {
+        self.0.is_selectable()
+    }
+
+    /// Sets whether it is shown expanded from the start (collapsed by default).
+    ///
+    /// This takes effect only when [`Tree::set_rows`] is called; after that, the widget
+    /// owns the expansion state.
+    #[inline]
+    pub fn expanded(self, expanded: bool) -> Self {
+        Self(self.0.expanded(expanded))
+    }
+
+    #[inline]
+    pub fn is_expanded(&self) -> bool {
+        self.0.is_expanded()
+    }
+
+    /// Replaces the child items.
+    #[inline]
+    pub fn children(self, children: impl IntoIterator<Item = TreeRow>) -> Self {
+        Self(self.0.children(children.into_iter().map(|row| row.0)))
+    }
+
+    /// Adds one child item.
+    #[inline]
+    pub fn child(self, child: TreeRow) -> Self {
+        Self(self.0.child(child.0))
+    }
+
+    /// Whether the item has no children (cannot be expanded).
+    #[inline]
+    pub fn is_leaf(&self) -> bool {
+        self.0.is_leaf()
     }
 }

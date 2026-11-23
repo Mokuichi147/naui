@@ -11,6 +11,7 @@
 //! | Part | Built from |
 //! | --- | --- |
 //! | Rows | A `ListViewItem` per item, built in advance for every item |
+//! | Content | The text built as in `List`, or the widget of a [`TreeRow`](super::TreeRow) in a holder |
 //! | Indentation | The left margin of the row's content (16 per level, as on GTK and the Web) |
 //! | Expand / collapse | A borderless `Button` holding a copy of `TreeViewItem`'s chevron (`\u{E76C}` / `\u{E70D}`, the same size and place) |
 //! | Selection | The `ListView`'s own Ctrl / Shift handling (`Extended`) |
@@ -243,6 +244,9 @@ impl Tree {
 
     /// Builds the rows of every item and shows those that are visible.
     pub(super) fn multi_rebuild(&self) -> Result<()> {
+        // 新しい行を組んでから `ListView` を空にするので、前の行 (や `TreeView` の節) の
+        // 受け皿にいるウィジェットは先に外す。XAML の要素は親を 1 つしか持てない。
+        self.release_holders();
         let mut rows = Vec::new();
         {
             let items = self.0.items.borrow();
@@ -350,9 +354,16 @@ impl Tree {
         };
 
         // 文字は `List` と同じ組み方 (選べない項目は淡くなる)。行ごと無効にはしない
-        // (山形まで押せなくなる)。
-        let content: UIElement =
-            item_content(&item.label, item.detail.as_deref(), selectable)?.native_element();
+        // (山形まで押せなくなる)。ウィジェットの項目は受け皿に入れ、淡くしない。列の
+        // 指定もアプリのウィジェットではなく受け皿へ書く。選べない行の押下は行の全体
+        // (`line`) が受け止めるので、受け皿では止めない。
+        let content: UIElement = match self.widget_at(path) {
+            Some(widget) => self
+                .widget_holder(widget.as_ref(), false)?
+                .cast::<UIElement>()
+                .map_err(|e| to_error("convert the tree row", e))?,
+            None => item_content(&item.label, item.detail.as_deref(), selectable)?.native_element(),
+        };
         if let Ok(framework) = content.cast::<FrameworkElement>() {
             let _ = XamlGrid::SetColumn(&framework, 1);
         }
@@ -385,15 +396,25 @@ impl Tree {
 
     /// ← / → on a row collapse and expand it, as in `TreeView`: → expands a collapsed
     /// branch or moves to its first child, ← collapses an expanded branch or moves to
-    /// the parent. They are mirrored right to left.
+    /// the parent. They are mirrored right to left. Keys a control inside the row gets
+    /// are left to it.
     fn listen_multi_keys(&self, native: &ListViewItem, path: &[usize]) -> Result<()> {
         let state = UiThreadCell::new(Rc::downgrade(&self.0));
         let target = path.to_vec();
         let row = native.clone();
-        let handler = KeyEventHandler::new(move |_, args| {
+        let handler = KeyEventHandler::new(move |sender, args| {
             let Some(args) = args.as_ref() else {
                 return Ok(());
             };
+            // 行の中のコントロール (ウィジェットの項目) が受けたキーは、そのコントロールの
+            // もの。行そのものにフォーカスがあるときだけ開閉する (`List` と同じ)。
+            let on_row = match (args.OriginalSource(), sender.as_ref()) {
+                (Ok(source), Some(sender)) => &source == sender,
+                _ => false,
+            };
+            if !on_row {
+                return Ok(());
+            }
             let rtl = row.FlowDirection() == Ok(FlowDirection::RightToLeft);
             let key = match (args.Key().unwrap_or(VirtualKey::None), rtl) {
                 (VirtualKey::Left, false) | (VirtualKey::Right, true) => VirtualKey::Left,

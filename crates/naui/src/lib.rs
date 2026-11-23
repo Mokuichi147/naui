@@ -117,7 +117,7 @@ pub use time_picker::TimePicker;
 pub use toast::Toast;
 pub use toggle::Toggle;
 pub use toolbar::Toolbar;
-pub use tree::Tree;
+pub use tree::{Tree, TreeRow};
 pub use ui::{run, Ui};
 pub use widget::Widget;
 pub use widgets::{

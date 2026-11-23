@@ -2799,7 +2799,7 @@ fn row_host(row: &ListRow) -> Result<XamlGrid> {
 /// on). Things that do not take focus, such as `ScrollViewer` and `ProgressBar`, are
 /// treated as part of the row. This matches the division of whether
 /// `PointerPressed` is stopped.
-fn pressed_on_control(source: &IInspectable, row: &IInspectable) -> bool {
+pub(crate) fn pressed_on_control(source: &IInspectable, row: &IInspectable) -> bool {
     let mut current = source.cast::<DependencyObject>().ok();
     while let Some(object) = current {
         if crate::keys::same(&object, row) {

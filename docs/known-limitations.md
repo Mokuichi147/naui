@@ -210,7 +210,9 @@ that shape are covered in
     the browser can handle (about 33 million px in Chromium), the mapping between
     the scroll bar position and rows drifts (around 1 million rows for 30 px rows).
     Selection by index and `set_rows` work even with more than that.
-- `Tree`'s items can hold only strings. Items are addressed by paths
+- `Tree` builds every item when it is passed (`set_items` / `set_rows`), including
+  items inside collapsed branches; unlike `List` and `Table`, it does not build only
+  the rows on screen. Items are addressed by paths
   (`&[usize]`), and they cannot be rearranged by dragging. With multiple selection,
   `on_select` still passes only the first selected item (read `Tree::selection`
   for all of them), and selecting a branch never selects its children (there is no
