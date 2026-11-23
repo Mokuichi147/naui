@@ -44,6 +44,11 @@ struct FlowState {
     /// The shown children as the last `MeasureOverride` measured them.
     /// `ArrangeOverride` places them from this without measuring again.
     measured: RefCell<Vec<Measured>>,
+    /// The room inside the padding the last `MeasureOverride` was offered, when a
+    /// child that is not narrowed was wider than it (so the panel asked for more).
+    /// WinUI then arranges the panel at the width it asked for and clips it to the
+    /// room it has; `ArrangeOverride` lays the lines out in that room, as measured.
+    overflowed_room: Cell<Option<f64>>,
 }
 
 /// One shown child, as measured.
@@ -170,6 +175,8 @@ impl FlowState {
             .iter()
             .map(|slot| slot.x + slot.width)
             .fold(0.0, f64::max);
+        self.overflowed_room
+            .set((room.is_finite() && items_width > room + 0.5).then_some(room.max(0.0)));
         Size {
             Width: (items_width + horizontal) as f32,
             Height: (height + vertical) as f32,
@@ -184,9 +191,19 @@ impl FlowState {
     /// ends by raising an exception. Each child's height is the one its last
     /// measuring (at its slot's width when that differed from its natural width)
     /// left in `DesiredSize`.
+    ///
+    /// When a child wider than the room keeps its width, the panel asks for that
+    /// width, and WinUI arranges it at that width even where it has less (clipping
+    /// it to its slot). The lines are then laid out in the room `measure` was
+    /// offered: in the wider width, the alignment would move the other lines out of
+    /// sight and `Fill` children would be widened past the slot (and drawn at a width
+    /// other than the one their height was measured at).
     fn arrange(&self, final_size: Size) -> Size {
         let padding = self.padding.get();
-        let room = final_size.Width as f64 - padding.start - padding.end;
+        let mut room = final_size.Width as f64 - padding.start - padding.end;
+        if let Some(measured_room) = self.overflowed_room.get() {
+            room = room.min(measured_room);
+        }
         let measured = self.measured.borrow().clone();
         let layout = self.lines(&measured, room);
         let widths = Self::widths(&measured, &layout);
@@ -429,6 +446,7 @@ impl Flow {
             padding: Cell::new(Padding::ZERO),
             align: Cell::new(Align::Start),
             measured: RefCell::new(Vec::new()),
+            overflowed_room: Cell::new(None),
         });
         let native = Compose::compose(FlowPanel {
             state: state.clone(),
