@@ -39,6 +39,20 @@ impl Window {
         self.0.on_close_request(f)
     }
 
+    /// Tries to close it the way the user does with its close button:
+    /// [`on_close_request`](Self::on_close_request) is asked first, and it closes
+    /// unless the answer is [`CloseResponse::KeepOpen`]. Without `on_close_request`
+    /// it closes.
+    ///
+    /// **It does nothing on the Web**, where the user has no way to close a window
+    /// inside the page and `on_close_request` is never called.
+    ///
+    /// For tests and automation. See [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn request_close(&self) {
+        self.0.request_close()
+    }
+
     /// The size of the content area (width, height) in logical pixels, excluding the
     /// header bar and menu bar. With a sidebar attached, it includes the sidebar's
     /// width, as on the other platforms.
@@ -191,6 +205,21 @@ impl Window {
     #[inline]
     pub fn on_file_drop(&self, f: impl FnMut(&[FileEntry]) + 'static) {
         self.0.on_file_drop(f)
+    }
+
+    /// Drops `files` onto the window where no widget takes them, the way the user
+    /// drops files from the OS, so [`on_file_drop`](Self::on_file_drop) is called
+    /// with them. Nothing happens if `files` is empty or the window has no
+    /// `on_file_drop`. To drop onto a widget, use the widget's `drop_files`.
+    ///
+    /// Natively the entries arrive as given. On the Web they arrive as the browser
+    /// delivers dropped files: an empty file named after each entry, with a `blob:`
+    /// URL and no path.
+    ///
+    /// For tests and automation. See [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn drop_files(&self, files: &[FileEntry]) {
+        self.0.drop_files(files)
     }
 
     #[inline]

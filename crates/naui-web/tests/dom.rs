@@ -911,6 +911,118 @@ async fn canvas_draws_the_broader_vocabulary() {
     );
 }
 
+/// Color roles are read from the element's computed style at each draw, and
+/// setting the theme draws the surface again on the next frame without `redraw`.
+/// The left half is filled with the text color's role and the right half with a
+/// fixed red.
+#[wasm_bindgen_test]
+async fn canvas_follows_light_and_dark() {
+    type Seen = (bool, (Color, f64), (Color, f64), (Color, f64));
+    let seen: Rc<RefCell<Vec<Seen>>> = Rc::new(RefCell::new(Vec::new()));
+    let mut kept = None;
+    with_ui(|ui| {
+        ui.set_theme(Theme::Light)?;
+        let canvas = ui.canvas()?;
+        canvas.set_sizing(
+            Sizing::new()
+                .width(Length::Fixed(60.0))
+                .height(Length::Fixed(40.0)),
+        );
+        canvas.on_draw({
+            let seen = seen.clone();
+            move |painter| {
+                seen.borrow_mut().push((
+                    painter.is_dark(),
+                    painter.role_color(TextColor::Default),
+                    painter.role_color(TextColor::Secondary),
+                    painter.role_color(TextColor::Danger),
+                ));
+                painter.fill_rect(Rect::new(0.0, 0.0, 30.0, 40.0), TextColor::Default);
+                painter.fill_rect(Rect::new(30.0, 0.0, 30.0, 40.0), Color::rgb(0xff, 0, 0));
+            }
+        });
+        let mounted = Mounted::new(&canvas);
+        kept = Some((ui.clone(), canvas, mounted));
+        Ok(())
+    });
+    let (ui, canvas, _mounted) = kept.expect("描画面");
+    canvas.draw_for_test();
+
+    let native = canvas.native_canvas();
+    let ratio = web_sys::window().expect("window").device_pixel_ratio();
+    let context: CanvasRenderingContext2d = native
+        .get_context("2d")
+        .expect("2D コンテキスト")
+        .expect("2D コンテキスト")
+        .unchecked_into();
+    let read = |x: f64, y: f64| -> (u8, u8, u8, u8) {
+        let data = context
+            .get_image_data((x * ratio).floor(), (y * ratio).floor(), 1.0, 1.0)
+            .expect("画素の読み出し")
+            .data();
+        (data[0], data[1], data[2], data[3])
+    };
+    let brightness = |c: Color| u32::from(c.r) + u32::from(c.g) + u32::from(c.b);
+    // 危険の色はどの環境でも赤系 (アクセントは灰色にもなるので見ない)。
+    let reddish = |c: Color| c.r > c.g.saturating_add(40) && c.r > c.b.saturating_add(40);
+    let sum = |(r, g, b, _): (u8, u8, u8, u8)| u32::from(r) + u32::from(g) + u32::from(b);
+
+    let light = *seen.borrow().last().expect("描くときに呼ばれること");
+    assert!(
+        reddish(light.3 .0),
+        "明るい外観の危険の色は赤寄り: {light:?}"
+    );
+    assert!(!light.0, "明るいテーマでは is_dark が偽");
+    assert!(
+        brightness(light.1 .0) < 150,
+        "明るいテーマの文字色は暗い: {light:?}"
+    );
+    assert_ne!(light.2, light.1, "副次の文字色は本文と違う: {light:?}");
+    let left = read(15.0, 20.0);
+    assert!(
+        sum(left) < 150 && left.3 > 128,
+        "明るいテーマでは役割の色が暗く塗られる: {left:?}"
+    );
+    let drawn = seen.borrow().len();
+
+    // テーマを決めるだけで (redraw を呼ばずに) 次のフレームで描き直される。
+    ui.set_theme(Theme::Dark).expect("テーマ");
+    frames_until(|| seen.borrow().len() > drawn).await;
+    let dark = seen.borrow().last().copied();
+    let (left, right) = (read(15.0, 20.0), read(45.0, 20.0));
+    // ページの見た目をテスト前へ戻す。システムに従うテーマでは
+    // `prefers-color-scheme` の答えで決まる。
+    let drawn_dark = seen.borrow().len();
+    ui.set_theme(Theme::System).expect("テーマ");
+    frames_until(|| seen.borrow().len() > drawn_dark).await;
+    let system = seen.borrow().last().map(|seen| seen.0);
+    let prefers_dark = web_sys::window()
+        .and_then(|window| window.match_media("(prefers-color-scheme: dark)").ok())
+        .flatten()
+        .is_some_and(|list| list.matches());
+    assert_eq!(
+        system,
+        Some(prefers_dark),
+        "システムに従うテーマではメディアクエリの答えに従う"
+    );
+    assert!(
+        seen.borrow().len() > drawn,
+        "テーマが変わると描き直されること"
+    );
+    let dark = dark.unwrap();
+    assert!(reddish(dark.3 .0), "暗い外観の危険の色は赤寄り: {dark:?}");
+    assert!(dark.0, "暗いテーマでは is_dark が真");
+    assert!(
+        brightness(dark.1 .0) > 600,
+        "暗いテーマの文字色は明るい: {dark:?}"
+    );
+    assert!(
+        sum(left) > 600,
+        "暗いテーマでは役割の色が明るく塗られる: {left:?}"
+    );
+    assert_eq!(right, (255, 0, 0, 255), "固定の色はテーマで変わらない");
+}
+
 /// Pointer presses, moves and releases arrive with positions relative to the
 /// surface's top left.
 #[wasm_bindgen_test]
@@ -11963,6 +12075,388 @@ fn rows_leave_a_child_moved_without_removal_alone() {
             || "List → Dialog: 一覧が取り返す".to_string(),
         );
         violations.assert_none();
+        Ok(())
+    });
+}
+
+// ------------------------------------- トースト・ファイル・描画面への利用者の操作
+
+/// `click_action` clicks the button the way the user does: `on_action` with the
+/// index, then `on_dismiss`. Nothing happens while the toast is not on screen or
+/// for an index without a button.
+#[wasm_bindgen_test]
+fn toast_click_action_like_the_user() {
+    with_ui(|ui| {
+        let toast = ui.toast("削除しました")?;
+        toast.set_timeout(0.0);
+        toast.set_actions(&["元に戻す", "開く"]);
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        toast.on_action({
+            let seen = seen.clone();
+            move |index| seen.borrow_mut().push(format!("action {index}"))
+        });
+        toast.on_dismiss({
+            let seen = seen.clone();
+            move || seen.borrow_mut().push("dismiss".to_string())
+        });
+
+        toast.click_action(0);
+        assert!(seen.borrow().is_empty(), "出ていないトーストは押せない");
+
+        toast.show();
+        toast.click_action(2);
+        assert!(seen.borrow().is_empty(), "無い番号のボタンは押せない");
+        assert!(toast.is_visible(), "無い番号では消えない");
+
+        toast.click_action(1);
+        assert_eq!(
+            *seen.borrow(),
+            ["action 1", "dismiss"],
+            "番号が届き、消えて on_dismiss が続くこと"
+        );
+        assert!(!toast.is_visible() && !toast_is_displayed(&toast));
+
+        toast.click_action(0);
+        assert_eq!(seen.borrow().len(), 2, "消えたあとは押せない");
+
+        toast.dismiss();
+        toast.native_element().remove();
+        Ok(())
+    });
+}
+
+/// `drop_files` goes where a real drop goes: to the widget's own `on_file_drop`,
+/// or else the nearest enclosing widget's, or else the window's. The files arrive
+/// as the browser delivers them: an empty file per name, with a `blob:` URL and no
+/// path.
+#[wasm_bindgen_test]
+async fn drop_files_go_where_a_real_drop_goes_like_the_user() {
+    use naui_core::FileEntry;
+
+    let mut kept = None;
+    with_ui(|ui| {
+        let window = ui.window("ファイルを落とす", 400.0, 300.0)?;
+        let stack = ui.stack(Orientation::Vertical)?;
+        let outer = ui.stack(Orientation::Vertical)?;
+        let target = ui.label("受け取る")?;
+        let inside = ui.label("受け口の無い子")?;
+        let field = ui.text_input("")?;
+        let plain = ui.button("受け取らない")?;
+        outer.append(&target);
+        outer.append(&inside);
+        outer.append(&field);
+        stack.append(&outer);
+        stack.append(&plain);
+        window.set_child(&stack);
+        window.show();
+        kept = Some((window, outer, target, inside, field, plain));
+        Ok(())
+    });
+    let (window, outer, target, inside, field, plain) = kept.expect("widgets");
+
+    let names = |files: &[FileEntry]| -> Vec<String> {
+        files.iter().map(|f| f.name().to_string()).collect()
+    };
+    let to_target: Rc<RefCell<Vec<FileEntry>>> = Rc::default();
+    let to_outer: Rc<RefCell<Vec<String>>> = Rc::default();
+    let to_window: Rc<RefCell<Vec<String>>> = Rc::default();
+    target.on_file_drop({
+        let seen = to_target.clone();
+        move |files| seen.borrow_mut().extend(files.iter().cloned())
+    });
+    outer.on_file_drop({
+        let seen = to_outer.clone();
+        move |files| seen.borrow_mut().extend(names(files))
+    });
+    window.on_file_drop({
+        let seen = to_window.clone();
+        move |files| seen.borrow_mut().extend(names(files))
+    });
+
+    // 自分に受け口があれば自分へ。パスで渡しても、届くのは名前と blob: URL。
+    target.drop_files(&[
+        FileEntry::from_name("メモ.txt"),
+        FileEntry::from_path("/tmp/写真.png"),
+    ]);
+    assert_eq!(names(&to_target.borrow()), ["メモ.txt", "写真.png"]);
+    let first = to_target.borrow()[0].clone();
+    assert_eq!(first.path(), None, "ブラウザはパスを渡さない");
+    let url = first.source().expect("中身を指す URL").to_string();
+    assert!(url.starts_with("blob:"), "{url}");
+    assert_eq!(read_blob(&url).await.as_deref(), Some(""), "中身は空");
+    assert!(to_outer.borrow().is_empty() && to_window.borrow().is_empty());
+
+    // 受け口の無い子からは、受け口のある祖先へ。
+    inside.drop_files(&[FileEntry::from_name("祖先へ.txt")]);
+    assert_eq!(*to_outer.borrow(), ["祖先へ.txt"]);
+    assert!(to_window.borrow().is_empty());
+
+    // どこにも受け口が無ければ窓へ。
+    plain.drop_files(&[FileEntry::from_name("窓へ.txt")]);
+    assert_eq!(*to_window.borrow(), ["窓へ.txt"]);
+
+    // 窓へ直接落とすと、ウィジェットへは行かない。
+    window.drop_files(&[FileEntry::from_name("直接.txt")]);
+    assert_eq!(*to_window.borrow(), ["窓へ.txt", "直接.txt"]);
+    assert_eq!(to_target.borrow().len(), 2);
+    assert_eq!(to_outer.borrow().len(), 1);
+
+    // 空なら何もしない。
+    target.drop_files(&[]);
+    window.drop_files(&[]);
+    assert_eq!(to_target.borrow().len(), 2);
+    assert_eq!(to_window.borrow().len(), 2);
+
+    // 入力欄への落としは、本物と同じくどこにも届かない。
+    field.drop_files(&[FileEntry::from_name("入力欄.txt")]);
+    assert_eq!(
+        to_outer.borrow().len(),
+        1,
+        "入力欄へのドロップは親へも届かない"
+    );
+    assert_eq!(to_window.borrow().len(), 2, "窓へも届かない");
+    window.close();
+}
+
+/// `FilePicker::choose` goes through the `<input type="file">` as a real pick does,
+/// so each entry arrives as an empty file with a `blob:` URL and no path. An empty
+/// list is a cancel, a disabled picker ignores it, and the folder mode delivers one
+/// folder with only its name.
+#[wasm_bindgen_test]
+async fn file_picker_choose_like_the_user() {
+    use naui_core::{FileEntry, FilePickerMode};
+
+    let mut kept = None;
+    with_ui(|ui| {
+        kept = Some(ui.file_picker("開く…")?);
+        Ok(())
+    });
+    let picker = kept.expect("picker");
+    let picks: Rc<RefCell<Vec<Vec<FileEntry>>>> = Rc::default();
+    picker.on_select({
+        let picks = picks.clone();
+        move |files| picks.borrow_mut().push(files.to_vec())
+    });
+    let names = |files: &[FileEntry]| -> Vec<String> {
+        files.iter().map(|f| f.name().to_string()).collect()
+    };
+
+    picker.choose(&[]);
+    assert!(picks.borrow().is_empty(), "空は取り消し");
+    assert!(picker.selection().is_empty());
+
+    picker.set_mode(FilePickerMode::Files);
+    picker.choose(&[
+        FileEntry::from_path("/tmp/a.txt"),
+        FileEntry::from_name("b.txt"),
+    ]);
+    assert_eq!(picks.borrow().len(), 1, "1 度だけ通知する");
+    assert_eq!(names(&picks.borrow()[0]), ["a.txt", "b.txt"]);
+    let selection = picker.selection();
+    assert_eq!(names(&selection), ["a.txt", "b.txt"]);
+    assert_eq!(selection[0].path(), None, "ブラウザはパスを渡さない");
+    let url = selection[0].source().expect("blob: URL").to_string();
+    assert!(url.starts_with("blob:"), "{url}");
+    assert_eq!(read_blob(&url).await.as_deref(), Some(""), "中身は空");
+
+    // 選び直すと前の URL は取り消す (本物の選択と同じ)。
+    picker.choose(&[FileEntry::from_name("c.txt")]);
+    assert_eq!(names(&picker.selection()), ["c.txt"]);
+    assert_eq!(read_blob(&url).await, None, "前の URL は取り消される");
+
+    picker.set_enabled(false);
+    picker.choose(&[FileEntry::from_name("d.txt")]);
+    assert_eq!(picks.borrow().len(), 2, "無効な間は選べない");
+    assert_eq!(names(&picker.selection()), ["c.txt"]);
+    picker.set_enabled(true);
+
+    picker.set_mode(FilePickerMode::Folder);
+    picker.choose(&[FileEntry::from_path("/tmp/写真")]);
+    let selection = picker.selection();
+    assert_eq!(names(&selection), ["写真"], "フォルダーは名前だけの 1 件");
+    assert_eq!(selection[0].source(), None);
+    assert_eq!(picks.borrow().len(), 3);
+}
+
+/// `FileSaver::choose` writes nothing and starts no download; `on_save` gets an
+/// entry with only the destination's name, as after a download. A disabled saver
+/// ignores it.
+#[wasm_bindgen_test]
+fn file_saver_choose_like_the_user() {
+    use naui_core::{FileEntry, FileFilter};
+    use wasm_bindgen::closure::Closure;
+
+    with_ui(|ui| {
+        let saver = ui.file_saver("保存…")?;
+        saver.set_contents(b"hello");
+        saver.set_file_name("既定");
+        saver.set_filters(&[FileFilter::new("テキスト", ["txt"])]);
+        let saved: Rc<RefCell<Vec<FileEntry>>> = Rc::default();
+        saver.on_save({
+            let saved = saved.clone();
+            move |entry| saved.borrow_mut().push(entry.clone())
+        });
+        let errors = Rc::new(Cell::new(0));
+        saver.on_error({
+            let errors = errors.clone();
+            move |_| errors.set(errors.get() + 1)
+        });
+        // ダウンロードは `<a download>` のクリックで始まる。文書で見張る。
+        let anchor_clicks = Rc::new(Cell::new(0));
+        let watch = Closure::<dyn Fn(web_sys::Event)>::new({
+            let anchor_clicks = anchor_clicks.clone();
+            move |event: web_sys::Event| {
+                let is_anchor = event
+                    .target()
+                    .and_then(|t| t.dyn_into::<Element>().ok())
+                    .is_some_and(|e| e.tag_name().eq_ignore_ascii_case("a"));
+                if is_anchor {
+                    anchor_clicks.set(anchor_clicks.get() + 1);
+                }
+            }
+        });
+        let document = body().owner_document().expect("document");
+        document
+            .add_event_listener_with_callback_and_bool(
+                "click",
+                watch.as_ref().unchecked_ref(),
+                true,
+            )
+            .expect("見張りの登録");
+
+        saver.choose(&FileEntry::from_path("/tmp/out/報告.md"));
+        assert_eq!(saved.borrow().len(), 1);
+        let entry = saved.borrow()[0].clone();
+        assert_eq!(entry.name(), "報告.md", "名前はそのまま (拡張子を足さない)");
+        assert_eq!(entry.path(), None, "パスは持たない");
+        assert_eq!(entry.source(), None);
+        assert_eq!(saver.destination(), Some(entry));
+        assert_eq!(anchor_clicks.get(), 0, "ダウンロードを始めない");
+        assert_eq!(errors.get(), 0);
+
+        saver.set_enabled(false);
+        saver.choose(&FileEntry::from_name("無効.txt"));
+        assert_eq!(saved.borrow().len(), 1, "無効な間は保存しない");
+
+        document
+            .remove_event_listener_with_callback_and_bool(
+                "click",
+                watch.as_ref().unchecked_ref(),
+                true,
+            )
+            .expect("見張りの解除");
+        Ok(())
+    });
+}
+
+/// On the Web the user cannot close a window inside the page, so `request_close`
+/// does nothing: `on_close_request` is not asked and the window stays open.
+#[wasm_bindgen_test]
+fn window_request_close_does_nothing_like_the_user() {
+    with_ui(|ui| {
+        let window = ui.window("閉じない", 300.0, 200.0)?;
+        window.set_child(&ui.label("中身")?);
+        let asked = Rc::new(Cell::new(0));
+        window.on_close_request({
+            let asked = asked.clone();
+            move || {
+                asked.set(asked.get() + 1);
+                naui_core::CloseResponse::Close
+            }
+        });
+        window.show();
+        window.request_close();
+        assert_eq!(asked.get(), 0, "on_close_request は呼ばれない");
+        assert!(window.is_visible(), "開いたまま");
+        assert!(window.native_element().is_connected(), "文書に残る");
+        window.close();
+        Ok(())
+    });
+}
+
+/// `send_pointer` and `send_wheel` hand the event to the closures as given, with no
+/// DOM event in between; a wheel event sent with `send_pointer` goes to `on_wheel`.
+#[wasm_bindgen_test]
+fn canvas_send_pointer_like_the_user() {
+    with_ui(|ui| {
+        let canvas = ui.canvas()?;
+        let pointers: Rc<RefCell<Vec<naui_core::PointerEvent>>> = Rc::default();
+        let wheels: Rc<RefCell<Vec<naui_core::PointerEvent>>> = Rc::default();
+        canvas.on_pointer({
+            let pointers = pointers.clone();
+            move |event| pointers.borrow_mut().push(event)
+        });
+        assert_eq!(
+            canvas.send_wheel(naui_core::PointerEvent::wheel(
+                Point::new(1.0, 1.0),
+                0.0,
+                3.0
+            )),
+            EventResponse::Continue,
+            "on_wheel が無ければ Continue"
+        );
+        canvas.on_wheel({
+            let wheels = wheels.clone();
+            move |event| {
+                wheels.borrow_mut().push(event);
+                if event.modifiers.control {
+                    EventResponse::Handled
+                } else {
+                    EventResponse::Continue
+                }
+            }
+        });
+
+        // 面の外や半端な座標も、そのまま届く。
+        let down = naui_core::PointerEvent::new(PointerPhase::Down, Point::new(-3.25, 1000.5))
+            .button(Some(PointerButton::Secondary))
+            .modifiers(Modifiers {
+                shift: true,
+                ..Modifiers::default()
+            });
+        canvas.send_pointer(down);
+        let moved = naui_core::PointerEvent::new(PointerPhase::Move, Point::new(4.0, 5.0));
+        canvas.send_pointer(moved);
+        assert_eq!(*pointers.borrow(), [down, moved]);
+        assert!(wheels.borrow().is_empty());
+
+        let ctrl = Modifiers {
+            control: true,
+            ..Modifiers::default()
+        };
+        let zoom = naui_core::PointerEvent::wheel(Point::new(2.0, 3.0), 0.5, -7.0).modifiers(ctrl);
+        assert_eq!(canvas.send_wheel(zoom), EventResponse::Handled);
+        let scroll = naui_core::PointerEvent::wheel(Point::new(2.0, 3.0), 0.0, 12.0);
+        assert_eq!(canvas.send_wheel(scroll), EventResponse::Continue);
+        canvas.send_pointer(zoom);
+        assert_eq!(
+            *wheels.borrow(),
+            [zoom, scroll, zoom],
+            "Wheel は on_wheel へ"
+        );
+        assert_eq!(pointers.borrow().len(), 2, "on_pointer へは行かない");
+        Ok(())
+    });
+}
+
+/// `check_url` reads a URL as `window.open` does, relative to the document, without
+/// opening anything.
+#[wasm_bindgen_test]
+fn ui_check_url_like_the_user() {
+    with_ui(|ui| {
+        for url in [
+            "https://example.com/help",
+            "mailto:someone@example.com",
+            "relative/page.html",
+            "/rooted",
+            "",
+        ] {
+            assert!(ui.check_url(url).is_ok(), "読める: {url:?}");
+        }
+        // ホストの空白は、WebKit は断るが Chrome は読めてしまう。どこでも断るものだけ。
+        for url in ["http://[", "https://[::1"] {
+            assert!(ui.check_url(url).is_err(), "読めない: {url:?}");
+        }
         Ok(())
     });
 }

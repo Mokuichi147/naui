@@ -742,14 +742,22 @@ impl Ui {
     /// GTK4 opens it asynchronously (`GtkUriLauncher`), so what this returns is only
     /// whether it could be read as a URL.
     pub fn open_url(&self, url: &str) -> Result<()> {
+        self.check_url(url)?;
+        let parent = self.0.app.active_window();
+        gtk::UriLauncher::new(url).launch(parent.as_ref(), None::<&gtk::gio::Cancellable>, |_| {});
+        Ok(())
+    }
+
+    /// Reads `url` as [`open_url`](Self::open_url) does (`g_uri_parse`), without
+    /// opening it. `Err` when it cannot be read as a URL.
+    #[doc(hidden)]
+    pub fn check_url(&self, url: &str) -> Result<()> {
         if gtk::glib::Uri::parse(url, gtk::glib::UriFlags::NONE).is_err() {
             return Err(Error::new(
                 "open the URL",
                 format!("not a valid URL: {url}"),
             ));
         }
-        let parent = self.0.app.active_window();
-        gtk::UriLauncher::new(url).launch(parent.as_ref(), None::<&gtk::gio::Cancellable>, |_| {});
         Ok(())
     }
 

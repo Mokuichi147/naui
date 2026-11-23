@@ -11,6 +11,14 @@
 //! to `true` (the same as the other three platforms). The font is the system font
 //! (`systemFontOfSize:`).
 //!
+//! Color roles are resolved inside `drawRect:`, where AppKit has made the view's
+//! effective appearance the current drawing appearance, by converting the same
+//! dynamic `NSColor`s a `Label` uses (`labelColor` and friends) to sRGB, alpha
+//! included. Light or dark is the effective appearance's best match between Aqua
+//! and Dark Aqua. When it changes (the system setting, or a theme set on the
+//! window or the app), `viewDidChangeEffectiveAppearance` marks the view for
+//! redrawing.
+//!
 //! Pointer notifications come from `mouseDown:` / `mouseDragged:` / `mouseUp:`
 //! (and the same set for the right and middle buttons) and from `mouseMoved:`
 //! through an `NSTrackingArea`. The button is identified by which method AppKit
@@ -34,8 +42,8 @@ use std::rc::Rc;
 
 use naui_core::{
     Align, Bitmap, BitmapData, Color, DrawCommand, EventResponse, Gradient, GradientShape, Paint,
-    Painter, Path, PathSegment, PointerButton, PointerEvent, PointerPhase, Rect, WheelHandler,
-    WHEEL_STEP,
+    Painter, Path, PathSegment, PointerButton, PointerEvent, PointerPhase, Rect, TextColor,
+    WheelHandler, WHEEL_STEP,
 };
 use objc2::rc::Retained;
 use objc2::runtime::{AnyObject, NSObjectProtocol};
@@ -43,7 +51,8 @@ use objc2::{
     define_class, msg_send, AnyThread, DefinedClass, MainThreadMarker, MainThreadOnly, Message,
 };
 use objc2_app_kit::{
-    NSAffineTransformNSAppKitAdditions, NSBezierPath, NSColor, NSColorSpace,
+    NSAffineTransformNSAppKitAdditions, NSAppearance, NSAppearanceCustomization,
+    NSAppearanceNameAqua, NSAppearanceNameDarkAqua, NSBezierPath, NSColor, NSColorSpace,
     NSCompositingOperation, NSEvent, NSFont, NSFontAttributeName, NSForegroundColorAttributeName,
     NSGradient, NSGradientDrawingOptions, NSGraphicsContext, NSImage, NSLineCapStyle,
     NSLineJoinStyle, NSStringDrawing, NSTrackingArea, NSTrackingAreaOptions, NSView,
@@ -100,7 +109,8 @@ define_class!(
         fn draw_rect(&self, _dirty: NSRect) {
             let bounds = self.bounds();
             let mut painter =
-                Painter::with_text_measure(bounds.size.width, bounds.size.height, text_width);
+                Painter::with_text_measure(bounds.size.width, bounds.size.height, text_width)
+                    .with_role_colors(is_dark(&self.effectiveAppearance()), role_color);
             let Some(mut draw) = self.ivars().draw.borrow_mut().take() else {
                 return;
             };
@@ -111,6 +121,15 @@ define_class!(
             }
             drop(slot);
             replay(&painter.into_commands());
+        }
+
+        /// Light and dark switched (or another appearance was set on the window or
+        /// the app). Roles and `Painter::is_dark` resolve differently now, so the
+        /// drawing is made again.
+        #[unsafe(method(viewDidChangeEffectiveAppearance))]
+        fn view_did_change_effective_appearance(&self) {
+            let _: () = unsafe { msg_send![super(self), viewDidChangeEffectiveAppearance] };
+            self.setNeedsDisplay(true);
         }
 
         #[unsafe(method(updateTrackingAreas))]
@@ -306,6 +325,25 @@ impl Canvas {
         (bounds.size.width, bounds.size.height)
     }
 
+    /// Delivers `event` to `on_pointer` as given (a `Wheel` one to `on_wheel`). For
+    /// tests and automation.
+    ///
+    /// No `NSEvent` is made: AppKit's synthesized mouse events lose the button
+    /// number, and the view's position in its window would have to be known.
+    pub fn send_pointer(&self, event: PointerEvent) {
+        if event.phase == PointerPhase::Wheel {
+            self.send_wheel(event);
+        } else {
+            self.0.view.ivars().pointer.emit(event);
+        }
+    }
+
+    /// Delivers `event` to `on_wheel` and returns its answer (`Continue` without
+    /// one). Nothing scrolls on `Continue`. For tests and automation.
+    pub fn send_wheel(&self, event: PointerEvent) -> EventResponse {
+        self.0.view.ivars().wheel.emit(event)
+    }
+
     /// Draws on the spot. **For automated tests only.**
     ///
     /// Real apps do not use it, because AppKit decides when to draw.
@@ -350,6 +388,8 @@ fn replay(commands: &[DrawCommand]) {
                         bezier.fill();
                     }
                     Paint::Gradient(gradient) => fill_gradient(&bezier, gradient, *opacity),
+                    // `Painter` は役割を色にしてから記録する。
+                    Paint::Role(_) => {}
                 }
             }
             DrawCommand::Stroke {
@@ -591,6 +631,34 @@ fn draw_text(
         }
     };
     unsafe { string.drawAtPoint_withAttributes(NSPoint::new(x, at.y), Some(&attributes)) };
+}
+
+/// Whether `appearance` is closer to Dark Aqua than to Aqua (the vibrant and
+/// high-contrast variants match their base).
+fn is_dark(appearance: &NSAppearance) -> bool {
+    // SAFETY: AppKit が定める定数の文字列を読むだけ。
+    let (light, dark) = unsafe { (NSAppearanceNameAqua, NSAppearanceNameDarkAqua) };
+    appearance
+        .bestMatchFromAppearancesWithNames(&NSArray::from_slice(&[light, dark]))
+        .is_some_and(|name| &*name == dark)
+}
+
+/// The color and opacity of `role` in the current drawing appearance (the view's,
+/// inside `drawRect:`): the dynamic color a `Label` uses, converted to sRGB.
+fn role_color(role: TextColor) -> (Color, f64) {
+    let color = crate::widgets::label_color(role);
+    match color.colorUsingColorSpace(&NSColorSpace::sRGBColorSpace()) {
+        Some(srgb) => (
+            Color::from_unit(
+                srgb.redComponent(),
+                srgb.greenComponent(),
+                srgb.blueComponent(),
+            ),
+            srgb.alphaComponent(),
+        ),
+        // 動的な色は sRGB へ変換できるはず。できなければ塗らないより黒で描く。
+        None => (Color::BLACK, 1.0),
+    }
 }
 
 fn ns_color(color: Color, opacity: f64) -> Retained<NSColor> {

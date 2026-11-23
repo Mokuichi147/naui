@@ -598,6 +598,14 @@ impl Ui {
         open_url(url)
     }
 
+    /// Reads `url` as [`open_url`](Self::open_url) does, without opening it. `Err`
+    /// when it cannot be read as a URL. Whether something can open it is not
+    /// checked (that is known only by opening). **For naui's testing support.**
+    #[doc(hidden)]
+    pub fn check_url(&self, url: &str) -> Result<()> {
+        check_url(url)
+    }
+
     /// Quits the app.
     pub fn quit(&self) {
         // `Application::Exit` でもウィンドウは通知を上げずに畳まれるので、
@@ -613,18 +621,25 @@ impl Ui {
     }
 }
 
-/// [`Ui::open_url`]. A link inside a `Label` opens through the same path.
-pub(crate) fn open_url(url: &str) -> Result<()> {
-    use windows::Win32::UI::Shell::ShellExecuteW;
-    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
-    use windows_core::{w, HSTRING};
-
+/// Whether `url` can be read as a URL ([`Ui::check_url`]). [`open_url`] checks
+/// with this before opening.
+pub(crate) fn check_url(url: &str) -> Result<()> {
     if url.trim().is_empty() || !url.contains(':') {
         return Err(Error::new(
             "open the URL",
             format!("not a valid URL: {url}"),
         ));
     }
+    Ok(())
+}
+
+/// [`Ui::open_url`]. A link inside a `Label` opens through the same path.
+pub(crate) fn open_url(url: &str) -> Result<()> {
+    use windows::Win32::UI::Shell::ShellExecuteW;
+    use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+    use windows_core::{w, HSTRING};
+
+    check_url(url)?;
     let target = HSTRING::from(url);
     // 32 以下はエラーの番号 (`ShellExecute` の古い約束)。
     let result = unsafe { ShellExecuteW(None, w!("open"), &target, None, None, SW_SHOWNORMAL) };

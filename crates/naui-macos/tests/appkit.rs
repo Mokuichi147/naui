@@ -76,6 +76,10 @@ fn main() {
             respond_answers_like_the_user,
         ),
         (
+            "トーストのボタン・閉じるボタン・Canvas・ファイルの選択とドロップをテストから操作できる",
+            remaining_actions_reach_the_app,
+        ),
+        (
             "チェックボックスが反転し新しい値を通知する",
             checkbox_toggle,
         ),
@@ -102,6 +106,10 @@ fn main() {
         (
             "描画面の切り抜き・回転・グラデーション・画像・文字幅が AppKit で効く",
             canvas_draws_the_broader_vocabulary,
+        ),
+        (
+            "描画面の役割の色が明暗に追従し、切り替えで描き直される",
+            canvas_follows_light_and_dark,
         ),
         (
             "描画面がマウスの押下・移動・解放を面の座標で通知する",
@@ -1456,6 +1464,193 @@ fn typing_notifies_like_the_user(ui: &Ui) -> Result<()> {
 /// `respond` clicks the dialog's or sheet's button for the role. Given before it
 /// opens, it is kept and given right after it opens: inside `Dialog::open`'s modal
 /// loop on macOS, which is why a click that opens a dialog returns answered.
+/// `Toast::click_action`, `Window::request_close`, `Canvas::send_pointer` /
+/// `send_wheel`, `FilePicker::choose`, `FileSaver::choose` and `drop_files` reach the
+/// app's closures as the user's own actions do.
+fn remaining_actions_reach_the_app(ui: &Ui) -> Result<()> {
+    use naui_core::{CloseResponse, FileEntry, PointerEvent};
+
+    let window = ui.window("残りの操作", 360.0, 240.0)?;
+    let column = ui.stack(Orientation::Vertical)?;
+    let outer = ui.stack(Orientation::Vertical)?;
+    let inner = ui.label("ここへ落とす")?;
+    let plain = ui.label("受け取らない")?;
+    outer.append(&inner);
+    outer.append(&plain);
+    let canvas = ui.canvas()?;
+    let picker = ui.file_picker("開く…")?;
+    let saver = ui.file_saver("保存…")?;
+    column.append(&outer);
+    column.append(&canvas);
+    column.append(&picker);
+    column.append(&saver);
+    window.set_child(&column);
+    window.show();
+    pump(0.1);
+
+    // トースト: 出ているときだけ、押したボタンの番号のあとに消えた通知が届く。
+    let toast = ui.toast("削除しました")?;
+    toast.set_actions(&["元に戻す", "開く"]);
+    toast.set_timeout(0.0);
+    let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+    toast.on_action({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(format!("action {index}"))
+    });
+    toast.on_dismiss({
+        let seen = seen.clone();
+        move || seen.borrow_mut().push("dismiss".to_string())
+    });
+    toast.click_action(0);
+    assert!(seen.borrow().is_empty(), "出ていなければ押せない");
+    toast.show();
+    toast.click_action(2);
+    assert!(seen.borrow().is_empty(), "無い番号は押せない");
+    assert!(toast.is_visible());
+    toast.click_action(1);
+    assert_eq!(*seen.borrow(), ["action 1", "dismiss"]);
+    assert!(!toast.is_visible());
+
+    // Canvas: 渡したイベントがそのまま届き、ホイールは答えが返る。
+    let (pointers, sink) = recorder::<PointerEvent>();
+    canvas.on_pointer(sink);
+    let down = PointerEvent::new(PointerPhase::Down, Point::new(10.0, 20.0))
+        .button(Some(PointerButton::Secondary))
+        .modifiers(Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        });
+    canvas.send_pointer(down);
+    canvas.send_pointer(PointerEvent::new(
+        PointerPhase::Move,
+        Point::new(30.0, 40.0),
+    ));
+    assert_eq!(
+        *pointers.borrow(),
+        [
+            down,
+            PointerEvent::new(PointerPhase::Move, Point::new(30.0, 40.0))
+        ]
+    );
+    let wheel = PointerEvent::wheel(Point::new(5.0, 5.0), 0.0, 12.0);
+    assert_eq!(
+        canvas.send_wheel(wheel),
+        EventResponse::Continue,
+        "受け口が無ければ Continue"
+    );
+    let (wheels, mut sink) = recorder::<PointerEvent>();
+    canvas.on_wheel(move |event| {
+        sink(event);
+        EventResponse::Handled
+    });
+    assert_eq!(canvas.send_wheel(wheel), EventResponse::Handled);
+    canvas.send_pointer(wheel);
+    assert_eq!(
+        *wheels.borrow(),
+        [wheel, wheel],
+        "Wheel の段は on_wheel へ回る"
+    );
+    assert_eq!(pointers.borrow().len(), 2);
+
+    // ファイルの選択: パネルを出さずに選んだことになる。空と無効中は何もしない。
+    let (picks, mut sink) = recorder::<Vec<FileEntry>>();
+    picker.on_select(move |files| sink(files.to_vec()));
+    let files = [
+        FileEntry::from_path("/tmp/naui 写真.png"),
+        FileEntry::from_path("/tmp/メモ.txt"),
+    ];
+    picker.choose(&files);
+    assert_eq!(*picks.borrow(), [files.to_vec()]);
+    assert_eq!(picker.selection(), files);
+    picker.choose(&[]);
+    picker.set_enabled(false);
+    picker.choose(&files[..1]);
+    assert_eq!(picks.borrow().len(), 1);
+    assert_eq!(picker.selection(), files);
+
+    // 保存先の選択: 中身を実際に書く。path の無いものは on_error。
+    let (saves, mut sink) = recorder::<FileEntry>();
+    saver.on_save(move |entry| sink(entry.clone()));
+    let (errors, mut sink) = recorder::<String>();
+    saver.on_error(move |error| sink(error.context().to_string()));
+    saver.set_contents("中身".as_bytes());
+    let path = std::env::temp_dir().join("naui-choose-保存.txt");
+    let _ = std::fs::remove_file(&path);
+    saver.choose(&FileEntry::from_path(&path));
+    assert_eq!(
+        std::fs::read(&path).ok().as_deref(),
+        Some("中身".as_bytes())
+    );
+    assert_eq!(saves.borrow().len(), 1);
+    assert_eq!(
+        saver
+            .destination()
+            .and_then(|e| e.path().map(|p| p.to_path_buf())),
+        Some(path.clone())
+    );
+    saver.choose(&FileEntry::from_name("名前だけ.txt"));
+    assert_eq!(errors.borrow().len(), 1, "path が無ければ書けない");
+    saver.set_enabled(false);
+    saver.choose(&FileEntry::from_path(&path));
+    assert_eq!(saves.borrow().len(), 1, "無効中は何もしない");
+    let _ = std::fs::remove_file(&path);
+
+    // ドロップ: 自分 → 受け口のある祖先 → 窓 の順に届く。
+    let (to_inner, mut sink) = recorder::<Vec<FileEntry>>();
+    inner.on_file_drop(move |files| sink(files.to_vec()));
+    let (to_outer, mut sink) = recorder::<Vec<FileEntry>>();
+    outer.on_file_drop(move |files| sink(files.to_vec()));
+    let (to_window, mut sink) = recorder::<Vec<FileEntry>>();
+    canvas.drop_files(&files);
+    assert!(
+        to_outer.borrow().is_empty(),
+        "受け口の無い枝からは窓へ (窓にも無ければ捨てる)"
+    );
+    window.on_file_drop(move |files| sink(files.to_vec()));
+    inner.drop_files(&files);
+    assert_eq!(*to_inner.borrow(), [files.to_vec()]);
+    plain.drop_files(&files[..1]);
+    assert_eq!(
+        *to_outer.borrow(),
+        [files[..1].to_vec()],
+        "受け口の無いウィジェットは祖先へ"
+    );
+    canvas.drop_files(&files);
+    window.drop_files(&files[1..]);
+    assert_eq!(*to_window.borrow(), [files.to_vec(), files[1..].to_vec()]);
+    inner.drop_files(&[]);
+    window.drop_files(&[]);
+    assert_eq!(to_inner.borrow().len(), 1, "空のドロップは届かない");
+    assert_eq!(to_window.borrow().len(), 2);
+
+    // 閉じるボタン: on_close_request に聞いてから閉じる。
+    let answers = Rc::new(RefCell::new(vec![
+        CloseResponse::KeepOpen,
+        CloseResponse::Close,
+    ]));
+    let asked = Rc::new(Cell::new(0));
+    window.on_close_request({
+        let answers = answers.clone();
+        let asked = asked.clone();
+        move || {
+            asked.set(asked.get() + 1);
+            answers.borrow_mut().remove(0)
+        }
+    });
+    window.request_close();
+    assert_eq!(asked.get(), 1);
+    assert!(window.is_visible(), "KeepOpen なら開いたまま");
+    window.request_close();
+    assert_eq!(asked.get(), 2);
+    assert!(!window.is_visible(), "Close なら閉じる");
+
+    let bare = ui.window("受け口なし", 200.0, 120.0)?;
+    bare.show();
+    bare.request_close();
+    assert!(!bare.is_visible(), "on_close_request が無ければ閉じる");
+    Ok(())
+}
+
 fn respond_answers_like_the_user(ui: &Ui) -> Result<()> {
     let dialog = ui.dialog("消しますか")?;
     dialog.set_buttons(
@@ -1784,6 +1979,121 @@ fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
     canvas.redraw();
     view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
     assert!(sizes.borrow().len() > drawn, "描き直しで呼ばれること");
+    window.close();
+    Ok(())
+}
+
+/// Color roles are resolved from the view's effective appearance at each draw, and
+/// switching the window's theme draws the surface again without `redraw`. The left
+/// half is filled with the text color's role and the right half with a fixed red.
+fn canvas_follows_light_and_dark(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    canvas.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(60.0))
+            .height(Length::Fixed(40.0)),
+    );
+    type Seen = (bool, (Color, f64), (Color, f64), (Color, f64));
+    let seen: Rc<RefCell<Vec<Seen>>> = Rc::new(RefCell::new(Vec::new()));
+    canvas.on_draw({
+        let seen = seen.clone();
+        move |painter| {
+            seen.borrow_mut().push((
+                painter.is_dark(),
+                painter.role_color(TextColor::Default),
+                painter.role_color(TextColor::Secondary),
+                painter.role_color(TextColor::Danger),
+            ));
+            painter.fill_rect(Rect::new(0.0, 0.0, 30.0, 40.0), TextColor::Default);
+            painter.fill_rect(Rect::new(30.0, 0.0, 30.0, 40.0), Color::rgb(0xff, 0, 0));
+        }
+    });
+
+    let window = ui.window("canvas theme", 120.0, 80.0)?;
+    window.set_theme(Theme::Light)?;
+    window.set_child(&canvas);
+    window.show();
+    let view = canvas.native_view();
+    view.layoutSubtreeIfNeeded();
+    let bounds = view.bounds();
+    let bitmap = view
+        .bitmapImageRepForCachingDisplayInRect(bounds)
+        .expect("ビットマップを用意できること");
+    let scale = bitmap.pixelsWide() as f64 / bounds.size.width;
+    let read = |x: f64, y: f64| -> (Color, f64) {
+        let color = bitmap
+            .colorAtX_y((x * scale) as isize, (y * scale) as isize)
+            .expect("画素が読めること");
+        let srgb = color
+            .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
+            .expect("sRGB へ変換できること");
+        (
+            Color::from_unit(
+                srgb.redComponent(),
+                srgb.greenComponent(),
+                srgb.blueComponent(),
+            ),
+            srgb.alphaComponent(),
+        )
+    };
+    let brightness = |c: Color| u32::from(c.r) + u32::from(c.g) + u32::from(c.b);
+    // 危険の色はどの環境でも赤系 (アクセントは灰色にもなるので見ない)。
+    let reddish = |c: Color| c.r > c.g.saturating_add(40) && c.r > c.b.saturating_add(40);
+
+    view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
+    let light = *seen.borrow().last().expect("描くときに呼ばれること");
+    assert!(
+        reddish(light.3 .0),
+        "明るい外観の危険の色は赤寄り: {light:?}"
+    );
+    assert!(!light.0, "明るい外観では is_dark が偽");
+    assert!(
+        brightness(light.1 .0) < 150,
+        "明るい外観の文字色は暗い: {light:?}"
+    );
+    assert!(
+        light.2 .1 < light.1 .1,
+        "副次の文字色は本文より薄い (アルファが落ちていない): {light:?}"
+    );
+    let (left, alpha) = read(15.0, 20.0);
+    assert!(
+        brightness(left) < 150 && alpha > 0.5,
+        "明るい外観では役割の色が暗く塗られる: {left} {alpha}"
+    );
+    let drawn = seen.borrow().len();
+
+    // テーマを切り替えるだけで (redraw を呼ばずに) 描き直される。
+    window.set_theme(Theme::Dark)?;
+    pump_until(2.0, || {
+        view.displayIfNeeded();
+        seen.borrow().len() > drawn
+    });
+    assert!(
+        seen.borrow().len() > drawn,
+        "外観が変わると描き直されること"
+    );
+    let dark = *seen.borrow().last().unwrap();
+    assert!(reddish(dark.3 .0), "暗い外観の危険の色は赤寄り: {dark:?}");
+    assert!(dark.0, "暗い外観では is_dark が真");
+    assert!(
+        brightness(dark.1 .0) > 600,
+        "暗い外観の文字色は明るい: {dark:?}"
+    );
+    assert!(
+        dark.2 .1 < dark.1 .1,
+        "暗い外観でも副次の文字色は薄い: {dark:?}"
+    );
+    view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
+    let (left, _) = read(15.0, 20.0);
+    assert!(
+        brightness(left) > 600,
+        "暗い外観では役割の色が明るく塗られる: {left}"
+    );
+    let (right, _) = read(45.0, 20.0);
+    assert!(
+        right.r > 180 && right.g < 120 && right.b < 120,
+        "固定の色は外観で変わらない: {right}"
+    );
     window.close();
     Ok(())
 }

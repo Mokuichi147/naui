@@ -130,13 +130,17 @@ The rest of the testing actions, the separate crate that `Canvas` is now ready
 for along with the colors it needs in a dark appearance, and adaptive items that
 need investigating first but are not heavy.
 
-- [ ] **The rest of the actions for testing apps:** a `Toast`'s action button,
+- [x] **The rest of the actions for testing apps:** a `Toast`'s action button,
       the window's close button (`on_close_request`), pointer events on a
       `Canvas`, and choosing and dropping files, delivered the way typing and
       answering dialogs are since v0.18.0. Whether a test can also read what the
       app handed to the OS (the URL given to `Ui::open_url`, say) without it
-      really opening is decided with them.
-- [ ] **Colors that follow light and dark in `Canvas`.** Widgets follow the
+      really opening is decided with them. `Toast::click_action`,
+      `Window::request_close`, `Canvas::send_pointer` / `send_wheel`,
+      `FilePicker::choose`, `FileSaver::choose` and `drop_files` on widgets and
+      windows deliver them, and inside a test case `Ui::open_url` records the URL
+      for `testing::opened_urls` instead of opening it.
+- [x] **Colors that follow light and dark in `Canvas`.** Widgets follow the
       appearance by themselves, but `Canvas` draws with fixed `Color`s and
       nothing tells the app when the appearance changes, so a drawing made for
       light stays that way in dark. All four can tell: AppKit's
@@ -146,6 +150,9 @@ need investigating first but are not heavy.
       `TextColor` (and the accent color) so that the platform resolves them at
       each draw, a notification with the resolved light or dark, or both. The
       charts below need it for axes and labels, so it comes before them.
+      Done with both: strokes, fills and text take a role, which the platform
+      resolves when it is recorded (`Ink`, `Paint::Role`), `Painter::is_dark`
+      tells the appearance, and the surface draws itself again when it changes.
 - [ ] *(drawing)* **`naui-charts`.** Line, bar and scatter charts in a separate
       crate drawing on `Canvas`. What it waited on, clipping so that plot areas
       do not draw outside their bounds and text width measurement for laying out
@@ -162,9 +169,14 @@ need investigating first but are not heavy.
       (`NSView::layout`, a `GtkWidget`'s height-for-width measuring, a derived
       `Panel`'s `MeasureOverride` / `ArrangeOverride`), with no callback through
       the app.
-- [ ] *(adaptive)* **Narrow navigation rail.** Windows is covered by `Sidebar`'s
+- [x] *(adaptive)* **Narrow navigation rail.** Windows is covered by `Sidebar`'s
       automatic collapsing (`LeftCompact`). Whether the same collapsing covers
       macOS, GTK and the Web is checked first; if it does, nothing new is needed.
+      It does: only WinUI's `NavigationView` has a strip of icons. AppKit's
+      sidebar item, libadwaita's split views and `AdwSidebar` (1.9) have no
+      icon-only state, so naui hides the whole pane there and on the Web, and no
+      new API is added. The difference is written in `Sidebar`'s documentation and
+      the known limitations.
 
 ## v0.20.0
 
@@ -374,9 +386,9 @@ planned, and the versions above may change to meet them.
   `Tree` items change `TreeItem`, whose fields are public, so a new field breaks
   apps that build it with a struct literal (more than one action on a toast,
   which changed `Toast::action` and `on_action`, was done in v0.18.0).
-  Shortcuts outside the menu bar may rename or move `MenuShortcut`, and colors
-  by role in `Canvas` may add a variant to `Paint`, which is not
-  `#[non_exhaustive]`.
+  Shortcuts outside the menu bar may rename or move `MenuShortcut` (colors by
+  role in `Canvas` added `Paint::Role` in v0.19.0, since `Paint` is not
+  `#[non_exhaustive]`).
 - **Public types are reviewed for growth.** Each public struct and enum is
   checked for whether it may gain fields or variants later. Those that may get
   `#[non_exhaustive]`, or private fields with constructors, as `PointerEvent`

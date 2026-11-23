@@ -225,6 +225,45 @@ impl FilePicker {
         self.0.input.set_value("");
         self.0.input.click();
     }
+
+    /// Picks `files` as if the user had chosen them in the dialog, without showing
+    /// it (for tests and automation): `selection` becomes them and `on_select` is
+    /// called before this returns. An empty `files` is a cancelled dialog and
+    /// changes nothing. Does nothing while disabled.
+    ///
+    /// It goes the way a real pick does: an empty file named after each entry is put
+    /// in the `<input type="file">` and `input` and `change` are dispatched, so each
+    /// entry arrives with a `blob:` URL and no path. The mode and filters are not
+    /// checked, except that in the folder mode, where a page cannot make a folder,
+    /// the first entry arrives as one folder with only its name, as the browser
+    /// delivers a picked folder.
+    pub fn choose(&self, files: &[FileEntry]) {
+        let input = &self.0.input;
+        if files.is_empty() || input.disabled() {
+            return;
+        }
+        if self.0.mode.get().is_folder() {
+            // 作った `File` には `webkitRelativePath` が無く、`<input>` を通すと
+            // 取り消しに見える。ブラウザが選ばれたフォルダーを渡す形 (名前だけの
+            // 1 件) で直接届ける。
+            let entries = vec![FileEntry::from_name(files[0].name())];
+            *self.0.selection.borrow_mut() = entries.clone();
+            self.emit(&entries);
+            return;
+        }
+        let Some(data) = crate::file_drop::data_transfer_of(files) else {
+            return;
+        };
+        input.set_files(data.files().as_ref());
+        // ダイアログで選んだときと同じく `input` → `change` の順に送る。
+        for name in ["input", "change"] {
+            let init = web_sys::EventInit::new();
+            init.set_bubbles(true);
+            if let Ok(event) = web_sys::Event::new_with_event_init_dict(name, &init) {
+                let _ = input.dispatch_event(&event);
+            }
+        }
+    }
 }
 
 /// Takes the folder name from the start of `webkitRelativePath` (`photos/a.png`).

@@ -99,11 +99,9 @@ impl FilePicker {
 
         let weak = Rc::downgrade(&self.0);
         let finish = move |entries: Vec<FileEntry>| {
-            let Some(inner) = weak.upgrade() else {
-                return;
-            };
-            *inner.selection.borrow_mut() = entries.clone();
-            inner.on_select.emit(&entries);
+            if let Some(inner) = weak.upgrade() {
+                FilePicker(inner).finish(entries);
+            }
         };
 
         match mode {
@@ -132,6 +130,25 @@ impl FilePicker {
                 });
             }
         }
+    }
+
+    /// Picks `files` as if the user had chosen them in the dialog, without showing it
+    /// (for tests and automation): the same handling as the dialog's answer, so
+    /// `selection` becomes them and `on_select` is called before this returns. An
+    /// empty `files` is a cancelled dialog and changes nothing. The mode and filters
+    /// are not checked. Does nothing while insensitive.
+    pub fn choose(&self, files: &[FileEntry]) {
+        if !self.0.native.is_sensitive() || files.is_empty() {
+            return;
+        }
+        self.finish(files.to_vec());
+    }
+
+    /// Takes the dialog's answer: `selection` becomes `entries` and `on_select` is
+    /// called with them.
+    fn finish(&self, entries: Vec<FileEntry>) {
+        *self.0.selection.borrow_mut() = entries.clone();
+        self.0.on_select.emit(&entries);
     }
 
     /// Builds the filters in the form `GtkFileDialog` requires (`GListModel`).
