@@ -252,8 +252,7 @@ impl Tree {
     ///
     /// Expansion returns to what [`TreeRow::expanded`] says. Each widget is taken if it
     /// has no parent or is in one of this tree's rows; a widget still in another
-    /// container is refused and its row stays empty, as for `List` rows
-    /// ([`crate::handover`]).
+    /// container is refused and its row stays empty, as for `List` rows.
     pub fn set_rows(&self, rows: &[TreeRow]) {
         let mut contents = Contents::new();
         TreeRow::collect(rows, &mut Vec::new(), &mut contents);

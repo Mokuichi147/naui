@@ -819,7 +819,7 @@ impl Tree {
     ///
     /// Expansion returns to what [`TreeRow::expanded`] says. Each widget is taken from
     /// wherever it is now; if the app moves it elsewhere afterwards, its row stays
-    /// empty ([`crate::row_cell`]).
+    /// empty, as for `List` rows.
     pub fn set_rows(&self, rows: &[TreeRow]) {
         let mut contents = Contents::new();
         TreeRow::collect(rows, &mut Vec::new(), &mut contents);

@@ -213,7 +213,10 @@ that shape are covered in
 - `Tree` builds every item when it is passed (`set_items` / `set_rows`), including
   items inside collapsed branches; unlike `List` and `Table`, it does not build only
   the rows on screen. Items are addressed by paths
-  (`&[usize]`), and they cannot be rearranged by dragging. With multiple selection,
+  (`&[usize]`), and they cannot be rearranged by dragging. Keys typed into a field
+  inside a `TreeRow` are kept from the tree only on the Web; elsewhere keys the field
+  does not use itself (an arrow key in a one-line field, for example) may move the
+  tree's selection, as in `List` rows. With multiple selection,
   `on_select` still passes only the first selected item (read `Tree::selection`
   for all of them), and selecting a branch never selects its children (there is no
   check-box selection as in WinUI's `TreeView`).

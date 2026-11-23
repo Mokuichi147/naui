@@ -14219,6 +14219,25 @@ fn tree_rows_hold_widgets(ui: &Ui) -> Result<()> {
         "開き直すと行へ戻ること"
     );
 
+    // 枝の中の枝を開いたまま親を閉じて開き直す。AppKit は中の枝の開閉を
+    // 親の開閉のデリゲートの中で戻すので、行の高さを答える経路が再入しないこと
+    // (警告は stderr に出る。自動の行の高さにすると出る)。
+    let deep = ui.label("孫")?;
+    tree.set_rows(&[TreeRow::new(&ui.label("親")?).expanded(true).child(
+        TreeRow::new(&ui.label("子の枝")?)
+            .expanded(true)
+            .child(TreeRow::new(&deep)),
+    )]);
+    assert_eq!(outline.numberOfRows(), 3);
+    tree.collapse(&[0]);
+    assert_eq!(outline.numberOfRows(), 1);
+    tree.expand(&[0]);
+    assert_eq!(outline.numberOfRows(), 3, "中の枝の開閉も戻ること");
+    assert!(
+        is_in_cell(table, &deep.native_view(), 0, 2),
+        "開き直した中の枝の行にも中身が入ること"
+    );
+
     // set_items で文字の項目へ戻る。
     tree.set_items(&[TreeItem::new("文字")]);
     assert_eq!(tree.len(), 1);
@@ -14254,15 +14273,29 @@ fn tree_row_controls_do_not_select(ui: &Ui) -> Result<()> {
     let check = ui.checkbox("同期")?;
     content.append(&check);
 
+    let field = ui.text_input("メモ")?;
+    content.append(&field);
+
     let tree = ui.tree()?;
     tree.set_rows(&[TreeRow::new(&content).child(TreeRow::new(&ui.label("子")?))]);
     tree.set_sizing(Sizing::fill());
+    // ツリーの外のボタン。本物のクリックを配送できる環境かは、これで見分ける。
+    let probe = ui.button("配送の確認")?;
+    let probe_clicks = Rc::new(Cell::new(0));
+    probe.on_click({
+        let probe_clicks = probe_clicks.clone();
+        move || probe_clicks.set(probe_clicks.get() + 1)
+    });
+    let root = ui.stack(Orientation::Vertical)?;
+    root.set_sizing(Sizing::fill());
+    root.append(&probe);
+    root.append(&tree);
     let selections = Rc::new(Cell::new(0));
     tree.on_select({
         let selections = selections.clone();
         move |_| selections.set(selections.get() + 1)
     });
-    window.set_child(&tree);
+    window.set_child(&root);
 
     app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
     #[allow(deprecated)]
@@ -14284,9 +14317,12 @@ fn tree_row_controls_do_not_select(ui: &Ui) -> Result<()> {
     content_view.layoutSubtreeIfNeeded();
     content_view.display();
 
-    // 窓が key でなくても届く環境がある。ボタンに届いたかで確かめられるかを決める。
-    click_view(&app, &native, &action.native_view());
-    if clicks.get() == 1 {
+    // 窓が key でなくても届く環境がある。ツリーの外のボタンに届いたかで、
+    // 確かめられるかを決める。届くなら、行の中のボタンにも届かなければならない。
+    click_view(&app, &native, &probe.native_view());
+    if probe_clicks.get() == 1 {
+        click_view(&app, &native, &action.native_view());
+        assert_eq!(clicks.get(), 1, "行の中のボタンにクリックが届くこと");
         click_view(&app, &native, &check.native_view());
         assert!(
             check.is_checked(),
@@ -14302,6 +14338,12 @@ fn tree_row_controls_do_not_select(ui: &Ui) -> Result<()> {
             !tree.is_expanded(&[0]),
             "中のコントロールを押しても開かないこと"
         );
+        click_view(&app, &native, &field.native_view());
+        assert_eq!(
+            tree.selected(),
+            None,
+            "行の中の入力欄を押しても選ばれないこと"
+        );
 
         click_view(&app, &native, &title.native_view());
         assert_eq!(
@@ -14310,7 +14352,7 @@ fn tree_row_controls_do_not_select(ui: &Ui) -> Result<()> {
             "行の文字を押すと選ばれること"
         );
     } else {
-        skip("ウィンドウが key にならず、本物のクリックを配送できなかった");
+        skip("本物のクリックを配送できなかった");
     }
 
     window.close();

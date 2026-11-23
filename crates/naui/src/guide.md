@@ -2637,8 +2637,7 @@ tree.set_rows(&[TreeRow::new(&ui.label("src")?)
 # }
 ```
 
-**Pressing a control inside a row does not choose the item** or expand it, and
-keys typed into a field in a row stay in the field.
+**Pressing a control inside a row does not choose the item** or expand it.
 [`TreeRow::selectable(false)`](TreeRow::selectable) makes the item and its
 descendants unselectable, as `TreeItem::enabled(false)` does, but the row is not dimmed and the controls inside
 keep working.

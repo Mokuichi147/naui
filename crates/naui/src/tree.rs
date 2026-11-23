@@ -42,8 +42,8 @@ impl Tree {
     /// can be passed again. If the app moves a widget elsewhere afterwards, the tree
     /// leaves it alone and its row stays empty.
     ///
-    /// Controls inside a row receive their own clicks and keys: pressing one neither
-    /// selects the item nor expands or collapses it. Every row is built when it is
+    /// Controls inside a row receive their own clicks: pressing one neither selects
+    /// the item nor expands or collapses it. Every row is built when it is
     /// passed, including those inside collapsed branches.
     ///
     /// ```no_run
