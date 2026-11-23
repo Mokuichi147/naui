@@ -1024,6 +1024,10 @@ type AsyncCase = (&'static str, fn(&Ui) -> Result<Deferred>);
 const ASYNC_CASES: &[AsyncCase] = &[
     ("ウィンドウが出て、閉じると消える", window_lifecycle),
     (
+        "利用者が窓を 1 枚閉じても、残りの窓は中身を持ったまま動く",
+        closing_one_window_keeps_the_others,
+    ),
+    (
         "トーストはメニューバーの行ではなく中身の行に重なる",
         toast_overlays_the_content_below_the_menu_bar,
     ),
@@ -3265,9 +3269,8 @@ fn widgets_expose_accessible_names(ui: &Ui) -> Result<()> {
 /// the content down.
 ///
 /// The overlay target is decided right when the toast is shown, so the check is done
-/// inside the setup. When a window closes, the cleanup (the `AppWindow`'s `Closing`)
-/// removes the content of every window, so the root `Grid` cannot be read after a
-/// round (after other cases close their windows). For the same reason, this window
+/// inside the setup. `run_for_test` removes the content of every window built in the
+/// setup right after it, so the root `Grid` cannot be read after a round. This window
 /// is not closed either, and is left to the app's exit.
 fn toast_overlays_the_content_below_the_menu_bar(ui: &Ui) -> Result<Deferred> {
     let window = ui.window("トースト", 320.0, 240.0)?;
@@ -3554,6 +3557,90 @@ fn window_lifecycle(ui: &Ui) -> Result<Deferred> {
         assert!(window.is_visible(), "出したら見えること");
         window.close();
         assert!(!window.is_visible(), "閉じたら見えないこと");
+        Ok(())
+    }))
+}
+
+/// When the user closes one of several windows, only that window is wound down; the
+/// others keep their content and the app keeps running. It used to tear down every
+/// window's content (and the `Ui`'s tasks) on any window's `Closing`, leaving the
+/// other windows black and empty.
+///
+/// WinUI raises the `AppWindow`'s `Closing` only for the user's close (not for
+/// `Window::Close`), so this sends `WM_CLOSE` the way UI Automation's
+/// `WindowPattern.Close` does. `run_for_test` clears every window built in the setup
+/// right after it, so the windows are created in the check, inside the event loop.
+/// The window left open is closed from code at the end, which does not raise
+/// `Closing`; other async cases leave their windows open, so it is not the last.
+fn closing_one_window_keeps_the_others(ui: &Ui) -> Result<Deferred> {
+    use windows::Win32::Foundation::{LPARAM, WPARAM};
+    use windows::Win32::UI::WindowsAndMessaging::{SendMessageW, WM_CLOSE};
+
+    let ui = ui.clone();
+    Ok(Box::new(move || {
+        let open = |title: &str| -> Result<naui_windows::Window> {
+            let window = ui.window(title, 320.0, 240.0)?;
+            let stack = ui.stack(Orientation::Vertical)?;
+            stack.append(&ui.button(title)?);
+            window.set_child(&stack);
+            window.show();
+            Ok(window)
+        };
+        let first = open("1 枚目")?;
+        let second = open("2 枚目")?;
+
+        let replies = Rc::new(RefCell::new(vec![
+            naui_core::CloseResponse::KeepOpen,
+            naui_core::CloseResponse::Close,
+        ]));
+        let asked = Rc::new(Cell::new(0));
+        first.on_close_request({
+            let replies = replies.clone();
+            let asked = asked.clone();
+            move || {
+                asked.set(asked.get() + 1);
+                replies.borrow_mut().remove(0)
+            }
+        });
+
+        let native = first
+            .native_window()
+            .cast::<naui_winui3::IWindowNative>()
+            .expect("IWindowNative");
+        // SAFETY: このウィンドウが生きている間の HWND を UI スレッドで使う。
+        let hwnd = unsafe { native.WindowHandle() }.expect("HWND");
+        let close_by_user = || {
+            // SAFETY: 引数の無いメッセージを UI スレッドから送るだけ。
+            unsafe {
+                SendMessageW(hwnd, WM_CLOSE, Some(WPARAM(0)), Some(LPARAM(0)));
+            }
+        };
+        // 中身が外れていると `Content` は空 (`Err`) で返る。
+        let has_content = |window: &naui_windows::Window| window.native_window().Content().is_ok();
+
+        // 閉じないと答えたら、どちらの窓もそのまま。
+        close_by_user();
+        assert_eq!(asked.get(), 1, "閉じる確認が呼ばれること");
+        assert!(has_content(&first), "閉じないと答えた窓は中身が残ること");
+        assert!(first.is_visible(), "閉じないと答えた窓は見えたままのこと");
+        assert!(has_content(&second), "閉じないと答えたらほかの窓もそのまま");
+
+        // 閉じると答えたら、その窓だけが畳まれる。
+        close_by_user();
+        assert_eq!(asked.get(), 2, "2 度目の閉じる確認が呼ばれること");
+        assert!(
+            has_content(&second),
+            "1 枚を閉じても残りの窓の中身は外れないこと"
+        );
+        assert!(second.is_visible(), "残りの窓は見えたままのこと");
+        assert!(
+            ui.tasks().channel(|()| {}).send(()).is_ok(),
+            "1 枚を閉じてもアプリの仕事の受け口は畳まれないこと"
+        );
+        // 壊れた窓の `Visible` は読めず、覚えておいた値が返る。
+        assert!(!first.is_visible(), "閉じた窓は見えないこと");
+
+        second.close();
         Ok(())
     }))
 }
