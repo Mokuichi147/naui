@@ -304,6 +304,18 @@ fn main() {
             grid_fill_weights_split_the_room,
         ),
         (
+            "Flow は幅が尽きたら次の行へ折り返し、高さが幅に従う",
+            flow_wraps_onto_new_lines,
+        ),
+        (
+            "Flow の行の残りは Fill の子が受け取り、なければ揃えで置く",
+            flow_shares_the_room_left_in_a_line,
+        ),
+        (
+            "Flow の子を足し、差し込み、外せる",
+            flow_inserts_and_removes_children,
+        ),
+        (
             "グリッドの Fill の列は中身の最小を下回らず、残りを分け直す",
             grid_fill_keeps_the_content_minimum,
         ),
@@ -3875,6 +3887,155 @@ fn lay_out_grid(
             (bounds.x(), bounds.y(), bounds.width(), bounds.height())
         })
         .collect()
+}
+
+fn lay_out_flow(
+    flow: &naui_gtk::Flow,
+    width: i32,
+    children: &[&dyn Widget],
+) -> Vec<(f32, f32, f32, f32)> {
+    let native = flow.native_widget();
+    native.measure(gtk::Orientation::Horizontal, -1);
+    let (_, height, ..) = native.measure(gtk::Orientation::Vertical, width);
+    native.size_allocate(&gtk::Allocation::new(0, 0, width, height), -1);
+    children
+        .iter()
+        .map(|child| {
+            let bounds = bin_of(*child)
+                .compute_bounds(&native)
+                .expect("Flow の中の位置");
+            (bounds.x(), bounds.y(), bounds.width(), bounds.height())
+        })
+        .collect()
+}
+
+fn fixed_box(ui: &Ui, width: f64, height: f64) -> Result<naui_gtk::Stack> {
+    let child = ui.stack(Orientation::Vertical)?;
+    child.set_sizing(Sizing::fixed(width, height));
+    Ok(child)
+}
+
+/// Children go on a line while they fit and wrap onto the next one otherwise; the
+/// height is measured for the width offered, so the lines follow a resize.
+fn flow_wraps_onto_new_lines(ui: &Ui) -> Result<()> {
+    let flow = ui.flow()?;
+    flow.set_spacing(10.0, 5.0);
+    let boxes: Vec<naui_gtk::Stack> = (0..3)
+        .map(|_| fixed_box(ui, 100.0, 20.0))
+        .collect::<Result<_>>()?;
+    for child in &boxes {
+        flow.append(child);
+    }
+    let widgets: Vec<&dyn Widget> = boxes.iter().map(|b| b as &dyn Widget).collect();
+    let native = flow.native_widget();
+    // 最小は一番広い子、自然な幅は 1 行に並べた幅。
+    assert_eq!(measure_width(&native), (100, 320));
+    let (_, one_line, ..) = native.measure(gtk::Orientation::Vertical, 400);
+    let (_, two_lines, ..) = native.measure(gtk::Orientation::Vertical, 250);
+    let (_, three_lines, ..) = native.measure(gtk::Orientation::Vertical, 150);
+    assert_eq!((one_line, two_lines, three_lines), (20, 45, 70));
+
+    let placed = lay_out_flow(&flow, 250, &widgets);
+    assert_eq!(placed[0], (0.0, 0.0, 100.0, 20.0), "{placed:?}");
+    assert_eq!(placed[1], (110.0, 0.0, 100.0, 20.0), "{placed:?}");
+    assert_eq!(placed[2], (0.0, 25.0, 100.0, 20.0), "{placed:?}");
+
+    // 隠した子は場所も間隔も取らない。
+    boxes[1].set_visible(false);
+    let placed = lay_out_flow(&flow, 250, &widgets);
+    assert_eq!(placed[2], (110.0, 0.0, 100.0, 20.0), "{placed:?}");
+    boxes[1].set_visible(true);
+
+    // 右から左では行が右から始まる。
+    native.set_direction(gtk::TextDirection::Rtl);
+    let placed = lay_out_flow(&flow, 250, &widgets);
+    assert_eq!(placed[0].0, 150.0, "{placed:?}");
+    assert_eq!(placed[1].0, 40.0, "{placed:?}");
+    assert_eq!(placed[2].0, 150.0, "{placed:?}");
+    Ok(())
+}
+
+/// A `Fill` child takes the room left in its line; without one, the alignment
+/// places the line. Within a line, children are centered vertically and `Fill` on
+/// the height stretches to the line.
+fn flow_shares_the_room_left_in_a_line(ui: &Ui) -> Result<()> {
+    let flow = ui.flow()?;
+    flow.set_spacing(10.0, 0.0);
+    let tall = fixed_box(ui, 50.0, 40.0)?;
+    let short = fixed_box(ui, 50.0, 20.0)?;
+    let stretched = ui.stack(Orientation::Vertical)?;
+    stretched.set_sizing(Sizing::fixed(50.0, 0.0).height(Length::Fill));
+    flow.append(&tall);
+    flow.append(&short);
+    flow.append(&stretched);
+    let widgets: [&dyn Widget; 3] = [&tall, &short, &stretched];
+
+    // 50 * 3 + 20 = 170。残り 130 は揃えで置く。
+    let placed = lay_out_flow(&flow, 300, &widgets);
+    assert_eq!(
+        placed[1],
+        (60.0, 10.0, 50.0, 20.0),
+        "縦は行の中央: {placed:?}"
+    );
+    assert_eq!(
+        placed[2],
+        (120.0, 0.0, 50.0, 40.0),
+        "Fill は行の高さ: {placed:?}"
+    );
+    flow.set_align(Align::End);
+    let placed = lay_out_flow(&flow, 300, &widgets);
+    assert_eq!(placed[0].0, 130.0, "{placed:?}");
+    flow.set_align(Align::Center);
+    let placed = lay_out_flow(&flow, 300, &widgets);
+    assert_eq!(placed[0].0, 65.0, "{placed:?}");
+    flow.set_align(Align::Fill);
+    let placed = lay_out_flow(&flow, 300, &widgets);
+    assert_eq!(
+        placed[0],
+        (0.0, 0.0, 50.0, 40.0),
+        "Fill は Start と同じ: {placed:?}"
+    );
+
+    // Fill の幅の子があれば、揃えにかかわらずその子が受け取る。
+    flow.set_align(Align::End);
+    short.set_sizing(Sizing::fixed(0.0, 20.0).width(Length::Fill));
+    let placed = lay_out_flow(&flow, 300, &widgets);
+    assert_eq!(placed[0].0, 0.0, "{placed:?}");
+    assert_eq!(placed[1].2, 300.0 - 100.0 - 20.0, "{placed:?}");
+    Ok(())
+}
+
+fn flow_inserts_and_removes_children(ui: &Ui) -> Result<()> {
+    let flow = ui.flow()?;
+    let first = ui.label("一")?;
+    let second = ui.label("二")?;
+    let third = ui.label("三")?;
+    flow.append(&first);
+    flow.append(&third);
+    flow.insert(1, &second);
+    assert_eq!(flow.len(), 3);
+    let texts = |flow: &naui_gtk::Flow| -> Vec<String> {
+        labels_in(&flow.native_widget())
+            .iter()
+            .map(|label| label.text().to_string())
+            .collect()
+    };
+    assert_eq!(texts(&flow), ["一", "二", "三"]);
+    // 中にいる子をもう一度入れても断る。
+    flow.append(&first);
+    assert_eq!(flow.len(), 3);
+    flow.remove(0);
+    assert_eq!(texts(&flow), ["二", "三"]);
+    flow.remove(5);
+    assert_eq!(flow.len(), 2);
+    flow.clear();
+    assert!(flow.is_empty());
+    assert!(bin_of(&second).parent().is_none());
+    // 外した子はほかへ入れられる。
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&second);
+    assert_eq!(stack.len(), 1);
+    Ok(())
 }
 
 /// `Fill` columns and rows split the room by weight, as CSS's `fr` (Web) and

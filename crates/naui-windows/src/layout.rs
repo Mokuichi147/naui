@@ -932,6 +932,12 @@ pub(crate) fn apply_sizing(element: &UIElement, sizing: Sizing) {
     reapply_parent_layout(&framework);
     refit_in_grid(element);
     notify_sizing_change(element);
+    // `Flow` は子の `Fill` を測る中で読む。配置 (`HorizontalAlignment`) だけが
+    // 変わったときも、親に測り直してもらう。
+    if let Some(parent) = native_parent(element).and_then(|parent| parent.cast::<UIElement>().ok())
+    {
+        let _ = parent.InvalidateMeasure();
+    }
 }
 
 /// Maps `Stack::set_align` onto the Stack's children.

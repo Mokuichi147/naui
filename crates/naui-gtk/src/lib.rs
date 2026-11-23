@@ -152,6 +152,7 @@ mod expander;
 mod file_drop;
 mod file_picker;
 mod file_saver;
+mod flow;
 mod focus;
 mod grid;
 mod group;
@@ -204,6 +205,7 @@ pub use editable_combo_box::EditableComboBox;
 pub use expander::Expander;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
+pub use flow::Flow;
 pub use group::{Group, Separator};
 pub use layout::{Grid, Scroll, Spacer};
 pub use list::{List, ListRow};
@@ -382,6 +384,11 @@ impl Ui {
     /// A container that positions children by row and column.
     pub fn grid(&self) -> Result<Grid> {
         Ok(Grid::new())
+    }
+
+    /// A container that wraps its children onto new lines.
+    pub fn flow(&self) -> Result<Flow> {
+        Ok(Flow::new())
     }
 
     /// A container that scrolls when its contents overflow.

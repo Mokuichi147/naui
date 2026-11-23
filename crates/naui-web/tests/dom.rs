@@ -3139,6 +3139,107 @@ fn grid_places_a_capped_fill_child_in_the_middle() {
     });
 }
 
+/// A `Flow` wraps its children onto new lines as `flex-wrap` does, and its height
+/// follows its width. A `Fill` child takes the room left in its line and stretches
+/// to the line's height; the alignment places a line without one, and `Fill` as an
+/// alignment is the same as `Start`.
+#[wasm_bindgen_test]
+fn flow_wraps_onto_new_lines() {
+    with_ui(|ui| {
+        let flow = ui.flow()?;
+        flow.set_spacing(10.0, 5.0);
+        flow.set_sizing(Sizing::fixed(250.0, 0.0).height(naui_core::Length::Auto));
+        let boxes = (0..3)
+            .map(|_| {
+                let child = ui.stack(Orientation::Vertical)?;
+                child.set_sizing(Sizing::fixed(100.0, 20.0));
+                flow.append(&child);
+                Ok(child)
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let _mounted = Mounted::new(&flow);
+        let rect = |widget: &dyn Widget| {
+            let origin = flow.native_element().get_bounding_client_rect();
+            let rect = widget.native_element().get_bounding_client_rect();
+            (
+                rect.left() - origin.left(),
+                rect.top() - origin.top(),
+                rect.width(),
+                rect.height(),
+            )
+        };
+        let height = || flow.native_element().get_bounding_client_rect().height();
+
+        assert_eq!(height(), 45.0, "2 行");
+        assert_eq!(rect(&boxes[1]), (110.0, 0.0, 100.0, 20.0));
+        assert_eq!(rect(&boxes[2]), (0.0, 25.0, 100.0, 20.0));
+        flow.set_sizing(Sizing::fixed(400.0, 0.0).height(naui_core::Length::Auto));
+        assert_eq!(height(), 20.0, "広げると 1 行");
+        assert_eq!(rect(&boxes[2]).0, 220.0);
+
+        flow.set_align(Align::End);
+        assert_eq!(rect(&boxes[0]).0, 80.0, "右寄せ");
+        flow.set_align(Align::Center);
+        assert_eq!(rect(&boxes[0]).0, 40.0, "中央");
+        flow.set_align(Align::Fill);
+        assert_eq!(
+            rect(&boxes[0]),
+            (0.0, 0.0, 100.0, 20.0),
+            "Fill は Start と同じ"
+        );
+
+        flow.set_align(Align::End);
+        boxes[1].set_sizing(Sizing::fill());
+        assert_eq!(rect(&boxes[0]).0, 0.0, "Fill の子があれば揃えは効かない");
+        assert_eq!(
+            rect(&boxes[1]),
+            (110.0, 0.0, 180.0, 20.0),
+            "Fill の子が行の残りと行の高さを受け取る"
+        );
+
+        // 隠した子は場所も間隔も取らない。
+        flow.set_align(Align::Start);
+        boxes[1].set_visible(false);
+        assert_eq!(rect(&boxes[2]).0, 110.0);
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn flow_inserts_and_removes_children() {
+    with_ui(|ui| {
+        let flow = ui.flow()?;
+        let first = ui.label("一")?;
+        let second = ui.label("二")?;
+        let third = ui.label("三")?;
+        flow.append(&first);
+        flow.append(&third);
+        flow.insert(1, &second);
+        let _mounted = Mounted::new(&flow);
+        assert_eq!(flow.len(), 3);
+        assert_eq!(
+            flow.native_element().text_content().unwrap_or_default(),
+            "一二三"
+        );
+        flow.remove(0);
+        assert!(first.native_element().parent_element().is_none());
+        flow.remove(5);
+        assert_eq!(flow.len(), 2);
+        // 外さずにほかへ入れた子は、新しい親から取り上げない。
+        let stack = ui.stack(Orientation::Vertical)?;
+        stack.append(&second);
+        flow.clear();
+        assert!(flow.is_empty());
+        assert!(third.native_element().parent_element().is_none());
+        assert_eq!(
+            second.native_element().parent_element(),
+            Some(stack.native_element()),
+            "Stack に移った子はそのまま"
+        );
+        Ok(())
+    });
+}
+
 #[wasm_bindgen_test]
 fn grid_removes_children_by_cell() {
     with_ui(|ui| {

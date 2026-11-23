@@ -57,6 +57,7 @@ Each container also has ways to reduce what has been placed.
 | --- | --- |
 | Children of a `Stack` | [`insert`](Stack::insert) / [`remove`](Stack::remove) / [`clear`](Stack::clear) |
 | Cells of a `Grid` | [`replace`](Grid::replace) / [`remove`](Grid::remove) / [`clear`](Grid::clear) |
+| Children of a `Flow` | [`insert`](Flow::insert) / [`remove`](Flow::remove) / [`clear`](Flow::clear) |
 | Tabs of `Tabs` | [`remove_tab`](Tabs::remove_tab) / [`clear`](Tabs::clear) |
 | Lists, tables, trees, navigation | Replace everything with `set_items` / `set_rows` |
 | Single-content widgets (`Scroll` / `Expander` / `SplitView` / `Window`) | Replace with `set_child` and the like |
@@ -309,12 +310,13 @@ the language it chose, so that the layout follows it on every platform.
 
 ## Layout and size
 
-Layout uses these nine:
+Layout uses these ten:
 
 | API | Purpose |
 | --- | --- |
 | [`Stack`] | Lays out children vertically or horizontally |
 | [`Grid`] | Places children by row and column |
+| [`Flow`] | Lays children out in a row, wrapping onto new lines when it runs out of width |
 | [`Scroll`] | Scrolls content that overflows |
 | [`Spacer`] | Takes the parent's leftover space |
 | [`Separator`] | Draws a thin line between controls |
