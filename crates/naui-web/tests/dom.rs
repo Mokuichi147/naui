@@ -932,6 +932,11 @@ fn calendar_arrow_keys_move_the_selection() {
                 .unchecked_into()
         };
 
+        // 本物のキーはフォーカスのある日にだけ届くので、先に選んだ日へ置く。
+        selected_button(&calendar)
+            .unchecked_into::<HtmlElement>()
+            .focus()
+            .unwrap();
         // 月をまたいで動き、フォーカスも新しい日へ移る。
         assert!(press_shortcut(
             &selected_button(&calendar),
