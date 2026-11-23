@@ -1086,6 +1086,10 @@ fn main() {
             sheet_reopened_in_the_same_turn_ignores_the_old_close,
         ),
         (
+            "ダイアログやシートが開いたままでも close で窓が閉じる",
+            window_close_closes_the_dialogs_on_it,
+        ),
+        (
             "トーストの設定が AdwToast へ届く",
             toast_configuration_reaches_the_native_toast,
         ),
@@ -10988,7 +10992,9 @@ fn dialog_closed_right_after_opening_does_not_stay(ui: &Ui) -> Result<()> {
         log.borrow().as_slice(),
         [DialogResponse::Cancel, DialogResponse::Primary]
     );
+    // 応答を出しただけの AdwAlertDialog は開いたままでも、窓ごと閉じる。
     window.close();
+    assert!(!window.is_visible(), "窓を残さない");
     Ok(())
 }
 
@@ -11029,7 +11035,78 @@ fn dialog_reopened_in_the_same_turn_ignores_the_old_response(ui: &Ui) -> Result<
         [DialogResponse::Cancel, DialogResponse::Primary]
     );
     assert!(!dialog.is_open());
+    // 応答を出しただけの AdwAlertDialog は開いたままでも、窓ごと閉じる。
     window.close();
+    assert!(!window.is_visible(), "窓を残さない");
+    Ok(())
+}
+
+/// libadwaita's `close-request` closes the topmost dialog and keeps the window open.
+/// That stays so for the close button, but naui's `close` closes the window too.
+fn window_close_closes_the_dialogs_on_it(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 480.0, 360.0)?;
+    window.show();
+    let native_window = window.native_window();
+
+    let dialog = ui.dialog("消しますか")?;
+    dialog.set_buttons(DialogButtons::new().primary("消す").cancel("やめる"));
+    let (dialog_log, sink) = recorder::<DialogResponse>();
+    dialog.on_response(sink);
+
+    // 閉じるボタンと同じ `gtk_window_close` は、ダイアログだけを閉じて窓を残す。
+    dialog.open();
+    let native = dialog.native_dialog().expect("AdwAlertDialog");
+    assert_eq!(native.root().as_ref(), Some(native_window.upcast_ref()));
+    wait_until_opened(native.upcast_ref());
+    native_window.close();
+    pump();
+    assert!(
+        window.is_visible(),
+        "閉じるボタンではダイアログが先に閉じる"
+    );
+    assert!(!dialog.is_open());
+    assert_eq!(dialog_log.borrow().as_slice(), [DialogResponse::Cancel]);
+
+    // naui の `close` は、重なったダイアログとシートごと窓を閉じる。
+    dialog.open();
+    let sheet = ui.sheet("確認")?;
+    sheet.set_buttons(DialogButtons::new().primary("作成").cancel("やめる"));
+    let (sheet_log, sink) = recorder::<DialogResponse>();
+    sheet.on_response(sink);
+    sheet.open();
+    let native = sheet.native_dialog().expect("AdwDialog");
+    assert_eq!(native.root().as_ref(), Some(native_window.upcast_ref()));
+    wait_until_shown(&native);
+    window.close();
+    assert!(!window.is_visible(), "ダイアログが開いていても窓が閉じる");
+    assert!(!native_window.is_visible());
+    assert!(!dialog.is_open());
+    assert!(!sheet.is_open());
+    assert_eq!(
+        dialog_log.borrow().as_slice(),
+        [DialogResponse::Cancel, DialogResponse::Cancel]
+    );
+    assert_eq!(sheet_log.borrow().as_slice(), [DialogResponse::Cancel]);
+
+    // 開いたのと同じ処理の中で閉じても、窓は残らず取り消しが届く
+    // (libadwaita 1.5 はまだ開いていないダイアログを閉じられない)。
+    let window = ui.window("naui", 480.0, 360.0)?;
+    window.show();
+    dialog.open();
+    let native = dialog.native_dialog().expect("AdwAlertDialog");
+    assert_eq!(
+        native.root().as_ref(),
+        Some(window.native_window().upcast_ref())
+    );
+    window.close();
+    assert!(
+        !window.is_visible(),
+        "開く前のダイアログがあっても窓が閉じる"
+    );
+    assert!(!dialog.is_open());
+    assert_eq!(dialog_log.borrow().len(), 3, "取り消しは 1 回だけ届く");
+    pump();
+    assert_eq!(dialog_log.borrow().len(), 3);
     Ok(())
 }
 
@@ -11083,6 +11160,30 @@ fn wait_until_shown(native: &adw::Dialog) {
     };
     spin_until(std::time::Duration::from_secs(2), shown);
     assert!(shown(), "シートが開ききる");
+}
+
+/// Waits until libadwaita has opened `native`, so closing it takes effect.
+///
+/// libadwaita 1.5 opens it on its second frame after it is mapped, and ignores
+/// closing before then. Focus is not enough to tell: on Xvfb, the window takes focus
+/// as it is shown and passes it into the dialog before it opens.
+fn wait_until_opened(native: &adw::Dialog) {
+    wait_until_shown(native);
+    let ticks = Rc::new(Cell::new(0));
+    native.add_tick_callback({
+        let ticks = ticks.clone();
+        move |_, _| {
+            ticks.set(ticks.get() + 1);
+            if ticks.get() >= 3 {
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        }
+    });
+    // こちらの数え始めは map より後なので、2 フレーム数えれば開き終えている。
+    spin_until(std::time::Duration::from_secs(2), || ticks.get() >= 3);
+    assert!(ticks.get() >= 3, "ダイアログのフレームが進む");
 }
 
 fn sheet_builds_an_adw_dialog(ui: &Ui) -> Result<()> {
