@@ -14536,12 +14536,32 @@ fn table_column_widths_follow_header_drags(ui: &Ui) -> Result<()> {
         fills("狭めたあと", &narrow);
         assert!(sorts.borrow().is_empty(), "並べ替えは起きない");
 
-        // 幅の無い列が 1 つも残らなくても、表からはみ出さない。
+        // 幅の無い列が 1 つも残らなくても、表からはみ出さない。最後の幅の無い列は
+        // すでに残りを全部持っているので、広げようとしても上限のいまの幅で止まり、
+        // その幅の `Pixel` の列になる。
         drag(2, px(room())).expect("5 回目のドラッグ");
         let all = widths();
-        assert!(all[2] > narrow[2], "最後の列も広がる: {narrow:?} → {all:?}");
+        assert!(
+            (all[2] - narrow[2]).abs() < 1.0,
+            "最後の列は表の幅で止まる: {narrow:?} → {all:?}"
+        );
+        let last = header
+            .ColumnDefinitions()
+            .and_then(|definitions| definitions.GetAt(2))
+            .and_then(|definition| definition.Width())
+            .expect("最後の列の定義");
+        assert_eq!(
+            last.GridUnitType,
+            GridUnitType::Pixel,
+            "掴んだ最後の列は幅の決まった列になる: {last:?}"
+        );
         fills("全部の列を掴んだあと", &all);
         assert_eq!(row_widths(), all, "全部の列を掴むと、行も見出しと同じ幅");
+        // 全部の列が決まった幅なので、ほかの列を広げようとしても表からはみ出さない。
+        drag(0, px(100.0)).expect("6 回目のドラッグ");
+        let still = widths();
+        assert_eq!(still, all, "広げる余地が無ければ動かない");
+        fills("余地の無い列を広げようとしたあと", &still);
 
         // 列を渡し直すと、ドラッグした幅は捨てて渡した指定に戻る。
         table.set_columns(&columns);
