@@ -302,6 +302,12 @@ that shape are covered in
   depends on the keyboard layout) or a character key without the primary modifier.
   With ⇧, a digit arrives as the symbol it types on macOS, Linux and the Web (`!`
   for `1` on a US layout), so a `Shift` + digit shortcut fires only on Windows.
+- With a keyboard layout that does not type Latin letters (Russian, Greek and so
+  on), a character shortcut such as `Ctrl+S` may not fire on macOS, Linux and the
+  Web: naui compares the character the key types, not the physical key. Windows
+  compares the virtual key, and the menu bar's shortcuts on macOS and Linux are
+  matched by the OS, so those are not affected. This has not been checked on a
+  real device.
 - Keys pressed in a `Dialog` or `Sheet` do not reach the window's `on_key_down` or
   shortcuts. Keys pressed while an IME is composing reach no shortcut.
 

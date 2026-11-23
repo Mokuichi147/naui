@@ -690,19 +690,21 @@ editor.on_shortcut(Shortcut::new('n'), || println!("new paragraph"));
 # }
 ```
 
-A key goes, in this order and on every platform, to:
+A key goes, in this order and the same on every platform, to:
 
 1. the focused widget's `on_key_down` (the innermost widget that has one),
 2. the shortcuts of the widgets around the focus, **from the inside out**,
 3. the window's `on_key_down`,
-4. the window's shortcuts,
-5. the [`MenuBar`]'s shortcuts,
-6. the focused control itself.
+4. the window's shortcuts.
 
 The first one that takes the key stops it there: an `on_key_down` returning
-`Handled`, or a shortcut that matches. **A shortcut that fires takes the key from
-the focused control**, so a widget's `Ctrl+A` beats a text field's select-all,
-and a window's `⌘S` / `Ctrl+S` on the Web keeps the browser from saving the page.
+`Handled`, or a shortcut that matches. Only after these do the [`MenuBar`]'s
+shortcuts and the focused control itself get the key, in an order that depends on
+the platform (on Windows, a key the focused control handles itself never reaches
+the menu bar). So **a shortcut that fires takes the key from the focused control
+and the menu bar**: a widget's `Ctrl+A` beats a text field's select-all, a
+window's `Ctrl+S` beats a menu item's, and on the Web a window's `⌘S` / `Ctrl+S`
+keeps the browser from saving the page.
 
 Windows and widgets take more keys than menus do: besides the primary modifier
 with an alphanumeric character and the function keys, a named key (Enter, Escape,
@@ -711,10 +713,11 @@ own or with modifiers ([`Shortcut::from_key`]), and Space with the primary
 modifier ([`Shortcut::is_valid`]). A character key without the primary modifier is
 never valid, since it would take typing away from text fields.
 
-Keys pressed in a [`Dialog`] or [`Sheet`] reach the widgets in it but not the
-window's `on_key_down` or shortcuts (on macOS and Windows those are windows of
-their own; naui does the same on Linux and the Web). Keys pressed while an IME is
-composing reach no shortcut.
+Keys pressed in a [`Dialog`] or [`Sheet`] do not reach the window's `on_key_down`
+or shortcuts (on macOS and Windows those are windows of their own; naui does the
+same on Linux and the Web). The shortcuts of the widgets inside a `Sheet` do
+work, except that this has not been checked on Windows. Keys pressed while an IME
+is composing reach no shortcut.
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
