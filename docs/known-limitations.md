@@ -267,6 +267,16 @@ that shape are covered in
   the size on the Web (the size requested with `set_size`, not the browser's;
   fullscreen is refused outside a user action). naui does not store the placement
   itself: the app writes its text form to its own settings.
+- **A window can be made smaller than content placed with `Fill`**, which is then
+  cut off. A `Fill` child and a `Track::Fill` column or row never decide the
+  window's minimum, and a `Scroll` filling the window is no exception, even in a
+  direction it does not scroll. Linux stops at what the rest of the window needs
+  (the header bar and content that is not `Fill`); Windows and the Web do not take
+  any minimum from the content. On macOS it has not been checked on a real device;
+  there the content of a `Scroll` is held to the visible width by a required
+  constraint in a direction it does not scroll, so the window may stop at that
+  content's width instead. Set a minimum with `Window::set_min_size` or the
+  child's `min_width` / `min_height`.
 
 ### naui-app
 
@@ -404,6 +414,12 @@ that shape are covered in
   collapses on macOS only below `SIDEBAR_MIN_WIDTH + SIDEBAR_COLLAPSE_CONTENT_WIDTH`
   (it first narrows to its minimum width), and elsewhere below its own width plus
   `SIDEBAR_COLLAPSE_CONTENT_WIDTH`.
+- A collapsed `Sidebar` becomes a strip of icons (a navigation rail) only on
+  Windows, where an item without an icon shows only the first letters of its
+  label, cut off with an ellipsis. AppKit and libadwaita have
+  no icon-only state, so macOS, Linux and the Web hide the whole pane. Opening it
+  while narrow lays it over the content on Windows, widens the window on macOS
+  (outside full screen), and keeps it beside the content on Linux and the Web.
 
 ## Windows
 

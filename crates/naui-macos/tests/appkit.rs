@@ -108,6 +108,10 @@ fn main() {
             canvas_draws_the_broader_vocabulary,
         ),
         (
+            "描画面の役割の色が明暗に追従し、切り替えで描き直される",
+            canvas_follows_light_and_dark,
+        ),
+        (
             "描画面がマウスの押下・移動・解放を面の座標で通知する",
             canvas_reports_pointer_events,
         ),
@@ -1959,6 +1963,121 @@ fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
     canvas.redraw();
     view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
     assert!(sizes.borrow().len() > drawn, "描き直しで呼ばれること");
+    window.close();
+    Ok(())
+}
+
+/// Color roles are resolved from the view's effective appearance at each draw, and
+/// switching the window's theme draws the surface again without `redraw`. The left
+/// half is filled with the text color's role and the right half with a fixed red.
+fn canvas_follows_light_and_dark(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    canvas.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(60.0))
+            .height(Length::Fixed(40.0)),
+    );
+    type Seen = (bool, (Color, f64), (Color, f64), (Color, f64));
+    let seen: Rc<RefCell<Vec<Seen>>> = Rc::new(RefCell::new(Vec::new()));
+    canvas.on_draw({
+        let seen = seen.clone();
+        move |painter| {
+            seen.borrow_mut().push((
+                painter.is_dark(),
+                painter.role_color(TextColor::Default),
+                painter.role_color(TextColor::Secondary),
+                painter.role_color(TextColor::Danger),
+            ));
+            painter.fill_rect(Rect::new(0.0, 0.0, 30.0, 40.0), TextColor::Default);
+            painter.fill_rect(Rect::new(30.0, 0.0, 30.0, 40.0), Color::rgb(0xff, 0, 0));
+        }
+    });
+
+    let window = ui.window("canvas theme", 120.0, 80.0)?;
+    window.set_theme(Theme::Light)?;
+    window.set_child(&canvas);
+    window.show();
+    let view = canvas.native_view();
+    view.layoutSubtreeIfNeeded();
+    let bounds = view.bounds();
+    let bitmap = view
+        .bitmapImageRepForCachingDisplayInRect(bounds)
+        .expect("ビットマップを用意できること");
+    let scale = bitmap.pixelsWide() as f64 / bounds.size.width;
+    let read = |x: f64, y: f64| -> (Color, f64) {
+        let color = bitmap
+            .colorAtX_y((x * scale) as isize, (y * scale) as isize)
+            .expect("画素が読めること");
+        let srgb = color
+            .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
+            .expect("sRGB へ変換できること");
+        (
+            Color::from_unit(
+                srgb.redComponent(),
+                srgb.greenComponent(),
+                srgb.blueComponent(),
+            ),
+            srgb.alphaComponent(),
+        )
+    };
+    let brightness = |c: Color| u32::from(c.r) + u32::from(c.g) + u32::from(c.b);
+    // 危険の色はどの環境でも赤系 (アクセントは灰色にもなるので見ない)。
+    let reddish = |c: Color| c.r > c.g.saturating_add(40) && c.r > c.b.saturating_add(40);
+
+    view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
+    let light = *seen.borrow().last().expect("描くときに呼ばれること");
+    assert!(
+        reddish(light.3 .0),
+        "明るい外観の危険の色は赤寄り: {light:?}"
+    );
+    assert!(!light.0, "明るい外観では is_dark が偽");
+    assert!(
+        brightness(light.1 .0) < 150,
+        "明るい外観の文字色は暗い: {light:?}"
+    );
+    assert!(
+        light.2 .1 < light.1 .1,
+        "副次の文字色は本文より薄い (アルファが落ちていない): {light:?}"
+    );
+    let (left, alpha) = read(15.0, 20.0);
+    assert!(
+        brightness(left) < 150 && alpha > 0.5,
+        "明るい外観では役割の色が暗く塗られる: {left} {alpha}"
+    );
+    let drawn = seen.borrow().len();
+
+    // テーマを切り替えるだけで (redraw を呼ばずに) 描き直される。
+    window.set_theme(Theme::Dark)?;
+    pump_until(2.0, || {
+        view.displayIfNeeded();
+        seen.borrow().len() > drawn
+    });
+    assert!(
+        seen.borrow().len() > drawn,
+        "外観が変わると描き直されること"
+    );
+    let dark = *seen.borrow().last().unwrap();
+    assert!(reddish(dark.3 .0), "暗い外観の危険の色は赤寄り: {dark:?}");
+    assert!(dark.0, "暗い外観では is_dark が真");
+    assert!(
+        brightness(dark.1 .0) > 600,
+        "暗い外観の文字色は明るい: {dark:?}"
+    );
+    assert!(
+        dark.2 .1 < dark.1 .1,
+        "暗い外観でも副次の文字色は薄い: {dark:?}"
+    );
+    view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
+    let (left, _) = read(15.0, 20.0);
+    assert!(
+        brightness(left) > 600,
+        "暗い外観では役割の色が明るく塗られる: {left}"
+    );
+    let (right, _) = read(45.0, 20.0);
+    assert!(
+        right.r > 180 && right.g < 120 && right.b < 120,
+        "固定の色は外観で変わらない: {right}"
+    );
     window.close();
     Ok(())
 }

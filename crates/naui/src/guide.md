@@ -380,6 +380,14 @@ matches the visible area in a direction that does not scroll, and grows past it 
 one that does. So while the content fits, a `Fill` child inside takes the leftover
 space, as it would outside a `Scroll`.
 
+A `Fill` child, and a [`Track::Fill`] column or row, **never decides how narrow (or
+short) the window can get**: the parent decides its size. A page that fills the
+window, a `Scroll` included, can therefore be made narrower than what is inside it,
+and whatever does not fit is cut off; in a direction the `Scroll` does not scroll,
+it cannot be reached at all. Where that matters, set a minimum with
+[`Window::set_min_size`] or with [`Sizing::min_width`] / [`Sizing::min_height`] on
+the child, or let the `Scroll` scroll in that direction.
+
 An `Auto` height on a [`List`] follows all its rows, so every row is built. To scroll
 many rows within a limited area, specify `Fixed` or `Fill`; do so for any list that
 may have more than about [`ROW_WINDOW_THRESHOLD`] rows, because on Windows a UI
@@ -1662,14 +1670,15 @@ passed to [`on_draw`](Canvas::on_draw), and call [`redraw`](Canvas::redraw) when
 you want it redrawn. When the surface's size changes, naui redraws it.
 
 ```no_run
-# use naui::{Color, Point, Rect, Result, Sizing, Ui};
+# use naui::{Color, Point, Rect, Result, Sizing, TextColor, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let chart = ui.canvas()?;
 chart.set_sizing(Sizing::fill()); // the size is not decided by the content
 chart.on_draw(|painter| {
     let bar = Rect::new(10.0, 10.0, 40.0, painter.height() - 20.0);
     painter.fill_rect(bar, Color::rgb(0x33, 0x66, 0xff));
-    painter.text("Sales", Point::new(10.0, painter.height() - 16.0), 12.0, Color::BLACK);
+    // The text color of a label, in light or dark as the surface is shown.
+    painter.text("Sales", Point::new(10.0, painter.height() - 16.0), 12.0, TextColor::Default);
 });
 chart.on_pointer(|event| println!("{:?} at {:?}", event.phase, event.point));
 chart.redraw();
@@ -1715,9 +1724,10 @@ platform draws it in (Core Text, Pango, DirectWrite, `measureText`), so labels c
 be laid out and given room; the widths differ slightly between platforms, as the
 fonts do.
 
-The fills take a [`Color`] or a [`Gradient`]: linear along a line, or radial out
-from a center. Each stop has its own opacity, so a color can fade out, and past
-the ends the end colors carry on. Strokes take a color only.
+The fills take a [`Color`], a [`Gradient`] or a color role ([`TextColor`]): a
+gradient is linear along a line, or radial out from a center. Each stop has its
+own opacity, so a color can fade out, and past the ends the end colors carry on.
+Strokes and text take a color or a color role ([`Ink`]).
 
 ```no_run
 # use naui::{Color, Gradient, Point, Rect, Result, Ui};
@@ -1744,6 +1754,50 @@ chart.on_draw(move |painter| {
 # Ok(())
 # }
 ```
+
+**Colors that follow light and dark.** A fixed `Color` stays as it is when the appearance switches between light and
+dark, so a drawing made for light keeps its dark text on a dark window. Pass a
+color role instead, and the platform gives its color for the appearance the
+surface is shown in, the same colors as text in a [`Label`] (see the table at
+[`TextColor`]). Roles are resolved each time the surface is drawn, and the
+surface **draws itself again when the appearance changes** (the system setting,
+or a theme set with [`Ui::set_theme`] or [`Window::set_theme`]), so `on_draw`
+needs nothing more. [`is_dark`](Painter::is_dark) tells which appearance it is
+drawing for, for colors that are not roles (a palette for chart series, say), and
+[`role_color`](Painter::role_color) gives a role's color and opacity for building
+other things from it, such as a gradient fading out from the accent color.
+
+```no_run
+# use naui::{Color, Point, Result, TextColor, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+# let chart = ui.canvas()?;
+chart.on_draw(|painter| {
+    let axis = painter.height() - 20.0;
+    painter.line(Point::new(30.0, axis), Point::new(painter.width(), axis), TextColor::Secondary, 1.0);
+    painter.text("0", Point::new(4.0, axis - 6.0), 11.0, TextColor::Secondary);
+    let series = if painter.is_dark() {
+        Color::rgb(0x6c, 0xb6, 0xff)
+    } else {
+        Color::rgb(0x00, 0x5a, 0xc2)
+    };
+    painter.polyline(&[Point::new(30.0, axis), Point::new(80.0, 20.0)], series, 2.0);
+});
+# Ok(())
+# }
+```
+
+| | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| Role colors | The theme brushes, through `{ThemeResource}` on the surface | The dynamic `NSColor`s in the view's appearance | The window's text color and the role's style class | `getComputedStyle` (`CanvasText`, `GrayText`, `AccentColor`, …) |
+| Light or dark | `ActualTheme` | `effectiveAppearance` | `AdwStyleManager`'s `dark` | `color-scheme`, then `prefers-color-scheme` |
+| Redrawn on | `ActualThemeChanged` | `viewDidChangeEffectiveAppearance` | `dark`, `high-contrast`, `accent-color` | The media query's `change`, and naui's theme |
+
+The surface draws itself again on a switch between light and dark. A change of
+the accent color alone redraws it only on Linux; elsewhere the new color shows at
+the next draw. A role's color can be translucent (secondary text is the text color at part
+opacity on several platforms); its opacity multiplies into the painter's. A
+`Painter` made outside a `Canvas` (in a unit test, say) draws roles in fixed light
+colors; [`with_role_colors`](Painter::with_role_colors) gives it others.
 
 Images are drawn from a [`Bitmap`], made once from the contents of a PNG, JPEG or
 GIF file ([`Bitmap::from_bytes`]) or from RGBA pixels ([`Bitmap::from_pixels`]),
@@ -2135,6 +2189,11 @@ narrow lays it over the content.
 | Linux | `sidebar-show-symbolic` at the left end of the header bar | The whole pane is hidden |
 | Windows | `NavigationView`'s pane collapse button | A narrow strip of icons only |
 | Web | `<button aria-expanded>` at the start of the toolbar row (a row with just the button if there is no toolbar) | The whole pane is hidden |
+
+The strip of icons (a navigation rail) is WinUI's own: AppKit's sidebar item and
+libadwaita's split views have no icon-only state, so naui does not add one to the
+others. Give items icons: without one, the Windows strip shows only the first
+letters of the label, cut off with an ellipsis.
 
 Icons use the same kinds as [`ToolbarIcon`] and are mapped to the platform's
 standard icons. `set_selected` / `clear_selection` do not notify, while `select`

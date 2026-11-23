@@ -463,7 +463,7 @@ fn push_run_markup(markup: &mut String, run: &TextRun) {
 }
 
 /// libadwaita's `--dim-opacity`, which `.dim-label` applies to the whole widget.
-const DIM_OPACITY_PERCENT: u32 = 55;
+pub(crate) const DIM_OPACITY_PERCENT: u32 = 55;
 
 /// The attributes of a `<span>` showing a color role as the theme has it now.
 ///
