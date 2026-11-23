@@ -246,33 +246,50 @@ impl Calendar {
     /// Passes the range to `MinDate` / `MaxDate`, from 00:00 on the first day to
     /// 23:59 on the last. Without a range, everything the Gregorian calendar covers.
     fn write_native_range(&self) {
-        let (Some(widest_min), Some(widest_max)) = (calendar_limit(false), calendar_limit(true))
-        else {
-            return;
-        };
+        // 西暦の端は `Windows.Globalization` に尋ねる。取れないとき (端の日時が
+        // `DateTime` で表せないなど) は、どの時間帯でも表せる日へ落とす。両端は
+        // 別々に求め、片方が取れなくても範囲は書く。
+        let widest_min =
+            calendar_limit(false).or_else(|| to_native_day(DateTime::date(1601, 1, 2), 0).ok());
+        let widest_max =
+            calendar_limit(true).or_else(|| to_native_day(DateTime::date(9999, 12, 30), 23).ok());
         let min = self
             .0
             .min
             .get()
             .and_then(|min| to_native_day(min, 0).ok())
-            .unwrap_or(widest_min);
+            .or(widest_min);
         let max = self
             .0
             .max
             .get()
             .and_then(|max| to_native_day(max, 23).ok())
-            .unwrap_or(widest_max);
-        // 範囲の途中で下限が上限を追い越さないよう、いったん最大の範囲へ広げてから
-        // 上限、下限の順で狭める。逆転した範囲は naui の clamp と同じく上限で一点にする。
-        let min = if min.UniversalTime > max.UniversalTime {
-            to_native_day(self.0.max.get().unwrap_or_default(), 0).unwrap_or(max)
-        } else {
-            min
+            .or(widest_max);
+        // 逆転した範囲は naui の clamp と同じく上限の日で一点にする。
+        let min = match (min, max, self.0.max.get()) {
+            (Some(lower), Some(upper), Some(last)) if lower.UniversalTime > upper.UniversalTime => {
+                to_native_day(last, 0).ok().or(Some(upper))
+            }
+            _ => min,
         };
-        let _ = self.0.native.SetMaxDate(widest_max);
-        let _ = self.0.native.SetMinDate(widest_min);
-        let _ = self.0.native.SetMaxDate(max);
-        let _ = self.0.native.SetMinDate(min);
+        // 範囲の途中で下限が上限を追い越さないよう、いったん最大の範囲へ広げてから
+        // 上限、下限の順で狭める。
+        let steps = [
+            (true, widest_max),
+            (false, widest_min),
+            (true, max),
+            (false, min),
+        ];
+        for (is_max, date) in steps {
+            let Some(date) = date else {
+                continue;
+            };
+            let _ = if is_max {
+                self.0.native.SetMaxDate(date)
+            } else {
+                self.0.native.SetMinDate(date)
+            };
+        }
     }
 }
 

@@ -2522,7 +2522,11 @@ fn calendar_stays_inside_the_range(ui: &Ui) -> Result<()> {
     assert!(
         ranged.0.UniversalTime > widest.0.UniversalTime
             && ranged.1.UniversalTime < widest.1.UniversalTime,
-        "MinDate / MaxDate が狭まること"
+        "MinDate / MaxDate が狭まること: 範囲なし {} .. {}、範囲あり {} .. {}",
+        widest.0.UniversalTime,
+        widest.1.UniversalTime,
+        ranged.0.UniversalTime,
+        ranged.1.UniversalTime
     );
     assert!(
         ranged.1.UniversalTime - ranged.0.UniversalTime > 10 * 24 * 3_600 * 10_000_000,
