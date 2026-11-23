@@ -133,11 +133,20 @@ impl Sidebar {
     ///   set from code ([`Window::set_size`](crate::Window::set_size), or attaching to
     ///   a narrow window) naui collapses it below the same width, and expands it again
     ///   when the window gets wide enough.
+    ///   Opening it while narrow widens the window to fit both panes (in full
+    ///   screen, AppKit lays it over the content instead).
     /// - **Windows**: `NavigationView`'s `PaneDisplayMode::Auto`. It collapses into the
     ///   strip of icons, and opening it while narrow lays the pane over the content.
     /// - **Linux** and **Web**: naui decides from the window's width (`AdwBreakpoint`
     ///   would take away the window's minimum size, and a CSS container query cannot
-    ///   tell the page when it applies).
+    ///   tell the page when it applies). Opening it while narrow keeps it beside the
+    ///   content.
+    ///
+    /// Only Windows collapses into a strip of icons (a navigation rail). AppKit's
+    /// sidebar and libadwaita's split views have no icon-only state, so on macOS,
+    /// Linux and the Web the whole pane is hidden, leaving the sidebar button. In the
+    /// Windows strip, an item without an icon shows only the first letters of its
+    /// label, cut off with an ellipsis.
     #[inline]
     pub fn set_auto_collapse(&self, auto: bool) {
         self.0.set_auto_collapse(auto)

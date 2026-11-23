@@ -2144,6 +2144,11 @@ narrow lays it over the content.
 | Windows | `NavigationView`'s pane collapse button | A narrow strip of icons only |
 | Web | `<button aria-expanded>` at the start of the toolbar row (a row with just the button if there is no toolbar) | The whole pane is hidden |
 
+The strip of icons (a navigation rail) is WinUI's own: AppKit's sidebar item and
+libadwaita's split views have no icon-only state, so naui does not add one to the
+others. Give items icons: without one, the Windows strip shows only the first
+letters of the label, cut off with an ellipsis.
+
 Icons use the same kinds as [`ToolbarIcon`] and are mapped to the platform's
 standard icons. `set_selected` / `clear_selection` do not notify, while `select`
 and the user's choices do (the same as other navigation).
