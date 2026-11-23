@@ -666,7 +666,7 @@ fn radio_group_notifies_the_clicked_index() {
 fn calendar_days(calendar: &naui_web::Calendar) -> Vec<HtmlElement> {
     let list = calendar
         .native_table()
-        .query_selector_all("tbody button")
+        .query_selector_all("tbody button[data-day]")
         .expect("日のボタン");
     (0..list.length())
         .filter_map(|i| list.item(i))
@@ -745,6 +745,23 @@ fn calendar_lays_out_the_month_with_dom_parts() {
             .collect();
         assert_eq!(stops.len(), 1);
         assert_eq!(stops[0].get_attribute("data-day").as_deref(), Some("22"));
+        // 日の数字だけを書く (日本語の「22日」のような語は付けない)。
+        let number = stops[0].text_content().unwrap_or_default();
+        assert!(
+            !number.is_empty() && number.chars().all(char::is_numeric),
+            "日の数字だけ: {number}"
+        );
+        // 2026 年 11 月は 5 週で終わるが、6 週目も同じ高さを取る。
+        let rows = table.query_selector_all("tbody tr").unwrap();
+        let height = |i: u32| {
+            rows.item(i)
+                .unwrap()
+                .unchecked_into::<Element>()
+                .get_bounding_client_rect()
+                .height()
+        };
+        assert!(height(0) > 0.0);
+        assert_eq!(height(5), height(0), "日の無い週も同じ高さ");
         // 見た目は付けない (ボタンの幅だけ)。
         assert_eq!(computed(&stops[0], "background-color"), {
             let plain = calendar_days(&calendar)[0].clone();

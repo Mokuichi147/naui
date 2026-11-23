@@ -16,7 +16,7 @@
 //!   browsers that do not provide it.
 //!
 //! The only styles are for layout (the header in a row, buttons as wide as their
-//! column). The month buttons only show another month; the selected day stays.
+//! column, an invisible button keeping the height of a week without days). The month buttons only show another month; the selected day stays.
 //! The arrow keys move the selection (left / right by a day, swapped in
 //! right-to-left text, up / down by a week, Page Up / Page Down by a month).
 
@@ -414,6 +414,22 @@ impl Calendar {
                 }
                 let _ = row.append_child(&cell);
             }
+            // 日の無い週も、ほかの週と同じ高さを取る (月によって表の高さが
+            // 変わらないように)。見えない押せないボタンを 1 つ置く。
+            if i64::from(week as u8) * 7 - i64::from(offset)
+                >= i64::from(days_in_month(year, month))
+            {
+                if let (Ok(placeholder), Some(cell)) = (create(doc, "button"), row.first_child()) {
+                    let placeholder: HtmlButtonElement = placeholder.unchecked_into();
+                    placeholder.set_type("button");
+                    placeholder.set_disabled(true);
+                    placeholder.set_tab_index(-1);
+                    placeholder.set_text_content(Some("0"));
+                    let _ = placeholder.set_attribute("aria-hidden", "true");
+                    style(&placeholder, "visibility", "hidden");
+                    let _ = cell.append_child(&placeholder);
+                }
+            }
             let _ = inner.body.append_child(&row);
         }
     }
@@ -442,7 +458,7 @@ impl Calendar {
         button.set_disabled(!enabled);
 
         // 印はブラウザの既定の見た目に任せる: 選んだ日は <mark>、今日は <b>。
-        let number = format_date(&self.0.formats.day, days);
+        let number = format_day(&self.0.formats.day, days);
         let mut text_parent: Element = button.clone().unchecked_into();
         for (on, tag) in [(selected, "mark"), (today, "b")] {
             if on {
@@ -521,6 +537,25 @@ fn format_date(format: &Intl::DateTimeFormat, days: i64) -> String {
         .ok()
         .and_then(|text| text.as_string())
         .unwrap_or_default()
+}
+
+/// The number of the day counted from 1970-01-01, in the locale's digits but
+/// without words around it (Japanese writes "24日" for the day alone).
+fn format_day(format: &Intl::DateTimeFormat, days: i64) -> String {
+    let date = Date::new(&JsValue::from_f64(days as f64 * MS_PER_DAY));
+    format
+        .format_to_parts(&date)
+        .iter()
+        .find(|part| {
+            Reflect::get(part, &"type".into())
+                .ok()
+                .and_then(|kind| kind.as_string())
+                .as_deref()
+                == Some("day")
+        })
+        .and_then(|part| Reflect::get(&part, &"value".into()).ok())
+        .and_then(|value| value.as_string())
+        .unwrap_or_else(|| civil_from_days(days).2.to_string())
 }
 
 /// The first day of the week of the locale the text is written in, from
