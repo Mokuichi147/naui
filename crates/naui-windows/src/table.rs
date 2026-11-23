@@ -1416,12 +1416,30 @@ impl Table {
             return width;
         }
         let header = &self.0.header;
-        let padding = header
-            .Padding()
-            .map(|padding| padding.Left + padding.Right)
-            .unwrap_or(0.0);
+        let inner = |grid: &XamlGrid| {
+            let padding = grid
+                .Padding()
+                .map(|padding| padding.Left + padding.Right)
+                .unwrap_or(0.0);
+            grid.ActualWidth().unwrap_or(0.0) - padding
+        };
+        // 行の `Grid` が見出しより狭ければ (行の余白の当て方しだい)、狭いほうに
+        // 収める。幅の無い列が残らないとき、行の列が切れないように。
+        let row = self
+            .0
+            .row_items
+            .borrow()
+            .first()
+            .and_then(|item| item.Content().ok())
+            .and_then(|content| content.cast::<XamlGrid>().ok())
+            .map(|grid| inner(&grid))
+            .filter(|&width| width > 0.0);
+        let room = match row {
+            Some(row) => row.min(inner(header)),
+            None => inner(header),
+        };
         let spacing = COLUMN_SPACING * count.saturating_sub(1) as f64;
-        let available = header.ActualWidth().unwrap_or(0.0) - padding - spacing;
+        let available = room - spacing;
         let width = clamp_column_width(&self.0.columns.borrow(), index, width, available).round();
         self.0.columns.borrow_mut()[index].width = Some(width);
         set_column_width(header, index, width);

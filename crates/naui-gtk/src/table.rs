@@ -69,18 +69,26 @@ fn sort_arrow(order: Option<SortOrder>) -> &'static str {
     }
 }
 
+/// Whether a cell's natural width is kept from deciding its column's width.
+///
+/// - In a windowed table (`uniform`), for the columns without a width: rows are built
+///   again as they scroll, and columns sized by their cells would move.
+/// - For a column the user dragged: otherwise `GtkBox` hands a cell its natural width
+///   when there is room, and the column could not be made narrower than its text.
+///   (A column passed with a width keeps growing to its content as before.)
+fn limits_natural(column: &TableColumn, uniform: bool, dragged: bool) -> bool {
+    dragged || (uniform && column.width.is_none())
+}
+
 /// Creates the label for one cell. The column's width setting is applied here too.
-fn cell_label(text: &str, column: &TableColumn, uniform: bool) -> gtk::Label {
+fn cell_label(text: &str, column: &TableColumn, limit_natural: bool) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.set_xalign(xalign(column.align));
     // 列より長い文字は折り返さず、末尾を省略する。
     label.set_ellipsize(pango::EllipsizeMode::End);
-    // 行を絞っている表では、セルの文字の長さで列幅を決めない。決めてしまうと、
-    // スクロールで組み立て直すたびに列の幅が動いてしまう。列の幅は見出しと
-    // 余りの分け合いだけで決まればよいので、自然な幅を 1 文字ぶんに抑える。
-    // 幅のある列も同じにする。自然な幅が指定より大きいと、余りがあるときに
-    // `GtkBox` がその幅まで広げてしまい、指定 (やドラッグ) より狭くできない。
-    if uniform || column.width.is_some() {
+    // 列の幅をセルの文字の長さで決めないときは、自然な幅を 1 文字ぶんに抑える
+    // (`limits_natural`)。
+    if limit_natural {
         label.set_max_width_chars(1);
     }
     apply_column_width(&label, column);
@@ -422,6 +430,10 @@ struct TableInner {
     /// The column whose heading edge is being dragged, with its width when the drag
     /// started.
     column_drag: Cell<Option<(usize, f64)>>,
+    /// Which columns the user has dragged since the columns were last passed. Their
+    /// cells keep their natural width from deciding the column width
+    /// ([`limits_natural`]).
+    dragged: RefCell<Vec<bool>>,
     on_select: SelectionNotifier,
     on_sort: SortNotifier,
     handler: RefCell<Option<glib::SignalHandlerId>>,
@@ -498,6 +510,7 @@ impl Table {
             header_slots: RefCell::new(Vec::new()),
             sort: Cell::new(None),
             column_drag: Cell::new(None),
+            dragged: RefCell::new(Vec::new()),
             on_select: SelectionNotifier::default(),
             on_sort: SortNotifier::default(),
             handler: RefCell::new(None),
@@ -686,12 +699,33 @@ impl Table {
             return width;
         }
         let spacing = f64::from(CELL_SPACING) * count.saturating_sub(1) as f64;
-        let available = f64::from(self.0.header.width()) - spacing;
+        // 行は枠 (`row` の余白) の分だけ見出しより狭いことがある。幅の無い列が
+        // 残らないときにはみ出さないよう、狭いほうに収める。
+        let row_width = self
+            .0
+            .list
+            .first_child()
+            .and_downcast::<gtk::ListBoxRow>()
+            .and_then(|row| row.child())
+            .map(|content| content.width())
+            .filter(|&width| width > 0);
+        let width_of_room = match row_width {
+            Some(row) => row.min(self.0.header.width()),
+            None => self.0.header.width(),
+        };
+        let available = f64::from(width_of_room) - spacing;
         let mut width =
             clamp_column_width(&self.0.columns.borrow(), index, width, available).round();
         let slot = self.0.header_slots.borrow().get(index).cloned();
         if let Some(slot) = &slot {
             fix_cell_width(slot, width);
+        }
+        {
+            let mut dragged = self.0.dragged.borrow_mut();
+            if dragged.len() <= index {
+                dragged.resize(index + 1, false);
+            }
+            dragged[index] = true;
         }
         let mut row = self.0.list.first_child();
         while let Some(current) = row {
@@ -733,6 +767,7 @@ impl Table {
             stored.clear();
             stored.extend_from_slice(columns);
         }
+        self.0.dragged.borrow_mut().clear();
         self.rebuild();
         without_signal(&self.0.list, &self.0.handler, || self.show(&picked));
     }
@@ -1094,6 +1129,7 @@ impl Table {
         let window = self.0.window.get();
         let columns = self.0.columns.borrow().clone();
         let uniform = !window.is_complete();
+        let dragged = self.0.dragged.borrow().clone();
         let fixed_height = self.0.fixed_row_height.get();
         let focused = self.focused_row();
         // 列ごとの `GtkSizeGroup` は組み立てのたびに作り直す。消えた行の
@@ -1128,7 +1164,7 @@ impl Table {
                 if self.0.claimed.borrow_mut().insert(index) {
                     self.claim(&cells);
                 }
-                let row = build_row(&cells, &columns, &groups, uniform, self.0.owner);
+                let row = build_row(&cells, &columns, &groups, (uniform, &dragged), self.0.owner);
                 if let Some(height) = fixed_height {
                     row.set_size_request(-1, height);
                 }
@@ -1401,11 +1437,14 @@ fn release_cells(row: &gtk::Widget) {
 ///
 /// A widget goes in only if `owner` may place it (see [`crate::handover`]). Otherwise
 /// its cell is left empty, and nothing is written on the widget.
+///
+/// `(uniform, dragged)` decide which cells keep their natural width from deciding the
+/// column width ([`limits_natural`]).
 fn build_row(
     cells: &TableCells,
     columns: &[TableColumn],
     groups: &[gtk::SizeGroup],
-    uniform: bool,
+    (uniform, dragged): (bool, &[bool]),
     owner: Owner,
 ) -> gtk::ListBoxRow {
     let content = gtk::Box::new(gtk::Orientation::Horizontal, CELL_SPACING);
@@ -1415,6 +1454,11 @@ fn build_row(
     content.set_margin_end(SIDE_MARGIN);
 
     for (index, column) in columns.iter().enumerate() {
+        let limit_natural = limits_natural(
+            column,
+            uniform,
+            dragged.get(index).copied().unwrap_or(false),
+        );
         match cells.content(index) {
             Some(CellContent::Widget(widget)) if owner.may_place(&widget.size_bin()) => {
                 let bin = widget.size_bin();
@@ -1422,25 +1466,22 @@ fn build_row(
                 // 大きさを指定し直しても残る。
                 bin.set_placement(Placement::TableCell {
                     width: column.width,
-                    // 行を絞っているときは、ウィジェットの幅で列幅を決めない。
-                    // 行ごとに中身の幅が違うと、スクロールで列が動いてしまう
-                    // (文字のセルを 1 文字ぶんに抑えているのと同じ扱い)。
-                    // 幅のある列も、中身の自然な幅で指定より広がらないようにする。
-                    limit_natural: uniform || column.width.is_some(),
+                    // 文字のセルを 1 文字ぶんに抑えるのと同じ扱い (`limits_natural`)。
+                    limit_natural,
                 });
                 bin.join_size_group(&groups[index]);
                 content.append(&bin);
             }
             // 列より短い行は、足りない分が空のセルになる。
             Some(CellContent::Text(text)) => {
-                let label = cell_label(text, column, uniform);
+                let label = cell_label(text, column, limit_natural);
                 // 見出しと同じ列を 1 つの `GtkSizeGroup` に入れると、幅がそろう。
                 groups[index].add_widget(&label);
                 content.append(&label);
             }
             // 置けない中身のセルも、空のセルにする。
             Some(CellContent::Widget(_)) | None => {
-                let label = cell_label("", column, uniform);
+                let label = cell_label("", column, limit_natural);
                 groups[index].add_widget(&label);
                 content.append(&label);
             }

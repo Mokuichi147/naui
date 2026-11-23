@@ -14413,19 +14413,20 @@ fn table_column_widths_follow_header_drags(ui: &Ui) -> Result<()> {
     let mut pointer = POINT::default();
     // SAFETY: `pointer` はこの関数の中で生きている。
     let _ = unsafe { GetCursorPos(&mut pointer) };
-    let outcome = catch_unwind(AssertUnwindSafe(|| {
+    let scenario = || -> Option<()> {
         window.show();
         pump_until(Duration::from_secs(5), || {
-            header.ActualWidth().unwrap_or(0.0) > 0.0
+            header.ActualWidth().unwrap_or(0.0) > 0.0 && table.row_height() > 0.0
         });
-        if header.ActualWidth().unwrap_or(0.0) <= 0.0 {
+        if header.ActualWidth().unwrap_or(0.0) <= 0.0 || table.row_height() <= 0.0 {
             println!("     (見出しに実寸が付かない環境なので、確かめずに通す)");
-            return;
+            return None;
         }
-        let Some(hwnd) = bring_to_front(&window) else {
-            return;
-        };
+        let hwnd = bring_to_front(&window)?;
         pump_until(Duration::from_millis(500), || false);
+        // 本物のマウスが届く環境かを、行のクリックで先に確かめる。届かなければ
+        // 確かめずに通し、届いたのに幅が変わらなければ落とす。
+        first_click_on_list_row(hwnd, &table, 0)?;
 
         // 列 `index` の末尾の端 (見出しと見出しの間) の画面上の位置。
         let edge = |index: usize| -> Option<POINT> {
@@ -14487,21 +14488,16 @@ fn table_column_widths_follow_header_drags(ui: &Ui) -> Result<()> {
         fills("はじめ", &before);
 
         // 幅の無い列を広げると、その列だけが広がり、もう 1 つの幅の無い列が詰める。
-        if drag(0, px(60.0)).is_none() {
-            return;
-        }
+        drag(0, px(60.0))?;
         let after = widths();
-        if (after[0] - before[0]).abs() < 1.0 {
-            println!("     (マウスの入力が届かない環境なので、確かめずに通す: {after:?})");
-            return;
-        }
         assert!(
             (after[0] - (before[0] + 60.0)).abs() < 3.0,
             "掴んだ列が広がる: {before:?} → {after:?}"
         );
         assert_eq!(after[1], 120.0, "幅のある列は動かない: {after:?}");
         fills("広げたあと", &after);
-        assert_eq!(row_widths(), after, "行も見出しと同じ幅になる");
+        // 幅の無い列は行の枠の分だけ見出しとずれうるので、`Pixel` の 2 列で比べる。
+        assert_eq!(row_widths()[..2], after[..2], "行も見出しと同じ幅になる");
         assert!(
             sorts.borrow().is_empty(),
             "端を押しても並べ替えない: {:?}",
@@ -14540,11 +14536,22 @@ fn table_column_widths_follow_header_drags(ui: &Ui) -> Result<()> {
         fills("狭めたあと", &narrow);
         assert!(sorts.borrow().is_empty(), "並べ替えは起きない");
 
+        // 幅の無い列が 1 つも残らなくても、表からはみ出さない。
+        drag(2, px(room())).expect("5 回目のドラッグ");
+        let all = widths();
+        assert!(all[2] > narrow[2], "最後の列も広がる: {narrow:?} → {all:?}");
+        fills("全部の列を掴んだあと", &all);
+        assert_eq!(row_widths(), all, "全部の列を掴むと、行も見出しと同じ幅");
+
         // 列を渡し直すと、ドラッグした幅は捨てて渡した指定に戻る。
         table.set_columns(&columns);
         let reset = widths();
         assert_eq!(reset[1], 120.0, "渡した幅に戻る: {reset:?}");
         assert!((reset[0] - reset[2]).abs() < 1.0, "等分に戻る: {reset:?}");
+        Some(())
+    };
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        let _ = scenario();
     }));
     // SAFETY: 引数は値だけ。
     let _ = unsafe { SetCursorPos(pointer.x, pointer.y) };

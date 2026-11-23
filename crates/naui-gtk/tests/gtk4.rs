@@ -9139,11 +9139,13 @@ fn table_column_widths_follow_header_drags(ui: &Ui) -> Result<()> {
 
     // 表より広くはならない。最後の幅の無い列は最小幅まで詰める。
     drag_edge(0, 1000.0);
+    // 行は見出しより狭いことがあり、狭いほうに収める (見出しの最後の列はその分広い)。
     let wide = widths();
     assert_eq!(
-        f64::from(wide[2]),
+        f64::from(cell_widths()[2]),
         naui_core::MIN_COLUMN_WIDTH,
-        "残りの列は最小幅まで: {wide:?}"
+        "残りの列は行で最小幅まで: {wide:?} / {:?}",
+        cell_widths()
     );
     fills("広げすぎたあと", &wide);
 
@@ -9163,9 +9165,10 @@ fn table_column_widths_follow_header_drags(ui: &Ui) -> Result<()> {
     drag_edge(1, 1000.0);
     let crowded = widths();
     assert_eq!(
-        f64::from(crowded[2]),
+        f64::from(cell_widths()[2]),
         naui_core::MIN_COLUMN_WIDTH,
-        "{crowded:?}"
+        "{crowded:?} / {:?}",
+        cell_widths()
     );
     fills("狭めた列の隣を広げすぎたあと", &crowded);
     let narrow = crowded;
@@ -9176,9 +9179,50 @@ fn table_column_widths_follow_header_drags(ui: &Ui) -> Result<()> {
     assert_eq!(widths(), narrow, "行を渡し直しても列の幅は残る");
     assert_eq!(cell_widths()[..2], narrow[..2]);
 
+    // 幅の無い列が 1 つも残らなくても、行は表からはみ出さない (行は枠の分だけ
+    // 見出しより狭いことがあるので、行の中身の幅で比べる)。
+    drag_edge(2, 1000.0);
+    let all = widths();
+    let row = list.row_at_index(0).expect("1 行目").child().expect("中身");
+    let cells = cell_widths();
+    let used: i32 = cells.iter().sum::<i32>() + 12 * (cells.len() as i32 - 1);
+    assert!(
+        used <= row.width(),
+        "全部の列を掴んでも行に収まる: {cells:?} / {}",
+        row.width()
+    );
+    assert_eq!(cells, all, "全部の列を掴むと、行も見出しも同じ幅: {all:?}");
+    // `measure` は左右の余白 (`margin`) を含み、`width()` は含まない。
+    let margins = row.margin_start() + row.margin_end();
+    assert!(
+        measure_width(&row).0 <= row.width() + margins,
+        "行の最小の幅が行より広くならない (表が窓を押し広げない): {} / {} + {margins}",
+        measure_width(&row).0,
+        row.width()
+    );
+
     // 列を渡し直すと、ドラッグした幅は捨てて渡した指定に戻る。
     table.set_columns(&columns);
     assert_eq!(widths(), before, "渡した指定の幅に戻る");
+
+    // 右から左の並びでは、末尾の端は左にあり、左へ動かすと広がる。
+    // 子は親の向きを継がない (GTK4 は既定の向きを返す) ので、アプリ全体の向きを替える。
+    let previous = gtk::Widget::default_direction();
+    naui_gtk::apply_layout_direction(Some(LayoutDirection::Rtl));
+    tick(&header);
+    let mirrored = widths();
+    let bounds = slots()[0].compute_bounds(&header).expect("見出しの位置");
+    let x = f64::from(bounds.x()) - 2.0;
+    drag.emit_by_name::<()>("drag-begin", &[&x, &10.0f64]);
+    drag.emit_by_name::<()>("drag-update", &[&-30.0f64, &0.0f64]);
+    drag.emit_by_name::<()>("drag-end", &[&-30.0f64, &0.0f64]);
+    let rtl = widths();
+    // 落ちても後のケースへ向きを持ち越さないよう、確かめる前に戻す。
+    gtk::Widget::set_default_direction(previous);
+    assert!(
+        (rtl[0] - (mirrored[0] + 30)).abs() <= 1,
+        "右から左でも掴んだ列が広がる: {mirrored:?} → {rtl:?}"
+    );
     window.close();
     Ok(())
 }

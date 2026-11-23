@@ -632,8 +632,8 @@ collected in [Known limitations](known-limitations.md).
   Columns are resized the way `GtkColumnView` does it, with a `GtkGestureDrag` on the
   header row (in the capture phase, so pressing an edge does not press a sortable
   header) and the `col-resize` cursor over the edges; the cells already built get the
-  new width on the spot. The cells of a column with a width do not let their natural
-  width decide it (as in a windowed table), so the column is exactly that wide.
+  new width on the spot. The cells of a dragged column do not let their natural width
+  decide it (as in a windowed table), so the column can be made narrower than its text.
 - **`Tree`**: Instead of `GtkTreeExpander` (only for `GtkListView`), it is built
   from `GtkListBox` rows and disclosure buttons. Rows inside collapsed branches are
   only made invisible, so they keep their selection; with `SelectionMode::Multiple`

@@ -10826,6 +10826,16 @@ fn table_column_widths_follow_header_drags(ui: &Ui) -> Result<()> {
     );
     fills("表が広がったあと");
 
+    // 幅の無い列が 1 つも残らなくても、表からはみ出さない。
+    user_resizes_column(&table, 2, 900.0);
+    let all = widths();
+    assert!(all[2] < 900.0, "最後の列も表に収まる: {all:?}");
+    assert!(
+        (all[0] - grown[0]).abs() < 1.0 && (all[1] - grown[1]).abs() < 1.0,
+        "ほかの列はそのまま: {grown:?} → {all:?}"
+    );
+    fills("全部の列を掴んだあと");
+
     // 列を渡し直すと、ドラッグした幅は捨てて渡した指定に戻る。
     table.set_columns(&[
         TableColumn::new("都市"),

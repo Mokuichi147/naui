@@ -229,13 +229,9 @@ shortcuts that are not in a menu, and the always-visible calendar.
 - [x] **Make dragging `Table` column widths work on Windows and Linux too.** Linux
       has the native feature in `GtkColumnView`, while Windows uses a custom table,
       so it is heavy.
-      Done as a heading-edge drag on macOS, Windows and Linux with one rule
-      (`naui_core::clamp_column_width`): the dragged column keeps that width, the
-      columns without a width share the rest, no column goes below 40 px and the
-      columns never outgrow the table. Linux keeps its `GtkListBox` table and catches
-      the drag with a `GtkGestureDrag` on the headings; Windows puts a transparent
-      grab area over each heading edge. macOS could not actually be dragged before
-      (no column had `NSTableColumnUserResizingMask`) and is fixed too.
+      Done as a heading-edge drag on macOS, Windows and Linux that follows
+      `naui_core::clamp_column_width` everywhere (macOS, which could not actually
+      be dragged before, is fixed too).
 - [ ] **Placing widgets in `Tree` items.** Items hold only strings today, while
       `List` and `Table` can hold widgets.
 - [ ] **Always-visible calendar widget.** WinUI's `CalendarView`, `GtkCalendar`
