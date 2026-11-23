@@ -4,7 +4,7 @@ use naui_core::PopupItem;
 
 /// A popup (context) menu shown on right-click.
 ///
-/// It is not a widget laid out on screen, so it is not a [`Widget`]. Items are
+/// It is not a widget laid out on screen, so it is not a [`Widget`](crate::Widget). Items are
 /// identified by **a path**: the index at each level of submenus, separators
 /// included (`[2]` is the third item, `[3, 0]` the first item in the submenu that is
 /// the fourth item).

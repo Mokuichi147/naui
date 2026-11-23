@@ -10,7 +10,7 @@ use naui_core::PopoverPosition;
 /// is the native popover's own behavior (`NSPopover`, `GtkPopover`, `Flyout`, the
 /// HTML `popover` attribute).
 ///
-/// It is not a widget laid out on screen, so it is not a [`Widget`]. See
+/// It is not a widget laid out on screen, so it is not a [`Widget`](crate::Widget). See
 /// [Popovers](crate::guide#popovers) for how to open one from a button.
 #[derive(Clone)]
 pub struct Popover(pub(crate) sys::Popover);
