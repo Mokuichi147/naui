@@ -380,6 +380,14 @@ matches the visible area in a direction that does not scroll, and grows past it 
 one that does. So while the content fits, a `Fill` child inside takes the leftover
 space, as it would outside a `Scroll`.
 
+A `Fill` child, and a [`Track::Fill`] column or row, **never decides how narrow (or
+short) the window can get**: the parent decides its size. A page that fills the
+window, a `Scroll` included, can therefore be made narrower than what is inside it,
+and whatever does not fit is cut off; in a direction the `Scroll` does not scroll,
+it cannot be reached at all. Where that matters, set a minimum with
+[`Window::set_min_size`] or with [`Sizing::min_width`] / [`Sizing::min_height`] on
+the child, or let the `Scroll` scroll in that direction.
+
 An `Auto` height on a [`List`] follows all its rows, so every row is built. To scroll
 many rows within a limited area, specify `Fixed` or `Fill`; do so for any list that
 may have more than about [`ROW_WINDOW_THRESHOLD`] rows, because on Windows a UI
@@ -2181,6 +2189,11 @@ narrow lays it over the content.
 | Linux | `sidebar-show-symbolic` at the left end of the header bar | The whole pane is hidden |
 | Windows | `NavigationView`'s pane collapse button | A narrow strip of icons only |
 | Web | `<button aria-expanded>` at the start of the toolbar row (a row with just the button if there is no toolbar) | The whole pane is hidden |
+
+The strip of icons (a navigation rail) is WinUI's own: AppKit's sidebar item and
+libadwaita's split views have no icon-only state, so naui does not add one to the
+others. Give items icons: without one, the Windows strip shows only the first
+letters of the label, cut off with an ellipsis.
 
 Icons use the same kinds as [`ToolbarIcon`] and are mapped to the platform's
 standard icons. `set_selected` / `clear_selection` do not notify, while `select`

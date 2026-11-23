@@ -30,7 +30,8 @@
 //! adding one takes away that container's minimum size: the app would have to give
 //! the window a fixed minimum, and content wider than it overflows with a warning.
 //! That would break [`Window::set_min_size`](crate::Window::set_min_size) and the
-//! window never shrinking below its content. So naui decides itself: after each
+//! window never shrinking below the minimum its content reports (which leaves out
+//! `Fill` children and tracks, see `SizeBin`). So naui decides itself: after each
 //! paint it compares the `GtkPaned`'s width ([`SidebarAutoCollapse`]), and
 //! collapses or expands in the next main loop iteration (not while GTK is laying
 //! out).

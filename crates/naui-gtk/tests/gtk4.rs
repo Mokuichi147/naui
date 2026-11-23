@@ -381,6 +381,10 @@ fn main() {
             scroll_gives_the_child_its_natural_height,
         ),
         (
+            "Fill のスクロールは窓の最小幅を決めず、min_width で決まる",
+            fill_scroll_leaves_the_window_minimum_to_min_width,
+        ),
+        (
             "隠したものは Stack の中で場所を空けない",
             hidden_widget_leaves_the_stack_layout,
         ),
@@ -4570,6 +4574,42 @@ fn scroll_gives_the_child_its_natural_height(ui: &Ui) -> Result<()> {
         bin.height(),
         natural,
         "送れる向きでは自然な高さのまま置かれること (最小は {minimum})"
+    );
+    window.close();
+    Ok(())
+}
+
+/// A `Fill` child never decides how narrow the window can get, and a `Scroll` filling
+/// the window is no exception, even when it does not scroll horizontally: a row wider
+/// than the window is cut off. The window keeps it in view only once the `Scroll`
+/// asks for that width with `min_width` (the remedy the guide gives).
+fn fill_scroll_leaves_the_window_minimum_to_min_width(ui: &Ui) -> Result<()> {
+    let row = ui.stack(Orientation::Horizontal)?;
+    for index in 0..10 {
+        row.append(&ui.button(&format!("Button {index}"))?);
+    }
+    let (row_minimum, _) = measure_width(&bin_of(&row));
+    let pane = ui.stack(Orientation::Vertical)?;
+    pane.append(&row);
+    let scroll = ui.scroll()?;
+    scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);
+    scroll.set_child(&pane);
+    scroll.set_sizing(Sizing::fill());
+    let window = ui.window("Fill のスクロール", 400.0, 300.0)?;
+    window.set_child(&scroll);
+    let content = window.native_window().content().expect("中身");
+
+    let (window_minimum, _) = measure_width(&content);
+    assert!(
+        window_minimum < row_minimum,
+        "Fill は窓を中身の幅へ押し広げない: 窓 {window_minimum} / 行 {row_minimum}"
+    );
+
+    scroll.set_sizing(Sizing::fill().min_width(f64::from(row_minimum)));
+    let (window_minimum, _) = measure_width(&content);
+    assert!(
+        window_minimum >= row_minimum,
+        "min_width を指定すれば窓はそれより狭くならない: 窓 {window_minimum} / 行 {row_minimum}"
     );
     window.close();
     Ok(())
