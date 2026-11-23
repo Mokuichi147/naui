@@ -136,6 +136,24 @@ macro_rules! impl_sizing {
                 crate::file_drop::set_handler(&<$t as Widget>::size_bin(self), f);
             }
 
+            /// Drops `files` onto this widget the way the user drops files from a file
+            /// manager (for tests and automation). It goes where a real drop would: to
+            /// this widget's [`on_file_drop`](Self::on_file_drop), or else to the
+            /// nearest enclosing widget that has one, or else to its window's
+            /// [`on_file_drop`](crate::Window::on_file_drop), each through `drop` on
+            /// naui's `GtkDropTarget`. The entries arrive as given. Nothing happens if
+            /// `files` is empty or nothing takes the drop.
+            ///
+            /// Unlike a real drop, one onto a text field does not go into its text: it
+            /// goes on up as onto any other widget.
+            pub fn drop_files(&self, files: &[naui_core::FileEntry]) {
+                let bin = <$t as Widget>::size_bin(self);
+                crate::file_drop::drop_onto(
+                    gtk::prelude::Cast::upcast_ref::<gtk::Widget>(&bin),
+                    files,
+                );
+            }
+
             /// Creates a weak reference. Capture it when touching this widget from its own
             /// notification closures (capturing a `clone()` creates a cycle and it is never
             /// freed).
@@ -445,7 +463,7 @@ fn push_run_markup(markup: &mut String, run: &TextRun) {
 }
 
 /// libadwaita's `--dim-opacity`, which `.dim-label` applies to the whole widget.
-const DIM_OPACITY_PERCENT: u32 = 55;
+pub(crate) const DIM_OPACITY_PERCENT: u32 = 55;
 
 /// The attributes of a `<span>` showing a color role as the theme has it now.
 ///

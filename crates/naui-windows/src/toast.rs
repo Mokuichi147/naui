@@ -376,6 +376,39 @@ impl Toast {
         self.0.visible.get()
     }
 
+    /// Clicks its action button at `index` as the user does, for tests and
+    /// automation: `on_action(index)` is called, the toast disappears and
+    /// `on_dismiss` is called, all before this returns. Nothing happens unless it is
+    /// on screen and has a button at `index`.
+    ///
+    /// The button is clicked through UI Automation's Invoke pattern, so WinUI itself
+    /// raises its `Click`. naui creates the buttons and only hands them to the
+    /// `InfoBar`, so this does not wait for its template (which is not applied in
+    /// windows nothing draws, as on CI runners). Should WinUI refuse the click, the
+    /// toast is closed with that button itself.
+    pub fn click_action(&self, index: usize) {
+        if !self.is_visible() || index >= self.0.spec.borrow().actions().len() {
+            return;
+        }
+        // 増える一方の `buttons` から、借用を放してから押す (押すと `finish` が走る)。
+        let Some(button) = self
+            .0
+            .buttons
+            .borrow()
+            .get(index)
+            .map(|(button, _)| button.clone())
+        else {
+            return;
+        };
+        let clicked = button
+            .cast::<UIElement>()
+            .is_ok_and(|element| crate::automation::invoke(&element).is_ok());
+        if !clicked {
+            // 押せなかったときは、そのボタンで閉じたことにする。
+            self.finish(Some(index));
+        }
+    }
+
     /// The overlaid element. A backend-specific escape hatch.
     pub fn native_element(&self) -> UIElement {
         self.0

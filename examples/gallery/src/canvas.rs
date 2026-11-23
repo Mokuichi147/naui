@@ -5,6 +5,9 @@
 //! なく、`on_draw` の中で矩形や円の**命令を積んでいる**だけ。積んだ命令を
 //! 画素にするのは各環境の 2D API (Core Graphics / cairo / Direct2D /
 //! `<canvas>`) で、アンチエイリアスや高解像度の倍率もそちらが持つ。
+//!
+//! 色は固定の `Color` ではなく役割 (`TextColor`) で指定しているので、明暗を
+//! 切り替えると各環境がその外観の色で描き直す。
 
 use std::cell::{Cell, RefCell};
 use std::f64::consts::{FRAC_PI_2, TAU};
@@ -12,7 +15,7 @@ use std::rc::Rc;
 
 use naui::{
     Align, Bitmap, Color, EventResponse, Gradient, Length, Path, Point, PointerButton,
-    PointerPhase, Rect, Result, Sizing, Ui, WHEEL_STEP,
+    PointerPhase, Rect, Result, Sizing, TextColor, Ui, WHEEL_STEP,
 };
 
 use crate::parts::{self, Notice};
@@ -27,12 +30,12 @@ const SALES: [(&str, f64); 6] = [
     ("Sep", 80.0),
 ];
 
-/// 図の地色と枠。テーマに関係なく同じ見え方にするため、面の中はアプリが塗る。
-const PAPER: Color = Color::rgb(0xfa, 0xfa, 0xfa);
-const FRAME: Color = Color::rgb(0xc8, 0xc8, 0xc8);
-const INK: Color = Color::rgb(0x33, 0x33, 0x33);
-const ACCENT: Color = Color::rgb(0x33, 0x66, 0xff);
-const ACCENT_STRONG: Color = Color::rgb(0xff, 0x88, 0x00);
+/// 図の色。役割で指定するので、地は塗らずにウィンドウの地のまま、線と文字は
+/// ラベルと同じ色で、明暗の切り替えにも付いてくる。
+const FRAME: TextColor = TextColor::Secondary;
+const INK: TextColor = TextColor::Default;
+const ACCENT: TextColor = TextColor::Accent;
+const ACCENT_STRONG: TextColor = TextColor::Warning;
 
 /// 拡大縮小の図の状態。図の座標 `p` は面の `p * scale + offset` に描く。
 struct ViewState {
@@ -87,7 +90,6 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         move |painter| {
             let mut state = state.borrow_mut();
             let bounds = painter.bounds();
-            painter.fill_rect(bounds, PAPER);
             painter.stroke_rect(bounds.inset(0.5), FRAME, 1.0);
 
             // 目盛りの線 (破線) と、その値。
@@ -107,7 +109,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
                 painter.set_dash(&[]);
                 painter.text(
                     &format!("{value:.0}"),
-                    Point::new(plot.x - 8.0, y - 7.0),
+                    Point::new(plot.x - 8.0, y - 5.5),
                     11.0,
                     INK,
                 );
@@ -213,7 +215,6 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         let angle = angle.clone();
         move |painter| {
             let bounds = painter.bounds();
-            painter.fill_rect(bounds, PAPER);
             painter.stroke_rect(bounds.inset(0.5), FRAME, 1.0);
             let cy = bounds.height / 2.0;
 
@@ -400,7 +401,6 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
 /// 拡大縮小の図。方眼と、いくつかの図形を、いまの倍率と位置で描く。
 fn draw_zoomable(painter: &mut naui::Painter, view: &ViewState) {
     let bounds = painter.bounds();
-    painter.fill_rect(bounds, PAPER);
     let to_screen = |p: Point| {
         Point::new(
             p.x * view.scale + view.offset.x,
@@ -467,7 +467,6 @@ fn sprite_pixels() -> Vec<u8> {
 /// 回転・切り抜き・グラデーション・画像・文字幅を使う図。
 fn draw_extras(painter: &mut naui::Painter, turn: f64, sprite: &Bitmap) {
     let bounds = painter.bounds();
-    painter.fill_rect(bounds, PAPER);
     painter.stroke_rect(bounds.inset(0.5), FRAME, 1.0);
 
     // 枠からはみ出す波を、枠で切り抜く。下の塗りは下へ行くほど薄れる。
@@ -484,13 +483,16 @@ fn draw_extras(painter: &mut naui::Painter, turn: f64, sprite: &Bitmap) {
         .line_to(Point::new(wave[wave.len() - 1].x, plot.bottom()))
         .line_to(Point::new(wave[0].x, plot.bottom()))
         .close();
+    // グラデーションの色は役割を色に解決してから使う。
+    let (accent, _) = painter.role_color(ACCENT);
+    let (accent_strong, _) = painter.role_color(ACCENT_STRONG);
     painter.save();
     painter.clip_rect(plot);
     painter.fill_path(
         &area,
         Gradient::linear(Point::new(0.0, plot.y), Point::new(0.0, plot.bottom()))
-            .stop_with_opacity(0.0, ACCENT, 0.6)
-            .stop_with_opacity(1.0, ACCENT, 0.0),
+            .stop_with_opacity(0.0, accent, 0.6)
+            .stop_with_opacity(1.0, accent, 0.0),
     );
     painter.polyline(&wave, ACCENT, 2.0);
     painter.restore();
@@ -504,12 +506,12 @@ fn draw_extras(painter: &mut naui::Painter, turn: f64, sprite: &Bitmap) {
     painter.fill_rect(
         Rect::new(-40.0, -40.0, 80.0, 80.0),
         Gradient::radial(Point::new(0.0, 0.0), 57.0)
-            .stop(0.0, ACCENT_STRONG)
-            .stop(1.0, ACCENT),
+            .stop(0.0, accent_strong)
+            .stop(1.0, accent),
     );
     // 文字も一緒に回る。
     painter.set_text_align(Align::Center);
-    painter.text("naui", Point::new(0.0, -7.0), 12.0, Color::WHITE);
+    painter.text("naui", Point::new(0.0, -6.0), 12.0, Color::WHITE);
     painter.restore();
 
     // 画像を 4 倍に引き伸ばしたものと、その左上の 4 分の 1 を同じ大きさで。
@@ -530,7 +532,9 @@ fn draw_extras(painter: &mut naui::Painter, turn: f64, sprite: &Bitmap) {
     painter.set_text_align(Align::Start);
     for (label, at) in labels {
         let width = painter.text_width(label, 11.0);
-        painter.fill_rect(Rect::new(at.x - 4.0, at.y - 3.0, width + 8.0, 19.0), FRAME);
+        painter.set_opacity(0.3);
+        painter.fill_rect(Rect::new(at.x - 4.0, at.y - 4.0, width + 8.0, 19.0), FRAME);
+        painter.set_opacity(1.0);
         painter.text(label, at, 11.0, INK);
     }
 }

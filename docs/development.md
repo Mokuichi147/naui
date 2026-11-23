@@ -34,6 +34,7 @@ crates/
   naui-gtk       GTK4 / libadwaita backend
   naui           Facade that picks the backend for the target
   naui-app       Model–View–Update structure on top of naui (optional)
+  naui-charts    Line, bar and scatter charts drawn on Canvas (optional)
 examples/
   counter        Minimal sample
   i18n           Translating an app with Fluent
@@ -43,6 +44,7 @@ examples/
   notes          A notes app split into crates: app, core, screens and a service
   signup         An app whose UI is tested on all four platforms with naui::testing
   gallery        Demo of every widget, by kind
+  charts         Line, bar and scatter charts with naui-charts
 tools/
   winui3-bindgen Tool that regenerates naui-winui3's projection from .winmd files
 ```
@@ -106,6 +108,16 @@ tab is not rendered, so tests that wait for layout (`ResizeObserver`) time out.
 
 ```sh
 NO_HEADLESS=1 cargo test --target wasm32-unknown-unknown -p naui-web
+```
+
+`naui-charts` has unit tests that check the drawing commands without a window
+(tick steps, thinning many points, colors in light and dark), and `tests/ui.rs`,
+which draws charts on each platform's real `Canvas` with `naui::testing`, so that
+the platform measures the text and resolves the colors.
+
+```sh
+cargo test -p naui-charts
+cargo test --target wasm32-unknown-unknown -p naui-charts --test ui
 ```
 
 API compatibility with other targets can be checked with `cargo check`.

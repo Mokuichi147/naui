@@ -22,6 +22,14 @@
 //! over half a second per redraw that way, most of it parsing the string and
 //! rendering the elements, so it was replaced.
 //!
+//! Color roles are read from the theme brushes a `Label` uses
+//! (`TextFillColorPrimaryBrush`, `AccentTextFillColorPrimaryBrush` and so on).
+//! Each is bound with `{ThemeResource}` to the `Foreground` of a collapsed
+//! `TextBlock` inside the `Grid`, so XAML resolves it for the surface's own theme
+//! (naui sets `RequestedTheme` per window) and updates it when that changes; the
+//! brush's color is read at each draw, alpha included. Light or dark is the
+//! `Grid`'s `ActualTheme`, and `ActualThemeChanged` queues a redraw.
+//!
 //! Size changes are caught with `SizeChanged`, and the pointer comes from
 //! `PointerPressed` / `PointerMoved` / `PointerReleased`. Whether the cursor is over
 //! the surface is remembered from those plus the mouse and touchpad share of
@@ -62,8 +70,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use naui_core::{
-    DrawCommand, EventResponse, Modifiers, Painter, Point, PointerButton, PointerEvent,
-    PointerPhase, Result, WheelHandler, WHEEL_STEP,
+    Color, DrawCommand, EventResponse, Modifiers, Painter, Point, PointerButton, PointerEvent,
+    PointerPhase, Result, TextColor, WheelHandler, WHEEL_STEP,
 };
 use naui_winui3::ICompositionDrawingSurfaceInterop;
 use naui_winui3::Microsoft::Graphics::DirectX::{DirectXAlphaMode, DirectXPixelFormat};
@@ -72,13 +80,14 @@ use naui_winui3::Microsoft::UI::Composition::{
 };
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use naui_winui3::Microsoft::UI::Input::{PointerDeviceType, PointerPointProperties};
-use naui_winui3::Microsoft::UI::Xaml::Controls::Grid as XamlGrid;
+use naui_winui3::Microsoft::UI::Xaml::Controls::{Grid as XamlGrid, TextBlock};
 use naui_winui3::Microsoft::UI::Xaml::Hosting::ElementCompositionPreview;
 use naui_winui3::Microsoft::UI::Xaml::Input::{PointerEventHandler, PointerRoutedEventArgs};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::Media::{Brush, SolidColorBrush};
 use naui_winui3::Microsoft::UI::Xaml::{
-    FrameworkElement, RoutedEventHandler, SizeChangedEventHandler, UIElement, XamlRoot,
-    XamlRootChangedEventArgs,
+    ElementTheme, FrameworkElement, RoutedEventHandler, SizeChangedEventHandler, UIElement,
+    XamlRoot, XamlRootChangedEventArgs,
 };
 use windows::Foundation::TypedEventHandler;
 use windows::Graphics::SizeInt32;
@@ -93,9 +102,32 @@ use crate::widgets::{impl_widget, Widget};
 
 /// The base of the surface. With `Background="Transparent"`, pointer hit-testing
 /// remains even where nothing is drawn (`null` lets it pass through).
+///
+/// `{roles}` becomes one collapsed `TextBlock` per color role, in the order of
+/// [`TextColor::ALL`], whose `Foreground` is the role's theme brush.
 const HOST_XAML: &str = r##"<Grid
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-    Background="Transparent"/>"##;
+    Background="Transparent">{roles}</Grid>"##;
+
+/// The theme brush of a color role, the same one a `Label` takes.
+fn role_brush_key(role: TextColor) -> &'static str {
+    // 本文の色は型の段階の `Style` が決める `TextFillColorPrimaryBrush`。
+    role.xaml_brush_key().unwrap_or("TextFillColorPrimaryBrush")
+}
+
+/// The XAML of the `Grid` the surface is built on, with the role probes inside.
+fn host_xaml() -> String {
+    let roles: String = TextColor::ALL
+        .iter()
+        .map(|&role| {
+            format!(
+                r#"<TextBlock Visibility="Collapsed" Foreground="{{ThemeResource {}}}"/>"#,
+                role_brush_key(role)
+            )
+        })
+        .collect();
+    HOST_XAML.replace("{roles}", &roles)
+}
 
 /// The slot for the closure that decides what to draw.
 ///
@@ -251,7 +283,7 @@ impl_widget!(Canvas, native);
 
 impl Canvas {
     pub(crate) fn new() -> Result<Self> {
-        let native: XamlGrid = XamlReader::Load(&HSTRING::from(HOST_XAML))
+        let native: XamlGrid = XamlReader::Load(&HSTRING::from(host_xaml()))
             .and_then(|element| element.cast::<XamlGrid>())
             .map_err(|e| to_error("create the Canvas", e))?;
         // 反転は描画の変換なので、描いた面もポインタの座標も裏返る。描画面は
@@ -324,6 +356,21 @@ impl Canvas {
         element
             .Loaded(&loaded)
             .map_err(|e| to_error("subscribe to Canvas loading", e))?;
+
+        // 明暗が変わると役割の色と `Painter::is_dark` が変わるので描き直す。
+        let target = UiThreadCell::new(Rc::downgrade(&self.0));
+        let theme_changed =
+            TypedEventHandler::<FrameworkElement, windows_core::IInspectable>::new(move |_, _| {
+                let _ = target.try_with_mut(|weak| {
+                    if let Some(inner) = weak.upgrade() {
+                        schedule_paint(&inner);
+                    }
+                });
+                Ok(())
+            });
+        element
+            .ActualThemeChanged(&theme_changed)
+            .map_err(|e| to_error("subscribe to Canvas theme changes", e))?;
         Ok(())
     }
 
@@ -542,6 +589,26 @@ impl Canvas {
         }
     }
 
+    /// Delivers `event` to `on_pointer` as given, as if the user had pressed, moved
+    /// or released the pointer, for tests and automation. A `Wheel` event goes to
+    /// `on_wheel` instead, as with [`send_wheel`](Self::send_wheel). The closure is
+    /// called directly: no pointer message is made, so WinUI and the outer views see
+    /// nothing.
+    pub fn send_pointer(&self, event: PointerEvent) {
+        if event.phase == PointerPhase::Wheel {
+            let _ = self.send_wheel(event);
+        } else {
+            self.0.pointer.emit(event);
+        }
+    }
+
+    /// Delivers `event` to `on_wheel` as if the user had turned the wheel, for tests
+    /// and automation, and returns its answer (`Continue` without `on_wheel`). The
+    /// closure is called directly, so nothing scrolls on `Continue`.
+    pub fn send_wheel(&self, event: PointerEvent) -> EventResponse {
+        self.0.wheel.emit(event)
+    }
+
     /// The current size of the surface (width, height). 0 if not laid out yet.
     pub fn size(&self) -> (f64, f64) {
         self.0.actual_size()
@@ -566,7 +633,7 @@ impl Canvas {
         height: f64,
         scale: f64,
     ) -> Option<(u32, u32, Vec<u8>)> {
-        let mut painter = measured_painter(width, height);
+        let mut painter = self.0.painter(width, height);
         self.0.draw.emit(&mut painter);
         let commands = painter.into_commands();
         render::with_renderer(|renderer| renderer.pixels(width, height, scale, &commands))?.ok()
@@ -616,6 +683,31 @@ fn measured_painter(width: f64, height: f64) -> Painter {
     Painter::with_text_measure(width, height, |text, size| {
         // 描画の装置が作れないときは、何も無い `Painter` と同じ見積もりにする。
         render::measure_text(text, size).unwrap_or_else(|| text.chars().count() as f64 * size * 0.5)
+    })
+}
+
+/// The color and opacity of `role`: the color of its theme brush on the probe inside
+/// `grid` (see [`host_xaml`]) times the brush's opacity. Plain text color for the
+/// appearance if it cannot be read.
+fn role_color(grid: &XamlGrid, role: TextColor, dark: bool) -> (Color, f64) {
+    let read = || -> windows_core::Result<(Color, f64)> {
+        let index = TextColor::ALL
+            .iter()
+            .position(|&r| r == role)
+            .unwrap_or_default();
+        let brush: Brush = grid
+            .Children()?
+            .GetAt(index as u32)?
+            .cast::<TextBlock>()?
+            .Foreground()?;
+        let color = brush.cast::<SolidColorBrush>()?.Color()?;
+        let opacity = f64::from(color.A) / 255.0 * brush.Opacity()?;
+        Ok((Color::rgb(color.R, color.G, color.B), opacity))
+    };
+    read().unwrap_or(if dark {
+        (Color::WHITE, 1.0)
+    } else {
+        (Color::BLACK, 1.0)
     })
 }
 
@@ -813,6 +905,18 @@ impl CanvasInner {
             .unwrap_or(1.0)
     }
 
+    /// A painter for `on_draw`: text measured by DirectWrite, and color roles and
+    /// light or dark from the surface's theme.
+    fn painter(&self, width: f64, height: f64) -> Painter {
+        let dark = self
+            .native
+            .ActualTheme()
+            .is_ok_and(|theme| theme == ElementTheme::Dark);
+        let grid = self.native.clone();
+        measured_painter(width, height)
+            .with_role_colors(dark, move |role| role_color(&grid, role, dark))
+    }
+
     /// Calls `on_draw` and replays the commands onto the surface.
     fn paint(self: &Rc<Self>) {
         let (width, height) = self.actual_size();
@@ -821,7 +925,7 @@ impl CanvasInner {
         }
         self.watch_root();
         let scale = self.rasterization_scale();
-        let mut painter = measured_painter(width, height);
+        let mut painter = self.painter(width, height);
         if !self.draw.emit(&mut painter) {
             return;
         }

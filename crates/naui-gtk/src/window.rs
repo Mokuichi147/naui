@@ -528,6 +528,14 @@ impl Window {
         self.0.on_close_request.set(f);
     }
 
+    /// Tries to close it the way the user does with its close button (for tests and
+    /// automation): `gtk_window_close` without marking it as closed from code, so
+    /// `close-request` asks [`on_close_request`](Self::on_close_request) first, and it
+    /// closes unless the answer is [`CloseResponse::KeepOpen`]. Synchronous.
+    pub fn request_close(&self) {
+        self.0.native.close();
+    }
+
     /// The size of the content area (width, height) in logical pixels, excluding the
     /// header bar and menu bar. With a sidebar attached, it includes the sidebar's
     /// width, as on the other platforms.
@@ -902,6 +910,15 @@ impl Window {
     /// replaces the previous closure.
     pub fn on_file_drop(&self, f: impl FnMut(&[naui_core::FileEntry]) + 'static) {
         crate::file_drop::set_handler(&self.0.native, f);
+    }
+
+    /// Drops `files` onto the window where no widget takes them, the way the user
+    /// drops files from a file manager (for tests and automation): naui's
+    /// `GtkDropTarget` on the window gets `drop`, so
+    /// [`on_file_drop`](Self::on_file_drop) is called with `files` as given. Nothing
+    /// happens if `files` is empty or the window has no `on_file_drop`.
+    pub fn drop_files(&self, files: &[naui_core::FileEntry]) {
+        crate::file_drop::drop_onto(self.0.native.upcast_ref(), files);
     }
 
     /// The corresponding GTK4 window. Public as a backend-specific escape hatch.

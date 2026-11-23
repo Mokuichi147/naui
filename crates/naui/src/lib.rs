@@ -6,7 +6,7 @@ pub use naui_core::{
     with_default_extension, Align, Bitmap, BitmapData, Breakpoint, ButtonRole, ChannelCloser,
     CloseResponse, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, DrawCommand,
     Error, EventResponse, FileEntry, FileFilter, FilePickerMode, Fit, Gradient, GradientShape,
-    GradientStop, GridCell, Key, KeyEvent, LayoutDirection, Length, ListItem, MenuItem,
+    GradientStop, GridCell, Ink, Key, KeyEvent, LayoutDirection, Length, ListItem, MenuItem,
     MenuShortcut, MenuSpec, Modifiers, NavItem, NumberSpec, Orientation, Padding, Paint, Painter,
     Pane, Path, PathSegment, PlaybackState, Point, PointerButton, PointerEvent, PointerPhase,
     PopoverPosition, PopupItem, Rect, Result, RichText, RowMove, ScrollMetrics, ScrollPolicy,
@@ -100,7 +100,7 @@ pub use expander::Expander;
 pub use file_picker::FilePicker;
 pub use file_saver::FileSaver;
 pub use group::{Group, Separator};
-pub use layout::{Grid, Scroll, Spacer};
+pub use layout::{Flow, Grid, Scroll, Spacer};
 pub use list::{List, ListRow};
 pub use media_widgets::{Audio, Image, Video};
 pub use menu_bar::MenuBar;

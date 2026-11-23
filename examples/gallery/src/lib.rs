@@ -172,6 +172,9 @@ pub fn build(ui: &Ui) -> Result<()> {
 /// 長いので、画面ごとにスクロールへ載せて下まで見られるようにする。
 ///
 /// 横は `Never` にしてある。幅はウィンドウに合わせ、縦だけを送る。
+/// `Fill` は窓の最小幅を決めないので、画面の中身より狭い窓では右側が切れる。
+/// 最小幅は付けない。付けると Breakpoint やサイドバーの自動の開閉を試せる
+/// 幅まで窓を狭められなくなる。
 fn scrollable(ui: &Ui, pane: &dyn Widget) -> Result<Scroll> {
     let scroll = ui.scroll()?;
     scroll.set_policy(ScrollPolicy::Never, ScrollPolicy::Auto);

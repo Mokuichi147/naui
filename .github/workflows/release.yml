@@ -327,6 +327,8 @@ jobs:
           publish naui-web
           publish naui-gtk
           publish naui
+          # naui の上に作る別クレート。naui が索引に載ってから検証できる。
+          publish naui-charts
 
   release:
     name: Release を作る
