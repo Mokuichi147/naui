@@ -14395,6 +14395,11 @@ fn native_host_places_a_swap_chain_panel(ui: &Ui) -> Result<()> {
                 "大きさと倍率を伝える: {:?}",
                 sizes.borrow()
             );
+            assert_eq!(
+                sizes.borrow().first().copied(),
+                Some(naui_core::HostSize::new(120.0, 80.0, host.scale_factor())),
+                "レイアウト前の 0 x 0 は伝えない"
+            );
         }
 
         pump_until(HOST_TIMEOUT, || !attached.borrow().is_empty());
@@ -14412,6 +14417,15 @@ fn native_host_places_a_swap_chain_panel(ui: &Ui) -> Result<()> {
             "窓から外れたら伝える"
         );
         assert!(!host.is_attached());
+
+        // 窓を閉じたときに XAML が中身を下ろすかどうかを記録する。
+        let closing = ui.window("NativeHost を閉じる", 240.0, 200.0)?;
+        closing.set_child(&stack);
+        closing.show();
+        pump_until(HOST_TIMEOUT, || attached.borrow().len() == 3);
+        closing.close();
+        pump_until(Duration::from_secs(1), || attached.borrow().len() == 4);
+        println!("     (窓を閉じた後の on_attach: {:?})", attached.borrow());
         Ok(())
     }));
     window.close();

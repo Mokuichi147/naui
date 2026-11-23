@@ -876,6 +876,11 @@ async fn native_host_places_a_foreign_element() {
         "大きさと倍率を伝える: {:?}",
         sizes.borrow()
     );
+    assert_eq!(
+        sizes.borrow().first().copied(),
+        Some(naui_core::HostSize::new(120.0, 80.0, ratio)),
+        "レイアウト前の 0 x 0 は伝えない"
+    );
 
     host.set_sizing(Sizing::fixed(150.0, 90.0));
     next_frames().await;

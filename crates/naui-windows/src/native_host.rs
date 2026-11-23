@@ -226,18 +226,17 @@ impl NativeHost {
         let Ok(children) = self.0.native.Children() else {
             return false;
         };
-        if let Some(current) = &current {
-            if self.0.holds(current) {
-                let _ = children.Clear();
-            }
-        }
+        // 新しいものを先に足し、断られたら何も変えない (表示中の中身を一度も
+        // 下ろさない)。足せてから前のものを外す。
         if let Some(element) = element {
             if children.Append(element).is_err() {
-                // 断られたら前のものを戻す。
-                if let Some(current) = &current {
-                    let _ = children.Append(current);
-                }
                 return false;
+            }
+        }
+        if let Some(current) = &current {
+            let mut index = 0;
+            if children.IndexOf(current, &mut index).unwrap_or(false) {
+                let _ = children.RemoveAt(index);
             }
         }
         *self.0.hosted.borrow_mut() = element.cloned();

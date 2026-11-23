@@ -71,6 +71,10 @@ impl NativeHost {
     /// [`size`](Self::size) and [`scale_factor`](Self::scale_factor) for the
     /// current values.
     ///
+    /// The first call has a size with some area: the 0 × 0 a host has before its
+    /// first layout is not reported. Later the size can become 0 (the host hidden
+    /// on the Web, for example), and that is reported like any change.
+    ///
     /// It runs inside the platform's layout pass on macOS and Linux, and after it on
     /// Windows and the Web, so resize a GPU surface here, but change the layout of
     /// other widgets later (with [`Ui::tasks`](crate::Ui::tasks), for example).
@@ -80,8 +84,10 @@ impl NativeHost {
     }
 
     /// Called with `true` when the host joins a window and `false` when it leaves
-    /// one (it, or a container it is in, is removed or its window is closed).
-    /// Setting it again replaces the previous closure.
+    /// one (it, or a container it is in, is taken out of the window, or the
+    /// window's content is replaced). Setting it again replaces the previous
+    /// closure. Closing a window does not take its content out, so it does not
+    /// count as leaving on macOS, Linux and the Web.
     ///
     /// When it counts as joined differs: on macOS and Linux once it is in the
     /// window's widget tree, shown or not; on Windows when XAML loads it, which is

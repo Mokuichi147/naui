@@ -70,6 +70,9 @@ pub struct HostEvents {
     attach: RefCell<crate::Slot<AttachCallback>>,
     /// The size last reported. `None` before the first report.
     size: Cell<Option<HostSize>>,
+    /// Whether a size with some area has been delivered. Until then, empty sizes
+    /// (what a host reports before its first layout) are only recorded.
+    laid_out: Cell<bool>,
     /// Whether it was last reported as attached.
     attached: Cell<bool>,
 }
@@ -97,17 +100,22 @@ impl HostEvents {
     }
 
     /// Reports the current size. Calls `on_resize` when it differs from the last
-    /// report (the first report always counts, unless it is the zero size at
-    /// scale 1, which is what a host reports before any layout).
+    /// report, except that sizes with no width or no height are only recorded
+    /// until a size with some area has been delivered: before its first layout a
+    /// host reports 0 × 0 at whatever scale the display has. After that, every
+    /// change is delivered, an empty size included (a hidden host on some
+    /// platforms).
     pub fn report_size(&self, size: HostSize) {
         let previous = self.size.replace(Some(size));
-        let changed = match previous {
-            Some(previous) => previous != size,
-            None => size != HostSize::default(),
-        };
-        if changed {
-            emit(&self.resize, size);
+        if previous == Some(size) {
+            return;
         }
+        let empty = !(size.width > 0.0 && size.height > 0.0);
+        if empty && !self.laid_out.get() {
+            return;
+        }
+        self.laid_out.set(true);
+        emit(&self.resize, size);
     }
 
     /// Reports whether the host is in a window now. Calls `on_attach` when it
@@ -155,9 +163,11 @@ mod tests {
             move |size| seen.borrow_mut().push(size)
         });
         events.report_size(HostSize::default());
+        events.report_size(HostSize::new(0.0, 0.0, 2.0));
+        events.report_size(HostSize::new(10.0, 0.0, 2.0));
         assert!(
             seen.borrow().is_empty(),
-            "the unlaid-out size is not a change"
+            "empty sizes before the first layout are not delivered"
         );
         events.report_size(HostSize::new(10.0, 20.0, 1.0));
         events.report_size(HostSize::new(10.0, 20.0, 1.0));
@@ -170,6 +180,23 @@ mod tests {
             ]
         );
         assert_eq!(events.last_size(), Some(HostSize::new(10.0, 20.0, 2.0)));
+        // After the first layout, becoming empty (hidden) is a change too.
+        events.report_size(HostSize::new(0.0, 0.0, 2.0));
+        assert_eq!(seen.borrow().last(), Some(&HostSize::new(0.0, 0.0, 2.0)));
+    }
+
+    #[test]
+    fn the_first_delivery_is_the_first_size_with_area() {
+        let events = HostEvents::default();
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        events.on_resize({
+            let seen = seen.clone();
+            move |size| seen.borrow_mut().push(size)
+        });
+        events.report_size(HostSize::new(0.0, 0.0, 2.0));
+        events.report_size(HostSize::new(0.0, 0.0, 1.0));
+        events.report_size(HostSize::new(120.0, 80.0, 2.0));
+        assert_eq!(*seen.borrow(), vec![HostSize::new(120.0, 80.0, 2.0)]);
     }
 
     #[test]

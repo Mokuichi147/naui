@@ -1988,6 +1988,20 @@ fn native_host_places_a_foreign_view(ui: &Ui) -> Result<()> {
     );
     assert!(!host.is_attached());
     window.close();
+    assert_eq!(
+        sizes.borrow().first().copied(),
+        Some(naui_core::HostSize::new(120.0, 80.0, scale)),
+        "レイアウト前の 0 x 0 は伝えない: {:?}",
+        sizes.borrow()
+    );
+
+    // 閉じても窓の木からは外れないので、外れたとは伝えない (中身を外せば伝える)。
+    let closing = ui.window("native host closing", 240.0, 200.0)?;
+    closing.set_child(&stack);
+    closing.show();
+    closing.close();
+    pump(0.1);
+    assert_eq!(*attached.borrow(), vec![true, false, true]);
     Ok(())
 }
 
