@@ -1680,8 +1680,23 @@ impl Window {
         *self.0.title_label.borrow_mut() = None;
     }
 
+    /// Winds down only this window, when the user closes it while other windows stay
+    /// open. The app keeps running (WinUI ends it only when the last window closes),
+    /// so the `Ui`, its tasks and the handlers shared by every window are left alone.
+    fn clear_content_for_close(&self) {
+        if let Some(layer) = self.0.content_layer.borrow().as_ref() {
+            crate::toast::window_closing(layer);
+        }
+        self.clear_content_for_shutdown();
+        *self.0.visible.borrow_mut() = false;
+    }
+
     /// Removes the Content and child widgets before WinUI's XAML tree is destroyed.
     /// `Destroying` is too late, so it runs in the AppWindow's `Closing`.
+    ///
+    /// Only closing the last open window winds the whole app down (as on macOS and
+    /// GTK, where the app ends with its last window). Closing one of several windows
+    /// clears that window alone.
     pub(crate) fn install_closing_handler(&self, state: &'static UiThreadCell<Option<Ui>>) {
         if self.0.closing_token.get().is_some() {
             return;
@@ -1694,16 +1709,32 @@ impl Window {
             naui_winui3::Microsoft::UI::Windowing::AppWindow,
             naui_winui3::Microsoft::UI::Windowing::AppWindowClosingEventArgs,
         >::new(move |_sender, args| {
+            let closing = window.try_with_mut(|weak| weak.upgrade()).flatten();
             // アプリが閉じないと答えたら、取り消して何も畳まない。
-            let keep = window
-                .try_with_mut(|weak| weak.upgrade())
-                .flatten()
-                .is_some_and(|inner| {
-                    inner.on_close_request.ask() == naui_core::CloseResponse::KeepOpen
-                });
+            let keep = closing.as_ref().is_some_and(|inner| {
+                inner.on_close_request.ask() == naui_core::CloseResponse::KeepOpen
+            });
             if keep {
                 if let Some(args) = args.as_ref() {
                     let _ = args.SetCancel(true);
+                }
+                return Ok(());
+            }
+            // ほかに開いている窓があれば、アプリは続く。この窓だけを片づけ、
+            // `Ui` やタスク、窓をまたいで持つハンドラーには触れない。
+            let others_open = state.with_mut(|slot| {
+                slot.as_ref().is_some_and(|ui| {
+                    ui.0.windows.borrow().iter().any(|other| {
+                        let is_closing = closing
+                            .as_ref()
+                            .is_some_and(|inner| Rc::ptr_eq(&other.0, inner));
+                        !is_closing && *other.0.visible.borrow()
+                    })
+                })
+            });
+            if others_open {
+                if let Some(inner) = closing {
+                    Window(inner).clear_content_for_close();
                 }
                 return Ok(());
             }
