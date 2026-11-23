@@ -1162,20 +1162,38 @@ impl Window {
     /// libadwaita's `close-request` closes the topmost dialog and keeps the window
     /// open, which is what the close button should do, so the dialogs are closed first
     /// here.
+    ///
+    /// libadwaita 1.5 cannot close a dialog before it opens (on its second frame after
+    /// it is mapped). Such a dialog is told it closed, and the window is destroyed
+    /// along with it.
     pub fn close(&self) {
         self.0.closing.set(true);
-        let dialogs = self.0.native.dialogs();
-        // 上に重なったものから閉じる。`force_close` はその場で一覧を変えるので、
-        // 先に取り出しておく。
-        let dialogs: Vec<adw::Dialog> = (0..dialogs.n_items())
-            .rev()
-            .filter_map(|i| dialogs.item(i).and_downcast())
-            .collect();
-        for dialog in dialogs {
+        for dialog in self.dialogs() {
             dialog.force_close();
         }
-        self.0.native.close();
+        let left = self.dialogs();
+        if left.is_empty() {
+            self.0.native.close();
+        } else {
+            // `closed` で naui のダイアログとシートへ取り消しを知らせる。
+            // `close-request` は残ったダイアログを閉じようとして窓を残すので、
+            // 窓は直に壊す (`hide-on-close` でない窓を閉じたときと同じ)。
+            for dialog in left {
+                dialog.emit_by_name::<()>("closed", &[]);
+            }
+            self.0.native.destroy();
+        }
         self.0.closing.set(false);
+    }
+
+    /// The dialogs open on the window, topmost first. Taken out of the list model,
+    /// since closing one changes it on the spot.
+    fn dialogs(&self) -> Vec<adw::Dialog> {
+        let dialogs = self.0.native.dialogs();
+        (0..dialogs.n_items())
+            .rev()
+            .filter_map(|i| dialogs.item(i).and_downcast())
+            .collect()
     }
 
     pub fn is_visible(&self) -> bool {

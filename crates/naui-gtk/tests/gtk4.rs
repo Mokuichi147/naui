@@ -10374,7 +10374,7 @@ fn window_close_closes_the_dialogs_on_it(ui: &Ui) -> Result<()> {
     dialog.open();
     let native = dialog.native_dialog().expect("AdwAlertDialog");
     assert_eq!(native.root().as_ref(), Some(native_window.upcast_ref()));
-    wait_until_shown(native.upcast_ref());
+    wait_until_opened(native.upcast_ref());
     native_window.close();
     pump();
     assert!(
@@ -10404,6 +10404,26 @@ fn window_close_closes_the_dialogs_on_it(ui: &Ui) -> Result<()> {
         [DialogResponse::Cancel, DialogResponse::Cancel]
     );
     assert_eq!(sheet_log.borrow().as_slice(), [DialogResponse::Cancel]);
+
+    // 開いたのと同じ処理の中で閉じても、窓は残らず取り消しが届く
+    // (libadwaita 1.5 はまだ開いていないダイアログを閉じられない)。
+    let window = ui.window("naui", 480.0, 360.0)?;
+    window.show();
+    dialog.open();
+    let native = dialog.native_dialog().expect("AdwAlertDialog");
+    assert_eq!(
+        native.root().as_ref(),
+        Some(window.native_window().upcast_ref())
+    );
+    window.close();
+    assert!(
+        !window.is_visible(),
+        "開く前のダイアログがあっても窓が閉じる"
+    );
+    assert!(!dialog.is_open());
+    assert_eq!(dialog_log.borrow().len(), 3, "取り消しは 1 回だけ届く");
+    pump();
+    assert_eq!(dialog_log.borrow().len(), 3);
     Ok(())
 }
 
@@ -10457,6 +10477,30 @@ fn wait_until_shown(native: &adw::Dialog) {
     };
     spin_until(std::time::Duration::from_secs(2), shown);
     assert!(shown(), "シートが開ききる");
+}
+
+/// Waits until libadwaita has opened `native`, so closing it takes effect.
+///
+/// libadwaita 1.5 opens it on its second frame after it is mapped, and ignores
+/// closing before then. Focus is not enough to tell: on Xvfb, the window takes focus
+/// as it is shown and passes it into the dialog before it opens.
+fn wait_until_opened(native: &adw::Dialog) {
+    wait_until_shown(native);
+    let ticks = Rc::new(Cell::new(0));
+    native.add_tick_callback({
+        let ticks = ticks.clone();
+        move |_, _| {
+            ticks.set(ticks.get() + 1);
+            if ticks.get() >= 3 {
+                glib::ControlFlow::Break
+            } else {
+                glib::ControlFlow::Continue
+            }
+        }
+    });
+    // こちらの数え始めは map より後なので、2 フレーム数えれば開き終えている。
+    spin_until(std::time::Duration::from_secs(2), || ticks.get() >= 3);
+    assert!(ticks.get() >= 3, "ダイアログのフレームが進む");
 }
 
 fn sheet_builds_an_adw_dialog(ui: &Ui) -> Result<()> {
