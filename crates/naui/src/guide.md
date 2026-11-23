@@ -1724,7 +1724,11 @@ brings it back, as in `<canvas>`. Circles and arcs are converted to Béziers by
 
 The typeface is the platform's standard UI font, and `size` is the text size (in
 logical pixels). `at` is the **top** of the text, and horizontally it follows the
-alignment. [`text_width`](Painter::text_width) measures a line with the font the
+alignment. The top is the top of the em box (the font's ascent and descent scaled
+to add up to `size`, as with `textBaseline = "top"` on a `<canvas>`), so a line
+spans `at.y` to `at.y + size` on every platform with its baseline about
+0.8 × `size` down; to center a line on `y`, pass `y - size / 2.0`.
+[`text_width`](Painter::text_width) measures a line with the font the
 platform draws it in (Core Text, Pango, DirectWrite, `measureText`), so labels can
 be laid out and given room; the widths differ slightly between platforms, as the
 fonts do.

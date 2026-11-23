@@ -59,6 +59,8 @@ mod window;
 
 pub use bitmap::{Bitmap, BitmapData};
 pub use button::ButtonRole;
+#[doc(hidden)]
+pub use canvas::text_baseline_offset;
 pub use canvas::{
     DrawCommand, Gradient, GradientShape, GradientStop, Ink, Paint, Painter, Path, PathSegment,
     Point, PointerButton, PointerEvent, PointerPhase, Rect, Transform, WheelHandler, WHEEL_STEP,

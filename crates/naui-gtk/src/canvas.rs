@@ -50,9 +50,9 @@ use gtk::cairo;
 use gtk::pango;
 use gtk::prelude::*;
 use naui_core::{
-    Align, Bitmap, BitmapData, Color, DrawCommand, EventResponse, Gradient, GradientShape, Paint,
-    Painter, Path, PathSegment, Point, PointerButton, PointerEvent, PointerPhase, Rect, TextColor,
-    WheelHandler, WHEEL_STEP,
+    text_baseline_offset, Align, Bitmap, BitmapData, Color, DrawCommand, EventResponse, Gradient,
+    GradientShape, Paint, Painter, Path, PathSegment, Point, PointerButton, PointerEvent,
+    PointerPhase, Rect, TextColor, WheelHandler, WHEEL_STEP,
 };
 
 use crate::bin::SizeBin;
@@ -478,7 +478,7 @@ fn replay(area: &gtk::DrawingArea, cr: &cairo::Context, commands: &[DrawCommand]
                 };
                 let (r, g, b) = color.to_unit();
                 cr.set_source_rgba(r, g, b, *opacity);
-                cr.move_to(x, at.y);
+                cr.move_to(x, text_top(&layout, at.y, *size));
                 pangocairo::functions::show_layout(cr, &layout);
                 cr.new_path();
             }
@@ -521,6 +521,26 @@ fn text_layout(area: &gtk::DrawingArea, text: &str, size: f64) -> pango::Layout 
     font.set_absolute_size(size * f64::from(pango::SCALE));
     layout.set_font_description(Some(&font));
     layout
+}
+
+/// Where to draw `layout` from so its baseline lands where
+/// [`Painter::text`](naui_core::Painter::text) puts it: the em box of the layout's
+/// first font starting at `at_y`.
+///
+/// Pango lays a line out from the top of the font's whole ascent, which reaches
+/// higher than the em box, so drawing from `at_y` would put text lower than the
+/// other platforms do.
+fn text_top(layout: &pango::Layout, at_y: f64, size: f64) -> f64 {
+    let scale = f64::from(pango::SCALE);
+    let (ascent, descent) = layout
+        .font_description()
+        .and_then(|font| layout.context().load_font(&font))
+        .map_or((0.0, 0.0), |font| {
+            let metrics = font.metrics(None);
+            (f64::from(metrics.ascent()), f64::from(metrics.descent()))
+        });
+    let baseline = f64::from(layout.baseline()) / scale;
+    at_y + text_baseline_offset(size, ascent, descent) - baseline
 }
 
 /// The logical width of a layout, in logical pixels (not rounded to whole pixels).

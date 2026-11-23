@@ -759,6 +759,56 @@ fn canvas_paints_recorded_commands() {
     });
 }
 
+/// `Painter::text`'s `at.y` is the top of the em box, as on the other platforms:
+/// the baseline of an "H" 40 high drawn from y = 10 comes about 0.8 × 40 lower,
+/// the font's ascent over its ascent plus descent.
+#[wasm_bindgen_test]
+fn canvas_text_top_is_the_em_box() {
+    with_ui(|ui| {
+        let canvas = ui.canvas()?;
+        canvas.set_sizing(
+            Sizing::new()
+                .width(Length::Fixed(120.0))
+                .height(Length::Fixed(80.0)),
+        );
+        canvas.on_draw(|painter| {
+            painter.fill_rect(painter.bounds(), Color::WHITE);
+            painter.text("H", Point::new(10.0, 10.0), 40.0, Color::BLACK);
+        });
+        let _mounted = Mounted::new(&canvas);
+        canvas.draw_for_test();
+
+        let native = canvas.native_canvas();
+        let (width, height) = (native.width(), native.height());
+        let ratio = f64::from(width) / 120.0;
+        let context: CanvasRenderingContext2d = native
+            .get_context("2d")
+            .expect("2D コンテキスト")
+            .expect("2D コンテキスト")
+            .unchecked_into();
+        let data = context
+            .get_image_data(0.0, 0.0, f64::from(width), f64::from(height))
+            .expect("画素の読み出し")
+            .data();
+        let dark = |x: u32, y: u32| {
+            let i = ((y * width + x) * 4) as usize;
+            u32::from(data[i]) + u32::from(data[i + 1]) + u32::from(data[i + 2]) < 384
+        };
+        let inked: Vec<u32> = (0..height)
+            .filter(|&y| (0..width).any(|x| dark(x, y)))
+            .collect();
+        let top = f64::from(inked[0]) / ratio;
+        let baseline = f64::from(inked[inked.len() - 1] + 1) / ratio;
+        let depth = baseline - 10.0;
+        assert!(
+            (28.8..=35.2).contains(&depth),
+            "baseline は em box の上端から大きさの 0.8 倍ほど下: 上端から {depth} (H は {top}..{baseline})"
+        );
+        assert!(top >= 9.0, "H の上は em box の中: {top}");
+        Ok(())
+    });
+}
+
 /// 4 x 4 RGBA pixels: the top two rows red, the bottom two blue.
 fn two_bands() -> Vec<u8> {
     (0..16)

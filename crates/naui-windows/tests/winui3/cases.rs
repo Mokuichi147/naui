@@ -575,6 +575,10 @@ const CASES: &[Case] = &[
         canvas_commands_become_pixels,
     ),
     (
+        "描画面の文字の上端は em box の上端 (Direct2D)",
+        canvas_text_top_is_the_em_box,
+    ),
+    (
         "描画面の切り抜き・回転・グラデーション・画像・文字幅が Direct2D で効く",
         canvas_draws_the_broader_vocabulary,
     ),
@@ -1558,6 +1562,39 @@ fn canvas_commands_become_pixels(ui: &Ui) -> Result<()> {
         "倍率を下げて右端まで描くこと"
     );
     Ok(())
+}
+
+/// `Painter::text`'s `at.y` is the top of the em box, as on the other platforms:
+/// the baseline of an "H" 40 high drawn from y = 10 comes about 0.8 × 40 lower.
+/// DirectWrite lays a line out from the top of Segoe UI's whole ascent (1.08 × the
+/// size), and drawing from there put the baseline 43 below.
+fn canvas_text_top_is_the_em_box(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    canvas.on_draw(|painter| {
+        painter.text("H", Point::new(10.0, 10.0), 40.0, Color::BLACK);
+    });
+    let Some(pixels) = canvas.pixels_for_test(120.0, 80.0, 1.0) else {
+        println!("     (Direct2D を使えない環境なので、確かめずに通す)");
+        return Ok(());
+    };
+    let inked: Vec<u32> = (0..pixels.1)
+        .filter(|&y| (0..pixels.0).any(|x| pixel(&pixels, x, y).3 > 128))
+        .collect();
+    let (top, bottom) = (inked[0], inked[inked.len() - 1]);
+    assert_em_box_baseline(top, bottom + 1);
+    Ok(())
+}
+
+/// Checks the rows an "H" 40 high drawn from y = 10 was inked over: the baseline
+/// (the row below the bottom of the H) is 0.72 to 0.88 × 40 below 10, and the top
+/// of the H is inside the em box.
+fn assert_em_box_baseline(top: u32, baseline: u32) {
+    let depth = f64::from(baseline) - 10.0;
+    assert!(
+        (28.8..=35.2).contains(&depth),
+        "baseline は em box の上端から大きさの 0.8 倍ほど下: 上端から {depth} (H は {top}..{baseline})"
+    );
+    assert!(top >= 9, "H の上は em box の中: {top}");
 }
 
 /// 4 x 4 RGBA pixels: the top two rows red, the bottom two blue.

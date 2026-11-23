@@ -109,7 +109,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
                 painter.set_dash(&[]);
                 painter.text(
                     &format!("{value:.0}"),
-                    Point::new(plot.x - 8.0, y - 7.0),
+                    Point::new(plot.x - 8.0, y - 5.5),
                     11.0,
                     INK,
                 );
@@ -511,7 +511,7 @@ fn draw_extras(painter: &mut naui::Painter, turn: f64, sprite: &Bitmap) {
     );
     // 文字も一緒に回る。
     painter.set_text_align(Align::Center);
-    painter.text("naui", Point::new(0.0, -7.0), 12.0, Color::WHITE);
+    painter.text("naui", Point::new(0.0, -6.0), 12.0, Color::WHITE);
     painter.restore();
 
     // 画像を 4 倍に引き伸ばしたものと、その左上の 4 分の 1 を同じ大きさで。
@@ -533,7 +533,7 @@ fn draw_extras(painter: &mut naui::Painter, turn: f64, sprite: &Bitmap) {
     for (label, at) in labels {
         let width = painter.text_width(label, 11.0);
         painter.set_opacity(0.3);
-        painter.fill_rect(Rect::new(at.x - 4.0, at.y - 3.0, width + 8.0, 19.0), FRAME);
+        painter.fill_rect(Rect::new(at.x - 4.0, at.y - 4.0, width + 8.0, 19.0), FRAME);
         painter.set_opacity(1.0);
         painter.text(label, at, 11.0, INK);
     }

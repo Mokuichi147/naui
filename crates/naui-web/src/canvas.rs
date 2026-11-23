@@ -48,9 +48,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::{Rc, Weak};
 
 use naui_core::{
-    Align, Bitmap, BitmapData, Color, DrawCommand, EventResponse, Gradient, GradientShape,
-    Modifiers, Paint, Painter, Path, PathSegment, Point, PointerButton, PointerEvent, PointerPhase,
-    Rect, Result, TextColor, WheelHandler, WHEEL_STEP,
+    text_baseline_offset, Align, Bitmap, BitmapData, Color, DrawCommand, EventResponse, Gradient,
+    GradientShape, Modifiers, Paint, Painter, Path, PathSegment, Point, PointerButton,
+    PointerEvent, PointerPhase, Rect, Result, TextColor, WheelHandler, WHEEL_STEP,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{Clamped, JsCast, JsValue};
@@ -635,13 +635,22 @@ fn replay(inner: &Rc<CanvasInner>, commands: &[DrawCommand]) {
                 context.set_global_alpha(*opacity);
                 context.set_fill_style_str(&color.to_hex());
                 context.set_font(&font(*size));
-                context.set_text_baseline("top");
+                // `textBaseline = "top"` の em box はブラウザが決める (Chrome の
+                // Segoe UI では baseline の 0.776 倍上で、ascent と descent の比の
+                // 0.812 と違う) ので、ほかの環境と同じくフォントの ascent と
+                // descent から baseline を決めて描く。
+                // 測れないブラウザでは NaN になり、大きさの 0.8 倍に落ちる。
+                context.set_text_baseline("alphabetic");
+                let (ascent, descent) = context.measure_text(text).map_or((0.0, 0.0), |m| {
+                    (m.font_bounding_box_ascent(), m.font_bounding_box_descent())
+                });
                 context.set_text_align(match align {
                     Align::Center => "center",
                     Align::End => "right",
                     Align::Start | Align::Fill => "left",
                 });
-                let _ = context.fill_text(text, at.x, at.y);
+                let baseline = at.y + text_baseline_offset(*size, ascent, descent);
+                let _ = context.fill_text(text, at.x, baseline);
             }
             DrawCommand::Image {
                 bitmap,

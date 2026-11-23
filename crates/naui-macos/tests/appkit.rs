@@ -104,6 +104,10 @@ fn main() {
             canvas_paints_recorded_commands,
         ),
         (
+            "描画面の文字の上端は em box の上端 (AppKit)",
+            canvas_text_top_is_the_em_box,
+        ),
+        (
             "描画面の切り抜き・回転・グラデーション・画像・文字幅が AppKit で効く",
             canvas_draws_the_broader_vocabulary,
         ),
@@ -1979,6 +1983,56 @@ fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
     canvas.redraw();
     view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
     assert!(sizes.borrow().len() > drawn, "描き直しで呼ばれること");
+    window.close();
+    Ok(())
+}
+
+/// `Painter::text`'s `at.y` is the top of the em box, as on the other platforms:
+/// the baseline of an "H" 40 high drawn from y = 10 comes about 0.8 × 40 lower.
+/// `drawAtPoint:` lays a line out from the top of the font's whole ascender, and
+/// drawing from there put the baseline about 0.95 × 40 lower.
+fn canvas_text_top_is_the_em_box(ui: &Ui) -> Result<()> {
+    let canvas = ui.canvas()?;
+    canvas.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(120.0))
+            .height(Length::Fixed(80.0)),
+    );
+    canvas.on_draw(|painter| {
+        painter.fill_rect(painter.bounds(), Color::WHITE);
+        painter.text("H", Point::new(10.0, 10.0), 40.0, Color::BLACK);
+    });
+    let window = ui.window("canvas", 200.0, 160.0)?;
+    window.set_child(&canvas);
+    window.show();
+    let view = canvas.native_view();
+    view.layoutSubtreeIfNeeded();
+    let bounds = view.bounds();
+    let bitmap = view
+        .bitmapImageRepForCachingDisplayInRect(bounds)
+        .expect("ビットマップを用意できること");
+    view.cacheDisplayInRect_toBitmapImageRep(bounds, &bitmap);
+
+    // Retina では 1 論理ピクセルが複数の画素になるので、画素の行を倍率で割る。
+    let scale = bitmap.pixelsWide() as f64 / bounds.size.width;
+    let dark = |x: isize, y: isize| {
+        let color = bitmap.colorAtX_y(x, y).expect("画素が読めること");
+        let srgb = color
+            .colorUsingColorSpace(&NSColorSpace::sRGBColorSpace())
+            .expect("sRGB へ変換できること");
+        srgb.redComponent() + srgb.greenComponent() + srgb.blueComponent() < 1.5
+    };
+    let inked: Vec<isize> = (0..bitmap.pixelsHigh())
+        .filter(|&y| (0..bitmap.pixelsWide()).any(|x| dark(x, y)))
+        .collect();
+    let top = inked[0] as f64 / scale;
+    let baseline = (inked[inked.len() - 1] + 1) as f64 / scale;
+    let depth = baseline - 10.0;
+    assert!(
+        (28.8..=35.2).contains(&depth),
+        "baseline は em box の上端から大きさの 0.8 倍ほど下: 上端から {depth} (H は {top}..{baseline})"
+    );
+    assert!(top >= 9.0, "H の上は em box の中: {top}");
     window.close();
     Ok(())
 }

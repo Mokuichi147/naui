@@ -240,6 +240,10 @@ that shape are covered in
   orientation is applied differs by platform. Stretched parts of an image can take
   in the pixels just outside them at their edges. Its size is not decided by its
   content, so specify it with `set_sizing`.
+- `Canvas` text starts at the top of its em box everywhere, but where the baseline
+  falls inside it comes from each platform's UI font (about 0.8 × the size: 0.81
+  for Segoe UI), so the same text can sit up to a pixel or so apart between
+  platforms. `Painter` measures widths only, not heights or baselines.
 - Gradient stops that differ in both color and opacity blend slightly differently
   between platforms (some interpolate premultiplied colors, some not). Stops of one
   color fading out look the same everywhere.
