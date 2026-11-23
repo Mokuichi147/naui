@@ -1804,7 +1804,22 @@ fn canvas_follows_light_and_dark(ui: &Ui) -> Result<()> {
     window.set_child(&canvas);
     window.show();
     let area = canvas.native_area();
-    tick(&area);
+    // `dark` は切り替えてすぐ変わるが、窓の CSS が新しい外観になるのは何フレームか
+    // 後のことがある (Ubuntu 26.04 の libadwaita 1.9 で 10 フレームほど)。そのあいだの
+    // 描画は古い文字色を読むので、面の文字色が求めた側へ移るまで待つ。移れば GTK が
+    // 描き直しを積む。
+    let settle = |dark: bool| {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            tick(&area);
+            let c = area.color();
+            let lit = c.red() + c.green() + c.blue() > 1.5;
+            if lit == dark || std::time::Instant::now() >= deadline {
+                break;
+            }
+        }
+    };
+    settle(false);
     // 描画をレンダーノードへ取り、cairo の画像へ落として (左の色, 右の色) を読む。
     let render = || {
         let snapshot = gtk::Snapshot::new();
@@ -1836,8 +1851,9 @@ fn canvas_follows_light_and_dark(ui: &Ui) -> Result<()> {
         "明るい外観の危険の色は赤寄り: {light:?}"
     );
     assert!(!light.0, "明るい外観では is_dark が偽");
+    // libadwaita は rgb(0 0 6 / 80%) だが、Ubuntu の libadwaita は不透明な #3d3d3d。
     assert!(
-        brightness(light.1 .0) < 150,
+        brightness(light.1 .0) < 300,
         "明るい外観の文字色は暗い: {light:?}"
     );
     assert!(
@@ -1845,14 +1861,14 @@ fn canvas_follows_light_and_dark(ui: &Ui) -> Result<()> {
         "副次の文字色は本文より薄い (.dim-label の不透明度): {light:?}"
     );
     assert!(
-        u32::from(left.0) + u32::from(left.1) + u32::from(left.2) < 150 && left.3 > 128,
+        u32::from(left.0) + u32::from(left.1) + u32::from(left.2) < 300 && left.3 > 128,
         "明るい外観では役割の色が暗く塗られる: {left:?}"
     );
     let drawn = seen.borrow().len();
 
     // テーマを切り替えるだけで (redraw を呼ばずに) 描き直される。
     window.set_theme(Theme::Dark)?;
-    tick(&area);
+    settle(true);
     let (left, right) = render();
     assert!(
         seen.borrow().len() > drawn,
