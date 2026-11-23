@@ -112,7 +112,7 @@ checksum = "9330f8b2ff13f34540b44e946ef35111825727b38d33286ef986142615121801"
 
 [[package]]
 name = "charts"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "naui",
  "naui-charts",
@@ -120,7 +120,7 @@ dependencies = [
 
 [[package]]
 name = "checklist"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "naui",
  "naui-app",
@@ -134,7 +134,7 @@ checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "counter"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "naui",
 ]
@@ -341,7 +341,7 @@ dependencies = [
 
 [[package]]
 name = "gallery"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "naui",
 ]
@@ -617,7 +617,7 @@ dependencies = [
 
 [[package]]
 name = "i18n"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "fluent",
  "fluent-langneg",
@@ -751,7 +751,7 @@ dependencies = [
 
 [[package]]
 name = "naui"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "naui-core",
  "naui-gtk",
@@ -763,7 +763,7 @@ dependencies = [
 
 [[package]]
 name = "naui-app"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "naui",
  "naui-core",
@@ -771,7 +771,7 @@ dependencies = [
 
 [[package]]
 name = "naui-charts"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "naui",
  "wasm-bindgen-test",
@@ -779,11 +779,11 @@ dependencies = [
 
 [[package]]
 name = "naui-core"
-version = "0.18.0"
+version = "0.19.0"
 
 [[package]]
 name = "naui-gtk"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "gtk4",
  "libadwaita",
@@ -793,7 +793,7 @@ dependencies = [
 
 [[package]]
 name = "naui-macos"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "block2",
  "dispatch2",
@@ -810,7 +810,7 @@ dependencies = [
 
 [[package]]
 name = "naui-web"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "js-sys",
  "naui-core",
@@ -822,7 +822,7 @@ dependencies = [
 
 [[package]]
 name = "naui-windows"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "flate2",
  "naui-core",
@@ -835,7 +835,7 @@ dependencies = [
 
 [[package]]
 name = "naui-winui3"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "flate2",
  "roxmltree",
@@ -850,7 +850,7 @@ dependencies = [
 
 [[package]]
 name = "notes"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "naui",
  "naui-app",
@@ -864,11 +864,11 @@ dependencies = [
 
 [[package]]
 name = "notes-core"
-version = "0.18.0"
+version = "0.19.0"
 
 [[package]]
 name = "notes-editor"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "naui",
  "naui-app",
@@ -878,7 +878,7 @@ dependencies = [
 
 [[package]]
 name = "notes-l10n"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "fluent",
  "fluent-langneg",
@@ -887,7 +887,7 @@ dependencies = [
 
 [[package]]
 name = "notes-list"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "naui",
  "naui-app",
@@ -897,7 +897,7 @@ dependencies = [
 
 [[package]]
 name = "notes-sidebar"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "naui",
  "naui-app",
@@ -907,7 +907,7 @@ dependencies = [
 
 [[package]]
 name = "notes-store"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "notes-core",
 ]
@@ -1296,7 +1296,7 @@ dependencies = [
 
 [[package]]
 name = "search"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "naui",
  "naui-app",
@@ -1385,7 +1385,7 @@ checksum = "f8fadd59c855ef2080decdef8ff161eb6661b86933c9d82e5ba29dc602a55aba"
 
 [[package]]
 name = "signup"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "naui",
  "wasm-bindgen-test",
@@ -1483,7 +1483,7 @@ dependencies = [
 
 [[package]]
 name = "todo"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "naui",
  "naui-app",
