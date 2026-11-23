@@ -808,6 +808,14 @@ const CASES: &[Case] = &[
         "check_url が open_url と同じく読めない URL を断り、読めるものは開かずに通す",
         check_url_reads_without_opening,
     ),
+    (
+        "NativeHost が SwapChainPanel を置き、大きさ・倍率・窓への出入りを伝える",
+        native_host_places_a_swap_chain_panel,
+    ),
+    (
+        "NativeHost は親のある要素を断り、差し替えと破棄で外して放す",
+        native_host_lets_go_of_elements,
+    ),
 ];
 
 fn sheet_configuration_reaches_the_content_dialog(ui: &Ui) -> Result<()> {
@@ -14314,5 +14322,157 @@ fn check_url_reads_without_opening(ui: &Ui) -> Result<()> {
     // 開くなら既定のブラウザが立ち上がる。読むだけなので何も出ない。
     assert!(ui.check_url("https://example.com/naui").is_ok());
     assert!(ui.check_url("mailto:someone@example.com").is_ok());
+    Ok(())
+}
+
+// ------------------------------------------------------------ NativeHost
+
+/// How long to wait for XAML to lay out or load a host.
+const HOST_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// A `SwapChainPanel` made by XAML itself. naui's projection does not name the type,
+/// as a drawing crate's projection would, so it goes through `UIElement`.
+fn swap_chain_panel() -> UIElement {
+    use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+    XamlReader::Load(&HSTRING::from(
+        r#"<SwapChainPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"/>"#,
+    ))
+    .and_then(|object| object.cast::<UIElement>())
+    .expect("SwapChainPanel を作れること")
+}
+
+fn native_host_places_a_swap_chain_panel(ui: &Ui) -> Result<()> {
+    let host = ui.native_host()?;
+    host.set_sizing(Sizing::fixed(120.0, 80.0));
+    let panel = swap_chain_panel();
+    assert!(host.set_hosted_element(Some(&panel)));
+    assert!(host
+        .hosted_element()
+        .is_some_and(|element| element == panel));
+    let children = native::<Grid>(&host).Children().expect("Children");
+    assert_eq!(children.Size().expect("数"), 1);
+    assert!(
+        children.GetAt(0).expect("子") == panel,
+        "受け皿の子になること"
+    );
+
+    let sizes = Rc::new(RefCell::new(Vec::new()));
+    host.on_resize({
+        let sizes = sizes.clone();
+        move |size| sizes.borrow_mut().push(size)
+    });
+    let attached = Rc::new(RefCell::new(Vec::new()));
+    host.on_attach({
+        let attached = attached.clone();
+        move |value| attached.borrow_mut().push(value)
+    });
+    assert!(!host.is_attached());
+    assert_eq!(host.scale_factor(), 1.0, "窓に入る前は 1");
+
+    let window = ui.window("NativeHost", 240.0, 200.0)?;
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+        let stack = ui.stack(Orientation::Vertical)?;
+        stack.append(&host);
+        window.set_child(&stack);
+        window.show();
+        pump_until(HOST_TIMEOUT, || !sizes.borrow().is_empty());
+        if sizes.borrow().is_empty() {
+            println!("     (受け皿に実寸が付かない環境なので、大きさは確かめない)");
+        } else {
+            assert_eq!(host.size(), (120.0, 80.0), "指定した大きさになること");
+            let element: FrameworkElement = panel.cast().expect("FrameworkElement");
+            assert_eq!(
+                (
+                    element.ActualWidth().expect("幅"),
+                    element.ActualHeight().expect("高さ")
+                ),
+                (120.0, 80.0),
+                "置いた要素が受け皿いっぱいに広がること"
+            );
+            assert_eq!(
+                sizes.borrow().last().copied(),
+                Some(naui_core::HostSize::new(120.0, 80.0, host.scale_factor())),
+                "大きさと倍率を伝える: {:?}",
+                sizes.borrow()
+            );
+        }
+
+        pump_until(HOST_TIMEOUT, || !attached.borrow().is_empty());
+        if attached.borrow().is_empty() {
+            println!("     (Loaded が届かない環境なので、窓への出入りは確かめない)");
+            return Ok(());
+        }
+        assert_eq!(*attached.borrow(), vec![true], "窓に載ったら伝える");
+        assert!(host.is_attached());
+        window.set_child(&ui.label("空")?);
+        pump_until(HOST_TIMEOUT, || attached.borrow().len() == 2);
+        assert_eq!(
+            *attached.borrow(),
+            vec![true, false],
+            "窓から外れたら伝える"
+        );
+        assert!(!host.is_attached());
+        Ok(())
+    }));
+    window.close();
+    match outcome {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+fn native_host_lets_go_of_elements(ui: &Ui) -> Result<()> {
+    let host = ui.native_host()?;
+    let children = native::<Grid>(&host).Children().expect("Children");
+    let first: UIElement = TextBlock::new()
+        .expect("TextBlock")
+        .cast()
+        .expect("UIElement");
+    assert!(host.set_hosted_element(Some(&first)));
+
+    // ほかの親を持つ要素は XAML が断るので、前のものを残して false を返す。
+    let elsewhere = StackPanel::new().expect("StackPanel");
+    let owned: UIElement = TextBlock::new()
+        .expect("TextBlock")
+        .cast()
+        .expect("UIElement");
+    elsewhere
+        .Children()
+        .expect("Children")
+        .Append(&owned)
+        .expect("追加");
+    assert!(!host.set_hosted_element(Some(&owned)), "親のある要素は断る");
+    assert_eq!(children.Size().expect("数"), 1);
+    assert!(
+        children.GetAt(0).expect("子") == first,
+        "断ったときは前のものを残す"
+    );
+    assert!(host
+        .hosted_element()
+        .is_some_and(|element| element == first));
+
+    let second = swap_chain_panel();
+    assert!(host.set_hosted_element(Some(&second)));
+    assert_eq!(children.Size().expect("数"), 1);
+    assert!(children.GetAt(0).expect("子") == second);
+    // 外した要素は親を持たないので、ほかへ入れられる。
+    StackPanel::new()
+        .expect("StackPanel")
+        .Children()
+        .expect("Children")
+        .Append(&first)
+        .expect("差し替えた前の要素は受け皿から外れていること");
+
+    // 同じものを渡し直しても何も変わらない。
+    assert!(host.set_hosted_element(Some(&second)));
+    assert_eq!(children.Size().expect("数"), 1);
+
+    assert!(host.set_hosted_element(None));
+    assert_eq!(children.Size().expect("数"), 0, "空にすると外す");
+    assert!(host.hosted_element().is_none());
+
+    assert!(host.set_hosted_element(Some(&second)));
+    drop(host);
+    assert_eq!(children.Size().expect("数"), 0, "受け皿を落とすと外す");
     Ok(())
 }

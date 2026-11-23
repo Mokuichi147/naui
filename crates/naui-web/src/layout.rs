@@ -110,7 +110,7 @@ pub(crate) fn apply_sizing(element: &Element, sizing: Sizing) {
     // ので親を押し広げず、封じ込めると Auto の行のように自然な大きさで決まる所で
     // 0 に潰れて見えなくなる (`contain-intrinsic-*` で上限を渡しても、Firefox では
     // 0 のままだった)。Auto の行では、画素の大きさを上限で抑えた大きさになる。
-    if is_picture(element) {
+    if is_picture(element) || element.has_attribute(HOST_FRAME_ATTR) {
         let has_auto = matches!(sizing.width, naui_core::Length::Auto)
             || matches!(sizing.height, naui_core::Length::Auto);
         let capped_fill = (sizing.width.is_fill() && sizing.max_width.is_some())
@@ -314,6 +314,10 @@ pub(crate) const PICTURE_FRAME_ATTR: &str = "data-naui-picture";
 pub(crate) fn is_picture(element: &Element) -> bool {
     element.has_attribute(PICTURE_FRAME_ATTR)
 }
+
+/// The attribute marking a `NativeHost`'s frame. Its size containment follows the
+/// same rule as a picture frame's ([`apply_sizing`]).
+pub(crate) const HOST_FRAME_ATTR: &str = "data-naui-native-host";
 
 /// Stretches the element to the parent's size on one axis (`stretch`).
 ///
