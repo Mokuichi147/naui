@@ -960,6 +960,64 @@ fn calendar_arrow_keys_move_the_selection() {
         assert_eq!(calendar.value(), DateTime::new(2026, 12, 23, 9, 30));
         assert_eq!(seen.borrow().len(), 4);
 
+        // 日のボタンは作り直されるが、押した日にフォーカスがあれば新しい日へ移る。
+        // 通知の中で値を変えても同じ (表の外のフォーカスは奪わない)。
+        let active_day = || {
+            web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.active_element())
+                .and_then(|e| e.get_attribute("data-day"))
+        };
+        let tenth = calendar
+            .native_table()
+            .query_selector("button[data-day=\"10\"]")
+            .ok()
+            .flatten()
+            .expect("10 日")
+            .unchecked_into::<HtmlElement>();
+        tenth.focus().unwrap();
+        tenth.click();
+        assert_eq!(calendar.value(), DateTime::new(2026, 12, 10, 9, 30));
+        assert_eq!(
+            active_day().as_deref(),
+            Some("10"),
+            "押した日にフォーカスが残る"
+        );
+        calendar.on_change({
+            let calendar = calendar.clone();
+            move |_| calendar.set_value(DateTime::new(2026, 12, 23, 9, 30))
+        });
+        press_shortcut(
+            &selected_button(&calendar),
+            "ArrowDown",
+            false,
+            false,
+            false,
+        );
+        assert_eq!(calendar.value(), DateTime::new(2026, 12, 23, 9, 30));
+        assert_eq!(
+            active_day().as_deref(),
+            Some("23"),
+            "通知の中で変えた日へ移る"
+        );
+        calendar.on_change({
+            let seen = seen.clone();
+            move |value| seen.borrow_mut().push(value)
+        });
+        seen.borrow_mut().truncate(4);
+        // 表の外にフォーカスがあるときの pick は、フォーカスを奪わない。
+        let (_, next) = calendar.native_month_buttons();
+        next.focus().unwrap();
+        calendar.pick(DateTime::date(2026, 12, 2));
+        assert_eq!(
+            web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.active_element()),
+            Some(next.clone().unchecked_into::<Element>())
+        );
+        calendar.set_value(DateTime::new(2026, 12, 23, 9, 30));
+        seen.borrow_mut().truncate(4);
+
         // 右から左の配置では左右が入れ替わる。
         let _ = calendar.native_element().set_attribute("dir", "rtl");
         press_shortcut(

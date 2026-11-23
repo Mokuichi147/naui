@@ -1662,8 +1662,9 @@ or several days (WinUI's multiple selection) is something only one platform has.
 a range (macOS, Windows, and the Web, which composes the calendar from buttons),
 the days outside it cannot be clicked; `GtkCalendar` has none, so there the
 selection is moved back to the nearest end. On Linux the arrows in the header also
-move the selection to the next month or year, which notifies; on the other
-platforms they only show another month.
+move the selection to the next month or year, which notifies; on Windows and the
+Web they only show another month. (`on_change` reports whatever the native calendar
+selects, so an app need not care which.)
 
 The Web has no always-visible calendar control, so naui composes one from DOM
 parts without drawing anything itself: the selected day is marked with `<mark>`

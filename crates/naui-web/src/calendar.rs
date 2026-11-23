@@ -16,9 +16,12 @@
 //!   browsers that do not provide it.
 //!
 //! The only styles are for layout (the header in a row, buttons as wide as their
-//! column, an invisible button keeping the height of a week without days). The month buttons only show another month; the selected day stays.
-//! The arrow keys move the selection (left / right by a day, swapped in
-//! right-to-left text, up / down by a week, Page Up / Page Down by a month).
+//! column, an invisible button keeping the height of a week without days). The
+//! month buttons only show another month; the selected day stays. The arrow keys
+//! move the selection (left / right by a day, swapped in right-to-left text, up /
+//! down by a week, Page Up / Page Down by a month). The day buttons are made anew
+//! for each change, so when one of them had the keyboard focus, it moves to the new
+//! selected day (or the first selectable day of the month shown).
 
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
@@ -255,17 +258,12 @@ impl Calendar {
     }
 
     /// Selects a day as the user does, and notifies if the value changed.
-    fn select(&self, year: i32, month: u8, day: u8, focus: bool) {
+    fn select(&self, year: i32, month: u8, day: u8) {
         let accepted = self.clamp(self.value().with_date(year, month, day));
         let changed = accepted != self.value();
         self.0.value.set(accepted);
         self.0.shown.set((accepted.year, accepted.month));
         self.render();
-        if focus {
-            if let Some(button) = self.day_button(accepted.day) {
-                let _ = button.focus();
-            }
-        }
         if changed {
             self.0.on_change.emit(accepted);
         }
@@ -296,7 +294,7 @@ impl Calendar {
             return;
         };
         let (year, month) = self.0.shown.get();
-        self.select(year, month, day, false);
+        self.select(year, month, day);
     }
 
     fn key_down(&self, event: &web_sys::Event) {
@@ -324,7 +322,7 @@ impl Calendar {
             _ => return,
         };
         event.prevent_default();
-        self.select(target.year, target.month, target.day, true);
+        self.select(target.year, target.month, target.day);
     }
 
     fn is_right_to_left(&self) -> bool {
@@ -386,6 +384,12 @@ impl Calendar {
         };
         let offset = (weekday(first) + 7 - inner.first_weekday) % 7;
         let doc = &inner.document;
+        // 日のボタンは作り直すので、どれかにフォーカスがあったなら、作り直した
+        // あとで入口の日へ移す (表の外のフォーカスは奪わない)。
+        let had_focus = inner
+            .document
+            .active_element()
+            .is_some_and(|element| inner.body.contains(Some(&element)));
         inner.body.set_text_content(None);
         for week in 0..WEEKS {
             let Ok(row) = create(doc, "tr") else {
@@ -431,6 +435,11 @@ impl Calendar {
                 }
             }
             let _ = inner.body.append_child(&row);
+        }
+        if had_focus {
+            if let Some(button) = entry.and_then(|day| self.day_button(day)) {
+                let _ = button.focus();
+            }
         }
     }
 

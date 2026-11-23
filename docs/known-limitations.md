@@ -35,7 +35,7 @@ that shape are covered in
 | Where a `Toast`'s second and later action buttons go | A row below the text | Next to the first, after the text | Next to the first, after the text | Next to the first, after the text |
 | A `Flow` child wider than the flow | Keeps its width and is cut off, unless it has `Fill` on the width | Keeps its width and is cut off, unless it has `Fill` on the width | Narrowed to the flow, down to its minimum | Narrowed to the flow, down to its `min-content` width |
 | `Calendar`'s days outside `set_range` | Not shown | Dimmed, cannot be clicked | Look selectable; naui moves the selection back to the end | Disabled buttons |
-| `Calendar`'s month arrows | Only show another month | Only show another month (unchecked) | Also select a day in that month (notified) | Only show another month |
+| `Calendar`'s month arrows | Only show another month | Not checked (AppKit's own behavior; any change of the selection is notified) | Also select a day in that month (notified) | Only show another month |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
 
 ## Common
@@ -653,8 +653,8 @@ that shape are covered in
 - `Calendar` is a `GtkCalendar`, which **has no range**: days outside `set_range`
   are not dimmed, and clicking one moves the selection back to the nearest end.
   The arrows in its header **select a day in the next month or year** (the same
-  day of the month, clamped), which `on_change` reports like a click; on the other
-  platforms they only show another month.
+  day of the month, clamped), which `on_change` reports like a click; on Windows
+  and the Web they only show another month.
 - In a `Sheet`, **Enter in a text field does not press the primary button**: a
   `GtkText` activates the dialog's default widget only with `activates-default`,
   which naui's text fields leave off. Clicking it or Enter with the focus elsewhere
