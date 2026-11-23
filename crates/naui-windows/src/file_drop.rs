@@ -21,15 +21,19 @@
 //!
 //! The registry holds elements by weak reference, as `keys` does, and the handlers
 //! are released on the shutdown path with [`release_handlers`].
+//!
+//! `drop_files` on widgets and windows (for tests and automation) goes through the
+//! same routing ([`route`]), starting from the widget's own element instead of the
+//! element under the pointer. The files are delivered as given, on the spot.
 
 use std::cell::RefCell;
-use std::rc::Rc;
+use std::rc::{Rc, Weak as RcWeak};
 use std::sync::Arc;
 
 use naui_core::{FileEntry, Tasks};
 use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
 use naui_winui3::Microsoft::UI::Xaml::{
-    DependencyObject, DragEventArgs, DragEventHandler, UIElement,
+    DependencyObject, DragEventArgs, DragEventHandler, FrameworkElement, UIElement,
 };
 use windows::ApplicationModel::DataTransfer::{
     DataPackageOperation, DataPackageView, StandardDataFormats,
@@ -63,7 +67,7 @@ impl FileDropHandler {
         self.0.borrow().is_some()
     }
 
-    fn emit(&self, files: &[FileEntry]) {
+    pub(crate) fn emit(&self, files: &[FileEntry]) {
         let Some(mut f) = self.0.borrow_mut().take() else {
             return;
         };
@@ -78,8 +82,15 @@ impl FileDropHandler {
 
 type Entries = Registry<(Weak<UIElement>, Rc<FileDropHandler>)>;
 
+/// A window's root and the window's handler. The window holds the handler, so it is
+/// held weakly here.
+type Roots = Registry<(Weak<UIElement>, RcWeak<FileDropHandler>)>;
+
 thread_local! {
     static WIDGETS: Entries = const { Registry::new() };
+    /// The roots [`install`] attached the receiver to, so that routing from a
+    /// widget's element finds the window's handler as the real drop does.
+    static ROOTS: Roots = const { Registry::new() };
 }
 
 /// Lets the widget whose element is `element` take file drops. Each call replaces
@@ -108,6 +119,65 @@ pub(crate) fn set_widget_handler(element: &UIElement, f: impl FnMut(&[FileEntry]
 pub(crate) fn release_handlers() {
     // 借用の外で捨てる。
     drop(WIDGETS.with(Registry::take));
+    drop(ROOTS.with(Registry::take));
+}
+
+/// Remembers that `root` belongs to the window whose handler is `window`. Besides
+/// the window's XAML root, the layer holding its content is registered, so that a
+/// walk through naui's own record of places (which ends there) still finds the
+/// window.
+pub(crate) fn register_root(root: &UIElement, window: &Rc<FileDropHandler>) {
+    ROOTS.with(|roots| {
+        let mut roots = roots.borrow_mut();
+        roots.retain(|(weak, handler)| {
+            handler.strong_count() > 0 && weak.upgrade().is_some_and(|other| !same(&other, root))
+        });
+        if let Ok(weak) = root.downgrade() {
+            roots.push((weak, Rc::downgrade(window)));
+        }
+    });
+}
+
+/// The handler of the window whose root is `object`, if it is one.
+fn root_handler(object: &DependencyObject) -> Option<Option<Rc<FileDropHandler>>> {
+    ROOTS.with(|roots| {
+        roots
+            .borrow()
+            .iter()
+            .find(|(weak, _)| weak.upgrade().is_some_and(|other| same(&other, object)))
+            .map(|(_, handler)| handler.upgrade())
+    })
+}
+
+/// Drops `files` onto the widget whose element is `element`, as a real drop onto it
+/// would go: to its own handler, or else the nearest ancestor's, or else its
+/// window's (`Widget::drop_files`). Delivered on the spot. Nothing happens if `files`
+/// is empty or nothing takes them.
+pub(crate) fn drop_on(element: &UIElement, files: &[FileEntry]) {
+    if files.is_empty() {
+        return;
+    }
+    // 根までたどれないとき (ダイアログの中など、窓の根の下に無いもの) は、
+    // 同じ `XamlRoot` の中身を根とみなして窓へ渡す。
+    let window = element
+        .XamlRoot()
+        .and_then(|xaml_root| xaml_root.Content())
+        .ok()
+        .and_then(|root| root.cast::<DependencyObject>().ok())
+        .and_then(|root| root_handler(&root))
+        .flatten();
+    let start = element.cast::<DependencyObject>().ok();
+    if let Some(handler) = route(start, window) {
+        handler.emit(files);
+    }
+}
+
+/// Drops `files` onto the window whose handler is `window`, where no widget takes
+/// them (`Window::drop_files`). Delivered on the spot.
+pub(crate) fn drop_on_window(window: &FileDropHandler, files: &[FileEntry]) {
+    if !files.is_empty() {
+        window.emit(files);
+    }
 }
 
 fn lookup(object: &DependencyObject) -> Option<Rc<FileDropHandler>> {
@@ -128,16 +198,60 @@ fn target(
     hwnd: HWND,
     window: &Rc<FileDropHandler>,
 ) -> Option<Rc<FileDropHandler>> {
-    let mut current = pointer_position(root, hwnd)
+    let start = pointer_position(root, hwnd)
         .and_then(|point| element_at(point, root))
         .and_then(|element| element.cast::<DependencyObject>().ok());
+    route(start, Some(window.clone()))
+}
+
+/// Who takes a drop that lands on `start`: the nearest registered widget among
+/// `start` and its ancestors, or else the window. The window is the one whose root
+/// the walk reaches, or `window` when it reaches none.
+///
+/// The real drop and `drop_files` both come here. Parents are followed in the
+/// visual tree, and where that has none yet (the content of a control whose
+/// template has not been applied), through `FrameworkElement::Parent`. In the live
+/// tree the visual parent is always there, so the real drop walks the visual tree
+/// alone.
+fn route(
+    start: Option<DependencyObject>,
+    window: Option<Rc<FileDropHandler>>,
+) -> Option<Rc<FileDropHandler>> {
+    let mut window = window;
+    let mut current = start;
     while let Some(object) = current {
         if let Some(handler) = lookup(&object) {
             return Some(handler);
         }
-        current = VisualTreeHelper::GetParent(&object).ok();
+        if let Some(root) = root_handler(&object) {
+            // 窓の根に着いた。その窓の受け口が最後の受け取り手。
+            window = root;
+            break;
+        }
+        current = parent(&object);
     }
-    window.is_set().then(|| window.clone())
+    window.filter(|window| window.is_set())
+}
+
+/// `object`'s parent: the visual one, or else the logical one, or else the
+/// container naui put it in. A window nothing has drawn yet (as on CI runners)
+/// reports neither of the first two, so `drop_files` walks up through naui's own
+/// record there.
+fn parent(object: &DependencyObject) -> Option<DependencyObject> {
+    VisualTreeHelper::GetParent(object)
+        .ok()
+        .or_else(|| {
+            object
+                .cast::<FrameworkElement>()
+                .and_then(|element| element.Parent())
+                .ok()
+        })
+        .or_else(|| {
+            object
+                .cast::<UIElement>()
+                .ok()
+                .and_then(|element| crate::layout::placed_in(&element))
+        })
 }
 
 /// The pointer's position in `root`'s coordinates (DIPs), read from the cursor.
@@ -254,6 +368,7 @@ pub(crate) fn install(
     tasks: Tasks,
 ) -> windows_core::Result<()> {
     root.SetAllowDrop(true)?;
+    register_root(root, &window);
     let window = Arc::new(UiThreadCell::new((window, hwnd)));
 
     let over = DragEventHandler::new({

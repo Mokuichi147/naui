@@ -115,6 +115,18 @@ macro_rules! impl_widget {
                     .set(&<$t as Widget>::native_element(self), f);
             }
 
+            /// Drops `files` onto this widget the way the user drops files from the
+            /// OS (for tests and automation). A `drop` event carrying an empty file
+            /// named after each entry is dispatched at its element and bubbles, so it
+            /// goes where a real drop goes: this widget's `on_file_drop`, or else the
+            /// nearest enclosing widget's, or else the window's. The receiver gets a
+            /// `blob:` URL and no path for each, and is called before this returns.
+            /// Nothing happens if `files` is empty or nothing takes the drop; a drop
+            /// onto a text field arrives nowhere, as a real one does.
+            pub fn drop_files(&self, files: &[naui_core::FileEntry]) {
+                crate::file_drop::dispatch_drop(&<$t as Widget>::native_element(self), files);
+            }
+
             /// Creates a weak reference. Capture it when touching this widget from its own
             /// notification closures (capturing a `clone()` creates a cycle and it is never
             /// freed).

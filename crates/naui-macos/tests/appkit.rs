@@ -76,6 +76,10 @@ fn main() {
             respond_answers_like_the_user,
         ),
         (
+            "トーストのボタン・閉じるボタン・Canvas・ファイルの選択とドロップをテストから操作できる",
+            remaining_actions_reach_the_app,
+        ),
+        (
             "チェックボックスが反転し新しい値を通知する",
             checkbox_toggle,
         ),
@@ -1444,6 +1448,193 @@ fn typing_notifies_like_the_user(ui: &Ui) -> Result<()> {
 /// `respond` clicks the dialog's or sheet's button for the role. Given before it
 /// opens, it is kept and given right after it opens: inside `Dialog::open`'s modal
 /// loop on macOS, which is why a click that opens a dialog returns answered.
+/// `Toast::click_action`, `Window::request_close`, `Canvas::send_pointer` /
+/// `send_wheel`, `FilePicker::choose`, `FileSaver::choose` and `drop_files` reach the
+/// app's closures as the user's own actions do.
+fn remaining_actions_reach_the_app(ui: &Ui) -> Result<()> {
+    use naui_core::{CloseResponse, FileEntry, PointerEvent};
+
+    let window = ui.window("残りの操作", 360.0, 240.0)?;
+    let column = ui.stack(Orientation::Vertical)?;
+    let outer = ui.stack(Orientation::Vertical)?;
+    let inner = ui.label("ここへ落とす")?;
+    let plain = ui.label("受け取らない")?;
+    outer.append(&inner);
+    outer.append(&plain);
+    let canvas = ui.canvas()?;
+    let picker = ui.file_picker("開く…")?;
+    let saver = ui.file_saver("保存…")?;
+    column.append(&outer);
+    column.append(&canvas);
+    column.append(&picker);
+    column.append(&saver);
+    window.set_child(&column);
+    window.show();
+    pump(0.1);
+
+    // トースト: 出ているときだけ、押したボタンの番号のあとに消えた通知が届く。
+    let toast = ui.toast("削除しました")?;
+    toast.set_actions(&["元に戻す", "開く"]);
+    toast.set_timeout(0.0);
+    let seen = Rc::new(RefCell::new(Vec::<String>::new()));
+    toast.on_action({
+        let seen = seen.clone();
+        move |index| seen.borrow_mut().push(format!("action {index}"))
+    });
+    toast.on_dismiss({
+        let seen = seen.clone();
+        move || seen.borrow_mut().push("dismiss".to_string())
+    });
+    toast.click_action(0);
+    assert!(seen.borrow().is_empty(), "出ていなければ押せない");
+    toast.show();
+    toast.click_action(2);
+    assert!(seen.borrow().is_empty(), "無い番号は押せない");
+    assert!(toast.is_visible());
+    toast.click_action(1);
+    assert_eq!(*seen.borrow(), ["action 1", "dismiss"]);
+    assert!(!toast.is_visible());
+
+    // Canvas: 渡したイベントがそのまま届き、ホイールは答えが返る。
+    let (pointers, sink) = recorder::<PointerEvent>();
+    canvas.on_pointer(sink);
+    let down = PointerEvent::new(PointerPhase::Down, Point::new(10.0, 20.0))
+        .button(Some(PointerButton::Secondary))
+        .modifiers(Modifiers {
+            shift: true,
+            ..Modifiers::default()
+        });
+    canvas.send_pointer(down);
+    canvas.send_pointer(PointerEvent::new(
+        PointerPhase::Move,
+        Point::new(30.0, 40.0),
+    ));
+    assert_eq!(
+        *pointers.borrow(),
+        [
+            down,
+            PointerEvent::new(PointerPhase::Move, Point::new(30.0, 40.0))
+        ]
+    );
+    let wheel = PointerEvent::wheel(Point::new(5.0, 5.0), 0.0, 12.0);
+    assert_eq!(
+        canvas.send_wheel(wheel),
+        EventResponse::Continue,
+        "受け口が無ければ Continue"
+    );
+    let (wheels, mut sink) = recorder::<PointerEvent>();
+    canvas.on_wheel(move |event| {
+        sink(event);
+        EventResponse::Handled
+    });
+    assert_eq!(canvas.send_wheel(wheel), EventResponse::Handled);
+    canvas.send_pointer(wheel);
+    assert_eq!(
+        *wheels.borrow(),
+        [wheel, wheel],
+        "Wheel の段は on_wheel へ回る"
+    );
+    assert_eq!(pointers.borrow().len(), 2);
+
+    // ファイルの選択: パネルを出さずに選んだことになる。空と無効中は何もしない。
+    let (picks, mut sink) = recorder::<Vec<FileEntry>>();
+    picker.on_select(move |files| sink(files.to_vec()));
+    let files = [
+        FileEntry::from_path("/tmp/naui 写真.png"),
+        FileEntry::from_path("/tmp/メモ.txt"),
+    ];
+    picker.choose(&files);
+    assert_eq!(*picks.borrow(), [files.to_vec()]);
+    assert_eq!(picker.selection(), files);
+    picker.choose(&[]);
+    picker.set_enabled(false);
+    picker.choose(&files[..1]);
+    assert_eq!(picks.borrow().len(), 1);
+    assert_eq!(picker.selection(), files);
+
+    // 保存先の選択: 中身を実際に書く。path の無いものは on_error。
+    let (saves, mut sink) = recorder::<FileEntry>();
+    saver.on_save(move |entry| sink(entry.clone()));
+    let (errors, mut sink) = recorder::<String>();
+    saver.on_error(move |error| sink(error.context().to_string()));
+    saver.set_contents("中身".as_bytes());
+    let path = std::env::temp_dir().join("naui-choose-保存.txt");
+    let _ = std::fs::remove_file(&path);
+    saver.choose(&FileEntry::from_path(&path));
+    assert_eq!(
+        std::fs::read(&path).ok().as_deref(),
+        Some("中身".as_bytes())
+    );
+    assert_eq!(saves.borrow().len(), 1);
+    assert_eq!(
+        saver
+            .destination()
+            .and_then(|e| e.path().map(|p| p.to_path_buf())),
+        Some(path.clone())
+    );
+    saver.choose(&FileEntry::from_name("名前だけ.txt"));
+    assert_eq!(errors.borrow().len(), 1, "path が無ければ書けない");
+    saver.set_enabled(false);
+    saver.choose(&FileEntry::from_path(&path));
+    assert_eq!(saves.borrow().len(), 1, "無効中は何もしない");
+    let _ = std::fs::remove_file(&path);
+
+    // ドロップ: 自分 → 受け口のある祖先 → 窓 の順に届く。
+    let (to_inner, mut sink) = recorder::<Vec<FileEntry>>();
+    inner.on_file_drop(move |files| sink(files.to_vec()));
+    let (to_outer, mut sink) = recorder::<Vec<FileEntry>>();
+    outer.on_file_drop(move |files| sink(files.to_vec()));
+    let (to_window, mut sink) = recorder::<Vec<FileEntry>>();
+    canvas.drop_files(&files);
+    assert!(
+        to_outer.borrow().is_empty(),
+        "受け口の無い枝からは窓へ (窓にも無ければ捨てる)"
+    );
+    window.on_file_drop(move |files| sink(files.to_vec()));
+    inner.drop_files(&files);
+    assert_eq!(*to_inner.borrow(), [files.to_vec()]);
+    plain.drop_files(&files[..1]);
+    assert_eq!(
+        *to_outer.borrow(),
+        [files[..1].to_vec()],
+        "受け口の無いウィジェットは祖先へ"
+    );
+    canvas.drop_files(&files);
+    window.drop_files(&files[1..]);
+    assert_eq!(*to_window.borrow(), [files.to_vec(), files[1..].to_vec()]);
+    inner.drop_files(&[]);
+    window.drop_files(&[]);
+    assert_eq!(to_inner.borrow().len(), 1, "空のドロップは届かない");
+    assert_eq!(to_window.borrow().len(), 2);
+
+    // 閉じるボタン: on_close_request に聞いてから閉じる。
+    let answers = Rc::new(RefCell::new(vec![
+        CloseResponse::KeepOpen,
+        CloseResponse::Close,
+    ]));
+    let asked = Rc::new(Cell::new(0));
+    window.on_close_request({
+        let answers = answers.clone();
+        let asked = asked.clone();
+        move || {
+            asked.set(asked.get() + 1);
+            answers.borrow_mut().remove(0)
+        }
+    });
+    window.request_close();
+    assert_eq!(asked.get(), 1);
+    assert!(window.is_visible(), "KeepOpen なら開いたまま");
+    window.request_close();
+    assert_eq!(asked.get(), 2);
+    assert!(!window.is_visible(), "Close なら閉じる");
+
+    let bare = ui.window("受け口なし", 200.0, 120.0)?;
+    bare.show();
+    bare.request_close();
+    assert!(!bare.is_visible(), "on_close_request が無ければ閉じる");
+    Ok(())
+}
+
 fn respond_answers_like_the_user(ui: &Ui) -> Result<()> {
     let dialog = ui.dialog("消しますか")?;
     dialog.set_buttons(

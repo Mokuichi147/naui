@@ -130,12 +130,16 @@ The rest of the testing actions, the separate crate that `Canvas` is now ready
 for along with the colors it needs in a dark appearance, and adaptive items that
 need investigating first but are not heavy.
 
-- [ ] **The rest of the actions for testing apps:** a `Toast`'s action button,
+- [x] **The rest of the actions for testing apps:** a `Toast`'s action button,
       the window's close button (`on_close_request`), pointer events on a
       `Canvas`, and choosing and dropping files, delivered the way typing and
       answering dialogs are since v0.18.0. Whether a test can also read what the
       app handed to the OS (the URL given to `Ui::open_url`, say) without it
-      really opening is decided with them.
+      really opening is decided with them. `Toast::click_action`,
+      `Window::request_close`, `Canvas::send_pointer` / `send_wheel`,
+      `FilePicker::choose`, `FileSaver::choose` and `drop_files` on widgets and
+      windows deliver them, and inside a test case `Ui::open_url` records the URL
+      for `testing::opened_urls` instead of opening it.
 - [x] **Colors that follow light and dark in `Canvas`.** Widgets follow the
       appearance by themselves, but `Canvas` draws with fixed `Color`s and
       nothing tells the app when the appearance changes, so a drawing made for

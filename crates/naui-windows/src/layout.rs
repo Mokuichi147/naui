@@ -709,6 +709,24 @@ pub(crate) fn has_parent(element: &UIElement) -> bool {
     placed
 }
 
+/// The container naui put `element` in, while it still holds it (see
+/// [`note_place`]). Where WinUI reports no parent (a window nothing has drawn yet),
+/// this is how to walk up from an element.
+pub(crate) fn placed_in(element: &UIElement) -> Option<DependencyObject> {
+    let key = element_key(element);
+    // ネイティブを呼ぶ間は表を借りない。
+    let place = PLACES.with(|places| places.borrow_mut().remove(&key))?;
+    // 離れた場所は `has_parent` と同じく忘れる。
+    if !place.holds(element) {
+        return None;
+    }
+    let container = place.container();
+    PLACES.with(|places| {
+        places.borrow_mut().entry(key).or_insert(place);
+    });
+    container
+}
+
 /// The parent WinUI reports, in a shown window.
 fn native_parent(element: &UIElement) -> Option<DependencyObject> {
     let logical = element
@@ -769,6 +787,17 @@ impl Place {
 
     pub(crate) fn flyout(flyout: &Flyout) -> Option<Self> {
         flyout.downgrade().ok().map(Self::Flyout)
+    }
+
+    /// The container, if it is still alive. A `Flyout` is not an element, so it has
+    /// none to walk up to.
+    fn container(&self) -> Option<DependencyObject> {
+        match self {
+            Self::Panel(panel) => panel.upgrade().and_then(|panel| panel.cast().ok()),
+            Self::Border(border) => border.upgrade().and_then(|border| border.cast().ok()),
+            Self::Content(control) => control.upgrade().and_then(|control| control.cast().ok()),
+            Self::Flyout(_) => None,
+        }
     }
 
     /// Whether the container is alive and still holds the element.

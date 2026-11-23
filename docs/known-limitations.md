@@ -331,10 +331,44 @@ that shape are covered in
 
 ### Testing apps
 
-- Not every user action has a method that acts like it. A `Toast`'s action
-  button, the window's close button (`on_close_request`), pointer events on a
-  `Canvas`, choosing files and dropping them have none yet. Test the code behind
-  them directly.
+- Not every user action has a method that acts like it (pressing keys for
+  `on_key_down`, for example). The native file dialogs themselves cannot be
+  answered: `FilePicker::choose` and `FileSaver::choose` stand in for clicking the button
+  and choosing in the dialog, without showing it, so a test that clicks the
+  button instead shows the real dialog and waits for a person to answer it (on
+  macOS `open` does not return until then). They do not check the picker's mode
+  or filters.
+- `Canvas::send_pointer` and `send_wheel` make no native event: the event goes to
+  `on_pointer` or `on_wheel` as given, so an outer scroll view does not scroll on
+  `Continue`, and a right-click opens no context menu.
+- `Window::request_close` does nothing on the Web, where `on_close_request` is
+  never called. On macOS it goes through `performClose:`, as ⌘W does, so AppKit
+  plays the alert sound when `on_close_request` keeps the window open. On Windows
+  naui asks `on_close_request` and closes the window as `Window::close` does:
+  WinUI raises the `AppWindow`'s `Closing` only for the user's own close, and
+  naui winds the whole UI down there, which would stop the remaining test cases.
+- On Linux, `Toast::click_action` on a toast with one action clicks the button
+  inside libadwaita's toast widget, found by its private type name; libadwaita
+  takes the toast down a moment later, so `on_action` and `on_dismiss` arrive from
+  the event loop. `Window::request_close` on a window that has not been shown
+  does nothing there (`on_close_request` is not asked).
+- `drop_files` starts from the widget it is called on rather than from a point
+  under the pointer, and natively it does not check whether the widget is shown.
+  Natively a text field passes the drop on like other widgets, while a real drop
+  onto one is taken as text by the field itself and reaches no `on_file_drop`. On Windows the files of a real drop arrive once they have been
+  read, a moment later; `drop_files` delivers them at once.
+- `drop_files` on the Web dispatches a real `drop` event with an empty file per
+  entry, so the files arrive named after the entries, with `blob:` URLs and no
+  paths, as dropped files do there. Text fields take drops themselves there, so
+  `drop_files` onto one reaches no `on_file_drop`, and the widgets inside a
+  `Dialog` or `Sheet` do not pass a drop on to the window, as with real drops.
+  `FilePicker::choose` on the Web goes through the file input the same way, except
+  in folder mode, where a made-up file cannot stand for a folder: the first entry
+  arrives with its name only. `FileSaver::choose` on the Web writes nothing and
+  starts no download; `on_save` gets an entry with the name only.
+- Inside a test case `Ui::open_url` opens nothing and records the URL for
+  `testing::opened_urls` instead. Links the user clicks inside a `Label` are not
+  recorded (no method clicks them).
 - `enter_text`, `submit` and `search` press no key: `on_key_down` is not called,
   so an `on_key_down` that stops Enter does not stop `submit`, and nothing goes
   through an IME. `enter_text` replaces the whole text at once, so `on_change` is

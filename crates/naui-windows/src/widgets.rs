@@ -124,6 +124,16 @@ macro_rules! impl_widget {
                 crate::file_drop::set_widget_handler(&<$t as Widget>::native_element(self), f);
             }
 
+            /// Drops `files` onto this widget as the user drops files from Explorer, for
+            /// tests and automation. It goes where a real drop onto it would: this
+            /// widget's `on_file_drop`, or else the nearest enclosing widget's, or else
+            /// its window's. Unlike a real drop, the closure is called on the spot with
+            /// `files` as given. Nothing happens if `files` is empty or nothing takes
+            /// them.
+            pub fn drop_files(&self, files: &[naui_core::FileEntry]) {
+                crate::file_drop::drop_on(&<$t as Widget>::native_element(self), files);
+            }
+
             /// Creates a weak reference. Capture it when touching this widget from its own
             /// notification closures (capturing a `clone()` creates a cycle and it is never
             /// freed).

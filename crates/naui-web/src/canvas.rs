@@ -310,6 +310,29 @@ impl Canvas {
         self.0.css_size()
     }
 
+    /// Delivers `event` as if the user had pressed, moved or released the pointer:
+    /// `on_pointer` is called with it as given, before this returns (for tests and
+    /// automation). An event whose phase is `Wheel` goes to `on_wheel` instead.
+    ///
+    /// No DOM event is dispatched, so the value arrives unchanged (no rounding or
+    /// conversion of the position), no pointer is captured, and no other listener
+    /// sees it.
+    pub fn send_pointer(&self, event: PointerEvent) {
+        if event.phase == PointerPhase::Wheel {
+            self.0.wheel.emit(event);
+        } else {
+            self.0.pointer.emit(event);
+        }
+    }
+
+    /// Delivers `event` as if the user had turned the wheel: `on_wheel` is called
+    /// with it, and its answer is returned (`Continue` without `on_wheel`), for tests
+    /// and automation. No DOM event is dispatched, so nothing scrolls when the answer
+    /// is `Continue`.
+    pub fn send_wheel(&self, event: PointerEvent) -> EventResponse {
+        self.0.wheel.emit(event)
+    }
+
     /// Draws on the spot. **For automated tests only.**
     #[doc(hidden)]
     pub fn draw_for_test(&self) {

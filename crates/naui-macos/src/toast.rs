@@ -315,6 +315,23 @@ impl Toast {
         ToastQueue::is_waiting_in(&QUEUE, &self.0)
     }
 
+    /// Clicks the action button at `index` with `performClick:`, the same path as
+    /// the user's click, so `on_action(index)` and then `on_dismiss` are called
+    /// before it returns. Nothing happens unless it is on screen with a button at
+    /// `index`.
+    pub fn click_action(&self, index: usize) {
+        // クリックの中でトーストが取り下げられ `shown` を借りるので、先に取り出す。
+        let button = self
+            .0
+            .shown
+            .borrow()
+            .as_ref()
+            .and_then(|shown| shown.buttons.get(index).cloned());
+        if let Some(button) = button {
+            unsafe { button.performClick(None) };
+        }
+    }
+
     /// The overlaid view. `None` if it is not on screen.
     ///
     /// Public as a backend-specific escape hatch.
