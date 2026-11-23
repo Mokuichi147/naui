@@ -2,7 +2,8 @@
 //!
 //! A few strings are chosen by naui rather than by the app: the default macOS
 //! main menu, the `Sidebar` toggle, the back button of `AdaptivePanes`, the
-//! accessible names of `Breadcrumbs` and `Pagination`, and the "OK" of
+//! accessible names of `Breadcrumbs` and `Pagination`, the month buttons of the
+//! Web's `Calendar`, and the "OK" of
 //! [`DialogButtons::ok`](crate::DialogButtons::ok).
 //! They follow the OS's preferred languages, falling back to English when none of
 //! them is in the table.
@@ -47,6 +48,10 @@ pub struct UiStrings {
     pub breadcrumbs: &'static str,
     /// The accessible name of `Pagination` (Web).
     pub pagination: &'static str,
+    /// The button of `Calendar` that shows the previous month (Web).
+    pub previous_month: &'static str,
+    /// The button of `Calendar` that shows the next month (Web).
+    pub next_month: &'static str,
     /// The button of `AdaptivePanes` that goes back from the detail to the list.
     pub back: &'static str,
     /// The accessible name of `AdaptivePanes`' list pane (Linux).
@@ -159,6 +164,8 @@ const ENGLISH: UiStrings = UiStrings {
     sidebar: "Sidebar",
     breadcrumbs: "Breadcrumbs",
     pagination: "Pagination",
+    previous_month: "Previous month",
+    next_month: "Next month",
     back: "Back",
     list_pane: "List",
     detail_pane: "Details",
@@ -178,6 +185,8 @@ const JAPANESE: UiStrings = UiStrings {
     sidebar: "サイドバー",
     breadcrumbs: "パンくず",
     pagination: "ページ送り",
+    previous_month: "前の月",
+    next_month: "次の月",
     back: "戻る",
     list_pane: "一覧",
     detail_pane: "詳細",

@@ -1,11 +1,11 @@
 use crate::sys;
 use crate::{
-    AdaptivePanes, Audio, Breadcrumbs, Button, Canvas, Checkbox, Clipboard, ColorPicker, ComboBox,
-    DatePicker, Dialog, Dock, EditableComboBox, Expander, FilePicker, FileSaver, Flow, Grid, Group,
-    Image, Label, Link, List, Menu, MenuBar, Navbar, NumberInput, Pagination, PasswordInput,
-    Popover, PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Separator, Sheet, Sidebar,
-    Slider, Spacer, Spinner, SplitView, Stack, Table, Tabs, TextArea, TextInput, TimePicker, Toast,
-    Toggle, Toolbar, Tree, Video, Window,
+    AdaptivePanes, Audio, Breadcrumbs, Button, Calendar, Canvas, Checkbox, Clipboard, ColorPicker,
+    ComboBox, DatePicker, Dialog, Dock, EditableComboBox, Expander, FilePicker, FileSaver, Flow,
+    Grid, Group, Image, Label, Link, List, Menu, MenuBar, Navbar, NumberInput, Pagination,
+    PasswordInput, Popover, PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Separator,
+    Sheet, Sidebar, Slider, Spacer, Spinner, SplitView, Stack, Table, Tabs, TextArea, TextInput,
+    TimePicker, Toast, Toggle, Toolbar, Tree, Video, Window,
 };
 use naui_core::{DatePickerMode, LayoutDirection, Orientation, Result, Settings, Tasks, Theme};
 
@@ -142,6 +142,13 @@ impl Ui {
     #[inline]
     pub fn date_picker(&self, mode: DatePickerMode) -> Result<DatePicker> {
         self.0.date_picker(mode).map(DatePicker)
+    }
+
+    /// A month calendar that stays on screen and lets the user pick one day. The
+    /// initial value is the current date and time.
+    #[inline]
+    pub fn calendar(&self) -> Result<Calendar> {
+        self.0.calendar().map(Calendar)
     }
 
     /// A control for picking only a time of day. The initial value is the current time.

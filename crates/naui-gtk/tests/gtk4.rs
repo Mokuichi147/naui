@@ -169,6 +169,22 @@ fn main() {
             date_picker_programmatic_changes_are_silent,
         ),
         (
+            "カレンダーが GtkCalendar を置き、値が往復して時刻を保つ",
+            calendar_value_round_trips,
+        ),
+        (
+            "カレンダーの pick が day-selected の経路で通知する",
+            calendar_pick_acts_like_a_click,
+        ),
+        (
+            "カレンダーが範囲の外の日を端へ戻す",
+            calendar_stays_inside_the_range,
+        ),
+        (
+            "カレンダーの見出しの矢印で月を送ると選んだ日も動く",
+            calendar_month_arrows_move_the_selection,
+        ),
+        (
             "時刻ピッカーが時と分のスピンボタンを並べ、値が往復する",
             time_picker_value_round_trips,
         ),
@@ -11910,6 +11926,179 @@ fn date_picker_programmatic_changes_are_silent(ui: &Ui) -> Result<()> {
     hour.set_value(8.0);
     assert_eq!(seen.get(), Some(DateTime::new(2027, 1, 5, 8, 45)));
     assert_eq!(picker.value(), DateTime::new(2026, 12, 31, 0, 0));
+    Ok(())
+}
+
+/// The day shown selected on the `GtkCalendar`.
+fn calendar_shown_day(calendar: &gtk::Calendar) -> (i32, i32, i32) {
+    let date = calendar.date();
+    (date.year(), date.month(), date.day_of_month())
+}
+
+/// The calendar is a `GtkCalendar` itself. Writing the value is silent, and a day
+/// selected on the native side keeps the time the value had.
+fn calendar_value_round_trips(ui: &Ui) -> Result<()> {
+    let calendar = ui.calendar()?;
+    let native = calendar.native_calendar();
+    assert!(calendar.native_widget().is::<gtk::Calendar>());
+    assert!(calendar.value().is_valid(), "初期値は現在日時");
+
+    let (log, sink) = recorder::<DateTime>();
+    calendar.on_change(sink);
+    calendar.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    assert_eq!(calendar.value(), DateTime::new(2026, 8, 22, 9, 30));
+    assert_eq!(calendar_shown_day(&native), (2026, 8, 22));
+    calendar.set_value(DateTime::new(2026, 11, 31, 9, 30));
+    assert_eq!(
+        calendar.value(),
+        DateTime::new(2026, 11, 30, 9, 30),
+        "丸める"
+    );
+    assert!(log.borrow().is_empty(), "set_value は通知しない");
+
+    // ネイティブ側で日を選ぶと、時刻はそのままで日付だけ変わる。
+    let date = glib::DateTime::from_local(2027, 1, 5, 18, 0, 0.0).expect("日時");
+    native.select_day(&date);
+    assert_eq!(calendar.value(), DateTime::new(2027, 1, 5, 9, 30));
+    assert_eq!(*log.borrow(), vec![DateTime::new(2027, 1, 5, 9, 30)]);
+
+    calendar.set_enabled(false);
+    assert!(!native.is_sensitive());
+    Ok(())
+}
+
+/// `pick` selects the day through `day-selected`, and does nothing while disabled.
+fn calendar_pick_acts_like_a_click(ui: &Ui) -> Result<()> {
+    let calendar = ui.calendar()?;
+    calendar.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    let (log, sink) = recorder::<DateTime>();
+    calendar.on_change(sink);
+
+    calendar.pick(DateTime::new(2026, 9, 3, 18, 0));
+    assert_eq!(calendar.value(), DateTime::new(2026, 9, 3, 9, 30));
+    assert_eq!(
+        calendar_shown_day(&calendar.native_calendar()),
+        (2026, 9, 3)
+    );
+    assert_eq!(*log.borrow(), vec![DateTime::new(2026, 9, 3, 9, 30)]);
+
+    calendar.pick(DateTime::date(2026, 9, 3));
+    assert_eq!(log.borrow().len(), 1, "選ばれている日なら通知しない");
+
+    calendar.set_enabled(false);
+    calendar.pick(DateTime::date(2026, 10, 1));
+    assert_eq!(calendar.value(), DateTime::new(2026, 9, 3, 9, 30));
+    assert_eq!(log.borrow().len(), 1, "無効なら何もしない");
+
+    // 通知の中で同じカレンダーを触っても二重借用にならない。
+    calendar.set_enabled(true);
+    calendar.on_change({
+        let calendar = calendar.clone();
+        let log = log.clone();
+        move |value| {
+            log.borrow_mut().push(value);
+            calendar.set_value(DateTime::date(2030, 1, 1));
+            calendar.on_change(|_| {});
+        }
+    });
+    calendar.pick(DateTime::date(2026, 10, 1));
+    assert_eq!(log.borrow().len(), 2);
+    assert_eq!(calendar.value(), DateTime::date(2030, 1, 1));
+    assert_eq!(
+        calendar_shown_day(&calendar.native_calendar()),
+        (2030, 1, 1)
+    );
+    Ok(())
+}
+
+/// `GtkCalendar` has no range, so naui moves a day outside it back to the end.
+fn calendar_stays_inside_the_range(ui: &Ui) -> Result<()> {
+    let calendar = ui.calendar()?;
+    let native = calendar.native_calendar();
+    calendar.set_value(DateTime::new(2026, 6, 15, 9, 30));
+    calendar.set_range(
+        Some(DateTime::new(2026, 6, 10, 12, 0)),
+        Some(DateTime::new(2026, 6, 20, 12, 0)),
+    );
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 15, 9, 30));
+    let (log, sink) = recorder::<DateTime>();
+    calendar.on_change(sink);
+
+    // 端の日は、値の時刻にかかわらず選べる。
+    calendar.pick(DateTime::date(2026, 6, 20));
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 20, 9, 30));
+
+    // 範囲の外の日を押すと、端へ戻して表示も直す。
+    let outside = glib::DateTime::from_local(2026, 7, 1, 0, 0, 0.0).expect("日時");
+    native.select_day(&outside);
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 20, 9, 30));
+    assert_eq!(calendar_shown_day(&native), (2026, 6, 20), "表示も端へ戻る");
+    native.select_day(&glib::DateTime::from_local(2026, 6, 1, 0, 0, 0.0).expect("日時"));
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 10, 9, 30));
+    assert_eq!(
+        *log.borrow(),
+        vec![
+            DateTime::new(2026, 6, 20, 9, 30),
+            DateTime::new(2026, 6, 10, 9, 30)
+        ]
+    );
+
+    // 範囲の外を渡すと、通知せずに端へ寄る。
+    calendar.set_value(DateTime::date(1990, 1, 1));
+    assert_eq!(calendar.value(), DateTime::date(2026, 6, 10));
+    assert_eq!(log.borrow().len(), 2);
+
+    calendar.set_range(None, None);
+    calendar.pick(DateTime::date(1990, 1, 1));
+    assert_eq!(calendar.value(), DateTime::date(1990, 1, 1));
+    Ok(())
+}
+
+/// The arrows in `GtkCalendar`'s header select a day in the next month, which
+/// naui notifies like a click (documented as a difference from the other
+/// platforms).
+fn calendar_month_arrows_move_the_selection(ui: &Ui) -> Result<()> {
+    let calendar = ui.calendar()?;
+    calendar.set_value(DateTime::new(2026, 1, 31, 9, 30));
+    let (log, sink) = recorder::<DateTime>();
+    calendar.on_change(sink);
+
+    let mut buttons = Vec::new();
+    let mut stack = vec![calendar.native_calendar().upcast::<gtk::Widget>()];
+    while let Some(widget) = stack.pop() {
+        if let Ok(button) = widget.clone().downcast::<gtk::Button>() {
+            buttons.push(button);
+        }
+        let mut child = widget.last_child();
+        while let Some(c) = child {
+            child = c.prev_sibling();
+            stack.push(c);
+        }
+    }
+    // 見出しには「前の月・次の月・前の年・次の年」の 4 つの矢印が並ぶ。
+    assert_eq!(buttons.len(), 4, "見出しの矢印");
+    buttons[1].emit_clicked();
+    assert_eq!(
+        calendar.value(),
+        DateTime::new(2026, 2, 28, 9, 30),
+        "次の月へ移り、日はその月に収まる"
+    );
+    assert_eq!(*log.borrow(), vec![DateTime::new(2026, 2, 28, 9, 30)]);
+    // 年の矢印と前の月の矢印も同じ。
+    buttons[3].emit_clicked();
+    assert_eq!(calendar.value(), DateTime::new(2027, 2, 28, 9, 30));
+    buttons[0].emit_clicked();
+    assert_eq!(calendar.value(), DateTime::new(2027, 1, 28, 9, 30));
+    assert_eq!(log.borrow().len(), 3);
+
+    // 範囲の外へ送ったときは端へ戻す。
+    calendar.set_range(None, Some(DateTime::date(2027, 1, 31)));
+    buttons[1].emit_clicked();
+    assert_eq!(calendar.value(), DateTime::new(2027, 1, 31, 9, 30));
+    assert_eq!(
+        calendar_shown_day(&calendar.native_calendar()),
+        (2027, 1, 31)
+    );
     Ok(())
 }
 
