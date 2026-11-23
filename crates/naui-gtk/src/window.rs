@@ -1157,8 +1157,23 @@ impl Window {
         self.0.native.present();
     }
 
+    /// Closes it, along with the dialogs and sheets open on it (they are cancelled).
+    ///
+    /// libadwaita's `close-request` closes the topmost dialog and keeps the window
+    /// open, which is what the close button should do, so the dialogs are closed first
+    /// here.
     pub fn close(&self) {
         self.0.closing.set(true);
+        let dialogs = self.0.native.dialogs();
+        // 上に重なったものから閉じる。`force_close` はその場で一覧を変えるので、
+        // 先に取り出しておく。
+        let dialogs: Vec<adw::Dialog> = (0..dialogs.n_items())
+            .rev()
+            .filter_map(|i| dialogs.item(i).and_downcast())
+            .collect();
+        for dialog in dialogs {
+            dialog.force_close();
+        }
         self.0.native.close();
         self.0.closing.set(false);
     }

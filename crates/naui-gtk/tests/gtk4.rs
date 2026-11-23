@@ -1042,6 +1042,10 @@ fn main() {
             sheet_reopened_in_the_same_turn_ignores_the_old_close,
         ),
         (
+            "ダイアログやシートが開いたままでも close で窓が閉じる",
+            window_close_closes_the_dialogs_on_it,
+        ),
+        (
             "トーストの設定が AdwToast へ届く",
             toast_configuration_reaches_the_native_toast,
         ),
@@ -10305,7 +10309,9 @@ fn dialog_closed_right_after_opening_does_not_stay(ui: &Ui) -> Result<()> {
         log.borrow().as_slice(),
         [DialogResponse::Cancel, DialogResponse::Primary]
     );
+    // 応答を出しただけの AdwAlertDialog は開いたままでも、窓ごと閉じる。
     window.close();
+    assert!(!window.is_visible(), "窓を残さない");
     Ok(())
 }
 
@@ -10346,7 +10352,58 @@ fn dialog_reopened_in_the_same_turn_ignores_the_old_response(ui: &Ui) -> Result<
         [DialogResponse::Cancel, DialogResponse::Primary]
     );
     assert!(!dialog.is_open());
+    // 応答を出しただけの AdwAlertDialog は開いたままでも、窓ごと閉じる。
     window.close();
+    assert!(!window.is_visible(), "窓を残さない");
+    Ok(())
+}
+
+/// libadwaita's `close-request` closes the topmost dialog and keeps the window open.
+/// That stays so for the close button, but naui's `close` closes the window too.
+fn window_close_closes_the_dialogs_on_it(ui: &Ui) -> Result<()> {
+    let window = ui.window("naui", 480.0, 360.0)?;
+    window.show();
+    let native_window = window.native_window();
+
+    let dialog = ui.dialog("消しますか")?;
+    dialog.set_buttons(DialogButtons::new().primary("消す").cancel("やめる"));
+    let (dialog_log, sink) = recorder::<DialogResponse>();
+    dialog.on_response(sink);
+
+    // 閉じるボタンと同じ `gtk_window_close` は、ダイアログだけを閉じて窓を残す。
+    dialog.open();
+    let native = dialog.native_dialog().expect("AdwAlertDialog");
+    assert_eq!(native.root().as_ref(), Some(native_window.upcast_ref()));
+    wait_until_shown(native.upcast_ref());
+    native_window.close();
+    pump();
+    assert!(
+        window.is_visible(),
+        "閉じるボタンではダイアログが先に閉じる"
+    );
+    assert!(!dialog.is_open());
+    assert_eq!(dialog_log.borrow().as_slice(), [DialogResponse::Cancel]);
+
+    // naui の `close` は、重なったダイアログとシートごと窓を閉じる。
+    dialog.open();
+    let sheet = ui.sheet("確認")?;
+    sheet.set_buttons(DialogButtons::new().primary("作成").cancel("やめる"));
+    let (sheet_log, sink) = recorder::<DialogResponse>();
+    sheet.on_response(sink);
+    sheet.open();
+    let native = sheet.native_dialog().expect("AdwDialog");
+    assert_eq!(native.root().as_ref(), Some(native_window.upcast_ref()));
+    wait_until_shown(&native);
+    window.close();
+    assert!(!window.is_visible(), "ダイアログが開いていても窓が閉じる");
+    assert!(!native_window.is_visible());
+    assert!(!dialog.is_open());
+    assert!(!sheet.is_open());
+    assert_eq!(
+        dialog_log.borrow().as_slice(),
+        [DialogResponse::Cancel, DialogResponse::Cancel]
+    );
+    assert_eq!(sheet_log.borrow().as_slice(), [DialogResponse::Cancel]);
     Ok(())
 }
 
