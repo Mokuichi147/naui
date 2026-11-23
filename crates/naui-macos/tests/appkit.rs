@@ -653,10 +653,6 @@ fn main() {
             window_key_down_gets_what_the_widget_left,
         ),
         (
-            "ショートカットはフォーカスの内側から外へ、窓、メニューバーの順に届く",
-            shortcuts_go_from_the_focus_to_the_menu_bar,
-        ),
-        (
             "タイマーがメインループで呼ばれ、止められる",
             timers_fire_on_the_main_loop,
         ),
@@ -958,6 +954,11 @@ fn main() {
         (
             "標準メニューの項目名が OS の言語に従う",
             menu_bar_follows_the_os_language,
+        ),
+        // メニューバーを付けるので、既定のメニューの名前を見るテストより後に置く。
+        (
+            "ショートカットはフォーカスの内側から外へ、窓、メニューバーの順に届く",
+            shortcuts_go_from_the_focus_to_the_menu_bar,
         ),
         (
             "画像がローカルのファイルから読み込まれる",
@@ -7337,6 +7338,8 @@ fn shortcuts_go_from_the_focus_to_the_menu_bar(ui: &Ui) -> Result<()> {
     press_key(&app, &native, "\u{1b}", 53, NSEventModifierFlags::empty());
     press_key(&app, &native, "\u{1b}", 53, NSEventModifierFlags::Control);
     assert_eq!(take(), ["escape"]);
+    // アプリのメニューを既定へ戻す (後のテストが標準のメニューを見る)。
+    window.clear_menu_bar();
     window.close();
     Ok(())
 }
