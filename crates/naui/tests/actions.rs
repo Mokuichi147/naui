@@ -593,14 +593,15 @@ async fn shortcuts_go_from_the_focus_outward(ui: Ui) -> Result<()> {
     group.on_shortcut(escape, note(&log, "group"));
     window.on_shortcut(escape, note(&log, "window"));
 
-    assert!(inner.request_focus(), "the field takes focus");
+    // Windows では、置いた欄がビジュアルツリーに載るまでフォーカスを受けない。
+    testing::wait_until(&ui, || inner.request_focus()).await?;
     assert_eq!(window.send_key(&press_escape), EventResponse::Handled);
     assert_eq!(take(), ["inner"], "the innermost shortcut wins");
     inner.remove_shortcut(escape);
     window.send_key(&press_escape);
     assert_eq!(take(), ["group"], "then the next widget out");
 
-    assert!(outside.request_focus());
+    testing::wait_until(&ui, || outside.request_focus()).await?;
     window.send_key(&press_escape);
     assert_eq!(
         take(),
@@ -609,7 +610,7 @@ async fn shortcuts_go_from_the_focus_outward(ui: Ui) -> Result<()> {
     );
 
     // `on_key_down` comes before the shortcuts at each step.
-    assert!(inner.request_focus());
+    testing::wait_until(&ui, || inner.request_focus()).await?;
     let stop = Rc::new(Cell::new(true));
     inner.on_key_down({
         let log = log.clone();
@@ -650,7 +651,7 @@ async fn shortcuts_go_from_the_focus_outward(ui: Ui) -> Result<()> {
         move |_| log.borrow_mut().push("menu")
     });
     window.set_menu_bar(&menu_bar);
-    assert!(outside.request_focus());
+    testing::wait_until(&ui, || outside.request_focus()).await?;
     let press_k = KeyEvent::new(Key::Character('k'), primary());
     window.on_shortcut(Shortcut::new('k'), note(&log, "window k"));
     window.send_key(&press_k);
