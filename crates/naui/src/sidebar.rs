@@ -144,8 +144,9 @@ impl Sidebar {
     ///
     /// Only Windows collapses into a strip of icons (a navigation rail). AppKit's
     /// sidebar and libadwaita's split views have no icon-only state, so on macOS,
-    /// Linux and the Web the whole pane is hidden, leaving the sidebar button. Items
-    /// without an icon show nothing in the Windows strip.
+    /// Linux and the Web the whole pane is hidden, leaving the sidebar button. In the
+    /// Windows strip, an item without an icon shows only the first letters of its
+    /// label, cut off with an ellipsis.
     #[inline]
     pub fn set_auto_collapse(&self, auto: bool) {
         self.0.set_auto_collapse(auto)

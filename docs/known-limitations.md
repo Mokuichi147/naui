@@ -371,7 +371,8 @@ that shape are covered in
   (it first narrows to its minimum width), and elsewhere below its own width plus
   `SIDEBAR_COLLAPSE_CONTENT_WIDTH`.
 - A collapsed `Sidebar` becomes a strip of icons (a navigation rail) only on
-  Windows, where items without an icon show nothing. AppKit and libadwaita have
+  Windows, where an item without an icon shows only the first letters of its
+  label, cut off with an ellipsis. AppKit and libadwaita have
   no icon-only state, so macOS, Linux and the Web hide the whole pane. Opening it
   while narrow lays it over the content on Windows, widens the window on macOS
   (outside full screen), and keeps it beside the content on Linux and the Web.

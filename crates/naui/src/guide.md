@@ -2138,7 +2138,8 @@ narrow lays it over the content.
 
 The strip of icons (a navigation rail) is WinUI's own: AppKit's sidebar item and
 libadwaita's split views have no icon-only state, so naui does not add one to the
-others. Give items icons so the Windows strip shows something.
+others. Give items icons: without one, the Windows strip shows only the first
+letters of the label, cut off with an ellipsis.
 
 Icons use the same kinds as [`ToolbarIcon`] and are mapped to the platform's
 standard icons. `set_selected` / `clear_selection` do not notify, while `select`
