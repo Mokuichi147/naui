@@ -1787,7 +1787,13 @@ fn canvas_follows_light_and_dark(ui: &Ui) -> Result<()> {
     window.show();
     let element = native::<FrameworkElement>(&canvas);
     let theme_is = |theme: ElementTheme| element.ActualTheme().is_ok_and(|t| t == theme);
-    pump_until(CANVAS_TIMEOUT, || theme_is(ElementTheme::Light));
+    // 表示して最初に描くまで待ち、最初の表示で積まれた描き直し (大きさや倍率の
+    // 変化) も済ませてから切り替える。そうしないと、切り替えのあとに走った最初の
+    // 描画を、テーマが変わったための描き直しと取り違える。
+    pump_until(CANVAS_TIMEOUT, || {
+        theme_is(ElementTheme::Light) && !seen.borrow().is_empty()
+    });
+    pump_until(Duration::from_millis(500), || false);
     let outcome = catch_unwind(AssertUnwindSafe(|| {
         let brightness = |c: Color| u32::from(c.r) + u32::from(c.g) + u32::from(c.b);
         // 危険の色はどの環境でも赤系 (アクセントは灰色にもなるので見ない)。
