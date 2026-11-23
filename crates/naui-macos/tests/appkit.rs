@@ -100,6 +100,18 @@ fn main() {
             color_picker_reads_catalog_colors_as_srgb,
         ),
         (
+            "NativeHost が外で作った NSView を置き、大きさ・倍率・窓への出入りを伝える",
+            native_host_places_a_foreign_view,
+        ),
+        (
+            "NativeHost は大きさを知るビューならその大きさになる",
+            native_host_follows_an_intrinsic_size,
+        ),
+        (
+            "NativeHost は差し替えと破棄でビューを外して放す",
+            native_host_lets_go_of_views,
+        ),
+        (
             "描画面が on_draw の命令を AppKit で画素に落とす",
             canvas_paints_recorded_commands,
         ),
@@ -1887,6 +1899,166 @@ fn color_picker_reads_catalog_colors_as_srgb(ui: &Ui) -> Result<()> {
 /// The drawing surface is an `NSView`'s `drawRect:`, and the commands recorded by
 /// `on_draw` are painted with `NSBezierPath`. The view's drawing is copied into a
 /// bitmap, and pixels inside and outside the painted rectangle are read.
+fn native_host_places_a_foreign_view(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("main thread");
+    let host = ui.native_host()?;
+    host.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(120.0))
+            .height(Length::Fixed(80.0)),
+    );
+    // GPU の面のように、自分の大きさを持たないビュー。
+    let foreign = NSView::new(mtm);
+    assert!(host.set_hosted_view(Some(&foreign)));
+    assert!(host.hosted_view().is_some_and(|view| view == foreign));
+    assert!(!foreign.translatesAutoresizingMaskIntoConstraints());
+
+    let sizes = Rc::new(RefCell::new(Vec::new()));
+    host.on_resize({
+        let sizes = sizes.clone();
+        move |size| sizes.borrow_mut().push(size)
+    });
+    let attached = Rc::new(RefCell::new(Vec::new()));
+    host.on_attach({
+        let attached = attached.clone();
+        move |value| attached.borrow_mut().push(value)
+    });
+    assert!(!host.is_attached());
+
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&host);
+    let window = ui.window("native host", 240.0, 200.0)?;
+    window.set_child(&stack);
+    assert_eq!(
+        *attached.borrow(),
+        vec![true],
+        "窓のビューの木へ入ったら伝える"
+    );
+    assert!(host.is_attached());
+    window.show();
+    host.native_view().layoutSubtreeIfNeeded();
+
+    assert_eq!(host.size(), (120.0, 80.0), "指定した大きさになること");
+    let frame = foreign.frame();
+    assert_eq!(
+        (
+            frame.origin.x,
+            frame.origin.y,
+            frame.size.width,
+            frame.size.height
+        ),
+        (0.0, 0.0, 120.0, 80.0),
+        "置いたビューが受け皿いっぱいに広がること"
+    );
+    let scale = host
+        .native_view()
+        .window()
+        .expect("窓に入っている")
+        .backingScaleFactor();
+    assert_eq!(host.scale_factor(), scale);
+    assert_eq!(
+        sizes.borrow().last().copied(),
+        Some(naui_core::HostSize::new(120.0, 80.0, scale)),
+        "大きさと倍率を伝える: {:?}",
+        sizes.borrow()
+    );
+
+    host.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(150.0))
+            .height(Length::Fixed(90.0)),
+    );
+    host.native_view().layoutSubtreeIfNeeded();
+    assert_eq!(foreign.frame().size, NSSize::new(150.0, 90.0));
+    assert_eq!(
+        sizes.borrow().last().copied(),
+        Some(naui_core::HostSize::new(150.0, 90.0, scale)),
+        "大きさの変化を伝える"
+    );
+    let reports = sizes.borrow().len();
+    host.native_view().layoutSubtreeIfNeeded();
+    assert_eq!(sizes.borrow().len(), reports, "変わらなければ伝えない");
+
+    // 別のビューへ差し替えると窓から外れる。
+    window.set_child(&ui.label("other")?);
+    assert_eq!(
+        *attached.borrow(),
+        vec![true, false],
+        "窓から外れたら伝える"
+    );
+    assert!(!host.is_attached());
+    window.close();
+    Ok(())
+}
+
+fn native_host_follows_an_intrinsic_size(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("main thread");
+    let host = ui.native_host()?;
+    // target も action も無いボタン。
+    let button = unsafe {
+        NSButton::buttonWithTitle_target_action(
+            &NSString::from_str("Native button"),
+            None,
+            None,
+            mtm,
+        )
+    };
+    let natural = button.intrinsicContentSize();
+    host.set_hosted_view(Some(&button));
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&host);
+    stack.append(&ui.label("below")?);
+    let window = ui.window("native host intrinsic", 320.0, 200.0)?;
+    window.set_child(&stack);
+    window.show();
+    host.native_view().layoutSubtreeIfNeeded();
+    let (width, height) = host.size();
+    assert!(
+        (width - natural.width).abs() < 0.5 && (height - natural.height).abs() < 0.5,
+        "中身の自然な大きさ {natural:?} になること: {width} x {height}"
+    );
+    assert_eq!(button.frame().size, NSSize::new(width, height));
+    window.close();
+    Ok(())
+}
+
+fn native_host_lets_go_of_views(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("main thread");
+    let host = ui.native_host()?;
+    let first_weak = autoreleasepool(|_| {
+        let first = NSView::new(mtm);
+        host.set_hosted_view(Some(&first));
+        objc2::rc::Weak::from_retained(&first)
+    });
+    assert!(first_weak.load().is_some(), "置いている間は naui が持つ");
+
+    // ほかのビューに入っているビューは、addSubview: と同じく移ってくる。
+    let elsewhere = NSView::new(mtm);
+    let second = NSView::new(mtm);
+    elsewhere.addSubview(&second);
+    // 外したビューの解放が自動解放プールに残らないよう、差し替えをプールで包む。
+    assert!(autoreleasepool(|_| host.set_hosted_view(Some(&second))));
+    assert!(unsafe { second.superview() }.is_some_and(|parent| parent == host.native_view()));
+    assert!(elsewhere.subviews().is_empty());
+    assert!(first_weak.load().is_none(), "差し替えた前のビューは放す");
+
+    // 同じビューを渡し直しても何も変わらない。
+    assert!(host.set_hosted_view(Some(&second)));
+    assert_eq!(host.native_view().subviews().len(), 1);
+
+    assert!(host.set_hosted_view(None));
+    assert!(unsafe { second.superview() }.is_none(), "空にすると外す");
+    assert!(host.hosted_view().is_none());
+
+    host.set_hosted_view(Some(&second));
+    drop(host);
+    assert!(
+        unsafe { second.superview() }.is_none(),
+        "受け皿を落とすと外す"
+    );
+    Ok(())
+}
+
 fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
     let canvas = ui.canvas()?;
     canvas.set_sizing(

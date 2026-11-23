@@ -173,6 +173,13 @@ pub(crate) fn apply_sizing(view: &NSView, sizing: Sizing) {
     refresh_in_container(view);
 }
 
+/// Sets one axis's hugging and compression resistance the way `apply_sizing` does for
+/// `Fill` (`fill`) or `Auto`, without touching any constraint.
+pub(crate) fn set_axis_fill(view: &NSView, horizontal: bool, fill: bool) {
+    set_hugging(view, horizontal, fill);
+    set_compression_resistance(view, horizontal, fill);
+}
+
 fn set_hugging(view: &NSView, horizontal: bool, fill: bool) {
     let priority = if fill { FILL_HUGGING } else { HUG_CONTENT };
     view.setContentHuggingPriority_forOrientation(priority, orientation(horizontal));

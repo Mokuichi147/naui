@@ -37,6 +37,7 @@ mod list;
 mod main_thread;
 pub mod media;
 mod menu;
+mod native_host;
 mod number;
 mod panes;
 mod popover;
@@ -92,6 +93,9 @@ pub use list::{ListItem, RowMove, SelectionMode};
 pub use main_thread::{MainThread, Tasks, Work};
 pub use media::{Fit, PlaybackState};
 pub use menu::{MenuHandler, MenuItem, MenuShortcut, MenuSpec};
+#[doc(hidden)]
+pub use native_host::HostEvents;
+pub use native_host::HostSize;
 pub use number::NumberSpec;
 pub use panes::{Pane, PanesArrangement, DEFAULT_LIST_PANE_WIDTH, DEFAULT_PANES_BREAKPOINT};
 pub use popover::PopoverPosition;

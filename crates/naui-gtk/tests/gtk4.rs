@@ -77,6 +77,18 @@ fn main() {
             color_picker_set_is_silent,
         ),
         (
+            "NativeHost が外で作った GtkWidget を置き、大きさ・倍率・窓への出入りを伝える",
+            native_host_places_a_foreign_widget,
+        ),
+        (
+            "NativeHost は大きさを知るウィジェットならその大きさになる",
+            native_host_follows_a_natural_size,
+        ),
+        (
+            "NativeHost は親のあるウィジェットを断り、差し替えと破棄で外して放す",
+            native_host_lets_go_of_widgets,
+        ),
+        (
             "描画面が on_draw の命令を cairo で画素に落とす",
             canvas_paints_recorded_commands,
         ),
@@ -1757,6 +1769,147 @@ fn toggle_set_is_silent(ui: &Ui) -> Result<()> {
 /// The drawing surface is a `GtkDrawingArea`, and the commands recorded by
 /// `on_draw` are painted with cairo. The widget's snapshot is drawn into a cairo
 /// image, and pixels inside and outside the painted rectangle are read.
+fn native_host_places_a_foreign_widget(ui: &Ui) -> Result<()> {
+    let host = ui.native_host()?;
+    host.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(120.0))
+            .height(Length::Fixed(80.0)),
+    );
+    // GPU の面 (GtkGLArea など) のように、自然な大きさを持たないウィジェット。
+    let foreign = gtk::DrawingArea::new();
+    assert!(host.set_hosted_widget(Some(&foreign)));
+    assert!(host.hosted_widget().is_some_and(|widget| widget == foreign));
+
+    let (sizes, sink) = recorder::<naui_core::HostSize>();
+    host.on_resize(sink);
+    let (attached, sink) = recorder::<bool>();
+    host.on_attach(sink);
+    assert!(!host.is_attached());
+
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&host);
+    let window = ui.window("native host", 240.0, 200.0)?;
+    window.set_child(&stack);
+    assert_eq!(*attached.borrow(), vec![true], "窓の木へ入ったら伝える");
+    assert!(host.is_attached());
+    window.show();
+    tick(&foreign);
+
+    assert_eq!(host.size(), (120.0, 80.0), "指定した大きさになること");
+    assert_eq!(
+        (foreign.width(), foreign.height()),
+        (120, 80),
+        "置いたウィジェットが受け皿いっぱいに広がること"
+    );
+    let scale = f64::from(foreign.scale_factor());
+    assert_eq!(host.scale_factor(), scale);
+    assert_eq!(
+        sizes.borrow().last().copied(),
+        Some(naui_core::HostSize::new(120.0, 80.0, scale)),
+        "大きさと倍率を伝える: {:?}",
+        sizes.borrow()
+    );
+
+    host.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(150.0))
+            .height(Length::Fixed(90.0)),
+    );
+    tick(&foreign);
+    assert_eq!((foreign.width(), foreign.height()), (150, 90));
+    assert_eq!(
+        sizes.borrow().last().copied(),
+        Some(naui_core::HostSize::new(150.0, 90.0, scale)),
+        "大きさの変化を伝える"
+    );
+    let reports = sizes.borrow().len();
+    foreign.queue_resize();
+    tick(&foreign);
+    assert_eq!(sizes.borrow().len(), reports, "変わらなければ伝えない");
+
+    window.set_child(&ui.label("other")?);
+    assert_eq!(
+        *attached.borrow(),
+        vec![true, false],
+        "窓から外れたら伝える"
+    );
+    assert!(!host.is_attached());
+    window.close();
+    Ok(())
+}
+
+fn native_host_follows_a_natural_size(ui: &Ui) -> Result<()> {
+    let host = ui.native_host()?;
+    let button = gtk::Button::with_label("Native button");
+    host.set_hosted_widget(Some(&button));
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&host);
+    stack.append(&ui.label("below")?);
+    let window = ui.window("native host natural", 320.0, 200.0)?;
+    window.set_child(&stack);
+    window.show();
+    tick(&button);
+    let natural_width = button.measure(gtk::Orientation::Horizontal, -1).1;
+    let natural_height = button.measure(gtk::Orientation::Vertical, natural_width).1;
+    assert_eq!(
+        host.size(),
+        (f64::from(natural_width), f64::from(natural_height)),
+        "中身の自然な大きさになること"
+    );
+    // `measure` は CSS の余白を含み、`width` は含まない。
+    assert!(button.width() > 0 && button.width() <= natural_width);
+    window.close();
+    Ok(())
+}
+
+fn native_host_lets_go_of_widgets(ui: &Ui) -> Result<()> {
+    let host = ui.native_host()?;
+    let first_weak = {
+        let first = gtk::DrawingArea::new();
+        host.set_hosted_widget(Some(&first));
+        first.downgrade()
+    };
+    assert!(first_weak.upgrade().is_some(), "置いている間は naui が持つ");
+
+    // ほかの親を持つウィジェットは、GTK の決まりどおり断る。
+    let elsewhere = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let owned = gtk::DrawingArea::new();
+    elsewhere.append(&owned);
+    let (refused, log) = watch_log(|| host.set_hosted_widget(Some(&owned)));
+    assert!(!refused, "親のあるウィジェットは断る");
+    assert!(owned.parent().is_some_and(|parent| parent == elsewhere));
+    assert!(
+        log.iter()
+            .all(|entry| entry.level != glib::LogLevel::Critical),
+        "断るときに GTK が critical を出さないこと"
+    );
+    assert!(first_weak.upgrade().is_some(), "断ったときは前のものを残す");
+
+    let second = gtk::DrawingArea::new();
+    assert!(host.set_hosted_widget(Some(&second)));
+    assert!(
+        first_weak.upgrade().is_none(),
+        "差し替えた前のウィジェットは放す"
+    );
+    assert!(second
+        .parent()
+        .is_some_and(|parent| parent == host.native_widget()));
+
+    // 同じものを渡し直しても何も変わらない。
+    assert!(host.set_hosted_widget(Some(&second)));
+    assert!(second.next_sibling().is_none() && second.prev_sibling().is_none());
+
+    assert!(host.set_hosted_widget(None::<&gtk::Widget>));
+    assert!(second.parent().is_none(), "空にすると外す");
+    assert!(host.hosted_widget().is_none());
+
+    host.set_hosted_widget(Some(&second));
+    drop(host);
+    assert!(second.parent().is_none(), "受け皿を落とすと外す");
+    Ok(())
+}
+
 fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
     let canvas = ui.canvas()?;
     canvas.set_sizing(
