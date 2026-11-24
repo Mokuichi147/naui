@@ -265,11 +265,29 @@ pub(crate) fn report_row_position(row: &ListViewItem, index: usize, count: usize
 /// `ListViewItem`; `TreeViewItem` derives from it), and they are reused for other nodes,
 /// so the content arriving is what decides the name. The text is read as it is then; a
 /// row whose widgets change their text afterwards keeps the old name until rebuilt.
+///
+/// A row with no text (only an input field, say) is left unnamed, as the other backends
+/// read it. A `TreeViewItem` cannot be (see [`name_tree_view_row_on_load`]).
 pub(crate) fn name_row_on_load<T: Interface>(content: &T) {
+    name_on_load(content, "");
+}
+
+/// [`name_row_on_load`] for a `TreeView`'s row (`TreeViewItem`).
+///
+/// A `TreeViewItem`'s peer takes an empty name as unset and falls back to its content's
+/// string, the class name of the `TreeViewNode` ("Microsoft.UI.Xaml.Controls.TreeViewNode"),
+/// and failing that to the word "TreeViewNode". So a row with no text gets a lone space
+/// instead, which the peer keeps and a screen reader reads as nothing.
+pub(crate) fn name_tree_view_row_on_load<T: Interface>(content: &T) {
+    name_on_load(content, " ");
+}
+
+/// Names the row holding `content` on `Loaded`, `blank` when it has no text.
+fn name_on_load<T: Interface>(content: &T, blank: &'static str) {
     let Ok(content) = content.cast::<FrameworkElement>() else {
         return;
     };
-    let loaded = RoutedEventHandler::new(|sender, _| {
+    let loaded = RoutedEventHandler::new(move |sender, _| {
         let Some(content) = sender
             .as_ref()
             .and_then(|s| s.cast::<DependencyObject>().ok())
@@ -279,7 +297,11 @@ pub(crate) fn name_row_on_load<T: Interface>(content: &T) {
         let mut current = VisualTreeHelper::GetParent(&content).ok();
         while let Some(element) = current {
             if let Ok(row) = element.cast::<ListViewItem>() {
-                let _ = AutomationProperties::SetName(&row, &HSTRING::from(text_within(&content)));
+                let mut name = text_within(&content);
+                if name.is_empty() {
+                    name = blank.to_owned();
+                }
+                let _ = AutomationProperties::SetName(&row, &HSTRING::from(name));
                 break;
             }
             current = VisualTreeHelper::GetParent(&element).ok();
