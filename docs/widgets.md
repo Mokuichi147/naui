@@ -460,7 +460,14 @@ collected in [Known limitations](known-limitations.md).
   Date & Time settings), without a border or background. The calendar is fixed to
   Gregorian like `DatePicker`'s, with the first day of the week copied from the
   user's current calendar. `set_range` becomes `minDate` / `maxDate`, and `pick`
-  sets the date and sends the picker's action as a click does.
+  sets the date and sends the picker's action as a click does. Moving the
+  selection with the arrow keys changes the date **without sending the action**
+  (even with `continuous` set), so naui also listens to the cell delegate's
+  `datePickerCell:validateProposedDateValue:timeInterval:`, which is asked for
+  every change. It is called before the new date is in, so naui reads the date on
+  the run loop's next pass (in the common modes, so inside a modal loop too); a
+  click has already been handled through the action by then and is not notified
+  twice.
 - **`ColorPicker`**: `NSColorWell` itself. Pressing it opens the system color panel.
   The panel also returns catalog colors (such as `systemBlue`), so they are
   converted to sRGB before the components are read. `set_enabled(false)` also cuts

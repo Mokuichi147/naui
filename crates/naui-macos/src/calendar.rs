@@ -7,20 +7,64 @@
 //! follow the user's settings.
 
 use std::cell::{Cell, RefCell};
+use std::ptr::NonNull;
 use std::rc::Rc;
 
 use naui_core::{DatePickerMode, DateTime};
 use objc2::rc::Retained;
-use objc2::{sel, MainThreadMarker, Message};
-use objc2_app_kit::{NSDatePicker, NSDatePickerElementFlags, NSDatePickerStyle, NSView};
-use objc2_foundation::NSCalendar;
+use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
+use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
+use objc2_app_kit::{
+    NSDatePicker, NSDatePickerCell, NSDatePickerCellDelegate, NSDatePickerElementFlags,
+    NSDatePickerStyle, NSView,
+};
+use objc2_foundation::{NSCalendar, NSDate, NSTimeInterval};
 
 use crate::date_picker::{from_ns_date, gregorian_calendar, now_in, to_ns_date};
+use crate::main_thread::on_main_run_loop;
 use crate::trampoline::{ActionTarget, ValueHandler};
 use crate::widgets::{impl_widget, Widget};
 
 /// Only the date is picked, as in a `DatePicker` that shows only the date.
 const MODE: DatePickerMode = DatePickerMode::Date;
+
+define_class!(
+    /// Hears every change of the selected day, including the ones the picker does
+    /// not send its action for.
+    ///
+    /// Moving the selection with the arrow keys changes `dateValue` without sending
+    /// the action (even with `continuous` set), but the cell asks its delegate to
+    /// validate every proposed value, from the keyboard and from clicks alike.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "NauiCalendarDelegate"]
+    #[ivars = Box<dyn Fn()>]
+    struct CalendarDelegate;
+
+    unsafe impl NSObjectProtocol for CalendarDelegate {}
+
+    unsafe impl NSDatePickerCellDelegate for CalendarDelegate {
+        #[unsafe(method(datePickerCell:validateProposedDateValue:timeInterval:))]
+        unsafe fn validate_proposed(
+            &self,
+            _cell: &NSDatePickerCell,
+            _proposed: NonNull<NonNull<NSDate>>,
+            _interval: *mut NSTimeInterval,
+        ) {
+            // 提案の値はまだ入っていない。ここで通知すると、受け取った側が
+            // set_value で書いた値を直後に提案の値が上書きしてしまうので、
+            // 入った後の値を読む処理を積むだけにする。提案の値は変えない。
+            (self.ivars())();
+        }
+    }
+);
+
+impl CalendarDelegate {
+    fn new(mtm: MainThreadMarker, f: impl Fn() + 'static) -> Retained<Self> {
+        let this = Self::alloc(mtm).set_ivars(Box::new(f) as Box<dyn Fn()>);
+        unsafe { msg_send![super(this), init] }
+    }
+}
 
 struct CalendarInner {
     native: Retained<NSDatePicker>,
@@ -36,6 +80,9 @@ struct CalendarInner {
     silent: Cell<bool>,
     /// The target that receives changes. AppKit targets are weak, so it is kept alive.
     target: RefCell<Option<Retained<ActionTarget>>>,
+    /// The delegate that hears changes the action is not sent for (the arrow keys).
+    /// Delegates are weak too.
+    delegate: RefCell<Option<Retained<CalendarDelegate>>>,
 }
 
 /// An always-visible month calendar (`NSDatePicker` in the calendar style).
@@ -71,6 +118,7 @@ impl Calendar {
             handler: ValueHandler::default(),
             silent: Cell::new(false),
             target: RefCell::new(None),
+            delegate: RefCell::new(None),
         }));
         this.write_native(now);
 
@@ -88,6 +136,26 @@ impl Calendar {
             this.0.native.setAction(Some(sel!(invoke:)));
         }
         *this.0.target.borrow_mut() = Some(target);
+
+        // 矢印キーで選択を動かしてもアクションは来ないので、デリゲートで
+        // 変化を聞き、値が入った後に読み直す。クリックではアクションの方が
+        // 先に届くので、読み直したときには同じ値で、二重には通知しない。
+        // モーダルの入れ子のループの中でも届くよう、run loop の共通モードで回す。
+        let delegate = CalendarDelegate::new(mtm, {
+            let weak = Rc::downgrade(&this.0);
+            move || {
+                let weak = weak.clone();
+                on_main_run_loop(move || {
+                    if let Some(inner) = weak.upgrade() {
+                        Calendar(inner).native_changed();
+                    }
+                });
+            }
+        });
+        this.0
+            .native
+            .setDelegate(Some(ProtocolObject::from_ref(&*delegate)));
+        *this.0.delegate.borrow_mut() = Some(delegate);
         this
     }
 
@@ -108,8 +176,8 @@ impl Calendar {
     /// the dates are compared; the times of `min` and `max` are ignored.
     ///
     /// If the current value falls outside the range, it is clamped to the end without
-    /// notifying. The days outside the range are shown dimmed and cannot be clicked
-    /// (`minDate` / `maxDate`).
+    /// notifying. The days outside the range are shown dimmed (`minDate` /
+    /// `maxDate`); clicking one selects the nearest end, which is notified.
     pub fn set_range(&self, min: Option<DateTime>, max: Option<DateTime>) {
         self.0.min.set(min.map(DateTime::normalized));
         self.0.max.set(max.map(DateTime::normalized));

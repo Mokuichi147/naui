@@ -1147,6 +1147,10 @@ fn main() {
             calendar_stays_inside_the_range,
         ),
         (
+            "カレンダーの選択を矢印キーで動かしても値が追いつき通知する",
+            calendar_follows_the_arrow_keys,
+        ),
+        (
             "時刻ピッカーが時分だけを出し、値がネイティブと往復する",
             time_picker_value_round_trips,
         ),
@@ -15134,6 +15138,100 @@ fn calendar_stays_inside_the_range(ui: &Ui) -> Result<()> {
     assert!(calendar.native_picker().maxDate().is_none());
     calendar.pick(DateTime::date(1990, 1, 1));
     assert_eq!(calendar.value(), DateTime::date(1990, 1, 1));
+    Ok(())
+}
+
+/// Moving the selection with the arrow keys reaches the value and `on_change`.
+///
+/// `NSDatePicker` does not send its action for the keyboard, so the calendar hears
+/// the change through the cell's delegate and reads the value once it is in.
+fn calendar_follows_the_arrow_keys(ui: &Ui) -> Result<()> {
+    let window = ui.window("カレンダーのキー", 320.0, 240.0)?;
+    let calendar = ui.calendar()?;
+    window.set_child(&calendar);
+    window.show();
+    calendar.set_value(DateTime::new(2026, 11, 18, 9, 30));
+    let native = calendar.native_picker();
+    let ns_window = window.native_window();
+    assert!(ns_window.makeFirstResponder(Some(&native)));
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    calendar.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+    let arrow = |key_code: u16, character: char| {
+        let text = NSString::from_str(&character.to_string());
+        let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+            NSEventType::KeyDown,
+            NSPoint::new(0.0, 0.0),
+            NSEventModifierFlags::NumericPad | NSEventModifierFlags::Function,
+            0.0,
+            ns_window.windowNumber(),
+            None,
+            &text,
+            &text,
+            false,
+            key_code,
+        )
+        .expect("キーイベント");
+        // 窓が画面に出ていない環境でも届くよう、暦へ直接渡す。
+        native.keyDown(&event);
+    };
+
+    // → で翌日、↓ で翌週。時刻はそのまま。
+    arrow(124, '\u{F703}');
+    pump_until(2.0, || seen.borrow().len() == 1);
+    assert_eq!(calendar.value(), DateTime::new(2026, 11, 19, 9, 30));
+    assert_eq!(*seen.borrow(), vec![DateTime::new(2026, 11, 19, 9, 30)]);
+    arrow(125, '\u{F701}');
+    pump_until(2.0, || seen.borrow().len() == 2);
+    assert_eq!(calendar.value(), DateTime::new(2026, 11, 26, 9, 30));
+    assert_eq!(seen.borrow().len(), 2, "キー 1 回につき 1 度だけ通知する");
+
+    // 書き込みとクリック (アクション) は、後から読み直しても重ねて通知しない。
+    calendar.set_value(DateTime::new(2026, 11, 2, 9, 30));
+    edit_natively(&native, DateTime::date(2026, 11, 5));
+    pump(0.1);
+    assert_eq!(seen.borrow().len(), 3);
+    assert_eq!(calendar.value(), DateTime::new(2026, 11, 5, 9, 30));
+
+    // 範囲で値が寄っても、読み直しで通知しない。
+    calendar.set_range(Some(DateTime::date(2026, 11, 10)), None);
+    pump(0.1);
+    assert_eq!(calendar.value(), DateTime::new(2026, 11, 10, 9, 30));
+    assert_eq!(seen.borrow().len(), 3, "set_range は通知しない");
+
+    // 通知の中で書いた値が、キーの値に上書きされない。
+    calendar.on_change({
+        let seen = seen.clone();
+        let calendar = calendar.clone();
+        move |value| {
+            seen.borrow_mut().push(value);
+            calendar.set_value(DateTime::new(2026, 12, 24, 9, 30));
+        }
+    });
+    arrow(123, '\u{F702}');
+    arrow(124, '\u{F703}');
+    pump_until(2.0, || seen.borrow().len() == 4);
+    pump(0.1);
+    assert_eq!(calendar.value(), DateTime::new(2026, 12, 24, 9, 30));
+    let gregorian = NSCalendar::initWithCalendarIdentifier(NSCalendar::alloc(), unsafe {
+        NSCalendarIdentifierGregorian
+    })
+    .expect("グレゴリオ暦");
+    let shown = gregorian.components_fromDate(
+        NSCalendarUnit::Year | NSCalendarUnit::Month | NSCalendarUnit::Day,
+        &native.dateValue(),
+    );
+    assert_eq!((shown.year(), shown.month(), shown.day()), (2026, 12, 24));
+
+    // 無効の間はキーが効かない。
+    calendar.set_enabled(false);
+    arrow(124, '\u{F703}');
+    pump(0.1);
+    assert_eq!(calendar.value(), DateTime::new(2026, 12, 24, 9, 30));
+    window.native_window().close();
     Ok(())
 }
 

@@ -34,8 +34,8 @@ that shape are covered in
 | Where a `Toast` appears (`ToastPosition`) | Any of the six | Any of the six | Always the bottom center | Any of the six |
 | Where a `Toast`'s second and later action buttons go | A row below the text | Next to the first, after the text | Next to the first, after the text | Next to the first, after the text |
 | A `Flow` child wider than the flow | Keeps its width and is cut off, unless it has `Fill` on the width | Keeps its width and is cut off, unless it has `Fill` on the width | Narrowed to the flow, down to its minimum | Narrowed to the flow, down to its `min-content` width |
-| `Calendar`'s days outside `set_range` | Not shown | Dimmed, cannot be clicked | Look selectable; naui moves the selection back to the end | Disabled buttons |
-| `Calendar`'s month arrows | Only show another month | Not checked (AppKit's own behavior; any change of the selection is notified) | Also select a day in that month (notified) | Only show another month |
+| `Calendar`'s days outside `set_range` | Not shown | Dimmed; clicking one selects the nearest end (notified) | Look selectable; naui moves the selection back to the end (notified) | Disabled buttons |
+| `Calendar`'s month arrows | Only show another month | Only show another month (`●` shows today's month without selecting today) | Also select a day in that month (notified) | Only show another month |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
 
 ## Common
@@ -573,6 +573,11 @@ that shape are covered in
   [Widget implementations](widgets.md#windows-construction)).
 - `Toggle` switches **only when the switch is pressed**; pressing the label text
   does not switch it.
+- `Calendar`'s days outside `set_range` are dimmed but **can still be clicked**:
+  `NSDatePicker` then selects the nearest end of the range (`minDate` /
+  `maxDate`), which `on_change` reports like any other click. The arrows in the
+  header keep going past the range into months where every day is dimmed (Windows
+  disables them at the ends).
 - `EditableComboBox` completes the rest when you type characters matching the start
   of an option, but **does not narrow the option list itself**.
 - `Table` row height is a fixed value derived from the system font. Rows do not

@@ -1659,11 +1659,12 @@ or several days (WinUI's multiple selection) is something only one platform has.
 
 [`set_value`](Calendar::set_value) does not notify and shows the value's month.
 [`set_range`](Calendar::set_range) compares only the dates. Where the platform has
-a range (macOS, Windows, and the Web, which composes the calendar from buttons),
-the days outside it cannot be clicked; `GtkCalendar` has none, so there the
-selection is moved back to the nearest end. On Linux the arrows in the header also
-move the selection to the next month or year, which notifies; on Windows and the
-Web they only show another month. (`on_change` reports whatever the native calendar
+a range (Windows, and the Web, which composes the calendar from buttons), the
+days outside it cannot be clicked. macOS dims them, but clicking one selects the
+nearest end of the range, and `GtkCalendar` has no range, so there naui moves the
+selection back to the nearest end; both notify. On Linux the arrows in the header
+also move the selection to the next month or year, which notifies; on macOS,
+Windows and the Web they only show another month. (`on_change` reports whatever the native calendar
 selects, so an app need not care which.)
 
 The Web has no always-visible calendar control, so naui composes one from DOM
