@@ -2437,6 +2437,23 @@ fn calendar_value_round_trips(ui: &Ui) -> Result<()> {
         "GregorianCalendar",
         "暦は西暦に固定すること"
     );
+    // 週の始まりはユーザーのロケール (地域の設定) の LOCALE_IFIRSTDAYOFWEEK
+    // (月曜日 = 0 … 日曜日 = 6) に従うこと。
+    let mut first = [0u16; 2];
+    let written = unsafe {
+        windows::Win32::Globalization::GetLocaleInfoEx(
+            windows_core::PCWSTR::null(),
+            windows::Win32::Globalization::LOCALE_IFIRSTDAYOFWEEK
+                | windows::Win32::Globalization::LOCALE_RETURN_NUMBER,
+            Some(&mut first),
+        )
+    };
+    assert_ne!(written, 0, "週の始まりを読めること");
+    assert_eq!(
+        view.FirstDayOfWeek().unwrap(),
+        windows::Globalization::DayOfWeek((i32::from(first[0]) + 1) % 7),
+        "週の始まりがユーザーの設定に従うこと"
+    );
     assert!(calendar.value().is_valid(), "初期値は現在日時");
     assert_eq!(
         calendar_selected_days(&view).len(),

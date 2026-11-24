@@ -473,10 +473,11 @@ that shape are covered in
   (`TimePicker` supports no range at all), so naui clamps out-of-range values the
   user picks to the ends.
 - `Calendar` widens `CalendarView`'s `MinDate` / `MaxDate` beyond WinUI's default
-  of 100 years around today when there is no range; how it looks and performs with
-  that many months has not been checked on a real device (CI cannot draw the
-  template). Whether `CalendarView`'s first day of the week follows the user's
-  settings is left to WinUI (naui does not set `FirstDayOfWeek`).
+  of 100 years around today to the whole Gregorian calendar (years 1 to 9999) when
+  there is no range. `CalendarView`'s `FirstDayOfWeek` is Sunday whatever the
+  locale, so naui copies the first day of the week of the user's locale (including
+  the choice in the Region settings) when the calendar is created; changing the
+  setting while the app runs is not reflected.
 - Branches set to `TreeItem::enabled(false)` in a `Tree` can still be expanded and
   collapsed.
 - A `Tree` with `SelectionMode::Multiple` is not a `TreeView` but a `ListView` laid

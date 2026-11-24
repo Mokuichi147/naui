@@ -255,9 +255,10 @@ collected in [Known limitations](known-limitations.md).
   Gregorian calendar. `set_range` becomes `MinDate` / `MaxDate` (from 00:00 on the
   first day to 23:59 on the last); without a range they are widened from WinUI's
   default of 100 years around today to everything the Gregorian calendar of
-  `Windows.Globalization` covers. Clicking the selected day again deselects it in
-  `CalendarView`, which naui undoes without notifying, since a `Calendar` always
-  has a day. `pick` puts the day in `SelectedDates` and naui notifies, so it works
+  `Windows.Globalization` covers. `FirstDayOfWeek` is set from the user's locale
+  (`LOCALE_IFIRSTDAYOFWEEK`), since it is otherwise always Sunday. Clicking the
+  selected day again deselects it in `CalendarView`, which naui undoes without
+  notifying, since a `Calendar` always has a day. `pick` puts the day in `SelectedDates` and naui notifies, so it works
   before the window is drawn.
 - **`ColorPicker`**: WinUI 3's `ColorPicker` is a large surface with a spectrum and
   sliders stacked vertically, so it is put in a `Button`'s `Flyout`, and the button

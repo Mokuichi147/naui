@@ -1,7 +1,7 @@
 //! An always-visible month calendar (WinUI 3's `CalendarView`).
 //!
 //! `CalendarView` is used in its `Single` selection mode with the Gregorian
-//! calendar. Two of its behaviors are adjusted so that it matches the other
+//! calendar. Three of its behaviors are adjusted so that it matches the other
 //! platforms:
 //!
 //! - In `Single` mode the user can deselect the selected day by clicking it
@@ -10,6 +10,9 @@
 //! - Without a range, `MinDate` and `MaxDate` default to 100 years before and after
 //!   today. naui widens them to everything the Gregorian calendar of
 //!   `Windows.Globalization` covers.
+//! - `FirstDayOfWeek` defaults to Sunday whatever the locale. naui sets it to the
+//!   first day of the week of the user's locale (`LOCALE_IFIRSTDAYOFWEEK`, which
+//!   includes the choice in the Region settings) when the calendar is created.
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -21,8 +24,11 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
 };
 use naui_winui3::Microsoft::UI::Xaml::UIElement;
 use windows::Foundation::{DateTime as WinDateTime, TypedEventHandler};
-use windows::Globalization::{CalendarIdentifiers, ClockIdentifiers};
-use windows_core::Interface;
+use windows::Globalization::{CalendarIdentifiers, ClockIdentifiers, DayOfWeek};
+use windows::Win32::Globalization::{
+    GetLocaleInfoEx, LOCALE_IFIRSTDAYOFWEEK, LOCALE_RETURN_NUMBER,
+};
+use windows_core::{Interface, PCWSTR};
 
 use crate::date_picker::{from_native_date, gregorian_calendar, local_now};
 use crate::to_error;
@@ -91,6 +97,10 @@ impl Calendar {
         native
             .SetCalendarIdentifier(&gregorian)
             .map_err(|e| to_error("set the CalendarView calendar", e))?;
+        // `FirstDayOfWeek` の既定はロケールに関わらず日曜日なので、ユーザーの設定を写す。
+        if let Some(first) = first_day_of_week(PCWSTR::null(), 0) {
+            let _ = native.SetFirstDayOfWeek(first);
+        }
 
         let this = Self(Rc::new(CalendarInner {
             native,
@@ -333,9 +343,57 @@ fn calendar_limit(max: bool) -> Option<WinDateTime> {
     calendar.GetDateTime().ok()
 }
 
+/// The first day of the week of `locale` (`LOCALE_IFIRSTDAYOFWEEK`). A null `locale`
+/// is the user's locale, including the first day chosen in the Region settings.
+/// `None` if it cannot be read.
+fn first_day_of_week(locale: PCWSTR, flags: u32) -> Option<DayOfWeek> {
+    // LOCALE_RETURN_NUMBER は DWORD を 2 文字ぶんに書く。
+    let mut number = [0u16; 2];
+    // SAFETY: 手元の配列へ書かせるだけ。
+    let written = unsafe {
+        GetLocaleInfoEx(
+            locale,
+            LOCALE_IFIRSTDAYOFWEEK | LOCALE_RETURN_NUMBER | flags,
+            Some(&mut number),
+        )
+    };
+    if written == 0 {
+        return None;
+    }
+    day_of_week_from_locale(u32::from(number[0]) | (u32::from(number[1]) << 16))
+}
+
+/// `LOCALE_IFIRSTDAYOFWEEK` counts from Monday (0) to Sunday (6), while `DayOfWeek`
+/// counts from Sunday (0).
+fn day_of_week_from_locale(value: u32) -> Option<DayOfWeek> {
+    (value < 7).then(|| DayOfWeek(((value + 1) % 7) as i32))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use windows::Win32::Globalization::LOCALE_NOUSEROVERRIDE;
+    use windows_core::w;
+
+    #[test]
+    fn first_day_of_week_comes_from_the_locale() {
+        assert_eq!(day_of_week_from_locale(0), Some(DayOfWeek::Monday));
+        assert_eq!(day_of_week_from_locale(5), Some(DayOfWeek::Saturday));
+        assert_eq!(day_of_week_from_locale(6), Some(DayOfWeek::Sunday));
+        assert_eq!(day_of_week_from_locale(7), None);
+        assert_eq!(
+            first_day_of_week(w!("fr-FR"), LOCALE_NOUSEROVERRIDE),
+            Some(DayOfWeek::Monday)
+        );
+        assert_eq!(
+            first_day_of_week(w!("en-US"), LOCALE_NOUSEROVERRIDE),
+            Some(DayOfWeek::Sunday)
+        );
+        assert!(
+            first_day_of_week(PCWSTR::null(), 0).is_some(),
+            "ユーザーの設定"
+        );
+    }
 
     /// The hour and minute of `date` in a 24-hour Gregorian calendar.
     fn hour_minute(date: WinDateTime) -> (i32, i32) {
