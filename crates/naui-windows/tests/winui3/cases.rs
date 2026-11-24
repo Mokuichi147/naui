@@ -720,6 +720,10 @@ const CASES: &[Case] = &[
         editable_combo_box_commits_and_reverts_text,
     ),
     (
+        "シートの中のキーは中のウィジェットのショートカットへ届き、窓の Esc に取られない",
+        sheet_keys_skip_the_window_shortcuts,
+    ),
+    (
         "OS の優先言語を読め、WM_SETTINGCHANGE の intl で変わると知らせる",
         preferred_languages_follow_settingchange,
     ),
@@ -10190,6 +10194,106 @@ fn editable_combo_box_commits_and_reverts_text(ui: &Ui) -> Result<()> {
         );
         assert_eq!(*seen.borrow(), ["q", "w", "foo", "w", "", "z"]);
     }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// Keys pressed in a sheet reach the shortcuts of the widgets in it, but not the
+/// window's `on_key_down` or shortcuts, so a window's Escape does not keep the sheet
+/// from closing.
+///
+/// The `ContentDialog` is a popup outside the window's content, yet its keys tunnel
+/// through the window root's `PreviewKeyDown` too, so this needs real keys
+/// (`SendInput`). It passes without checking when the window cannot come to the
+/// front.
+fn sheet_keys_skip_the_window_shortcuts(ui: &Ui) -> Result<()> {
+    use naui_core::{DialogButtons, DialogResponse, EventResponse, Key};
+    use naui_winui3::Microsoft::UI::Xaml::FocusState;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_ESCAPE, VK_F5, VK_F7};
+
+    let window = ui.window("シートの中のキー", 320.0, 200.0)?;
+    let outside = ui.text_input("")?;
+    window.set_child(&outside);
+    let log = Rc::new(RefCell::new(Vec::<&'static str>::new()));
+    let note = |name: &'static str| {
+        let log = log.clone();
+        move || log.borrow_mut().push(name)
+    };
+    window.on_shortcut(Shortcut::from_key(Key::Escape), note("窓の Esc"));
+    window.on_shortcut(Shortcut::function(5), note("窓の F5"));
+    window.on_key_down({
+        let log = log.clone();
+        move |_| {
+            log.borrow_mut().push("窓の on_key_down");
+            EventResponse::Continue
+        }
+    });
+    let sheet = ui.sheet("シート")?;
+    let field = ui.text_input("")?;
+    field.on_shortcut(Shortcut::function(7), note("欄の F7"));
+    sheet.set_child(&field);
+    sheet.set_buttons(DialogButtons::new().primary("作成").cancel("やめる"));
+    let responses = Rc::new(RefCell::new(Vec::<DialogResponse>::new()));
+    sheet.on_response({
+        let responses = responses.clone();
+        move |response| responses.borrow_mut().push(response)
+    });
+    // フォーカスを移してから、それが立つまで待つ。
+    let focus = |text_box: &TextBox| {
+        let focused = || {
+            text_box
+                .FocusState()
+                .is_ok_and(|state| state != FocusState::Unfocused)
+        };
+        pump_until(KEY_INPUT_TIMEOUT, || {
+            let _ = text_box.Focus(FocusState::Programmatic);
+            focused()
+        });
+        focused()
+    };
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        if bring_to_front(&window).is_none() {
+            return;
+        }
+        sheet.open();
+        if !focus(&native::<TextBox>(&field)) {
+            println!("     (シートの欄へフォーカスを移せない環境なので、確かめずに通す)");
+            return;
+        }
+        if !type_keys(&[VK_F7, VK_F5]) {
+            return;
+        }
+        assert_eq!(
+            *log.borrow(),
+            ["欄の F7"],
+            "シートの中の欄のショートカットは届き、窓のものは届かない"
+        );
+        if !type_keys(&[VK_ESCAPE]) {
+            return;
+        }
+        pump_until(KEY_INPUT_TIMEOUT, || !sheet.is_open());
+        assert_eq!(
+            *responses.borrow(),
+            [DialogResponse::Cancel],
+            "Esc はシートが受け取って閉じる"
+        );
+        assert_eq!(*log.borrow(), ["欄の F7"], "窓の Esc は取らない");
+
+        // 窓の中へ戻れば、窓のショートカットは届く。
+        if !focus(&native::<TextBox>(&outside)) {
+            println!("     (窓の欄へフォーカスを戻せない環境なので、残りは確かめずに通す)");
+            return;
+        }
+        if !type_keys(&[VK_F5]) {
+            return;
+        }
+        assert_eq!(*log.borrow(), ["欄の F7", "窓の on_key_down", "窓の F5"]);
+    }));
+    sheet.close();
     window.close();
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);

@@ -714,10 +714,10 @@ modifier ([`Shortcut::is_valid`]). A character key without the primary modifier 
 never valid, since it would take typing away from text fields.
 
 Keys pressed in a [`Dialog`] or [`Sheet`] do not reach the window's `on_key_down`
-or shortcuts (on macOS and Windows those are windows of their own; naui does the
-same on Linux and the Web). The shortcuts of the widgets inside a `Sheet` do
-work, except that this has not been checked on Windows. Keys pressed while an IME
-is composing reach no shortcut.
+or shortcuts (on macOS those are windows of their own; naui does the same on
+Windows, Linux and the Web), so a window's Escape does not keep a dialog from
+closing. The shortcuts of the widgets inside a `Sheet` do work. Keys pressed while
+an IME is composing reach no shortcut.
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |

@@ -520,11 +520,13 @@ that shape are covered in
 - `MenuBar` shortcuts are picked up from the window's `KeyDown`, so a key that the
   focused control handles itself does not reach them (shortcuts given with
   `on_shortcut` come before the focused control, so they do not have this gap).
-  Whether keys pressed in a `Sheet` reach the `on_key_down` and shortcuts of the
-  widgets in it has not been checked on a real device: the `ContentDialog` is
-  outside the window root where naui receives keys. Whether F10 and Alt
-  combinations, which Windows uses for its own menu keys, arrive has not been
-  checked on a real device.
+  Keys pressed in a popup (a `Dialog` or `Sheet`'s `ContentDialog`, a menu, a
+  drop-down list) pass through the window root too, but naui gives them only to
+  the widgets they come from (the shortcuts of the widgets in a `Sheet` fire), not
+  to the window's `on_key_down` or shortcuts. F10 and Alt combinations, which
+  Windows uses for its own menu keys, reach `on_shortcut` (checked with real
+  keys); whether they reach the `MenuBar`'s shortcuts has not been checked on a
+  real device.
 
 ### Window
 

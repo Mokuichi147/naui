@@ -10,6 +10,13 @@
 //! either (inserting a newline, for example), nor the menu bar, whose shortcuts are
 //! picked up from the root's bubbling `KeyDown`.
 //!
+//! Keys pressed in a popup (a `Dialog` or `Sheet`'s `ContentDialog`, a `MenuFlyout`,
+//! a drop-down list) also tunnel through the root, but their source is not under it:
+//! popups hang off the XAML root, not the window's content. Those keys reach only the
+//! widgets they come from, not the window's `on_key_down` or shortcuts, so that a
+//! window's Escape does not keep a dialog or a menu from closing (the same as the
+//! other platforms, where these are separate windows or are left out).
+//!
 //! WinUI's `KeyboardAccelerator` is not used: it is not in naui's projection, and
 //! its invocation order relative to the focused control and the root's
 //! `PreviewKeyDown` would differ from the other platforms.
@@ -140,7 +147,8 @@ pub(crate) fn install(root: &UIElement, window: KeyTarget) -> windows_core::Resu
     let window = Arc::new(UiThreadCell::new(window));
     let down = KeyEventHandler::new({
         let pressed = pressed.clone();
-        move |_, args| {
+        // 根は送り手として届く (閉包に根を持たせると循環になる)。
+        move |sender, args| {
             let Some(args) = args.as_ref() else {
                 return Ok(());
             };
@@ -151,7 +159,10 @@ pub(crate) fn install(root: &UIElement, window: KeyTarget) -> windows_core::Resu
             let Some(window) = window.try_with_mut(|window| window.clone()) else {
                 return Ok(());
             };
-            if dispatch(args, key, repeat, &window) == EventResponse::Handled {
+            let root = sender
+                .as_ref()
+                .and_then(|sender| sender.cast::<DependencyObject>().ok());
+            if dispatch(args, key, repeat, root.as_ref(), &window) == EventResponse::Handled {
                 let _ = args.SetHandled(true);
             }
             Ok(())
@@ -174,6 +185,7 @@ fn dispatch(
     args: &KeyRoutedEventArgs,
     key: VirtualKey,
     repeat: bool,
+    root: Option<&DependencyObject>,
     window: &KeyTarget,
 ) -> EventResponse {
     if key.0 == VK_PROCESSKEY || is_modifier(key.0) {
@@ -184,13 +196,18 @@ fn dispatch(
         .ok()
         .and_then(|source| source.cast::<DependencyObject>().ok());
     let event = KeyEvent::new(key_of(key), modifiers()).repeat(repeat);
-    deliver(source, &event, window)
+    deliver(source, root, &event, window)
 }
 
 /// Delivers `event` to the widgets from `source` outward and to the window, in
 /// naui's order. Nothing is delivered while `source` is a composing `TextBox`.
+///
+/// The window gets it only when `source` is under `root` (the window's content). A
+/// key from a popup, which hangs off the XAML root instead, reaches only the widgets
+/// it comes from.
 fn deliver(
     source: Option<DependencyObject>,
+    root: Option<&DependencyObject>,
     event: &KeyEvent,
     window: &KeyTarget,
 ) -> EventResponse {
@@ -200,9 +217,15 @@ fn deliver(
             return EventResponse::Continue;
         }
     }
+    // 送り元が分からないキーは、これまでどおり窓へ届ける。
+    let mut in_window = source.is_none() || root.is_none();
     let mut widgets = Vec::new();
     let mut current = source;
     while let Some(object) = current {
+        if root.is_some_and(|root| same(&object, root)) {
+            in_window = true;
+            break;
+        }
         let target = KeyTarget {
             key_down: lookup(&WIDGETS, &object),
             shortcuts: lookup(&WIDGET_SHORTCUTS, &object).filter(|s| !s.is_empty()),
@@ -212,7 +235,12 @@ fn deliver(
         }
         current = VisualTreeHelper::GetParent(&object).ok();
     }
-    naui_core::deliver_key(event, &widgets, window)
+    if in_window {
+        naui_core::deliver_key(event, &widgets, window)
+    } else {
+        // ポップアップ (ダイアログ・メニュー・ドロップダウン) の中のキー。
+        naui_core::deliver_key(event, &widgets, &KeyTarget::default())
+    }
 }
 
 /// Delivers `event` as if pressed with focus where it is now under `root`, for
@@ -220,7 +248,12 @@ fn deliver(
 pub(crate) fn send(root: &UIElement, event: &KeyEvent, window: &KeyTarget) -> EventResponse {
     let root = root.cast::<DependencyObject>().ok();
     let focused = root.as_ref().and_then(focused_within);
-    deliver(focused.or(root), event, window)
+    deliver(
+        focused.or_else(|| root.clone()),
+        root.as_ref(),
+        event,
+        window,
+    )
 }
 
 /// The control under `object` that has keyboard focus.
