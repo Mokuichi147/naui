@@ -146,6 +146,7 @@ impl Dialog {
         }
         let native =
             adw::AlertDialog::new(Some(&self.0.title.borrow()), Some(&self.0.message.borrow()));
+        crate::keys::install_dialog(&native);
 
         let buttons = self.0.buttons.borrow().resolved();
         for (role, label) in buttons.in_order(&ORDER) {

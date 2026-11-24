@@ -438,8 +438,8 @@ fn main() {
             shortcuts_go_from_the_focus_to_the_menu_bar,
         ),
         (
-            "シートの中のキーはシートのウィジェットに届き、窓には届かない",
-            keys_in_a_sheet_do_not_reach_the_window,
+            "シートとダイアログの中のキーはその中のウィジェットに届き、窓には届かない",
+            keys_in_sheets_and_dialogs_do_not_reach_the_window,
         ),
         ("タイマーがメインループで呼ばれ、止められる", timers_fire_on_the_main_loop),
         (
@@ -13357,8 +13357,17 @@ fn press_key(
     keyval: gtk::gdk::Key,
     state: gtk::gdk::ModifierType,
 ) -> bool {
-    let native = window.native_window();
-    let controllers = native.observe_controllers();
+    press_key_on(window.native_window().upcast_ref(), keyval, state)
+}
+
+/// Sends a key to naui's capture-phase receiver on `widget` (a window or an
+/// `AdwDialog`).
+fn press_key_on(
+    widget: &gtk::Widget,
+    keyval: gtk::gdk::Key,
+    state: gtk::gdk::ModifierType,
+) -> bool {
+    let controllers = widget.observe_controllers();
     let controller = (0..controllers.n_items())
         .filter_map(|index| controllers.item(index))
         .filter_map(|item| item.downcast::<gtk::EventControllerKey>().ok())
@@ -13573,7 +13582,7 @@ fn shortcuts_go_from_the_focus_to_the_menu_bar(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-fn keys_in_a_sheet_do_not_reach_the_window(ui: &Ui) -> Result<()> {
+fn keys_in_sheets_and_dialogs_do_not_reach_the_window(ui: &Ui) -> Result<()> {
     use gtk::gdk::{Key as K, ModifierType as M};
     let window = ui.window("naui", 480.0, 360.0)?;
     window.show();
@@ -13595,12 +13604,20 @@ fn keys_in_a_sheet_do_not_reach_the_window(ui: &Ui) -> Result<()> {
     let native = sheet.native_dialog().expect("AdwDialog");
     wait_until_shown(&native);
     assert!(field.request_focus());
+    // libadwaita は窓の中のダイアログで打たれたキーを窓の capture に通さないので、
+    // ダイアログの受け口が届ける。窓の受け口はダイアログの中のキーを扱わない
+    // (両方を通す版でも二重に届かない)。
     press_key(&window, K::F2, M::empty());
-    press_key(&window, K::F3, M::empty());
+    assert!(
+        log.borrow().is_empty(),
+        "窓の受け口はシートの中のキーを扱わない"
+    );
+    press_key_on(native.upcast_ref(), K::F2, M::empty());
+    press_key_on(native.upcast_ref(), K::F3, M::empty());
     assert_eq!(
         *log.borrow(),
         ["field"],
-        "窓のショートカットはシートの中から届かない"
+        "シートの中のショートカットは届き、窓のショートカットは届かない"
     );
 
     native.close();
@@ -13608,6 +13625,28 @@ fn keys_in_a_sheet_do_not_reach_the_window(ui: &Ui) -> Result<()> {
     log.borrow_mut().clear();
     press_key(&window, K::F3, M::empty());
     assert_eq!(*log.borrow(), ["window F3"], "閉じれば窓に届く");
+
+    // `Dialog` (AdwAlertDialog) も同じ。
+    let dialog = ui.dialog("確認")?;
+    let input = ui.text_input("")?;
+    input.on_shortcut(f2, note("dialog field"));
+    dialog.set_child(&input);
+    dialog.open();
+    let native = dialog.native_dialog().expect("AdwAlertDialog");
+    wait_until_shown(native.upcast_ref());
+    // 閉じたシートが消えきるまで、ダイアログの中身はフォーカスを受けない。
+    spin_until(std::time::Duration::from_secs(2), || input.request_focus());
+    assert!(input.request_focus());
+    log.borrow_mut().clear();
+    press_key(&window, K::F2, M::empty());
+    press_key_on(native.upcast_ref(), K::F2, M::empty());
+    press_key_on(native.upcast_ref(), K::F3, M::empty());
+    assert_eq!(
+        *log.borrow(),
+        ["dialog field"],
+        "ダイアログの中のショートカットは届き、窓のショートカットは届かない"
+    );
+    dialog.close();
     window.close();
     Ok(())
 }

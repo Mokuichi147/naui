@@ -267,6 +267,7 @@ impl Sheet {
 
     fn build(&self) -> Current {
         let native = adw::Dialog::new();
+        crate::keys::install_dialog(&native);
         native.set_title(&self.0.title.borrow());
         // 中身が伸びれば (Expander を開くなど) ダイアログも伸びる。
         native.set_follows_content_size(true);

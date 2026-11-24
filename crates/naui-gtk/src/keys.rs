@@ -17,7 +17,8 @@
 //!
 //! `Dialog` and `Sheet` open in an `AdwDialog` inside the window. Keys pressed in
 //! one reach the widgets in it but not the window, as on the other platforms, where
-//! those are windows of their own.
+//! those are windows of their own. Libadwaita does not pass those keys through the
+//! window's capture phase, so each `AdwDialog` gets a receiver of its own.
 //!
 //! Modifier keys pressed on their own are not delivered (the same as macOS).
 //!
@@ -147,13 +148,40 @@ fn target_of(
 
 /// Attaches the key receiver to a window. Called exactly once when the window is
 /// created.
+///
+/// Keys whose focus is inside an `AdwDialog` are left to the dialog's own receiver
+/// ([`install_dialog`]).
 pub(crate) fn install(window: &impl IsA<gtk::Window>) {
+    let window_widget: glib::WeakRef<gtk::Widget> =
+        window.as_ref().upcast_ref::<gtk::Widget>().downgrade();
+    let controller = receiver(move || {
+        let window = window_widget.upgrade()?;
+        (!focus_in_dialog(&window)).then_some(window)
+    });
+    window.as_ref().add_controller(controller);
+}
+
+/// Attaches the key receiver to an `AdwDialog` (`Dialog` and `Sheet`). Called once
+/// when the dialog is built.
+///
+/// Libadwaita (1.9 at least) does not pass keys typed in a dialog shown inside a
+/// window through the window's capture phase, so the window's receiver never sees
+/// them. The dialog's receiver delivers them to the widgets in it, not to the
+/// window ([`dispatch`] stops at the dialog).
+pub(crate) fn install_dialog(dialog: &impl IsA<adw::Dialog>) {
+    let dialog_widget: glib::WeakRef<gtk::Widget> =
+        dialog.as_ref().upcast_ref::<gtk::Widget>().downgrade();
+    let controller = receiver(move || Some(dialog_widget.upgrade()?.root()?.upcast()));
+    dialog.as_ref().add_controller(controller);
+}
+
+/// A capture-phase key controller delivering keys through [`dispatch`] to the
+/// window `window_of` returns (`None` leaves the key alone).
+fn receiver(window_of: impl Fn() -> Option<gtk::Widget> + 'static) -> gtk::EventControllerKey {
     let controller = gtk::EventControllerKey::new();
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);
     // 押しっぱなしの繰り返しを見分けるため、押されているキーを覚える。
     let pressed: Rc<RefCell<HashSet<u32>>> = Rc::default();
-    let window_widget: glib::WeakRef<gtk::Widget> =
-        window.as_ref().upcast_ref::<gtk::Widget>().downgrade();
     controller.connect_key_pressed({
         let pressed = pressed.clone();
         move |_, keyval, keycode, state| {
@@ -161,7 +189,7 @@ pub(crate) fn install(window: &impl IsA<gtk::Window>) {
             if is_modifier(keyval) {
                 return glib::Propagation::Proceed;
             }
-            let Some(window) = window_widget.upgrade() else {
+            let Some(window) = window_of() else {
                 return glib::Propagation::Proceed;
             };
             let event = KeyEvent::new(key_of(keyval), modifiers_of(state)).repeat(repeat);
@@ -174,7 +202,15 @@ pub(crate) fn install(window: &impl IsA<gtk::Window>) {
     controller.connect_key_released(move |_, _, keycode, _| {
         pressed.borrow_mut().remove(&keycode);
     });
-    window.as_ref().add_controller(controller);
+    controller
+}
+
+/// Whether the window's focus is inside an `AdwDialog`.
+fn focus_in_dialog(window: &gtk::Widget) -> bool {
+    window
+        .downcast_ref::<gtk::Window>()
+        .and_then(gtk::prelude::GtkWindowExt::focus)
+        .is_some_and(|focus| focus.ancestor(adw::Dialog::static_type()).is_some())
 }
 
 /// Delivers `event` to the widgets around the window's focus and to the window, in
