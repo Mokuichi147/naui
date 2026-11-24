@@ -21,7 +21,7 @@ use naui_winui3::Microsoft::UI::Xaml::Controls::{
 };
 use naui_winui3::Microsoft::UI::Xaml::UIElement;
 use windows::Foundation::{DateTime as WinDateTime, TypedEventHandler};
-use windows::Globalization::CalendarIdentifiers;
+use windows::Globalization::{CalendarIdentifiers, ClockIdentifiers};
 use windows_core::Interface;
 
 use crate::date_picker::{from_native_date, gregorian_calendar, local_now};
@@ -296,8 +296,19 @@ impl Calendar {
 /// The day of `value` at `hour` o'clock local time (the minute is 0, or 59 for the
 /// last hour so that the whole day is covered).
 fn to_native_day(value: DateTime, hour: i32) -> windows_core::Result<WinDateTime> {
+    day_at(&gregorian_calendar()?, value, hour)
+}
+
+/// [`to_native_day`] with the given calendar, whose clock is switched to 24 hours.
+fn day_at(
+    calendar: &windows::Globalization::Calendar,
+    value: DateTime,
+    hour: i32,
+) -> windows_core::Result<WinDateTime> {
+    // 時計は言語で決まり、en-US などの 12 時間制では SetHour が 1〜12 しか
+    // 受け付けない (0 時と 23 時が失敗して範囲が書けなくなる)。
+    calendar.ChangeClock(&ClockIdentifiers::TwentyFourHour()?)?;
     let value = value.normalized();
-    let calendar = gregorian_calendar()?;
     calendar.SetToNow()?;
     calendar.SetDay(1)?;
     calendar.SetYear(value.year)?;
@@ -320,4 +331,37 @@ fn calendar_limit(max: bool) -> Option<WinDateTime> {
         calendar.SetToMin().ok()?;
     }
     calendar.GetDateTime().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The hour and minute of `date` in a 24-hour Gregorian calendar.
+    fn hour_minute(date: WinDateTime) -> (i32, i32) {
+        let calendar = gregorian_calendar().unwrap();
+        calendar
+            .ChangeClock(&ClockIdentifiers::TwentyFourHour().unwrap())
+            .unwrap();
+        calendar.SetDateTime(date).unwrap();
+        (calendar.Hour().unwrap(), calendar.Minute().unwrap())
+    }
+
+    #[test]
+    fn day_ends_are_set_with_a_12_hour_clock() {
+        // en-US などの 12 時間制を言語に関わらず再現する。
+        let calendar = gregorian_calendar().unwrap();
+        calendar
+            .ChangeClock(&ClockIdentifiers::TwelveHour().unwrap())
+            .unwrap();
+        let day = DateTime::date(2026, 6, 10);
+        let start = day_at(&calendar, day, 0).expect("0 時");
+        assert_eq!(hour_minute(start), (0, 0));
+        assert_eq!(from_native_date(start), Some(day));
+        let end = day_at(&calendar, day, 23).expect("23 時");
+        assert_eq!(hour_minute(end), (23, 59));
+        assert_eq!(from_native_date(end), Some(day));
+        let noon = day_at(&calendar, day, 12).expect("12 時");
+        assert_eq!(hour_minute(noon), (12, 0));
+    }
 }
