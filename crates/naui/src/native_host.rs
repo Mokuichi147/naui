@@ -87,7 +87,8 @@ impl NativeHost {
     /// one (it, or a container it is in, is taken out of the window, or the
     /// window's content is replaced). Setting it again replaces the previous
     /// closure. Closing a window does not take its content out, so it does not
-    /// count as leaving on macOS, Linux and the Web.
+    /// count as leaving on macOS, Linux and the Web. On Windows XAML unloads the
+    /// content of a window when it closes, so closing it reports `false`.
     ///
     /// When it counts as joined differs: on macOS and Linux once it is in the
     /// window's widget tree, shown or not; on Windows when XAML loads it, which is

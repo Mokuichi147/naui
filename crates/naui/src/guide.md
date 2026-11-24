@@ -1980,7 +1980,8 @@ loads it on Windows (when the window is shown), and once it is in the page on th
 Web (reported in a microtask after the change). Closing a window does not take its
 content out of it, so on macOS, Linux and the Web a host in a closed window still
 counts as joined; take it out (or replace the window's content) to have
-`on_attach(false)`. The first `on_resize` has a size with some area, never the 0 ×
+`on_attach(false)`. On Windows XAML unloads the content of a window when it
+closes, so closing it reports `on_attach(false)`. The first `on_resize` has a size with some area, never the 0 ×
 0 a host has before its first layout.
 
 Each platform has a view for GPU drawing that the host can hold:

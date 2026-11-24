@@ -14418,14 +14418,19 @@ fn native_host_places_a_swap_chain_panel(ui: &Ui) -> Result<()> {
         );
         assert!(!host.is_attached());
 
-        // 窓を閉じたときに XAML が中身を下ろすかどうかを記録する。
+        // 窓を閉じると XAML が中身を下ろすので、外れたと伝える (ほかの環境とは違う)。
         let closing = ui.window("NativeHost を閉じる", 240.0, 200.0)?;
         closing.set_child(&stack);
         closing.show();
         pump_until(HOST_TIMEOUT, || attached.borrow().len() == 3);
         closing.close();
-        pump_until(Duration::from_secs(1), || attached.borrow().len() == 4);
-        println!("     (窓を閉じた後の on_attach: {:?})", attached.borrow());
+        pump_until(HOST_TIMEOUT, || attached.borrow().len() == 4);
+        assert_eq!(
+            *attached.borrow(),
+            vec![true, false, true, false],
+            "窓を閉じたら外れたと伝える"
+        );
+        assert!(!host.is_attached());
         Ok(())
     }));
     window.close();

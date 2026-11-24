@@ -35,7 +35,7 @@ that shape are covered in
 | Where a `Toast`'s second and later action buttons go | A row below the text | Next to the first, after the text | Next to the first, after the text | Next to the first, after the text |
 | A `Flow` child wider than the flow | Keeps its width and is cut off, unless it has `Fill` on the width | Keeps its width and is cut off, unless it has `Fill` on the width | Narrowed to the flow, down to its minimum | Narrowed to the flow, down to its `min-content` width |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
-| When a `NativeHost` counts as in a window (`on_attach`) | When XAML loads it (once the window is shown) | Once in the window's view tree, still after the window is closed | Once in the window's widget tree, still after the window is closed | Once in the page (reported in a microtask), still after the window is closed |
+| When a `NativeHost` counts as in a window (`on_attach`) | When XAML loads it (once the window is shown), until it unloads it (also when the window is closed) | Once in the window's view tree, still after the window is closed | Once in the window's widget tree, still after the window is closed | Once in the page (reported in a microtask), still after the window is closed |
 | A view with a parent passed to a `NativeHost` | Refused (`false`) | Moved | Refused (`false`) | Moved |
 
 ## Common
@@ -496,8 +496,9 @@ that shape are covered in
 - In a right-to-left layout XAML mirrors the element in a `NativeHost`, as it does
   every element (other platforms do not mirror a hosted view's drawing). A drawing
   surface sets its own `FlowDirection` to `LeftToRight`. Drawing into a
-  `SwapChainPanel` in a `NativeHost` has been checked only up to placing it: the
-  CI runners give elements no real size, and no swap chain is connected there.
+  `SwapChainPanel` in a `NativeHost` has been checked only up to placing it,
+  sizing it and reporting its size and scale: no swap chain is connected in the
+  tests.
 - Two-finger scrolling on a precision touchpad over a `Canvas` inside a `Scroll`
   does not reach `on_wheel`; the outer `Scroll` moves instead. `ScrollViewer`
   receives touchpad gestures itself, and they do not become wheel notifications
