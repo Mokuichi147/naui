@@ -1,6 +1,6 @@
 # Roadmap
 
-This lists features commonly expected of a GUI toolkit that naui (as of v0.18.0)
+This lists features commonly expected of a GUI toolkit that naui (as of v0.19.0)
 does not have yet, with priorities.
 
 The native counterparts written for each item are estimates. When work starts,
@@ -72,11 +72,11 @@ one or two panes.
 
 ### Order
 
-What remains is `Flow` and the narrow navigation rail (v0.19.0), which do not
-depend on the released `Stack::set_breakpoint`, `AdaptivePanes` and `Sidebar`
-collapsing, and the display shape (v0.24.0), which comes with the first mobile
-target. The composition swap and the bottom bar were investigated against those
-and moved to Not planned.
+What remains is the display shape (v0.24.0), which comes with the first mobile
+target. `Stack::set_breakpoint`, `AdaptivePanes`, `Sidebar` collapsing and `Flow`
+are released, and the narrow navigation rail turned out to need nothing beyond
+`Sidebar` collapsing (v0.19.0). The composition swap and the bottom bar were
+investigated against those and moved to Not planned.
 
 ## Drawing in separate crates
 
@@ -105,7 +105,7 @@ drawing is done by separate crates.
 
   | Crate | Role | Needs from naui |
   | --- | --- | --- |
-  | `naui-charts` | Line, bar and scatter charts | Nothing new (draws on `Canvas`) |
+  | `naui-charts` | Line, bar and scatter charts (released in v0.19.0) | Nothing new (draws on `Canvas`) |
   | An extension widget crate | Tags, badges and other widgets no platform has | `NativeHost`, and passing its types to containers |
   | `naui-wgpu` | Fast 2D and 3D drawing with wgpu | `NativeHost` |
   | A scene crate | 3D models, cameras, lights | Nothing beyond `naui-wgpu` |
@@ -119,72 +119,10 @@ drawing is done by separate crates.
 2. **`naui-wgpu`** (v0.21.0), connecting a GPU surface through it and checking
    basic 2D and 3D drawing and resizing.
 
-`naui-charts` (v0.19.0) draws on `Canvas`, so it does not wait for these. What it
-waited on in `Canvas`, clipping and text width measurement, was released in
-v0.17.0. The extension widget crate (v0.22.0) builds its widgets from native
-pieces through `NativeHost`, so it comes after it.
-
-## v0.19.0
-
-The rest of the testing actions, the separate crate that `Canvas` is now ready
-for along with the colors it needs in a dark appearance, and adaptive items that
-need investigating first but are not heavy.
-
-- [x] **The rest of the actions for testing apps:** a `Toast`'s action button,
-      the window's close button (`on_close_request`), pointer events on a
-      `Canvas`, and choosing and dropping files, delivered the way typing and
-      answering dialogs are since v0.18.0. Whether a test can also read what the
-      app handed to the OS (the URL given to `Ui::open_url`, say) without it
-      really opening is decided with them. `Toast::click_action`,
-      `Window::request_close`, `Canvas::send_pointer` / `send_wheel`,
-      `FilePicker::choose`, `FileSaver::choose` and `drop_files` on widgets and
-      windows deliver them, and inside a test case `Ui::open_url` records the URL
-      for `testing::opened_urls` instead of opening it.
-- [x] **Colors that follow light and dark in `Canvas`.** Widgets follow the
-      appearance by themselves, but `Canvas` draws with fixed `Color`s and
-      nothing tells the app when the appearance changes, so a drawing made for
-      light stays that way in dark. All four can tell: AppKit's
-      `viewDidChangeEffectiveAppearance`, `AdwStyleManager`'s `dark` property,
-      WinUI's `ActualThemeChanged` and the `prefers-color-scheme` media query.
-      Which shape fits is decided first: `Painter` taking the roles of
-      `TextColor` (and the accent color) so that the platform resolves them at
-      each draw, a notification with the resolved light or dark, or both. The
-      charts below need it for axes and labels, so it comes before them.
-      Done with both: strokes, fills and text take a role, which the platform
-      resolves when it is recorded (`Ink`, `Paint::Role`), `Painter::is_dark`
-      tells the appearance, and the surface draws itself again when it changes.
-- [x] *(drawing)* **`naui-charts`.** Line, bar and scatter charts in a separate
-      crate drawing on `Canvas`. What it waited on, clipping so that plot areas
-      do not draw outside their bounds and text width measurement for laying out
-      axis labels, was released in v0.17.0, and Windows's `Canvas` keeps up with
-      charts of many points since v0.15.0.
-      Done as `crates/naui-charts`: line, bar and scatter series (mixed in one
-      chart), categories or a numeric x axis, ticks at steps of 1, 2, 2.5 and 5,
-      axis titles and a legend. Axes and text take the roles of `TextColor`, and
-      series a fixed palette with its own colors for light and dark. Lines with
-      many points keep four per pixel column and crowded dots are thinned, so
-      100,000 points stay one command per series. `ChartView` hands out the
-      `Canvas` inside it (`root()`) until containers take types made outside
-      naui. Tooltips and zooming are left for later.
-- [x] *(adaptive)* **`Flow`** (a container that wraps its children onto new lines).
-      `GtkFlowBox` and CSS `flex-wrap` exist, but WinUI only has
-      `VariableSizedWrapGrid` with fixed-size cells (`WrapPanel` is in the
-      Community Toolkit), and AppKit has nothing besides `NSCollectionView`'s flow
-      layout. Only the Web wraps natively (`flex-wrap`): `GtkFlowBox` lines its
-      children up in columns and wraps each in a focusable, selectable child, and
-      `AdwWrapBox` needs libadwaita 1.7. So macOS, Linux and Windows break the
-      lines with naui-core's `FlowLayout`, inside the toolkit's own layout pass
-      (`NSView::layout`, a `GtkWidget`'s height-for-width measuring, a derived
-      `Panel`'s `MeasureOverride` / `ArrangeOverride`), with no callback through
-      the app.
-- [x] *(adaptive)* **Narrow navigation rail.** Windows is covered by `Sidebar`'s
-      automatic collapsing (`LeftCompact`). Whether the same collapsing covers
-      macOS, GTK and the Web is checked first; if it does, nothing new is needed.
-      It does: only WinUI's `NavigationView` has a strip of icons. AppKit's
-      sidebar item, libadwaita's split views and `AdwSidebar` (1.9) have no
-      icon-only state, so naui hides the whole pane there and on the Web, and no
-      new API is added. The difference is written in `Sidebar`'s documentation and
-      the known limitations.
+`naui-charts`, released in v0.19.0, draws on `Canvas`, so it does not wait for
+these; its tooltips and zooming (v0.21.0) come after cursor shapes on `Canvas`.
+The extension widget crate (v0.22.0) builds its widgets from native pieces
+through `NativeHost`, so it comes after it.
 
 ## v0.20.0
 
@@ -211,7 +149,9 @@ shortcuts that are not in a menu, and the always-visible calendar.
       while `Widget` stays sealed. Decided first: whether the containers take
       the new trait in place of `&dyn Widget` (every `Widget` would implement
       it) or beside it, and that the common methods (`set_sizing`,
-      `set_visible`) reach the inner widget.
+      `set_visible`) reach the inner widget. `naui-charts`'s `ChartView`
+      implements it in place of handing out its `Canvas` (`root()`), and
+      `naui-app`'s `Mounted::root` is looked at with it.
 - [x] **Keyboard shortcuts outside the menu bar.** A shortcut is given today
       only to a `MenuBar` item (`MenuShortcut`); anything else is matched by
       hand in `on_key_down`, whose order relative to menu shortcuts differs by
@@ -246,8 +186,9 @@ shortcuts that are not in a menu, and the always-visible calendar.
 
 ## v0.21.0
 
-Items that build on `NativeHost`, cursor shapes for `Canvas`, and the items that
-depend on how an app is distributed.
+Items that build on `NativeHost`, cursor shapes for `Canvas` and the chart
+interactions that use them, and the items that depend on how an app is
+distributed.
 
 - [ ] *(drawing)* **`naui-wgpu`.** A separate crate that connects a wgpu surface
       through `NativeHost` on all four platforms, and checks basic 2D and 3D
@@ -266,6 +207,15 @@ depend on how an app is distributed.
       projection is checked first, along with which shapes all four name
       (WinUI's `InputSystemCursorShape` is the shortest list). Other widgets
       keep the cursors their controls choose.
+- [ ] *(drawing)* **Tooltips and zooming in `naui-charts`.** Left out of the
+      first release in v0.19.0. Both are built in the crate on what `Canvas`
+      already has: pointer and wheel events with modifier keys, and drawing
+      again. Showing the value under the pointer needs the series' points to be
+      found from a position, and zooming by wheel or by dragging a range needs
+      the visible range of the axes to be set from outside the drawing. Decided
+      first: whether a tooltip is drawn on the `Canvas` or shown with a native
+      widget (`Popover` anchored at a point, if all four can), and how a drag
+      is shown, which the cursor shapes above help with.
 - [ ] **Single instance, file associations, URL schemes.** GTK's `GtkApplication`
       already gives single-instance activation and an `open` signal for files.
       macOS needs `application:openURLs:` and a bundle `Info.plist`, WinUI uses
