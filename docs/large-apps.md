@@ -97,7 +97,7 @@ naui included:
 
 ```sh
 $ cargo tree -p notes-core
-notes-core v0.20.0 (examples/notes/core)
+notes-core v0.20.1 (examples/notes/core)
 ```
 
 This is what makes it the core:
