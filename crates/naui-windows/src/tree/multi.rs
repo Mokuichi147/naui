@@ -43,7 +43,9 @@ use windows_core::{IInspectable, Interface, HSTRING};
 
 use super::Tree;
 use crate::layout::ListScrollTarget;
-use crate::list::{hold_unselectable_press, item_content, item_padding, new_row_item};
+use crate::list::{
+    hold_unselectable_press, item_content, item_padding, name_row_on_load, new_row_item,
+};
 use crate::to_error;
 use crate::ui_thread::UiThreadCell;
 use crate::widgets::Widget;
@@ -367,6 +369,8 @@ impl Tree {
         if let Ok(framework) = content.cast::<FrameworkElement>() {
             let _ = XamlGrid::SetColumn(&framework, 1);
         }
+        // 単一選択の木と同じく、行の名前は文字から付ける (山形のボタンは入れない)。
+        name_row_on_load(&content);
         line.Children()
             .and_then(|children| children.Append(&content))
             .map_err(|e| to_error("add to the tree row", e))?;

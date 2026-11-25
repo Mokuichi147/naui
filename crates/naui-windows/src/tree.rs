@@ -64,8 +64,8 @@ use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
 use crate::list::{
-    hold_unselectable_press, item_content, name_row_on_load, pressed_on_control, transparent_grid,
-    SelectionHandler,
+    hold_unselectable_press, item_content, name_tree_view_row_on_load, pressed_on_control,
+    transparent_grid, SelectionHandler,
 };
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
@@ -828,7 +828,7 @@ impl Tree {
                 None => row_content(item, selectable)?,
             };
             // 行の `TreeViewItem` は WinUI が作って使い回すので、中身が載るたびに名前を付ける。
-            name_row_on_load(&content);
+            name_tree_view_row_on_load(&content);
             let content = content
                 .cast::<IInspectable>()
                 .map_err(|e| to_error("convert the row to UIElement", e))?;
