@@ -223,18 +223,18 @@ fn elements(mode: DatePickerMode) -> NSDatePickerElementFlags {
 
 /// The Gregorian calendar. The time zone stays the default (the system's current
 /// time zone).
-fn gregorian_calendar() -> Retained<NSCalendar> {
+pub(crate) fn gregorian_calendar() -> Retained<NSCalendar> {
     let identifier = unsafe { NSCalendarIdentifierGregorian };
     NSCalendar::initWithCalendarIdentifier(NSCalendar::alloc(), identifier)
         .unwrap_or_else(NSCalendar::currentCalendar)
 }
 
 /// The current date and time in that calendar and time zone.
-fn now_in(calendar: &NSCalendar) -> DateTime {
+pub(crate) fn now_in(calendar: &NSCalendar) -> DateTime {
     from_ns_date(calendar, &NSDate::now())
 }
 
-fn to_ns_date(calendar: &NSCalendar, value: DateTime) -> Option<Retained<NSDate>> {
+pub(crate) fn to_ns_date(calendar: &NSCalendar, value: DateTime) -> Option<Retained<NSDate>> {
     let value = value.normalized();
     let components = NSDateComponents::new();
     components.setYear(value.year as isize);
@@ -246,7 +246,7 @@ fn to_ns_date(calendar: &NSCalendar, value: DateTime) -> Option<Retained<NSDate>
     calendar.dateFromComponents(&components)
 }
 
-fn from_ns_date(calendar: &NSCalendar, date: &NSDate) -> DateTime {
+pub(crate) fn from_ns_date(calendar: &NSCalendar, date: &NSDate) -> DateTime {
     let units = NSCalendarUnit::Year
         | NSCalendarUnit::Month
         | NSCalendarUnit::Day

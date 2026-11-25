@@ -260,7 +260,7 @@ fn format_date(date: &glib::DateTime) -> String {
         })
 }
 
-fn to_glib_date_time(value: DateTime) -> Result<glib::DateTime, glib::BoolError> {
+pub(crate) fn to_glib_date_time(value: DateTime) -> Result<glib::DateTime, glib::BoolError> {
     let v = value.normalized();
     glib::DateTime::from_local(
         v.year,
@@ -273,7 +273,7 @@ fn to_glib_date_time(value: DateTime) -> Result<glib::DateTime, glib::BoolError>
 }
 
 /// The current date and time on the GTK side (local time).
-fn now() -> DateTime {
+pub(crate) fn now() -> DateTime {
     let Ok(now) = glib::DateTime::now_local() else {
         return DateTime::default();
     };

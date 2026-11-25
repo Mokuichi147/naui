@@ -1,6 +1,6 @@
 //! The testing actions (typing, answering dialogs, a toast's buttons, the close
-//! button, pointer events, choosing and dropping files, pressing shortcuts), run
-//! with `naui::testing` on every platform's real event loop.
+//! button, pointer events, choosing and dropping files, a calendar's day, pressing
+//! shortcuts), run with `naui::testing` on every platform's real event loop.
 //!
 //! ```sh
 //! cargo test -p naui --test actions                                   # macOS, Linux, Windows
@@ -16,9 +16,9 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use naui::{
-    testing, CloseResponse, DialogButtons, DialogResponse, EventResponse, FileEntry, Key, KeyEvent,
-    MenuItem, MenuSpec, Modifiers, Orientation, Point, PointerButton, PointerEvent, PointerPhase,
-    Result, Shortcut, Ui, Window,
+    testing, CloseResponse, DateTime, DialogButtons, DialogResponse, EventResponse, FileEntry, Key,
+    KeyEvent, MenuItem, MenuSpec, Modifiers, Orientation, Point, PointerButton, PointerEvent,
+    PointerPhase, Result, Shortcut, Ui, Window,
 };
 
 naui::test_cases!(
@@ -30,6 +30,7 @@ naui::test_cases!(
     request_close_asks_before_closing,
     canvas_receives_the_pointer_events_sent,
     choose_picks_files_without_the_dialog,
+    pick_selects_a_calendar_day_like_a_click,
     drop_files_goes_where_a_real_drop_would,
     open_url_is_recorded_instead_of_opened,
     shortcuts_go_from_the_focus_outward,
@@ -476,6 +477,42 @@ async fn choose_picks_files_without_the_dialog(ui: Ui) -> Result<()> {
     saver.choose(&destination);
     testing::settle(&ui).await;
     assert_eq!(saves.borrow().len(), 1, "a disabled saver saves nothing");
+    window.close();
+    Ok(())
+}
+
+/// `Calendar::pick` selects a day as a click does: `on_change` gets the new value
+/// with the time kept, the range stops it at the end, and nothing happens for the
+/// selected day or while disabled.
+async fn pick_selects_a_calendar_day_like_a_click(ui: Ui) -> Result<()> {
+    let window = shown_window(&ui, "calendar")?;
+    let calendar = ui.calendar()?;
+    window.set_child(&calendar);
+    calendar.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    let (seen, sink) = recorder::<DateTime>();
+    calendar.on_change(sink);
+    testing::settle(&ui).await;
+
+    calendar.pick(DateTime::date(2026, 9, 3));
+    testing::wait_until(&ui, || seen.borrow().len() == 1).await?;
+    assert_eq!(seen.borrow()[0], DateTime::new(2026, 9, 3, 9, 30));
+    assert_eq!(calendar.value(), DateTime::new(2026, 9, 3, 9, 30));
+
+    calendar.set_range(None, Some(DateTime::date(2026, 9, 10)));
+    calendar.pick(DateTime::date(2027, 1, 1));
+    testing::wait_until(&ui, || seen.borrow().len() == 2).await?;
+    assert_eq!(seen.borrow()[1], DateTime::new(2026, 9, 10, 9, 30));
+
+    calendar.pick(DateTime::date(2026, 9, 10));
+    calendar.set_enabled(false);
+    calendar.pick(DateTime::date(2026, 9, 1));
+    testing::settle(&ui).await;
+    assert_eq!(
+        seen.borrow().len(),
+        2,
+        "the selected day or a disabled calendar picks nothing"
+    );
+    assert_eq!(calendar.value(), DateTime::new(2026, 9, 10, 9, 30));
     window.close();
     Ok(())
 }

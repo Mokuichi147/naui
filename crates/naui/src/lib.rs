@@ -57,6 +57,7 @@ pub use naui_windows as windows;
 mod widget;
 
 mod adaptive_panes;
+mod calendar;
 mod canvas;
 mod clipboard;
 mod color_picker;
@@ -93,6 +94,7 @@ mod widgets;
 mod window;
 
 pub use adaptive_panes::AdaptivePanes;
+pub use calendar::Calendar;
 pub use canvas::Canvas;
 pub use clipboard::Clipboard;
 pub use color_picker::ColorPicker;

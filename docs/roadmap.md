@@ -201,10 +201,14 @@ shortcuts that are not in a menu, and the always-visible calendar.
       choose the item nor expand it, and `selectable(false)` leaves the row undimmed
       with its controls working. Every row is built when passed; building only the
       rows on screen is left for later.
-- [ ] **Always-visible calendar widget.** WinUI's `CalendarView`, `GtkCalendar`
+- [x] **Always-visible calendar widget.** WinUI's `CalendarView`, `GtkCalendar`
       and `NSDatePicker` (calendar style) exist. The Web has no always-visible
       control, only the popup of `<input type="date">`, so it would be composed
       from buttons there (🟡), as `Toast` is where no DOM element exists.
+      Done as `Calendar`, which picks one day as a `DateTime` (like `DatePicker`
+      in `DatePickerMode::Date`) with `set_range` and `pick`; range and multiple
+      selection, the first day of the week and the locale are left to the
+      platforms, and the Web composes it from `<button>`s in a `<table>`.
 
 ## v0.21.0
 

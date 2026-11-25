@@ -12,6 +12,7 @@
 #![forbid(unsafe_code)]
 
 mod adaptive_panes;
+mod calendar;
 mod canvas;
 mod clipboard;
 mod color_picker;
@@ -75,6 +76,7 @@ pub use wasm_bindgen;
 pub use adaptive_panes::AdaptivePanes;
 pub use focus::registered_focus_elements;
 
+pub use calendar::Calendar;
 pub use canvas::Canvas;
 pub use clipboard::Clipboard;
 pub use color_picker::ColorPicker;
@@ -302,6 +304,12 @@ impl Ui {
     /// A control for picking a date or time. `mode` decides what can be picked.
     pub fn date_picker(&self, mode: DatePickerMode) -> Result<DatePicker> {
         DatePicker::new(&self.0.document, mode)
+    }
+
+    /// A month calendar that stays on screen and lets the user pick one day. The
+    /// initial value is the current date and time.
+    pub fn calendar(&self) -> Result<Calendar> {
+        Calendar::new(&self.0.document)
     }
 
     /// A control for picking only a time of day. The initial value is the current time.

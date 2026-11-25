@@ -10,6 +10,7 @@
 #![allow(unsafe_code)]
 
 mod adaptive_panes;
+mod calendar;
 mod canvas;
 mod clipboard;
 mod color_picker;
@@ -69,6 +70,7 @@ use objc2_app_kit::{
 use objc2_foundation::NSNotification;
 
 pub use adaptive_panes::AdaptivePanes;
+pub use calendar::Calendar;
 pub use canvas::Canvas;
 pub use clipboard::Clipboard;
 pub use color_picker::ColorPicker;
@@ -277,6 +279,12 @@ impl Ui {
     /// A control for picking a date or time. `mode` decides what can be picked.
     pub fn date_picker(&self, mode: DatePickerMode) -> Result<DatePicker> {
         Ok(DatePicker::new(self.0.mtm, mode))
+    }
+
+    /// A month calendar that stays on screen and lets the user pick one day. The
+    /// initial value is the current date and time.
+    pub fn calendar(&self) -> Result<Calendar> {
+        Ok(Calendar::new(self.0.mtm))
     }
 
     /// A control for picking only a time of day. The initial value is the current time.

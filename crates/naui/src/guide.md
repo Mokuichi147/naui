@@ -1752,6 +1752,49 @@ valid clock times (such as 25:70) are clamped to the ends. There is no carry, so
 to 06:00 the next day) cannot be specified — [`Time`] has no date, and when the
 lower bound is after the upper bound, the upper bound wins.
 
+## A calendar on screen
+
+To keep a month calendar on screen instead of a field that opens one, use
+[`Calendar`]. The user picks one day, and the value is a [`DateTime`] of which
+only the date is picked, the same as a [`DatePicker`] in
+[`DatePickerMode::Date`]: the time part stays as it was set.
+
+```no_run
+# use naui::{DateTime, Result, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let day = ui.calendar()?;
+day.set_value(DateTime::date(2026, 8, 22)); // select a day without notifying
+day.set_range(Some(DateTime::date(2026, 8, 1)), None); // only a lower bound
+day.on_change(|value| println!("{value} was chosen"));
+# Ok(())
+# }
+```
+
+| naui | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| `Calendar` | `CalendarView` | `NSDatePicker` (calendar style) | `GtkCalendar` | `<button>`s in a `<table>` |
+
+A day is always selected, and the value right after creation is **the platform's
+current date and time (local time)**. The calendar is the Gregorian one; the month
+and weekday names, the first day of the week and the layout follow the platform's
+locale. Only one day can be picked: picking a range of days (AppKit's range mode)
+or several days (WinUI's multiple selection) is something only one platform has.
+
+[`set_value`](Calendar::set_value) does not notify and shows the value's month.
+[`set_range`](Calendar::set_range) compares only the dates. Where the platform has
+a range (Windows, and the Web, which composes the calendar from buttons), the
+days outside it cannot be clicked. macOS dims them, but clicking one selects the
+nearest end of the range, and `GtkCalendar` has no range, so there naui moves the
+selection back to the nearest end; both notify. On Linux the arrows in the header
+also move the selection to the next month or year, which notifies; on macOS,
+Windows and the Web they only show another month. (`on_change` reports whatever the native calendar
+selects, so an app need not care which.)
+
+The Web has no always-visible calendar control, so naui composes one from DOM
+parts without drawing anything itself: the selected day is marked with `<mark>`
+and today with `<b>`, in the browser's default styles. See the
+[known limitations](https://github.com/mokuichi147/naui/blob/main/docs/known-limitations.md).
+
 ## Picking a color
 
 To let the user pick a color, use [`ColorPicker`]. Values are exchanged as
@@ -3641,6 +3684,7 @@ that notify **like the user's own action**, and checks what the app did:
 | [`Pagination`] | `select`, `go_previous`, `go_next` | `set_page` |
 | [`Toolbar`], [`MenuBar`] | `activate` | |
 | [`ColorPicker`] | `pick` | `set_value` |
+| [`Calendar`] | `pick` | `set_value` |
 | [`SplitView`] | `drag_to` | `set_position` |
 | [`AdaptivePanes`] | `go_back` | |
 | [`Popover`] | `dismiss` | `close` |

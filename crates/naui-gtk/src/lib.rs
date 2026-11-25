@@ -31,6 +31,7 @@
 //! | `RadioGroup` | Grouped `GtkCheckButton`s laid out in a `GtkBox` |
 //! | `DatePicker` | A `GtkMenuButton` + `GtkCalendar` / `GtkSpinButton` combination |
 //! | `TimePicker` | `GtkSpinButton`s for hours and minutes separated by `:` |
+//! | `Calendar` | `GtkCalendar` |
 //! | `ColorPicker` | `GtkColorDialogButton` + `GtkColorDialog` |
 //! | `Canvas` | `GtkDrawingArea` (drawn with cairo + Pango) |
 //! | `NativeHost` | `NauiNativeHost` (a widget subclass holding the hosted `GtkWidget`) |
@@ -141,6 +142,7 @@
 
 mod adaptive_panes;
 mod bin;
+mod calendar;
 mod callback;
 mod canvas;
 mod clipboard;
@@ -197,6 +199,7 @@ use naui_core::{
 
 pub use adaptive_panes::AdaptivePanes;
 pub use bin::SizeBin;
+pub use calendar::Calendar;
 pub use canvas::Canvas;
 pub use clipboard::Clipboard;
 pub use color_picker::ColorPicker;
@@ -470,6 +473,12 @@ impl Ui {
     /// A control for picking a date or time. `mode` decides what can be picked.
     pub fn date_picker(&self, mode: DatePickerMode) -> Result<DatePicker> {
         Ok(DatePicker::new(mode))
+    }
+
+    /// A month calendar that stays on screen and lets the user pick one day. The
+    /// initial value is the current date and time.
+    pub fn calendar(&self) -> Result<Calendar> {
+        Ok(Calendar::new())
     }
 
     /// A control for picking only a time of day. The initial value is the current time.
