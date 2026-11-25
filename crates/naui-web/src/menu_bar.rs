@@ -24,7 +24,7 @@
 //! `keydown` and matches them itself, including function keys and items inside
 //! submenus. The primary modifier can be either Ctrl or ⌘ (since ⌘ is the primary
 //! modifier in browsers on macOS). The right edge of items shows
-//! [`MenuShortcut::label`](naui_core::MenuShortcut::label).
+//! [`Shortcut::label`](naui_core::Shortcut::label).
 //!
 //! The `document` subscriptions are attached **only while attached to a window**,
 //! so that a detached menu bar, or the menu bar of a closed (hidden) window, does
@@ -276,6 +276,21 @@ impl MenuBar {
         MenuSpec::find_shortcut(&self.0.menus.borrow(), |s| {
             s.matches(key, primary, shift, alt)
         })
+    }
+
+    /// If `event` is the shortcut of an item that can be chosen now, runs it and
+    /// returns `true`. Used by `Window::send_key`.
+    pub(crate) fn press_shortcut(&self, event: &naui_core::KeyEvent) -> bool {
+        if !self.0.enabled.get() {
+            return false;
+        }
+        let hit = MenuSpec::find_shortcut(&self.0.menus.borrow(), |s| s.matches_event(event));
+        let Some(path) = hit else {
+            return false;
+        };
+        self.close();
+        self.choose(&path);
+        true
     }
 
     /// Rebuilds the menus. The previous menus are removed.

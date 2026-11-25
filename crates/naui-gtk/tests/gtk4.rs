@@ -25,13 +25,13 @@ use gtk::pango;
 use naui_core::{
     Align, Bitmap, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
     EventResponse, FileFilter, FilePickerMode, Fit, Gradient, GridCell, LayoutDirection, Length,
-    ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState,
-    Point, PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode,
+    ListItem, MenuItem, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
+    PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode, Shortcut,
     SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle,
     Theme, Time, ToastPosition, ToastPriority, ToolbarIcon, ToolbarItem, Track, TreeItem,
     WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_OVERSCAN,
 };
-use naui_gtk::{run_for_test, ListRow, TableCells, Ui, Widget};
+use naui_gtk::{run_for_test, ListRow, TableCells, TreeRow, Ui, Widget};
 
 /// One test case.
 type Case = (&'static str, fn(&Ui) -> Result<()>);
@@ -448,6 +448,14 @@ fn main() {
         (
             "ウィジェットが Continue を返したキーだけがウィンドウへ届く",
             window_key_down_gets_what_the_widget_left,
+        ),
+        (
+            "ショートカットはフォーカスの内側から外へ、窓、メニューバーの順に届く",
+            shortcuts_go_from_the_focus_to_the_menu_bar,
+        ),
+        (
+            "シートとダイアログの中のキーはその中のウィジェットに届き、窓には届かない",
+            keys_in_sheets_and_dialogs_do_not_reach_the_window,
         ),
         ("タイマーがメインループで呼ばれ、止められる", timers_fire_on_the_main_loop),
         (
@@ -965,6 +973,22 @@ fn main() {
             tree_keeps_a_single_selection_inside_a_collapsed_branch,
         ),
         (
+            "ツリーの行にウィジェットを置け、数・選択・開閉が文字の項目と同じに動く",
+            tree_rows_hold_widgets,
+        ),
+        (
+            "ツリーの行の中のコントロールを操作しても、項目は選ばれず開閉もしない",
+            tree_row_controls_neither_select_nor_toggle,
+        ),
+        (
+            "選べないツリーの行は淡くならず中のコントロールが動き、子孫も選べない",
+            tree_unselectable_row_keeps_its_controls,
+        ),
+        (
+            "ツリーの行の子は、空いているときだけ引き取り、よそへ移ったものは取り返さない",
+            tree_rows_take_only_free_widgets,
+        ),
+        (
             "ツリーの開閉ボタンがクロージャへ届く",
             tree_expansion_notifies,
         ),
@@ -1138,11 +1162,11 @@ fn main() {
             moved_child_is_refused_and_left_alone,
         ),
         (
-            "外さずに別の親へ入れた子を、List の行・Table のセル・Dialog・Sheet は取り返さない",
+            "外さずに別の親へ入れた子を、List の行・Table のセル・Tree の行・Dialog・Sheet は取り返さない",
             later_placers_leave_a_moved_child_alone,
         ),
         (
-            "List の行・Table のセルから出た子は、移った先で新しく作った子と同じになる",
+            "List の行・Table のセル・Tree の行から出た子は、移った先で新しく作った子と同じになる",
             child_out_of_a_row_keeps_nothing_from_it,
         ),
         ("テーマを実行中に切り替えられる", theme_switch),
@@ -9625,6 +9649,331 @@ fn tree_expansion_notifies(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// The cell right of the expander button that holds a widget item's content, in the
+/// row at `index` (every item laid out depth-first, invisible rows too).
+fn tree_cell(tree: &naui_gtk::Tree, index: i32) -> Option<gtk::Widget> {
+    let row = tree_box_of(tree).row_at_index(index)?;
+    children(&row.child()?).pop()
+}
+
+/// Items made from widgets are counted, selected, expanded and collapsed exactly as
+/// text items, and each widget fills the room right of the expander button.
+fn tree_rows_hold_widgets(ui: &Ui) -> Result<()> {
+    let src = ui.label("src")?;
+    let main = ui.label("main.rs")?;
+    let lib = ui.label("lib.rs")?;
+    let docs = ui.label("docs")?;
+    let guide = ui.label("guide")?;
+    let tree = ui.tree()?;
+    tree.set_sizing(Sizing::fill());
+    tree.set_rows(&[
+        TreeRow::new(&src).children([TreeRow::new(&main), TreeRow::new(&lib)]),
+        TreeRow::new(&docs)
+            .expanded(true)
+            .child(TreeRow::new(&guide)),
+    ]);
+    let window = ui.window("ツリー", 400.0, 240.0)?;
+    window.set_child(&tree);
+    window.show();
+    let native = tree_box_of(&tree);
+    tick(&native);
+
+    assert_eq!(tree.len(), 5, "子孫まで数えること");
+    assert_eq!(children(&native).len(), 5, "行は全項目ぶん作ること");
+    let widgets: [&dyn Widget; 5] = [&src, &main, &lib, &docs, &guide];
+    for (index, widget) in widgets.iter().enumerate() {
+        let row = native.row_at_index(index as i32).expect("行");
+        assert!(
+            bin_of(*widget).is_ancestor(&row),
+            "{index} 行目にその項目のウィジェットが入ること"
+        );
+    }
+    let visible = |tree: &naui_gtk::Tree| -> Vec<bool> {
+        children(&tree_box_of(tree))
+            .iter()
+            .map(|row| row.get_visible())
+            .collect()
+    };
+    assert_eq!(
+        visible(&tree),
+        [true, false, false, true, true],
+        "TreeRow::expanded の枝だけが開いていること"
+    );
+    assert!(!tree.is_expanded(&[0]));
+    assert!(tree.is_expanded(&[1]));
+
+    // 中身は開閉ボタンの右の残り幅を使う (文字の項目と同じ)。
+    let cell = tree_cell(&tree, 0).expect("src のセル");
+    let (_, natural) = measure_width(&bin_of(&src));
+    assert!(
+        bin_of(&src).width() > natural,
+        "ウィジェットが行の残り幅を使っていない: 中身 {} / 自然な幅 {natural} (セル {})",
+        bin_of(&src).width(),
+        cell.width()
+    );
+
+    // 開閉は文字の項目と同じ経路。
+    let (expansions, sink) = recorder::<(Vec<usize>, bool)>();
+    tree.on_expand({
+        let mut sink = sink;
+        move |path: &[usize], expanded: bool| sink((path.to_vec(), expanded))
+    });
+    tree_twisty(&tree, 0)
+        .expect("src の開閉ボタン")
+        .emit_clicked();
+    assert!(tree.is_expanded(&[0]));
+    assert_eq!(visible(&tree), [true, true, true, true, true]);
+    tree.collapse(&[1]);
+    assert_eq!(visible(&tree), [true, true, true, true, false]);
+    assert_eq!(
+        expansions.borrow().as_slice(),
+        [(vec![0], true), (vec![1], false)]
+    );
+    assert!(
+        tree_twisty(&tree, 1).is_none(),
+        "葉には開閉ボタンが無いこと"
+    );
+
+    // 選択も同じ。
+    let (selections, sink) = recorder::<Vec<usize>>();
+    tree.on_select({
+        let mut sink = sink;
+        move |path: &[usize]| sink(path.to_vec())
+    });
+    native.select_row(native.row_at_index(2).as_ref());
+    assert_eq!(tree.selected(), Some(vec![0, 1]));
+    assert_eq!(selections.borrow().as_slice(), [vec![0, 1]]);
+    tree.set_selected(&[1, 0]);
+    assert!(tree.is_expanded(&[1]), "選ぶと祖先が開くこと");
+    assert_eq!(
+        native.selected_row().map(|row| row.index()),
+        Some(4),
+        "GtkListBox 側でも選ばれること"
+    );
+    assert_eq!(selections.borrow().len(), 1, "set_selected は通知しない");
+
+    // 出し直すと選択は消え、開閉は TreeRow::expanded へ戻る。中身は同じ行に戻る。
+    tree.set_rows(&[TreeRow::new(&src).child(TreeRow::new(&main))]);
+    assert_eq!(tree.len(), 2);
+    assert_eq!(tree.selection(), Vec::<Vec<usize>>::new());
+    assert!(!tree.is_expanded(&[0]));
+    assert!(bin_of(&src).is_ancestor(&native.row_at_index(0).expect("行")));
+    assert!(bin_of(&main).is_ancestor(&native.row_at_index(1).expect("行")));
+    for widget in [&lib, &docs, &guide] {
+        assert!(
+            bin_of(widget).parent().is_none(),
+            "外した項目のウィジェットは行から放すこと"
+        );
+    }
+
+    // set_items で文字の項目へ戻る。
+    tree.set_items(&sample_tree());
+    assert_eq!(tree.len(), 6);
+    assert_eq!(tree_labels(&tree), ["src", "docs"]);
+    assert!(
+        bin_of(&src).parent().is_none(),
+        "文字へ戻すと中身を放すこと"
+    );
+    assert!(
+        bin_of(&main).parent().is_none(),
+        "文字へ戻すと中身を放すこと"
+    );
+    tree.set_selected(&[0, 1]);
+    assert_eq!(tree.selected(), Some(vec![0, 1]));
+    window.close();
+    Ok(())
+}
+
+/// Controls inside a widget item take their own clicks and keys: operating them
+/// neither selects the item nor expands or collapses it.
+///
+/// GTK4 cannot make real pointer events in tests, so the controls are operated
+/// through their own signals. That a click on a button does not also reach the
+/// `GtkListBox` is GTK's own gesture handling (the button claims the sequence), the
+/// same as for `List` rows.
+fn tree_row_controls_neither_select_nor_toggle(ui: &Ui) -> Result<()> {
+    let content = ui.stack(Orientation::Horizontal)?;
+    let check = ui.checkbox("有効")?;
+    let button = ui.button("設定…")?;
+    let input = ui.text_input("")?;
+    content.append(&check);
+    content.append(&button);
+    content.append(&input);
+    let tree = ui.tree()?;
+    tree.set_sizing(Sizing::fill());
+    tree.set_rows(&[TreeRow::new(&content).child(TreeRow::new(&ui.label("子")?))]);
+    let window = ui.window("ツリー", 420.0, 200.0)?;
+    window.set_child(&tree);
+    window.show();
+    let native = tree_box_of(&tree);
+    tick(&native);
+
+    let (selections, sink) = recorder::<Vec<usize>>();
+    tree.on_select({
+        let mut sink = sink;
+        move |path: &[usize]| sink(path.to_vec())
+    });
+    let (expansions, sink) = recorder::<(Vec<usize>, bool)>();
+    tree.on_expand({
+        let mut sink = sink;
+        move |path: &[usize], expanded: bool| sink((path.to_vec(), expanded))
+    });
+    let clicks = Rc::new(Cell::new(0));
+    button.on_click({
+        let clicks = clicks.clone();
+        move || clicks.set(clicks.get() + 1)
+    });
+    // 窓を出したときにフォーカスの行が選ばれることがあるので、前と比べる。
+    let before = tree.selection();
+
+    button.click();
+    check.click();
+    assert!(
+        input.request_focus(),
+        "行の中の入力欄へフォーカスを移せること"
+    );
+    pump();
+    input.set_text("abc");
+    input.native_widget().activate();
+    pump();
+
+    assert_eq!(clicks.get(), 1, "ボタンが押されること");
+    assert!(check.is_checked(), "チェックボックスが変わること");
+    assert_eq!(input.text(), "abc");
+    assert_eq!(
+        tree.selection(),
+        before,
+        "中のコントロールで選択が変わらないこと"
+    );
+    assert!(selections.borrow().is_empty(), "選択の通知が来ないこと");
+    assert!(!tree.is_expanded(&[0]), "中のコントロールで開かないこと");
+    assert!(expansions.borrow().is_empty(), "開閉の通知が来ないこと");
+    window.close();
+    Ok(())
+}
+
+/// `TreeRow::selectable(false)` keeps the item and its descendants from being
+/// selected, but the row is not dimmed and the controls inside keep working.
+fn tree_unselectable_row_keeps_its_controls(ui: &Ui) -> Result<()> {
+    let check = ui.checkbox("同期")?;
+    let child_button = ui.button("子の操作")?;
+    let other = ui.label("ほか")?;
+    let tree = ui.tree()?;
+    tree.set_rows(&[
+        TreeRow::new(&check)
+            .selectable(false)
+            .expanded(true)
+            .child(TreeRow::new(&child_button)),
+        TreeRow::new(&other),
+    ]);
+    assert!(!TreeRow::new(&other).selectable(false).is_selectable());
+    let native = tree_box_of(&tree);
+    let first = native.row_at_index(0).expect("1 行目");
+    let child_row = native.row_at_index(1).expect("2 行目");
+    assert!(!first.is_selectable(), "選べない項目の行は選べないこと");
+    assert!(!child_row.is_selectable(), "その子孫も選べないこと");
+    assert!(first.is_sensitive(), "行は無効にしないこと");
+    assert!(
+        bin_of(&check).is_sensitive() && check.native_widget().is_sensitive(),
+        "中身を淡くしないこと"
+    );
+    assert!(child_button.native_widget().is_sensitive());
+
+    tree.set_selected(&[0]);
+    assert_eq!(tree.selected(), None, "選べない項目は選べないこと");
+    tree.set_selected(&[0, 0]);
+    assert_eq!(tree.selected(), None, "選べない項目の子孫も選べないこと");
+    native.select_row(Some(&first));
+    assert_eq!(tree.selected(), None, "GtkListBox 側からも選べないこと");
+    tree.set_selected(&[1]);
+    assert_eq!(tree.selected(), Some(vec![1]), "ほかの項目は選べること");
+
+    check.click();
+    assert!(check.is_checked(), "選べない行の中のコントロールは動くこと");
+    let clicks = Rc::new(Cell::new(0));
+    child_button.on_click({
+        let clicks = clicks.clone();
+        move || clicks.set(clicks.get() + 1)
+    });
+    child_button.click();
+    assert_eq!(clicks.get(), 1);
+    // 開閉はできる。
+    tree.collapse(&[0]);
+    assert!(!tree.is_expanded(&[0]));
+    assert!(!child_row.get_visible());
+    Ok(())
+}
+
+/// Widget items follow the same handing-over rules as `List` rows: a tree takes a
+/// widget only while it has no parent (or is in one of its own rows), refuses one
+/// still in another container, and never takes back a widget that has gone
+/// elsewhere, whatever is done to the tree afterwards.
+fn tree_rows_take_only_free_widgets(ui: &Ui) -> Result<()> {
+    let refused = |log: &[LogEntry]| {
+        log.iter()
+            .any(|entry| entry.level == glib::LogLevel::Critical && entry.domain == "naui")
+    };
+    let child = ui.text_input("子")?;
+    let first = ui.tree()?;
+    let second = ui.tree()?;
+    first.set_rows(&[TreeRow::new(&child)]);
+    assert!(bin_of(&child).is_ancestor(&first.native_widget()));
+
+    // 別のツリーが持つ子は断る。行は空のまま。
+    let ((), log) = watch_log(|| second.set_rows(&[TreeRow::new(&child)]));
+    assert!(refused(&log), "持ち主のいる子を断ったと知らせること");
+    assert!(
+        bin_of(&child).is_ancestor(&first.native_widget()),
+        "前のツリーに残ること"
+    );
+    assert!(
+        tree_cell(&second, 0).is_some_and(|cell| cell.first_child().is_none()),
+        "断った行は空のままにすること"
+    );
+
+    // 同じツリーへ渡し直すのは引き取れる。
+    let next = ui.label("隣")?;
+    let ((), log) = watch_log(|| first.set_rows(&[TreeRow::new(&child), TreeRow::new(&next)]));
+    assert!(!refused(&log), "自分の行の中の子は断らないこと");
+    assert!(bin_of(&child).is_ancestor(&first.native_widget()));
+
+    // 前のツリーが放したら、次のツリーへ入る。前のツリーは取り返さない。
+    first.set_items(&[TreeItem::new("文字")]);
+    assert!(bin_of(&child).parent().is_none());
+    second.set_rows(&[TreeRow::new(&child)]);
+    assert!(
+        bin_of(&child).is_ancestor(&second.native_widget()),
+        "空いた子は次のツリーへ入ること"
+    );
+    let ((), log) = watch_log(|| first.set_rows(&[TreeRow::new(&child)]));
+    assert!(refused(&log));
+    assert!(bin_of(&child).is_ancestor(&second.native_widget()));
+
+    // ツリーが放した子を Stack へ入れたら、ツリーを何をしても取り返さない。
+    second.set_items(&[TreeItem::new("枝").child(TreeItem::new("葉"))]);
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&child);
+    let before = placed(&child);
+    assert_eq!(before.parent, Some(stack.native_widget()));
+    second.expand_all();
+    second.collapse_all();
+    second.set_selection_mode(SelectionMode::Multiple);
+    second.set_selection_mode(SelectionMode::Single);
+    second.set_rows(&[TreeRow::new(&ui.label("別")?)]);
+    let ((), log) = watch_log(|| second.set_rows(&[TreeRow::new(&child)]));
+    assert!(refused(&log), "Stack の中の子を断ったと知らせること");
+    second.expand_all();
+    second.set_selected(&[0]);
+    assert_eq!(placed(&child), before, "Stack へ移った子に触れないこと");
+    assert!(
+        tree_cell(&second, 0).is_some_and(|cell| cell.first_child().is_none()),
+        "取り返さず、行は空のままにすること"
+    );
+    // 一度選んだ項目は、空のままでも選べる。
+    assert_eq!(second.selected(), Some(vec![0]));
+    Ok(())
+}
+
 fn tree_remembers_expansion_inside_a_closed_branch(ui: &Ui) -> Result<()> {
     let tree = ui.tree()?;
     tree.set_items(&sample_tree());
@@ -12318,10 +12667,10 @@ fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
         MenuSpec::new(
             "ファイル",
             [
-                MenuItem::new("新規").shortcut(MenuShortcut::new('n')),
+                MenuItem::new("新規").shortcut(Shortcut::new('n')),
                 MenuItem::separator(),
                 MenuItem::new("保存")
-                    .shortcut(MenuShortcut::new('s').shift(true))
+                    .shortcut(Shortcut::new('s').shift(true))
                     .enabled(false),
             ],
         ),
@@ -12540,13 +12889,13 @@ fn menu_bar_function_keys_become_accelerators(ui: &Ui) -> Result<()> {
     menu_bar.set_menus(&[MenuSpec::new(
         "表示",
         [
-            MenuItem::new("再読み込み").shortcut(MenuShortcut::function(5)),
+            MenuItem::new("再読み込み").shortcut(Shortcut::function(5)),
             MenuItem::submenu(
                 "開発",
                 [MenuItem::new("調べる")
-                    .shortcut(MenuShortcut::function(12).primary(true).shift(true))],
+                    .shortcut(Shortcut::function(12).primary(true).shift(true))],
             ),
-            MenuItem::new("記号").shortcut(MenuShortcut::new('/')),
+            MenuItem::new("記号").shortcut(Shortcut::new('/')),
         ],
     )]);
     window.set_menu_bar(&menu_bar);
@@ -12583,7 +12932,7 @@ fn menu_bar_attaches_to_the_window(ui: &Ui) -> Result<()> {
     let menu_bar = ui.menu_bar()?;
     menu_bar.set_menus(&[MenuSpec::new(
         "ファイル",
-        [MenuItem::new("開く").shortcut(MenuShortcut::new('o'))],
+        [MenuItem::new("開く").shortcut(Shortcut::new('o'))],
     )]);
     let name = menu_bar.native_action_name(&[0, 0]).expect("操作の名前");
     assert!(
@@ -12637,7 +12986,7 @@ fn menu_bar_attaches_to_the_window(ui: &Ui) -> Result<()> {
     // 外している間に組み替えても、登録はしない。
     menu_bar.set_menus(&[MenuSpec::new(
         "ファイル",
-        [MenuItem::new("保存").shortcut(MenuShortcut::new('s'))],
+        [MenuItem::new("保存").shortcut(Shortcut::new('s'))],
     )]);
     assert!(app.accels_for_action(&name).is_empty());
 
@@ -12700,7 +13049,7 @@ fn menu_bar_callback_is_reentrant_and_replaceable(ui: &Ui) -> Result<()> {
 fn menu_bar_shortcuts_are_kept_per_menu_bar(ui: &Ui) -> Result<()> {
     let spec = [MenuSpec::new(
         "ファイル",
-        [MenuItem::new("開く").shortcut(MenuShortcut::new('o'))],
+        [MenuItem::new("開く").shortcut(Shortcut::new('o'))],
     )];
 
     let first_window = ui.window("1 つ目", 400.0, 300.0)?;
@@ -13538,8 +13887,17 @@ fn press_key(
     keyval: gtk::gdk::Key,
     state: gtk::gdk::ModifierType,
 ) -> bool {
-    let native = window.native_window();
-    let controllers = native.observe_controllers();
+    press_key_on(window.native_window().upcast_ref(), keyval, state)
+}
+
+/// Sends a key to naui's capture-phase receiver on `widget` (a window or an
+/// `AdwDialog`).
+fn press_key_on(
+    widget: &gtk::Widget,
+    keyval: gtk::gdk::Key,
+    state: gtk::gdk::ModifierType,
+) -> bool {
+    let controllers = widget.observe_controllers();
     let controller = (0..controllers.n_items())
         .filter_map(|index| controllers.item(index))
         .filter_map(|item| item.downcast::<gtk::EventControllerKey>().ok())
@@ -13660,6 +14018,165 @@ fn window_key_down_gets_what_the_widget_left(ui: &Ui) -> Result<()> {
         *seen.borrow(),
         vec![naui_core::Key::Character('x'), naui_core::Key::Escape]
     );
+    window.close();
+    Ok(())
+}
+
+fn shortcuts_go_from_the_focus_to_the_menu_bar(ui: &Ui) -> Result<()> {
+    use gtk::gdk::{Key as K, ModifierType as M};
+    let window = ui.window("ショートカット", 320.0, 200.0)?;
+    let group = ui.stack(Orientation::Vertical)?;
+    let input = ui.text_input("")?;
+    group.append(&input);
+    window.set_child(&group);
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new(
+        "編集",
+        [MenuItem::new("印").shortcut(naui_core::Shortcut::new('k'))],
+    )]);
+    let log = Rc::new(RefCell::new(Vec::<&str>::new()));
+    menu_bar.on_activate({
+        let log = log.clone();
+        move |_| log.borrow_mut().push("menu")
+    });
+    window.set_menu_bar(&menu_bar);
+    window.show();
+    tick(&input.native_widget());
+    assert!(input.request_focus());
+
+    // naui の受け口は、窓が作られたときに GTK が付けたアプリのアクセラレータ
+    // (メニューバーのショートカット) より後に付く。コントローラーは新しいものから
+    // 順に動く (`gtk_widget_add_controller` は先頭へ足す) ので、naui が先に受け取る。
+    let controllers = window.native_window().observe_controllers();
+    let position = |found: &dyn Fn(&gtk::EventController) -> bool| {
+        (0..controllers.n_items())
+            .filter_map(|index| {
+                controllers
+                    .item(index)
+                    .and_downcast::<gtk::EventController>()
+            })
+            .position(|controller| found(&controller))
+    };
+    let naui = position(&|c| {
+        c.is::<gtk::EventControllerKey>() && c.propagation_phase() == gtk::PropagationPhase::Capture
+    })
+    .expect("naui のキーの受け口");
+    let accels = position(&|c| c.name().as_deref() == Some("gtk-application-shortcuts"))
+        .expect("アプリのアクセラレータ");
+    assert!(naui < accels, "naui の受け口が先に並ぶ ({naui} < {accels})");
+
+    let note = |name: &'static str| {
+        let log = log.clone();
+        move || log.borrow_mut().push(name)
+    };
+    let take = || std::mem::take(&mut *log.borrow_mut());
+    // 主修飾キーは Linux では Ctrl。GTK を macOS で動かすときは ⌘ (Meta) になる。
+    let (primary, other) = if cfg!(target_os = "macos") {
+        (M::META_MASK, M::CONTROL_MASK)
+    } else {
+        (M::CONTROL_MASK, M::SUPER_MASK)
+    };
+    let ctrl_k = naui_core::Shortcut::new('k');
+    input.on_shortcut(ctrl_k, note("input"));
+    group.on_shortcut(ctrl_k, note("group"));
+    window.on_shortcut(ctrl_k, note("window"));
+    assert!(press_key(&window, K::k, primary), "ショートカットは止める");
+    assert_eq!(take(), ["input"]);
+    input.remove_shortcut(ctrl_k);
+    press_key(&window, K::k, primary);
+    assert_eq!(take(), ["group"]);
+    group.remove_shortcut(ctrl_k);
+    press_key(&window, K::K, primary);
+    assert_eq!(take(), ["window"], "大文字の keyval も同じキー");
+    window.remove_shortcut(ctrl_k);
+    assert!(
+        !press_key(&window, K::k, primary),
+        "naui が受け取らなければメニューバーへ通す"
+    );
+    // send_key はメニューバーまで届ける。
+    let event = naui_core::KeyEvent::new(
+        naui_core::Key::Character('k'),
+        naui_core::Modifiers {
+            control: !cfg!(target_os = "macos"),
+            meta: cfg!(target_os = "macos"),
+            ..naui_core::Modifiers::default()
+        },
+    );
+    assert_eq!(window.send_key(&event), naui_core::EventResponse::Handled);
+    assert_eq!(take(), ["menu"]);
+    // 主修飾キーではないほう (Linux では Super) が加わると別の組み合わせ。
+    window.on_shortcut(ctrl_k, note("window"));
+    assert!(!press_key(&window, K::k, primary | other));
+    assert!(take().is_empty());
+    window.close();
+    Ok(())
+}
+
+fn keys_in_sheets_and_dialogs_do_not_reach_the_window(ui: &Ui) -> Result<()> {
+    use gtk::gdk::{Key as K, ModifierType as M};
+    let window = ui.window("naui", 480.0, 360.0)?;
+    window.show();
+    let log = Rc::new(RefCell::new(Vec::<&str>::new()));
+    let note = |name: &'static str| {
+        let log = log.clone();
+        move || log.borrow_mut().push(name)
+    };
+    let f2 = naui_core::Shortcut::function(2);
+    window.on_shortcut(f2, note("window"));
+    window.on_shortcut(naui_core::Shortcut::function(3), note("window F3"));
+
+    let sheet = ui.sheet("確認")?;
+    let field = ui.text_input("")?;
+    field.on_shortcut(f2, note("field"));
+    sheet.set_child(&field);
+    sheet.set_buttons(DialogButtons::new().primary("閉じる"));
+    sheet.open();
+    let native = sheet.native_dialog().expect("AdwDialog");
+    wait_until_shown(&native);
+    assert!(field.request_focus());
+    // libadwaita は窓の中のダイアログで打たれたキーを窓の capture に通さないので、
+    // ダイアログの受け口が届ける。窓の受け口はダイアログの中のキーを扱わない
+    // (両方を通す版でも二重に届かない)。
+    press_key(&window, K::F2, M::empty());
+    assert!(
+        log.borrow().is_empty(),
+        "窓の受け口はシートの中のキーを扱わない"
+    );
+    press_key_on(native.upcast_ref(), K::F2, M::empty());
+    press_key_on(native.upcast_ref(), K::F3, M::empty());
+    assert_eq!(
+        *log.borrow(),
+        ["field"],
+        "シートの中のショートカットは届き、窓のショートカットは届かない"
+    );
+
+    native.close();
+    pump();
+    log.borrow_mut().clear();
+    press_key(&window, K::F3, M::empty());
+    assert_eq!(*log.borrow(), ["window F3"], "閉じれば窓に届く");
+
+    // `Dialog` (AdwAlertDialog) も同じ。
+    let dialog = ui.dialog("確認")?;
+    let input = ui.text_input("")?;
+    input.on_shortcut(f2, note("dialog field"));
+    dialog.set_child(&input);
+    dialog.open();
+    let native = dialog.native_dialog().expect("AdwAlertDialog");
+    wait_until_shown(native.upcast_ref());
+    // 閉じたシートが消えきるまで、ダイアログの中身はフォーカスを受けない。
+    spin_until(std::time::Duration::from_secs(2), || input.request_focus());
+    assert!(input.request_focus());
+    log.borrow_mut().clear();
+    press_key(&window, K::F2, M::empty());
+    press_key_on(native.upcast_ref(), K::F2, M::empty());
+    press_key_on(native.upcast_ref(), K::F3, M::empty());
+    assert_eq!(
+        *log.borrow(),
+        ["dialog field"],
+        "ダイアログの中のショートカットは届き、窓のショートカットは届かない"
+    );
+    dialog.close();
     window.close();
     Ok(())
 }
@@ -15623,6 +16140,42 @@ fn holders(ui: &Ui, host: &naui_gtk::Window, anchor: &dyn Widget) -> Result<Vec<
         keeps_previous: false,
         finish: nothing(),
     });
+    let tree = ui.tree()?;
+    tree.set_rows(&[TreeRow::new(&ui.label("前")?)]);
+    all.push(Holder {
+        name: "Tree::set_rows",
+        put: Box::new({
+            let tree = tree.clone();
+            move |child| {
+                tree.set_rows(&[
+                    TreeRow::new(child),
+                    TreeRow::new(&ui_label("枝"))
+                        .expanded(true)
+                        .child(TreeRow::new(&ui_label("葉"))),
+                ])
+            }
+        }),
+        native: Box::new({
+            let tree = tree.clone();
+            move || Some(tree.native_widget())
+        }),
+        exercise: Box::new({
+            let tree = tree.clone();
+            move || {
+                tree.collapse(&[1]);
+                tree.expand(&[1]);
+                tree.collapse_all();
+                tree.expand_all();
+                tree.set_selection_mode(SelectionMode::Multiple);
+                tree.set_selection(&[vec![0], vec![1, 0]]);
+                tree.set_selection_mode(SelectionMode::Single);
+                tree.set_selected(&[0]);
+                tree.scroll_to_item(&[1, 0]);
+            }
+        }),
+        keeps_previous: false,
+        finish: nothing(),
+    });
     let list = ui.list()?;
     all.push(Holder {
         name: "List::set_row_builder",
@@ -16132,6 +16685,59 @@ fn later_placers_leave_a_moved_child_alone(ui: &Ui) -> Result<()> {
         pump();
 
         let child = ui.text_input("子").expect("子");
+        let dialog = ui.dialog("先").expect("ダイアログ");
+        dialog.set_child(&child);
+        dialog.open();
+        pump();
+        dialog.close();
+        pump();
+        if wait_until_free(&child) {
+            let tree = ui.tree().expect("ツリー");
+            tree.set_rows(&[TreeRow::new(&child)]);
+            let tree_box = tree.native_widget();
+            violations.check(bin_of(&child).is_ancestor(&tree_box), || {
+                "Dialog → Tree: ツリーに入らない".to_string()
+            });
+            dialog.open();
+            pump();
+            violations.check(bin_of(&child).is_ancestor(&tree_box), || {
+                "Dialog → Tree: 前のダイアログが開くと取り返す".to_string()
+            });
+            dialog.close();
+            pump();
+        } else {
+            violations.check(false, || {
+                "Dialog → Tree: 閉じても中身を放さない".to_string()
+            });
+        }
+
+        let child = ui.text_input("子").expect("子");
+        let tree = ui.tree().expect("ツリー");
+        tree.set_rows(&[TreeRow::new(&child).child(TreeRow::new(&ui.label("葉").expect("葉")))]);
+        tree.set_items(&[TreeItem::new("文字")]);
+        violations.check(bin_of(&child).parent().is_none(), || {
+            "Tree → Dialog: 文字へ戻しても行が放さない".to_string()
+        });
+        let dialog = ui.dialog("後").expect("ダイアログ");
+        dialog.set_child(&child);
+        tree.expand_all();
+        tree.set_selection_mode(SelectionMode::Multiple);
+        tree.set_rows(&[TreeRow::new(&ui.label("別").expect("別"))]);
+        violations.check(bin_of(&child).parent().is_none(), || {
+            "Tree → Dialog: ツリーの操作で取り返す".to_string()
+        });
+        dialog.open();
+        pump();
+        violations.check(
+            dialog
+                .native_dialog()
+                .is_some_and(|native| bin_of(&child).is_ancestor(&native)),
+            || "Tree → Dialog: ダイアログに入らない".to_string(),
+        );
+        dialog.close();
+        pump();
+
+        let child = ui.text_input("子").expect("子");
         let (window, _list, native) = list_with_first_row(ui, &child, true).expect("一覧");
         scroll_list_to(&native, 1e7);
         let dialog = ui.dialog("後").expect("ダイアログ");
@@ -16283,6 +16889,42 @@ fn child_out_of_a_row_keeps_nothing_from_it(ui: &Ui) -> Result<()> {
                 pump();
             }
         }
+    }
+
+    // ツリーの行から出た子 (文字の項目へ差し替えた)。
+    for kind in [NewParent::Stack, NewParent::Grid] {
+        let what = format!("Tree の行から {kind:?} へ");
+        let child = ui.button("子")?;
+        let tree = ui.tree()?;
+        tree.set_sizing(Sizing::fill());
+        let window = ui.window("ツリー", 300.0, 200.0)?;
+        window.set_child(&tree);
+        window.show();
+        tree.set_rows(&[TreeRow::new(&ui.label("枝")?)
+            .expanded(true)
+            .child(TreeRow::new(&child))]);
+        let native = tree.native_widget();
+        tick(&native);
+        violations.check(bin_of(&child).is_ancestor(&native), || {
+            format!("{what}: 行に入らない")
+        });
+        tree.set_items(&[TreeItem::new("別")]);
+        tick(&native);
+        violations.check(bin_of(&child).parent().is_none(), || {
+            format!("{what}: 行が子を放さない")
+        });
+        let fresh = ui.button("子")?;
+        let moved_into = put(ui, kind, &child)?;
+        put(ui, kind, &fresh)?;
+        violations.check(bin_of(&child).parent() == Some(moved_into), || {
+            format!("{what}: 新しい親に入らない")
+        });
+        let (moved, made) = (looks(&child), looks(&fresh));
+        violations.check(moved == made, || {
+            format!("{what}: 新しく作った子と違う\n  移した子 {moved:?}\n  新しい子 {made:?}")
+        });
+        window.close();
+        pump();
     }
 
     // 同じ列のセルだった 2 つの子は、表から出たあと幅をそろえ合わない。

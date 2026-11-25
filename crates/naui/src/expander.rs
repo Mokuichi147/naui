@@ -1,5 +1,5 @@
 use crate::sys;
-use crate::Widget;
+use crate::AsWidget;
 
 /// A container whose contents are shown and hidden by clicking its heading
 /// (`GtkExpander`).
@@ -39,8 +39,8 @@ impl Expander {
 
     /// The contents to collapse. Each call replaces them.
     #[inline]
-    pub fn set_child(&self, child: &dyn Widget) {
-        self.0.set_child(child.as_backend())
+    pub fn set_child(&self, child: &dyn AsWidget) {
+        self.0.set_child(child.as_widget().as_backend())
     }
 
     /// Called with the new state every time the user expands or collapses it.

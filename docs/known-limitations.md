@@ -141,11 +141,11 @@ that shape are covered in
   in the layout. Items can open submenus and show check marks, but **there are no
   radio items** (use check items and turn the others off with
   `set_item_checked`) and no icons in items. `PopupMenu` items show no shortcuts.
-- `MenuShortcut` is either **the primary modifier key + one alphanumeric
-  character** (the primary modifier is ⌘ on macOS and Ctrl on the other three
-  platforms) or **a function key from F1 to F24**, on its own or with modifiers.
-  Symbol keys and named keys (Delete, the arrow keys and so on) cannot be
-  specified. Some function keys reach the OS or the browser first: macOS assigns
+- A `MenuItem`'s `Shortcut` is either **the primary modifier key + one
+  alphanumeric character** (the primary modifier is ⌘ on macOS and Ctrl on the
+  other three platforms) or **a function key from F1 to F24**, on its own or with
+  modifiers. Symbol keys and named keys (Delete, the arrow keys and so on) cannot
+  be given to a menu item (windows and widgets take the named keys). Some function keys reach the OS or the browser first: macOS assigns
   F11 to Show Desktop by default and laptops may need fn, and browsers may keep F11
   (full screen) or F12 (developer tools) for themselves.
 - `List` has one column. For data lists that need columns, use `Table`.
@@ -212,8 +212,13 @@ that shape are covered in
     the browser can handle (about 33 million px in Chromium), the mapping between
     the scroll bar position and rows drifts (around 1 million rows for 30 px rows).
     Selection by index and `set_rows` work even with more than that.
-- `Tree`'s items can hold only strings. Items are addressed by paths
-  (`&[usize]`), and they cannot be rearranged by dragging. With multiple selection,
+- `Tree` builds every item when it is passed (`set_items` / `set_rows`), including
+  items inside collapsed branches; unlike `List` and `Table`, it does not build only
+  the rows on screen. Items are addressed by paths
+  (`&[usize]`), and they cannot be rearranged by dragging. Keys typed into a field
+  inside a `TreeRow` are kept from the tree only on the Web; elsewhere keys the field
+  does not use itself (an arrow key in a one-line field, for example) may move the
+  tree's selection, as in `List` rows. With multiple selection,
   `on_select` still passes only the first selected item (read `Tree::selection`
   for all of them), and selecting a branch never selects its children (there is no
   check-box selection as in WinUI's `TreeView`).
@@ -292,6 +297,26 @@ that shape are covered in
   constraint in a direction it does not scroll, so the window may stop at that
   content's width instead. Set a minimum with `Window::set_min_size` or the
   child's `min_width` / `min_height`.
+
+- Shortcuts given with `on_shortcut` (windows and widgets) are matched by naui
+  in its own key receiver, not registered as WinUI's `KeyboardAccelerator`, a
+  `GtkShortcutController` or AppKit's key equivalents, so that the scope (the
+  focus inside the widget) and the order (the focus outward, the window, then the
+  menu bar) are the same on all four. In return, **screen readers do not announce
+  them**, and they show nowhere on screen; put the key in a tooltip or label
+  (`Shortcut::label`) where it matters.
+- A shortcut cannot be a symbol key (`/`, `+`, `[` and so on: which key types them
+  depends on the keyboard layout) or a character key without the primary modifier.
+  With ⇧, a digit arrives as the symbol it types on macOS, Linux and the Web (`!`
+  for `1` on a US layout), so a `Shift` + digit shortcut fires only on Windows.
+- With a keyboard layout that does not type Latin letters (Russian, Greek and so
+  on), a character shortcut such as `Ctrl+S` may not fire on macOS, Linux and the
+  Web: naui compares the character the key types, not the physical key. Windows
+  compares the virtual key, and the menu bar's shortcuts on macOS and Linux are
+  matched by the OS, so those are not affected. This has not been checked on a
+  real device.
+- Keys pressed in a `Dialog` or `Sheet` do not reach the window's `on_key_down` or
+  shortcuts. Keys pressed while an IME is composing reach no shortcut.
 
 ### naui-app
 
@@ -384,6 +409,10 @@ that shape are covered in
 - Inside a test case `Ui::open_url` opens nothing and records the URL for
   `testing::opened_urls` instead. Links the user clicks inside a `Label` are not
   recorded (no method clicks them).
+- `Window::send_key` delivers a key only through naui (the `on_key_down`s,
+  shortcuts and the menu bar's shortcuts): the focused control does not get it, so
+  no text is typed and a control's own keys (a list's arrow keys, a field's Enter)
+  do nothing. It starts from the widget that has focus, which `request_focus` moves.
 - `enter_text`, `submit` and `search` press no key: `on_key_down` is not called,
   so an `on_key_down` that stops Enter does not stop `submit`, and nothing goes
   through an IME. `enter_text` replaces the whole text at once, so `on_change` is
@@ -502,9 +531,15 @@ that shape are covered in
 - `Sheet` keeps the width `ContentDialog` allows, between 320 and 548 px
   (`ContentDialogMinWidth` / `ContentDialogMaxWidth`), so wider content is squeezed.
 - `MenuBar` shortcuts are picked up from the window's `KeyDown`, so a key that the
-  focused control handles itself does not reach them. Whether F10 and Alt
-  combinations, which Windows uses for its own menu keys, arrive has not been
-  checked on a real device.
+  focused control handles itself does not reach them (shortcuts given with
+  `on_shortcut` come before the focused control, so they do not have this gap).
+  Keys pressed in a popup (a `Dialog` or `Sheet`'s `ContentDialog`, a menu, a
+  drop-down list) pass through the window root too, but naui gives them only to
+  the widgets they come from (the shortcuts of the widgets in a `Sheet` fire), not
+  to the window's `on_key_down` or shortcuts. F10 and Alt combinations, which
+  Windows uses for its own menu keys, reach `on_shortcut` (checked with real
+  keys); whether they reach the `MenuBar`'s shortcuts has not been checked on a
+  real device.
 
 ### Window
 
@@ -768,8 +803,14 @@ that shape are covered in
   Safari.
 - Browsers have no standard icon set, so naui carries SVGs for `Toolbar` icons (the
   only place where OS assets are not used).
-- `MenuBar` shortcuts **accept either Ctrl or ⌘ as the primary modifier** (because
-  ⌘ is the primary modifier in browsers on macOS). When pressed, the browser default
+- `MenuBar` shortcuts, and those given with `on_shortcut`, **accept either Ctrl or
+  ⌘ as the primary modifier** (because ⌘ is the primary modifier in browsers on
+  macOS). A window's or widget's shortcut that fires also prevents the browser's
+  default, so a window's `Ctrl+S` keeps the browser from saving the page; keys the
+  browser keeps for itself (such as `Ctrl+W` or `Ctrl+T` in Chrome) never reach
+  the page. Keys pressed while the page itself has focus (after a click on an empty
+  area, for example) belong to no window and go to every shown window's
+  `on_key_down` and shortcuts in turn. When pressed, the browser default
   (such as ⌘S or F5's reload) is prevented. The menu bar of a hidden window does not react to keys,
   and when a page has several windows, only the menu bar of the window the key
   bubbled up to receives it.

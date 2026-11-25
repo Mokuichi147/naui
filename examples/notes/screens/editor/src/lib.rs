@@ -83,11 +83,14 @@ pub fn build(ui: &Ui, dispatch: &Dispatch<Message>) -> naui::Result<View> {
     })
 }
 
-impl View {
-    pub fn root(&self) -> &dyn naui::Widget {
+/// The app places the view itself (`stack.append(&list)`), which places its root.
+impl naui::AsWidget for View {
+    fn as_widget(&self) -> &dyn naui::Widget {
         &self.root
     }
+}
 
+impl View {
     /// Sets the strings that do not depend on the notes: called when the language
     /// changes, before `render`.
     pub fn translate(&self, tr: &Translations) {

@@ -163,7 +163,7 @@ impl MenuDom {
                         let _ = button.set_attribute("role", "menuitem");
                     }
                 }
-                if let Some(shortcut) = item.shortcut.filter(|s| s.is_valid()) {
+                if let Some(shortcut) = item.shortcut.filter(|s| s.is_valid_for_menu()) {
                     // ブラウザはショートカットの表示を持たないので、naui が添える。
                     // 読み上げには aria-keyshortcuts で伝える。
                     trailing(doc, &button, &shortcut.label())?;
