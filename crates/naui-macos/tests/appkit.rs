@@ -14762,7 +14762,16 @@ fn tree_row_controls_do_not_select(ui: &Ui) -> Result<()> {
 
     // 窓が key でなくても届く環境がある。ツリーの外のボタンに届いたかで、
     // 確かめられるかを決める。届くなら、行の中のボタンにも届かなければならない。
-    click_view(&app, &native, &probe.native_view());
+    // 表示の直後は、窓が画面に出きるまで押下が捨てられることがある (CI の macOS
+    // ランナーで数回に 1 回)。届くまで少し待って押し直す。
+    for _ in 0..40 {
+        click_view(&app, &native, &probe.native_view());
+        if probe_clicks.get() > 0 {
+            break;
+        }
+        pump(0.05);
+        deliver_events(&app);
+    }
     if probe_clicks.get() == 1 {
         click_view(&app, &native, &action.native_view());
         assert_eq!(clicks.get(), 1, "行の中のボタンにクリックが届くこと");
