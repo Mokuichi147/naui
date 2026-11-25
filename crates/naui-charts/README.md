@@ -17,7 +17,7 @@ fn main() -> naui::Result<()> {
             .series(Series::bar("2025", [120.0, 90.0, 140.0, 160.0]))
             .series(Series::line("2026", [130.0, 110.0, 150.0, 175.0]));
         let view = ChartView::new(ui, chart)?;
-        window.set_child(view.root());
+        window.set_child(&view);
         window.show();
         Ok(())
     })
@@ -40,8 +40,9 @@ fn main() -> naui::Result<()> {
 `Chart::draw` draws a chart on any `Painter`, to put it in part of a drawing of
 your own or to check the drawing commands in a unit test.
 
-naui's containers take only naui's own widgets, so a `ChartView` is put in one
-through the `Canvas` inside it (`view.root()`).
+A `ChartView` implements naui's `AsWidget`, so it goes into a container as it is
+(`stack.append(&view)`), and `set_sizing` and the other common methods reach the
+`Canvas` it draws on (`view.canvas()`).
 
 Tooltips, zooming and other interaction are not part of it yet. `ChartLayout`
 (from `ChartView::layout`) turns a pointer position on the `Canvas` into values,

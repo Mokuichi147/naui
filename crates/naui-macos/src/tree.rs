@@ -12,6 +12,11 @@
 //! `NSOutlineView` identifies items by **object identity**, so one `NSObject` is
 //! created per path (a sequence of child indices like `[0, 2]`), and [`Nodes`]
 //! allows lookups in both directions.
+//!
+//! Items made from widgets ([`TreeRow`]) are put in cells the same way as `List`
+//! rows ([`crate::row_cell`]): the tree takes each widget when it is handed over, and a
+//! new cell puts it in itself only if it is in an earlier cell of this tree or in no
+//! parent.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
@@ -29,7 +34,8 @@ use objc2_app_kit::{
 };
 use objc2_foundation::{NSIndexSet, NSInteger, NSMutableIndexSet, NSNotification, NSString};
 
-use crate::list::{cell_view, SelectionHandler};
+use crate::list::{cell_view, custom_cell_view, SelectionHandler, ROW_PADDING};
+use crate::row_cell::CellOwner;
 use crate::trampoline::SharedSlot;
 use crate::widgets::Widget;
 
@@ -71,6 +77,118 @@ impl RowHeights {
         match has_detail {
             true => self.double,
             false => self.single,
+        }
+    }
+}
+
+/// The widgets of items made from [`TreeRow`]s, by path.
+type Contents = HashMap<Vec<usize>, Box<dyn Widget>>;
+
+/// One item to put in a tree, with a widget as its content.
+///
+/// [`TreeItem`] is a convenience API for trees that need only strings. To combine
+/// icons, several labels, check boxes, buttons and so on, build the content with
+/// `Grid` / `Stack` and wrap it in this type.
+///
+/// ```no_run
+/// # use naui_macos::{TreeRow, Widget};
+/// # fn row(folder: &dyn Widget, file: &dyn Widget) {
+/// let row = TreeRow::new(folder)
+///     .expanded(true)
+///     .child(TreeRow::new(file).selectable(false));
+/// # let _ = row;
+/// # }
+/// ```
+pub struct TreeRow {
+    content: Box<dyn Widget>,
+    selectable: bool,
+    expanded: bool,
+    children: Vec<TreeRow>,
+}
+
+impl Clone for TreeRow {
+    fn clone(&self) -> Self {
+        Self {
+            content: self.content.boxed_clone(),
+            selectable: self.selectable,
+            expanded: self.expanded,
+            children: self.children.clone(),
+        }
+    }
+}
+
+impl TreeRow {
+    /// Uses a widget as the content of one item. By default the item can be selected,
+    /// starts collapsed and has no children.
+    pub fn new(content: &dyn Widget) -> Self {
+        Self {
+            content: content.boxed_clone(),
+            selectable: true,
+            expanded: false,
+            children: Vec::new(),
+        }
+    }
+
+    /// Set to `false` for items where only the controls inside are operated.
+    ///
+    /// Its descendants cannot be selected either, as with [`TreeItem::enabled`]. The row
+    /// is not dimmed, and the controls inside keep working.
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        self.selectable = selectable;
+        self
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.selectable
+    }
+
+    /// Sets whether it is shown expanded from the start (collapsed by default).
+    pub fn expanded(mut self, expanded: bool) -> Self {
+        self.expanded = expanded;
+        self
+    }
+
+    pub fn is_expanded(&self) -> bool {
+        self.expanded
+    }
+
+    /// Replaces the child items.
+    pub fn children(mut self, children: impl IntoIterator<Item = TreeRow>) -> Self {
+        self.children = children.into_iter().collect();
+        self
+    }
+
+    /// Adds one child item.
+    pub fn child(mut self, child: TreeRow) -> Self {
+        self.children.push(child);
+        self
+    }
+
+    /// Whether the item has no children (cannot be expanded).
+    pub fn is_leaf(&self) -> bool {
+        self.children.is_empty()
+    }
+
+    /// The shape of the rows as items without text: selection and expansion are
+    /// handled by the same code as for [`TreeItem`]s.
+    fn skeleton(rows: &[TreeRow]) -> Vec<TreeItem> {
+        rows.iter()
+            .map(|row| {
+                TreeItem::new("")
+                    .enabled(row.selectable)
+                    .expanded(row.expanded)
+                    .children(TreeRow::skeleton(&row.children))
+            })
+            .collect()
+    }
+
+    /// Collects the widgets by path.
+    fn collect(rows: &[TreeRow], path: &mut Vec<usize>, out: &mut Contents) {
+        for (index, row) in rows.iter().enumerate() {
+            path.push(index);
+            out.insert(path.clone(), row.content.boxed_clone());
+            TreeRow::collect(&row.children, path, out);
+            path.pop();
         }
     }
 }
@@ -188,6 +306,10 @@ struct SourceState {
     mode: Rc<Cell<SelectionMode>>,
     /// Row heights. Measured once at creation.
     heights: RowHeights,
+    /// The widgets of items made from [`TreeRow`]s, by path.
+    contents: Rc<RefCell<Contents>>,
+    /// The mark on the cells this tree makes for widgets ([`crate::row_cell`]).
+    owner: CellOwner,
 }
 
 impl SourceState {
@@ -288,7 +410,10 @@ define_class!(
         #[unsafe(method(outlineView:heightOfRowByItem:))]
         fn height_of_row(&self, _outline_view: &NSOutlineView, item: &AnyObject) -> f64 {
             let state = self.ivars();
-            state.heights.of(self.has_detail(item))
+            match self.content_height(item) {
+                Some(height) => height,
+                None => state.heights.of(self.has_detail(item)),
+            }
         }
 
         #[unsafe(method(outlineView:shouldSelectItem:))]
@@ -366,11 +491,33 @@ impl TreeSource {
     fn build_cell(&self, mtm: MainThreadMarker, item: &AnyObject) -> Option<Retained<NSView>> {
         let state = self.ivars();
         let path = state.nodes.path(Some(item))?;
+        if let Some(content) = state.contents.borrow().get(&path) {
+            let height = self.content_height(item);
+            return Some(custom_cell_view(mtm, &**content, height, state.owner));
+        }
         let items = state.items.borrow();
         let node = TreeItem::at(&items, &path)?;
         // 選べるかどうかは祖先まで見て決まる。淡い見た目もそれにそろえる。
         let enabled = TreeItem::selectable(&items, &path);
         Some(cell_view(mtm, &node.label, node.detail.as_deref(), enabled))
+    }
+
+    /// The height of the row of an item made from a widget. `None` for text items.
+    ///
+    /// It is measured from the widget each time AppKit asks, rather than by AppKit from
+    /// the cell ([`RowHeights`] explains why). `fittingSize` reads only the constraints
+    /// inside the widget, so it does not depend on the cell it is in. A widget the app
+    /// has moved elsewhere leaves an empty row of one line.
+    fn content_height(&self, item: &AnyObject) -> Option<f64> {
+        let state = self.ivars();
+        let path = state.nodes.path(Some(item))?;
+        let contents = state.contents.borrow();
+        let view = contents.get(&path)?.native_view();
+        let single = state.heights.single;
+        if !state.owner.may_take(&view) {
+            return Some(single);
+        }
+        Some((view.fittingSize().height + ROW_PADDING * 2.0).max(single))
     }
 
     /// Whether the item has secondary text (= becomes two lines).
@@ -553,6 +700,9 @@ struct TreeInner {
     /// The selection as seen by naui (the same as [`SourceState::selection`]).
     selection: Rc<RefCell<Vec<Vec<usize>>>>,
     mode: Rc<Cell<SelectionMode>>,
+    /// The widgets of items made from [`TreeRow`]s (the same as [`SourceState::contents`]).
+    contents: Rc<RefCell<Contents>>,
+    owner: CellOwner,
     /// Delegates and data sources are weak references, so they are held.
     source: Retained<TreeSource>,
 }
@@ -612,6 +762,8 @@ impl Tree {
         let silent = Rc::new(Cell::new(false));
         let selection: Rc<RefCell<Vec<Vec<usize>>>> = Rc::new(RefCell::new(Vec::new()));
         let mode = Rc::new(Cell::new(SelectionMode::Single));
+        let contents: Rc<RefCell<Contents>> = Rc::default();
+        let owner = CellOwner::new();
         let source = TreeSource::new(
             mtm,
             SourceState {
@@ -625,6 +777,8 @@ impl Tree {
                 selection: selection.clone(),
                 mode: mode.clone(),
                 heights: RowHeights::measure(mtm),
+                contents: contents.clone(),
+                owner,
             },
         );
         unsafe {
@@ -647,6 +801,8 @@ impl Tree {
             silent,
             selection,
             mode,
+            contents,
+            owner,
             source,
         }))
     }
@@ -655,6 +811,27 @@ impl Tree {
     ///
     /// Expansion returns to what [`TreeItem::expanded`] says.
     pub fn set_items(&self, items: &[TreeItem]) {
+        self.load(items, Contents::new());
+    }
+
+    /// Rebuilds the items with widgets as their content. Paths change meaning, so the
+    /// selection is cleared.
+    ///
+    /// Expansion returns to what [`TreeRow::expanded`] says. Each widget is taken from
+    /// wherever it is now; if the app moves it elsewhere afterwards, its row stays
+    /// empty, as for `List` rows.
+    pub fn set_rows(&self, rows: &[TreeRow]) {
+        let mut contents = Contents::new();
+        TreeRow::collect(rows, &mut Vec::new(), &mut contents);
+        for content in contents.values() {
+            crate::row_cell::claim(&content.native_view(), self.0.owner);
+        }
+        self.load(&TreeRow::skeleton(rows), contents);
+    }
+
+    /// Replaces the items and their widgets, and shows them anew.
+    fn load(&self, items: &[TreeItem], contents: Contents) {
+        *self.0.contents.borrow_mut() = contents;
         *self.0.items.borrow_mut() = items.to_vec();
         self.0.nodes.reset(items);
         self.0.expanded.borrow_mut().clear();

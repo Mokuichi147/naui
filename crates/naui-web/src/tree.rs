@@ -16,19 +16,153 @@
 //!
 //! The frame and selection colors use the browser's system colors (`Field` /
 //! `SelectedItem` / `Highlight` / `GrayText`) as is; naui decides no colors.
+//!
+//! Items made from widgets ([`TreeRow`]) are put in cells the same way as `List`
+//! rows ([`crate::handover`]): the tree takes each widget when it is handed over, and a
+//! new cell puts it in itself only if it is in an earlier cell of this tree or in no
+//! parent.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
 use naui_core::{Result, SelectionMode, TreeItem};
 use wasm_bindgen::JsCast;
-use web_sys::{Document, Element, HtmlElement, KeyboardEvent, MouseEvent};
+use web_sys::{Document, Element, Event, HtmlElement, KeyboardEvent, MouseEvent};
 
+use crate::handover::Owner;
+use crate::list::control_was_targeted;
 use crate::widgets::{create, impl_widget, Listener, Widget};
 
 /// The indentation per level (px).
 const INDENT: f64 = 16.0;
+
+/// The attribute on the cell that holds an item's widget.
+const CONTENT_CELL: &str = "data-naui-tree-cell";
+
+/// The widgets of items made from [`TreeRow`]s, by path.
+type Contents = HashMap<Vec<usize>, Box<dyn Widget>>;
+
+/// One item to put in a tree, with a widget as its content.
+///
+/// [`TreeItem`] is a convenience API for trees that need only strings. To combine
+/// icons, several labels, check boxes, buttons and so on, build the content with
+/// `Grid` / `Stack` and wrap it in this type.
+///
+/// ```no_run
+/// # use naui_web::{TreeRow, Widget};
+/// # fn row(folder: &dyn Widget, file: &dyn Widget) {
+/// let row = TreeRow::new(folder)
+///     .expanded(true)
+///     .child(TreeRow::new(file).selectable(false));
+/// # let _ = row;
+/// # }
+/// ```
+pub struct TreeRow {
+    content: Box<dyn Widget>,
+    selectable: bool,
+    expanded: bool,
+    children: Vec<TreeRow>,
+}
+
+impl Clone for TreeRow {
+    fn clone(&self) -> Self {
+        Self {
+            content: self.content.boxed_clone(),
+            selectable: self.selectable,
+            expanded: self.expanded,
+            children: self.children.clone(),
+        }
+    }
+}
+
+impl TreeRow {
+    /// Uses a widget as the content of one item. By default the item can be selected,
+    /// starts collapsed and has no children.
+    pub fn new(content: &dyn Widget) -> Self {
+        Self {
+            content: content.boxed_clone(),
+            selectable: true,
+            expanded: false,
+            children: Vec::new(),
+        }
+    }
+
+    /// Set to `false` for items where only the controls inside are operated.
+    ///
+    /// Its descendants cannot be selected either, as with [`TreeItem::enabled`]. The row
+    /// is not dimmed, and the controls inside keep working.
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        self.selectable = selectable;
+        self
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.selectable
+    }
+
+    /// Sets whether it is shown expanded from the start (collapsed by default).
+    pub fn expanded(mut self, expanded: bool) -> Self {
+        self.expanded = expanded;
+        self
+    }
+
+    pub fn is_expanded(&self) -> bool {
+        self.expanded
+    }
+
+    /// Replaces the child items.
+    pub fn children(mut self, children: impl IntoIterator<Item = TreeRow>) -> Self {
+        self.children = children.into_iter().collect();
+        self
+    }
+
+    /// Adds one child item.
+    pub fn child(mut self, child: TreeRow) -> Self {
+        self.children.push(child);
+        self
+    }
+
+    /// Whether the item has no children (cannot be expanded).
+    pub fn is_leaf(&self) -> bool {
+        self.children.is_empty()
+    }
+
+    /// The shape of the rows as items without text: selection and expansion are
+    /// handled by the same code as for [`TreeItem`]s.
+    fn skeleton(rows: &[TreeRow]) -> Vec<TreeItem> {
+        rows.iter()
+            .map(|row| {
+                TreeItem::new("")
+                    .enabled(row.selectable)
+                    .expanded(row.expanded)
+                    .children(TreeRow::skeleton(&row.children))
+            })
+            .collect()
+    }
+
+    /// Collects the widgets by path.
+    fn collect(rows: &[TreeRow], path: &mut Vec<usize>, out: &mut Contents) {
+        for (index, row) in rows.iter().enumerate() {
+            path.push(index);
+            out.insert(path.clone(), row.content.boxed_clone());
+            TreeRow::collect(&row.children, path, out);
+            path.pop();
+        }
+    }
+}
+
+/// Whether a key event comes from inside an item's widget (a control in it has the
+/// focus). Such keys belong to the control, not to the tree.
+fn from_content(root: &HtmlElement, event: &Event) -> bool {
+    let Some(target) = event.target().and_then(|t| t.dyn_into::<Element>().ok()) else {
+        return false;
+    };
+    let Ok(Some(cell)) = target.closest(&format!("[{CONTENT_CELL}]")) else {
+        return false;
+    };
+    root.contains(Some(cell.as_ref()))
+}
 
 thread_local! {
     /// A per-tree running number for referring to items from
@@ -113,6 +247,11 @@ struct TreeInner {
     document: Document,
     id: u32,
     items: RefCell<Vec<TreeItem>>,
+    /// The widgets of items made from [`TreeRow`]s, by path. Empty for text items.
+    contents: RefCell<Contents>,
+    /// Marks the cells and widgets of the items as this tree's (see
+    /// [`crate::handover`]).
+    owner: Owner,
     nodes: RefCell<Vec<Node>>,
     /// The items remembered as expanded. Those inside collapsed branches remain too.
     expanded: RefCell<HashSet<Vec<usize>>>,
@@ -171,6 +310,8 @@ impl Tree {
             document: doc.clone(),
             id: next_tree_id(),
             items: RefCell::new(Vec::new()),
+            contents: RefCell::new(Contents::new()),
+            owner: Owner::new(),
             nodes: RefCell::new(Vec::new()),
             expanded: RefCell::new(HashSet::new()),
             selected: RefCell::new(Vec::new()),
@@ -190,6 +331,12 @@ impl Tree {
                 let Some(inner) = weak.upgrade() else {
                     return;
                 };
+                // 項目の中のコントロールが受けたキーは、そのコントロールのもの。
+                // ツリーの操作として横取りすると、チェックボックスの Space や
+                // 入力欄の矢印キーが動かなくなる (`List` と同じ)。
+                if from_content(&inner.root, &event) {
+                    return;
+                }
                 if let Some(key) = event.dyn_ref::<KeyboardEvent>() {
                     if Tree(inner).on_key(key) {
                         event.prevent_default();
@@ -205,6 +352,27 @@ impl Tree {
     ///
     /// Expansion returns to what [`TreeItem::expanded`] says.
     pub fn set_items(&self, items: &[TreeItem]) {
+        self.load(items, Contents::new());
+    }
+
+    /// Rebuilds the items with widgets as their content. Paths change meaning, so the
+    /// selection is cleared.
+    ///
+    /// Expansion returns to what [`TreeRow::expanded`] says. Each widget is taken from
+    /// wherever it is now; if the app moves it elsewhere afterwards, its row stays
+    /// empty, as for `List` rows.
+    pub fn set_rows(&self, rows: &[TreeRow]) {
+        let mut contents = Contents::new();
+        TreeRow::collect(rows, &mut Vec::new(), &mut contents);
+        for content in contents.values() {
+            self.0.owner.claim(&content.native_element());
+        }
+        self.load(&TreeRow::skeleton(rows), contents);
+    }
+
+    /// Replaces the items and their widgets, and shows them anew.
+    fn load(&self, items: &[TreeItem], contents: Contents) {
+        *self.0.contents.borrow_mut() = contents;
         *self.0.items.borrow_mut() = items.to_vec();
         self.0.selected.borrow_mut().clear();
         *self.0.active.borrow_mut() = None;
@@ -441,22 +609,48 @@ impl Tree {
             }
         };
 
-        let text: HtmlElement = create(doc, "span")?.unchecked_into();
-        // `<option>` に合わせて 1 行に収める (2 行にすると行の高さがそろわない)。
-        let label = match &item.detail {
-            Some(detail) => format!("{} — {detail}", item.label),
-            None => item.label.clone(),
+        // 中身はウィジェットか文字のどちらか。ウィジェットは印付きのセルに包み、
+        // 並べ方の指定はセルへ書く (移っていった先にツリーの指定を残さない)。
+        let content = self
+            .0
+            .contents
+            .borrow()
+            .get(path)
+            .map(|content| content.native_element());
+        let cell = match content {
+            Some(content) => {
+                let cell: HtmlElement = create(doc, "div")?.unchecked_into();
+                let _ = cell.set_attribute(CONTENT_CELL, "");
+                style(&cell, "flex", "1 1 auto");
+                style(&cell, "min-width", "0");
+                style(&cell, "padding-block", "2px");
+                // 外さずにほかへ移った中身は、移った先に残して空の行にする。
+                self.0.owner.mark_cell(&cell);
+                if self.0.owner.may_take(&content) {
+                    let _ = cell.append_child(&content);
+                }
+                let _ = row.append_child(&cell);
+                Some(cell)
+            }
+            None => {
+                let text: HtmlElement = create(doc, "span")?.unchecked_into();
+                // `<option>` に合わせて 1 行に収める (2 行にすると行の高さがそろわない)。
+                let label = match &item.detail {
+                    Some(detail) => format!("{} — {detail}", item.label),
+                    None => item.label.clone(),
+                };
+                text.set_text_content(Some(&label));
+                style(&text, "white-space", "nowrap");
+                let _ = row.append_child(&text);
+                if !selectable {
+                    let _ = element.set_attribute("aria-disabled", "true");
+                    // 無効な文字にブラウザが使うシステム色。
+                    style(&text, "color", "GrayText");
+                }
+                None
+            }
         };
-        text.set_text_content(Some(&label));
-        style(&text, "white-space", "nowrap");
-        let _ = row.append_child(&text);
         let _ = element.append_child(&row);
-
-        if !selectable {
-            let _ = element.set_attribute("aria-disabled", "true");
-            // 無効な文字にブラウザが使うシステム色。
-            style(&text, "color", "GrayText");
-        }
 
         let group = match item.is_leaf() {
             true => None,
@@ -472,15 +666,30 @@ impl Tree {
         };
 
         // 行を押すと選ぶ。印を押すと開閉する (選択は動かさない)。
+        // ウィジェットの項目は、選べなくても中のコントロールは動くので淡くしない。
+        // そのため行の購読も付け、中のコントロールの操作と行の操作をここで分ける。
         let mut listeners = Vec::new();
-        if selectable {
+        if selectable || cell.is_some() {
             listeners.push(Listener::attach_event(row.as_ref(), "click", {
                 let weak = Rc::downgrade(&self.0);
                 let path = path.to_vec();
+                let cell_for_click = cell.clone();
                 move |event| {
                     let Some(inner) = weak.upgrade() else {
                         return;
                     };
+                    // Button や input 自身の操作はそのまま通し、選びも開閉もしない。
+                    if let Some(cell) = cell_for_click.as_ref() {
+                        if control_was_targeted(cell, &event) {
+                            return;
+                        }
+                    }
+                    // クリックの続きを矢印キーで行えるように、ツリーへフォーカスを
+                    // 移す (行内のコントロールを押したときは、そこから奪わない)。
+                    let _ = inner.root.focus();
+                    if !selectable {
+                        return;
+                    }
                     // ⌘ / Ctrl は 1 つずつ足し引きし、Shift は起点からの範囲を選ぶ
                     // (`List` と同じ)。
                     let mouse = event.dyn_ref::<MouseEvent>();

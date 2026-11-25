@@ -192,6 +192,53 @@ on Windows). **It loses the keyboard focus**, and text being composed with an IM
 ends with it (on macOS it is committed into the field). Call `request_focus` after
 adding it again if it should keep the focus.
 
+## Passing your own types to containers
+
+Containers take children as [`&dyn AsWidget`](AsWidget): every naui widget, a
+`&dyn Widget`, and any type of your own that implements [`AsWidget`]. A type that
+puts a few widgets together (a tag, a labeled field, a whole screen in its own
+crate) implements it by returning the widget it places, usually its outermost
+container. It is then passed as it is, without handing out the widget inside at
+every call:
+
+```no_run
+# use naui::{AsWidget, Orientation, Result, Sizing, Ui, Widget};
+struct LabeledField {
+    root: naui::Stack,
+    field: naui::TextInput,
+}
+
+impl AsWidget for LabeledField {
+    fn as_widget(&self) -> &dyn Widget {
+        &self.root
+    }
+}
+
+# fn build(ui: &Ui, form: &naui::Stack) -> Result<()> {
+let root = ui.stack(Orientation::Vertical)?;
+let field = ui.text_input("")?;
+root.append(&ui.label("Name")?);
+root.append(&field);
+let name = LabeledField { root, field };
+
+form.append(&name);
+name.set_sizing(Sizing::fill_width()); // reaches `name.root`
+name.field.request_focus();
+# Ok(())
+# }
+```
+
+The operations every widget has ([`set_sizing`](AsWidget::set_sizing),
+[`set_visible`](AsWidget::set_visible), [`request_focus`](AsWidget::request_focus),
+[`set_tooltip`](AsWidget::set_tooltip) and the others) are methods of `AsWidget`
+too, and reach the widget it returns, so they work on your own type with the trait
+in scope, and on a `&dyn Widget`. Each naui widget's methods of the same name are
+what they call. The container holds the returned widget, so your value can be
+dropped once it is placed if nothing else needs it.
+
+[`Widget`] itself cannot be implemented outside naui: what goes into a container
+is always one of naui's widgets, reached through `as_widget`.
+
 ## Themes
 
 The default, [`Theme::System`], follows the OS or browser setting. Use
@@ -2612,6 +2659,40 @@ a `ListView` (with the same chevrons and indentation) instead.
 Setting [`TreeItem::enabled`] to `false` **makes all its descendants unselectable
 too**. Expansion is remembered per item, so collapsing a parent and expanding it
 again brings back the expansion inside as it was (the same as macOS's Finder).
+
+### Widgets in tree items
+
+To put check boxes, icons or buttons in items, build each item's content as a
+widget, wrap it in a [`TreeRow`] and pass the rows to [`Tree::set_rows`], as rows of
+a `List` are wrapped in a [`ListRow`]. Selection, expansion and paths work the same
+as with `TreeItem`s, and [`Tree::set_items`] turns the tree back into text items.
+
+```no_run
+# use naui::{Orientation, Result, TreeRow, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let tree = ui.tree()?;
+let file = |name: &str| -> Result<TreeRow> {
+    let content = ui.stack(Orientation::Horizontal)?;
+    content.append(&ui.checkbox(name)?);
+    content.append(&ui.label("12 KB")?);
+    Ok(TreeRow::new(&content))
+};
+tree.set_rows(&[TreeRow::new(&ui.label("src")?)
+    .expanded(true)
+    .children([file("main.rs")?, file("lib.rs")?])]);
+# Ok(())
+# }
+```
+
+**Pressing a control inside a row does not choose the item** or expand it.
+[`TreeRow::selectable(false)`](TreeRow::selectable) makes the item and its
+descendants unselectable, as `TreeItem::enabled(false)` does, but the row is not dimmed and the controls inside
+keep working.
+
+Every row is built when it is passed, including those inside collapsed branches,
+so unlike a long `List` there is no form that builds rows only as they become
+visible. Pass widgets that are in no other container; a widget the app moves
+elsewhere afterwards is left there, and its row stays empty.
 
 ## Tables
 

@@ -1,5 +1,5 @@
 use crate::sys;
-use crate::Widget;
+use crate::AsWidget;
 use naui_core::{Result, SelectionMode, SortOrder, TableColumn, TableRow};
 
 /// A table with column headings. It scrolls by itself.
@@ -266,8 +266,8 @@ impl TableCells {
 
     /// Adds one widget cell.
     #[inline]
-    pub fn cell(self, content: &dyn Widget) -> Self {
-        Self(self.0.cell(content.as_backend()))
+    pub fn cell(self, content: &dyn AsWidget) -> Self {
+        Self(self.0.cell(content.as_widget().as_backend()))
     }
 
     /// Whether the whole row can be selected (it can by default).

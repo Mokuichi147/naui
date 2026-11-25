@@ -1,5 +1,5 @@
 use crate::sys;
-use crate::Widget;
+use crate::AsWidget;
 use crate::{MenuBar, Sidebar, Toolbar};
 use naui_core::{
     CloseResponse, EventResponse, FileEntry, KeyEvent, Result, Theme, WindowPlacement, WindowState,
@@ -280,8 +280,8 @@ impl Window {
 
     /// Replaces the window's content.
     #[inline]
-    pub fn set_child(&self, child: &dyn Widget) {
-        self.0.set_child(child.as_backend())
+    pub fn set_child(&self, child: &dyn AsWidget) {
+        self.0.set_child(child.as_widget().as_backend())
     }
 
     /// The sidebar attached to the left of the window. Each call replaces it.
