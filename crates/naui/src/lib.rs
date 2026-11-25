@@ -8,16 +8,17 @@ pub use naui_core::{
     with_default_extension, Align, Bitmap, BitmapData, Breakpoint, ButtonRole, ChannelCloser,
     CloseResponse, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, DrawCommand,
     Error, EventResponse, FileEntry, FileFilter, FilePickerMode, Fit, Gradient, GradientShape,
-    GradientStop, GridCell, Ink, Key, KeyEvent, LayoutDirection, Length, ListItem, MenuItem,
-    MenuSpec, Modifiers, NavItem, NumberSpec, Orientation, Padding, Paint, Painter, Pane, Path,
-    PathSegment, PlaybackState, Point, PointerButton, PointerEvent, PointerPhase, PopoverPosition,
-    PopupItem, Rect, Result, RichText, RowMove, ScrollMetrics, ScrollPolicy, SelectionMode, Sender,
-    Settings, Shortcut, SidebarItem, SidebarSection, Sizing, Sleep, SortOrder, TableColumn,
-    TableRow, Task, Tasks, TextColor, TextRun, TextStyle, Theme, Time, Timer, ToastPosition,
-    ToastPriority, ToastSpec, ToolbarIcon, ToolbarItem, Track, Transform, TreeItem, WeakWidget,
-    WindowPlacement, WindowState, DEFAULT_GROUP_PADDING, DEFAULT_LIST_PANE_WIDTH,
-    DEFAULT_PANES_BREAKPOINT, DEFAULT_SIDEBAR_WIDTH, DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD,
-    SHEET_MIN_WIDTH, SIDEBAR_COLLAPSE_CONTENT_WIDTH, SIDEBAR_MIN_WIDTH, WHEEL_STEP,
+    GradientStop, GridCell, HostSize, Ink, Key, KeyEvent, LayoutDirection, Length, ListItem,
+    MenuItem, MenuSpec, Modifiers, NavItem, NumberSpec, Orientation, Padding, Paint, Painter, Pane,
+    Path, PathSegment, PlaybackState, Point, PointerButton, PointerEvent, PointerPhase,
+    PopoverPosition, PopupItem, Rect, Result, RichText, RowMove, ScrollMetrics, ScrollPolicy,
+    SelectionMode, Sender, Settings, Shortcut, SidebarItem, SidebarSection, Sizing, Sleep,
+    SortOrder, TableColumn, TableRow, Task, Tasks, TextColor, TextRun, TextStyle, Theme, Time,
+    Timer, ToastPosition, ToastPriority, ToastSpec, ToolbarIcon, ToolbarItem, Track, Transform,
+    TreeItem, WeakWidget, WindowPlacement, WindowState, DEFAULT_GROUP_PADDING,
+    DEFAULT_LIST_PANE_WIDTH, DEFAULT_PANES_BREAKPOINT, DEFAULT_SIDEBAR_WIDTH,
+    DEFAULT_SPLIT_POSITION, ROW_WINDOW_THRESHOLD, SHEET_MIN_WIDTH, SIDEBAR_COLLAPSE_CONTENT_WIDTH,
+    SIDEBAR_MIN_WIDTH, WHEEL_STEP,
 };
 
 // ビルド対象のバックエンド。naui の型はこれの型を包む。
@@ -56,6 +57,7 @@ pub use naui_windows as windows;
 mod widget;
 
 mod adaptive_panes;
+mod calendar;
 mod canvas;
 mod clipboard;
 mod color_picker;
@@ -71,6 +73,7 @@ mod layout;
 mod list;
 mod media_widgets;
 mod menu_bar;
+mod native_host;
 mod navigation;
 mod number_input;
 mod popover;
@@ -91,6 +94,7 @@ mod widgets;
 mod window;
 
 pub use adaptive_panes::AdaptivePanes;
+pub use calendar::Calendar;
 pub use canvas::Canvas;
 pub use clipboard::Clipboard;
 pub use color_picker::ColorPicker;
@@ -106,6 +110,7 @@ pub use layout::{Flow, Grid, Scroll, Spacer};
 pub use list::{List, ListRow};
 pub use media_widgets::{Audio, Image, Video};
 pub use menu_bar::MenuBar;
+pub use native_host::NativeHost;
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use number_input::NumberInput;
 pub use popover::Popover;

@@ -35,20 +35,20 @@ use objc2::{
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSAttributedStringNSStringDrawing, NSBox,
     NSBoxType, NSButton, NSColor, NSColorSpace, NSComboBox, NSControlStateValueOff,
-    NSControlStateValueOn, NSDatePicker, NSDatePickerElementFlags, NSEvent, NSEventMask,
-    NSEventModifierFlags, NSEventType, NSFont, NSFontAttributeName, NSForegroundColorAttributeName,
-    NSImage, NSImageScaling, NSImageView, NSLayoutAttribute, NSLayoutConstraint,
-    NSLayoutConstraintOrientation, NSLayoutRelation, NSLinkAttributeName, NSOutlineViewDelegate,
-    NSResponder, NSScrollView, NSScrollerStyle, NSSearchField, NSSecureTextField,
-    NSSegmentedControl, NSStandardKeyBindingResponding, NSStepper, NSSwitch, NSTableViewDelegate,
-    NSTextField, NSTextInputClient, NSTextView, NSTintProminence, NSTitlePosition,
-    NSUserInterfaceItemIdentification, NSView, NSWindow, NSWindowStyleMask,
+    NSControlStateValueOn, NSDatePicker, NSDatePickerElementFlags, NSDatePickerStyle, NSEvent,
+    NSEventMask, NSEventModifierFlags, NSEventType, NSFont, NSFontAttributeName,
+    NSForegroundColorAttributeName, NSImage, NSImageScaling, NSImageView, NSLayoutAttribute,
+    NSLayoutConstraint, NSLayoutConstraintOrientation, NSLayoutRelation, NSLinkAttributeName,
+    NSOutlineViewDelegate, NSResponder, NSScrollView, NSScrollerStyle, NSSearchField,
+    NSSecureTextField, NSSegmentedControl, NSStandardKeyBindingResponding, NSStepper, NSSwitch,
+    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSTintProminence,
+    NSTitlePosition, NSUserInterfaceItemIdentification, NSView, NSWindow, NSWindowStyleMask,
     NSWindowTitleVisibility,
 };
 use objc2_foundation::{
-    NSArgumentDomain, NSArray, NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents,
-    NSDefaultRunLoopMode, NSMutableDictionary, NSNotFound, NSNotification, NSPoint, NSRange,
-    NSRect, NSRunLoop, NSSize, NSString, NSUserDefaults,
+    NSArgumentDomain, NSArray, NSCalendar, NSCalendarIdentifierGregorian, NSCalendarUnit, NSDate,
+    NSDateComponents, NSDefaultRunLoopMode, NSMutableDictionary, NSNotFound, NSNotification,
+    NSPoint, NSRange, NSRect, NSRunLoop, NSSize, NSString, NSUserDefaults,
 };
 
 /// One test case.
@@ -98,6 +98,18 @@ fn main() {
         (
             "色ピッカーがカタログ色を sRGB として読む",
             color_picker_reads_catalog_colors_as_srgb,
+        ),
+        (
+            "NativeHost が外で作った NSView を置き、大きさ・倍率・窓への出入りを伝える",
+            native_host_places_a_foreign_view,
+        ),
+        (
+            "NativeHost は大きさを知るビューならその大きさになる",
+            native_host_follows_an_intrinsic_size,
+        ),
+        (
+            "NativeHost は差し替えと破棄でビューを外して放す",
+            native_host_lets_go_of_views,
         ),
         (
             "描画面が on_draw の命令を AppKit で画素に落とす",
@@ -288,6 +300,10 @@ fn main() {
         (
             "列を入れ替えても幅いっぱいを使い続ける",
             table_columns_keep_filling_the_width,
+        ),
+        (
+            "見出しの端をドラッグすると列の幅が変わり、残りの列が余りを分ける",
+            table_column_widths_follow_header_drags,
         ),
         (
             "リストが見えている行だけを組み立てる",
@@ -1144,6 +1160,26 @@ fn main() {
             date_picker_callback_is_reentrant,
         ),
         (
+            "カレンダーが暦だけの NSDatePicker になる",
+            calendar_shows_only_the_month_grid,
+        ),
+        (
+            "カレンダーの値がネイティブと往復し、時刻を保つ",
+            calendar_value_round_trips,
+        ),
+        (
+            "カレンダーの pick がクリックと同じ経路で通知する",
+            calendar_pick_acts_like_a_click,
+        ),
+        (
+            "カレンダーが範囲の外の日を選ばせない",
+            calendar_stays_inside_the_range,
+        ),
+        (
+            "カレンダーの選択を矢印キーで動かしても値が追いつき通知する",
+            calendar_follows_the_arrow_keys,
+        ),
+        (
             "時刻ピッカーが時分だけを出し、値がネイティブと往復する",
             time_picker_value_round_trips,
         ),
@@ -1900,6 +1936,180 @@ fn color_picker_reads_catalog_colors_as_srgb(ui: &Ui) -> Result<()> {
 /// The drawing surface is an `NSView`'s `drawRect:`, and the commands recorded by
 /// `on_draw` are painted with `NSBezierPath`. The view's drawing is copied into a
 /// bitmap, and pixels inside and outside the painted rectangle are read.
+fn native_host_places_a_foreign_view(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("main thread");
+    let host = ui.native_host()?;
+    host.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(120.0))
+            .height(Length::Fixed(80.0)),
+    );
+    // GPU の面のように、自分の大きさを持たないビュー。
+    let foreign = NSView::new(mtm);
+    assert!(host.set_hosted_view(Some(&foreign)));
+    assert!(host.hosted_view().is_some_and(|view| view == foreign));
+    assert!(!foreign.translatesAutoresizingMaskIntoConstraints());
+
+    let sizes = Rc::new(RefCell::new(Vec::new()));
+    host.on_resize({
+        let sizes = sizes.clone();
+        move |size| sizes.borrow_mut().push(size)
+    });
+    let attached = Rc::new(RefCell::new(Vec::new()));
+    host.on_attach({
+        let attached = attached.clone();
+        move |value| attached.borrow_mut().push(value)
+    });
+    assert!(!host.is_attached());
+
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&host);
+    let window = ui.window("native host", 240.0, 200.0)?;
+    window.set_child(&stack);
+    assert_eq!(
+        *attached.borrow(),
+        vec![true],
+        "窓のビューの木へ入ったら伝える"
+    );
+    assert!(host.is_attached());
+    window.show();
+    host.native_view().layoutSubtreeIfNeeded();
+
+    assert_eq!(host.size(), (120.0, 80.0), "指定した大きさになること");
+    let frame = foreign.frame();
+    assert_eq!(
+        (
+            frame.origin.x,
+            frame.origin.y,
+            frame.size.width,
+            frame.size.height
+        ),
+        (0.0, 0.0, 120.0, 80.0),
+        "置いたビューが受け皿いっぱいに広がること"
+    );
+    let scale = host
+        .native_view()
+        .window()
+        .expect("窓に入っている")
+        .backingScaleFactor();
+    assert_eq!(host.scale_factor(), scale);
+    assert_eq!(
+        sizes.borrow().last().copied(),
+        Some(naui_core::HostSize::new(120.0, 80.0, scale)),
+        "大きさと倍率を伝える: {:?}",
+        sizes.borrow()
+    );
+
+    host.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(150.0))
+            .height(Length::Fixed(90.0)),
+    );
+    host.native_view().layoutSubtreeIfNeeded();
+    assert_eq!(foreign.frame().size, NSSize::new(150.0, 90.0));
+    assert_eq!(
+        sizes.borrow().last().copied(),
+        Some(naui_core::HostSize::new(150.0, 90.0, scale)),
+        "大きさの変化を伝える"
+    );
+    let reports = sizes.borrow().len();
+    host.native_view().layoutSubtreeIfNeeded();
+    assert_eq!(sizes.borrow().len(), reports, "変わらなければ伝えない");
+
+    // 別のビューへ差し替えると窓から外れる。
+    window.set_child(&ui.label("other")?);
+    assert_eq!(
+        *attached.borrow(),
+        vec![true, false],
+        "窓から外れたら伝える"
+    );
+    assert!(!host.is_attached());
+    window.close();
+    assert_eq!(
+        sizes.borrow().first().copied(),
+        Some(naui_core::HostSize::new(120.0, 80.0, scale)),
+        "レイアウト前の 0 x 0 は伝えない: {:?}",
+        sizes.borrow()
+    );
+
+    // 閉じても窓の木からは外れないので、外れたとは伝えない (中身を外せば伝える)。
+    let closing = ui.window("native host closing", 240.0, 200.0)?;
+    closing.set_child(&stack);
+    closing.show();
+    closing.close();
+    pump(0.1);
+    assert_eq!(*attached.borrow(), vec![true, false, true]);
+    Ok(())
+}
+
+fn native_host_follows_an_intrinsic_size(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("main thread");
+    let host = ui.native_host()?;
+    // target も action も無いボタン。
+    let button = unsafe {
+        NSButton::buttonWithTitle_target_action(
+            &NSString::from_str("Native button"),
+            None,
+            None,
+            mtm,
+        )
+    };
+    let natural = button.intrinsicContentSize();
+    host.set_hosted_view(Some(&button));
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&host);
+    stack.append(&ui.label("below")?);
+    let window = ui.window("native host intrinsic", 320.0, 200.0)?;
+    window.set_child(&stack);
+    window.show();
+    host.native_view().layoutSubtreeIfNeeded();
+    let (width, height) = host.size();
+    assert!(
+        (width - natural.width).abs() < 0.5 && (height - natural.height).abs() < 0.5,
+        "中身の自然な大きさ {natural:?} になること: {width} x {height}"
+    );
+    assert_eq!(button.frame().size, NSSize::new(width, height));
+    window.close();
+    Ok(())
+}
+
+fn native_host_lets_go_of_views(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("main thread");
+    let host = ui.native_host()?;
+    let first_weak = autoreleasepool(|_| {
+        let first = NSView::new(mtm);
+        host.set_hosted_view(Some(&first));
+        objc2::rc::Weak::from_retained(&first)
+    });
+    assert!(first_weak.load().is_some(), "置いている間は naui が持つ");
+
+    // ほかのビューに入っているビューは、addSubview: と同じく移ってくる。
+    let elsewhere = NSView::new(mtm);
+    let second = NSView::new(mtm);
+    elsewhere.addSubview(&second);
+    // 外したビューの解放が自動解放プールに残らないよう、差し替えをプールで包む。
+    assert!(autoreleasepool(|_| host.set_hosted_view(Some(&second))));
+    assert!(unsafe { second.superview() }.is_some_and(|parent| parent == host.native_view()));
+    assert!(elsewhere.subviews().is_empty());
+    assert!(first_weak.load().is_none(), "差し替えた前のビューは放す");
+
+    // 同じビューを渡し直しても何も変わらない。
+    assert!(host.set_hosted_view(Some(&second)));
+    assert_eq!(host.native_view().subviews().len(), 1);
+
+    assert!(host.set_hosted_view(None));
+    assert!(unsafe { second.superview() }.is_none(), "空にすると外す");
+    assert!(host.hosted_view().is_none());
+
+    host.set_hosted_view(Some(&second));
+    drop(host);
+    assert!(
+        unsafe { second.superview() }.is_none(),
+        "受け皿を落とすと外す"
+    );
+    Ok(())
+}
+
 fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
     let canvas = ui.canvas()?;
     canvas.set_sizing(
@@ -10882,6 +11092,160 @@ fn table_widths(table: &naui_macos::Table) -> (f64, f64) {
     (total + spacing, native.frame().size.width)
 }
 
+thread_local! {
+    /// What the swapped-in `-[NSTableHeaderView resizedColumn]` answers
+    /// ([`user_resizes_column`]).
+    static RESIZED_COLUMN: Cell<isize> = const { Cell::new(-1) };
+}
+
+extern "C-unwind" fn fake_resized_column(_this: &AnyObject, _cmd: objc2::runtime::Sel) -> isize {
+    RESIZED_COLUMN.with(Cell::get)
+}
+
+/// Resizes column `index` the way AppKit does while the user drags its heading edge:
+/// the header reports the column in `resizedColumn` and the column gets `setWidth:`
+/// (which `minWidth` / `maxWidth` bound).
+///
+/// A synthesized drag cannot be used: `NSTableHeaderView` reads the queued events but
+/// never starts resizing from a synthesized press (with or without a timestamp or a
+/// `deltaX`), so the test plays AppKit's part. That AppKit lets the edge be grabbed at
+/// all (the columns' `resizingMask`) is checked by hand with a real mouse.
+fn user_resizes_column(table: &naui_macos::Table, index: usize, width: f64) {
+    let class = <objc2_app_kit::NSTableHeaderView as objc2::ClassType>::class();
+    let method = class
+        .instance_method(sel!(resizedColumn))
+        .expect("resizedColumn");
+    RESIZED_COLUMN.with(|cell| cell.set(index as isize));
+    // SAFETY: 引数と戻り値の型は `resizedColumn` (NSInteger を返す) と同じ。
+    let original = unsafe {
+        method.set_implementation(std::mem::transmute::<
+            extern "C-unwind" fn(&AnyObject, objc2::runtime::Sel) -> isize,
+            objc2::runtime::Imp,
+        >(fake_resized_column))
+    };
+    let column = table.native_table().tableColumns().objectAtIndex(index);
+    column.setWidth(width);
+    // SAFETY: 取り出した元の実装を戻すだけ。
+    unsafe { method.set_implementation(original) };
+    RESIZED_COLUMN.with(|cell| cell.set(-1));
+}
+
+/// Dragging the trailing edge of a heading resizes that column, the columns without a
+/// width share what is left, and the columns never get wider in total than the table.
+///
+/// This is the behavior the other backends follow too (`naui_core::clamp_column_width`).
+fn table_column_widths_follow_header_drags(ui: &Ui) -> Result<()> {
+    let window = ui.window("列の幅のドラッグ", 600.0, 300.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[
+        TableColumn::new("都市"),
+        TableColumn::new("人口").width(120.0).align(Align::End),
+        TableColumn::new("面積"),
+    ]);
+    table.set_rows(&TableRow::list([["東京", "13,960,000", "2,194"]]));
+    table.set_sizing(Sizing::fixed(500.0, 200.0));
+    let root = ui.stack(Orientation::Vertical)?;
+    root.append(&table);
+    window.set_child(&root);
+    window.show();
+    pump(0.1);
+
+    let native = table.native_table();
+    let widths = || {
+        native.layoutSubtreeIfNeeded();
+        let columns = native.tableColumns();
+        (0..columns.len())
+            .map(|i| columns.objectAtIndex(i).width())
+            .collect::<Vec<_>>()
+    };
+    let fills = |label: &str| {
+        let (total, width) = table_widths(&table);
+        assert!(
+            (total - width).abs() < 2.0,
+            "{label}: 幅いっぱいを使う (列の合計 {total} / 表の幅 {width})"
+        );
+    };
+    let before = widths();
+    fills("はじめ");
+    assert!(
+        (before[0] - before[2]).abs() < 1.0,
+        "幅の無い列は等分: {before:?}"
+    );
+
+    // 幅の無い列を広げると、その列だけが広がり、もう 1 つの幅の無い列が詰める。
+    user_resizes_column(&table, 0, before[0] + 60.0);
+    let after = widths();
+    assert!(
+        (after[0] - (before[0] + 60.0)).abs() < 3.0,
+        "掴んだ列が広がる: {before:?} → {after:?}"
+    );
+    assert_eq!(after[1], 120.0, "幅のある列は動かない: {after:?}");
+    fills("広げたあと");
+
+    // 幅のある列も掴める。掴んだ列はそのまま、幅の無い列が詰める。
+    user_resizes_column(&table, 1, 150.0);
+    let next = widths();
+    assert!(
+        (next[1] - 150.0).abs() < 3.0,
+        "幅のある列も広がる: {next:?}"
+    );
+    assert!(
+        (next[0] - after[0]).abs() < 1.0,
+        "掴んだあとの列は余りを受け取らない: {after:?} → {next:?}"
+    );
+    fills("幅のある列を広げたあと");
+
+    // 表より広くはならない。最後の幅の無い列は最小幅まで詰める。
+    user_resizes_column(&table, 0, 900.0);
+    let wide = widths();
+    assert!(
+        (wide[2] - naui_core::MIN_COLUMN_WIDTH).abs() < 1.0,
+        "残りの列は最小幅まで: {wide:?}"
+    );
+    fills("広げすぎたあと");
+
+    // 狭める側も最小幅で止まる。
+    user_resizes_column(&table, 0, 5.0);
+    let narrow = widths();
+    assert!(
+        (narrow[0] - naui_core::MIN_COLUMN_WIDTH).abs() < 1.0,
+        "最小幅より狭くならない: {narrow:?}"
+    );
+    fills("狭めたあと");
+
+    // 表が広がっても、掴んだ列はそのままで、余りは幅の無い列へ行く。
+    table.set_sizing(Sizing::fixed(560.0, 200.0));
+    pump(0.05);
+    let grown = widths();
+    assert!(
+        (grown[0] - narrow[0]).abs() < 1.0,
+        "掴んだ列は動かない: {grown:?}"
+    );
+    fills("表が広がったあと");
+
+    // 幅の無い列が 1 つも残らなくても、表からはみ出さない。
+    user_resizes_column(&table, 2, 900.0);
+    let all = widths();
+    assert!(all[2] < 900.0, "最後の列も表に収まる: {all:?}");
+    assert!(
+        (all[0] - grown[0]).abs() < 1.0 && (all[1] - grown[1]).abs() < 1.0,
+        "ほかの列はそのまま: {grown:?} → {all:?}"
+    );
+    fills("全部の列を掴んだあと");
+
+    // 列を渡し直すと、ドラッグした幅は捨てて渡した指定に戻る。
+    table.set_columns(&[
+        TableColumn::new("都市"),
+        TableColumn::new("人口").width(120.0).align(Align::End),
+        TableColumn::new("面積"),
+    ]);
+    let reset = widths();
+    assert_eq!(reset[1], 120.0, "渡した幅に戻る: {reset:?}");
+    assert!((reset[0] - reset[2]).abs() < 1.0, "等分に戻る: {reset:?}");
+    window.close();
+    Ok(())
+}
+
 /// Even after removing columns and adding them back, the columns without a width
 /// keep taking the leftover.
 ///
@@ -11141,8 +11505,9 @@ fn table_columns_and_rows_are_native(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// Columns with a width are fixed, and only those without share the leftover. Text
-/// alignment applies to both cells and headings.
+/// Columns with a width keep it, and only those without share the leftover (every
+/// column can still be dragged by its heading edge). Text alignment applies to both
+/// cells and headings.
 fn table_columns_follow_the_spec(ui: &Ui) -> Result<()> {
     let table = ui.table()?;
     table.set_columns(&[
@@ -11155,14 +11520,20 @@ fn table_columns_follow_the_spec(ui: &Ui) -> Result<()> {
     let columns = native.tableColumns();
     let flexible = columns.objectAtIndex(0);
     let fixed = columns.objectAtIndex(1);
-    assert!(
-        flexible.width() >= 40.0 && flexible.maxWidth() > 120.0,
-        "指定の無い列は伸び縮みできること: {}",
-        flexible.width()
+    use objc2_app_kit::NSTableColumnResizingOptions as Resizing;
+    assert!(flexible.width() >= 40.0, "{}", flexible.width());
+    assert_eq!(
+        flexible.resizingMask(),
+        Resizing::AutoresizingMask | Resizing::UserResizingMask,
+        "指定の無い列は余りに合わせて伸び縮みし、見出しの端でも動かせること"
     );
     assert_eq!(fixed.width(), 120.0);
-    assert_eq!(fixed.minWidth(), 120.0, "指定した列は固定されること");
-    assert_eq!(fixed.maxWidth(), 120.0);
+    assert_eq!(
+        fixed.resizingMask(),
+        Resizing::UserResizingMask,
+        "指定した列は余りを受け取らず、見出しの端でだけ動かせること"
+    );
+    assert_eq!(fixed.minWidth(), naui_core::MIN_COLUMN_WIDTH);
     assert_eq!(
         fixed.headerCell().alignment(),
         objc2_app_kit::NSTextAlignment::Right,
@@ -15379,6 +15750,265 @@ fn date_picker_callback_is_reentrant(ui: &Ui) -> Result<()> {
         ],
         "差し替えた通知先が呼ばれる"
     );
+    Ok(())
+}
+
+/// The calendar is an `NSDatePicker` in the calendar style showing only the date.
+fn calendar_shows_only_the_month_grid(ui: &Ui) -> Result<()> {
+    let calendar = ui.calendar()?;
+    let native = calendar.native_picker();
+    assert_eq!(
+        native.datePickerStyle(),
+        NSDatePickerStyle::ClockAndCalendar
+    );
+    assert_eq!(
+        native.datePickerElements(),
+        NSDatePickerElementFlags::YearMonthDay,
+        "時計は出さない"
+    );
+    // 暦は西暦に固定しつつ、週の始まりはユーザーの設定に従う。
+    let shown = native.calendar().expect("暦を渡している");
+    assert_eq!(
+        shown.calendarIdentifier().to_string(),
+        unsafe { NSCalendarIdentifierGregorian }.to_string()
+    );
+    assert_eq!(
+        shown.firstWeekday(),
+        NSCalendar::currentCalendar().firstWeekday()
+    );
+    // 作った直後は現在日時。
+    assert!(
+        (2000..=9999).contains(&calendar.value().year),
+        "初期値が西暦で入る: {}",
+        calendar.value()
+    );
+    assert!(calendar.value().is_valid());
+    Ok(())
+}
+
+/// Writing the value is silent, and a day clicked on the native side keeps the
+/// time the value had.
+fn calendar_value_round_trips(ui: &Ui) -> Result<()> {
+    let calendar = ui.calendar()?;
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    calendar.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+
+    calendar.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    assert_eq!(calendar.value(), DateTime::new(2026, 8, 22, 9, 30));
+    assert!(seen.borrow().is_empty(), "set_value は通知しない");
+
+    // 暦として成り立たない値は丸める。
+    calendar.set_value(DateTime::new(2026, 11, 31, 9, 30));
+    assert_eq!(calendar.value(), DateTime::new(2026, 11, 30, 9, 30));
+
+    // ネイティブ側で日を押すと、時刻はそのままで日付だけ変わる。
+    edit_natively(&calendar.native_picker(), DateTime::date(2027, 1, 5));
+    assert_eq!(calendar.value(), DateTime::new(2027, 1, 5, 9, 30));
+    assert_eq!(*seen.borrow(), vec![DateTime::new(2027, 1, 5, 9, 30)]);
+
+    // 同じ日なら知らせない。
+    edit_natively(&calendar.native_picker(), DateTime::new(2027, 1, 5, 18, 0));
+    assert_eq!(seen.borrow().len(), 1);
+    assert_eq!(calendar.value(), DateTime::new(2027, 1, 5, 9, 30));
+
+    calendar.set_enabled(false);
+    assert!(!calendar.native_picker().isEnabled());
+    Ok(())
+}
+
+/// `pick` selects the day through the picker's action, and does nothing while
+/// disabled.
+fn calendar_pick_acts_like_a_click(ui: &Ui) -> Result<()> {
+    let calendar = ui.calendar()?;
+    calendar.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    calendar.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+
+    calendar.pick(DateTime::new(2026, 9, 3, 18, 0));
+    assert_eq!(calendar.value(), DateTime::new(2026, 9, 3, 9, 30));
+    assert_eq!(*seen.borrow(), vec![DateTime::new(2026, 9, 3, 9, 30)]);
+    let gregorian = NSCalendar::initWithCalendarIdentifier(NSCalendar::alloc(), unsafe {
+        NSCalendarIdentifierGregorian
+    })
+    .expect("グレゴリオ暦");
+    let shown = gregorian.components_fromDate(
+        NSCalendarUnit::Year | NSCalendarUnit::Month | NSCalendarUnit::Day,
+        &calendar.native_picker().dateValue(),
+    );
+    assert_eq!(
+        (shown.year(), shown.month(), shown.day()),
+        (2026, 9, 3),
+        "表示も選んだ日になる"
+    );
+
+    calendar.pick(DateTime::date(2026, 9, 3));
+    assert_eq!(seen.borrow().len(), 1, "選ばれている日なら通知しない");
+
+    calendar.set_enabled(false);
+    calendar.pick(DateTime::date(2026, 10, 1));
+    assert_eq!(calendar.value(), DateTime::new(2026, 9, 3, 9, 30));
+    assert_eq!(seen.borrow().len(), 1, "無効なら何もしない");
+
+    // 通知の中から値を書き換え、通知先を差し替えられる。
+    calendar.set_enabled(true);
+    calendar.on_change({
+        let seen = seen.clone();
+        let calendar = calendar.clone();
+        move |value| {
+            seen.borrow_mut().push(value);
+            calendar.set_value(DateTime::date(2030, 1, 1));
+            calendar.on_change(|_| {});
+        }
+    });
+    calendar.pick(DateTime::date(2026, 10, 1));
+    assert_eq!(seen.borrow().len(), 2);
+    assert_eq!(calendar.value(), DateTime::date(2030, 1, 1));
+    Ok(())
+}
+
+/// The range reaches `minDate` / `maxDate`, and a pick beyond it stops at the end.
+fn calendar_stays_inside_the_range(ui: &Ui) -> Result<()> {
+    let calendar = ui.calendar()?;
+    calendar.set_value(DateTime::new(2026, 6, 15, 9, 30));
+    calendar.set_range(
+        Some(DateTime::new(2026, 6, 10, 12, 0)),
+        Some(DateTime::new(2026, 6, 20, 12, 0)),
+    );
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 15, 9, 30));
+    assert!(calendar.native_picker().minDate().is_some());
+    assert!(calendar.native_picker().maxDate().is_some());
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    calendar.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+
+    // 範囲の端の日は、値の時刻にかかわらず選べる (時刻は比べない)。
+    calendar.pick(DateTime::date(2026, 6, 20));
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 20, 9, 30));
+    calendar.pick(DateTime::date(2026, 6, 10));
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 10, 9, 30));
+
+    calendar.pick(DateTime::date(2030, 5, 5));
+    assert_eq!(
+        calendar.value(),
+        DateTime::new(2026, 6, 20, 9, 30),
+        "上限で止まり、時刻は動かない"
+    );
+    assert_eq!(seen.borrow().len(), 3);
+
+    // 範囲の外を渡すと、通知せずに端へ寄る。
+    calendar.set_value(DateTime::date(1990, 1, 1));
+    assert_eq!(calendar.value(), DateTime::date(2026, 6, 10));
+    assert_eq!(seen.borrow().len(), 3);
+
+    // 範囲を外すと自由に選べる。
+    calendar.set_range(None, None);
+    assert!(calendar.native_picker().minDate().is_none());
+    assert!(calendar.native_picker().maxDate().is_none());
+    calendar.pick(DateTime::date(1990, 1, 1));
+    assert_eq!(calendar.value(), DateTime::date(1990, 1, 1));
+    Ok(())
+}
+
+/// Moving the selection with the arrow keys reaches the value and `on_change`.
+///
+/// `NSDatePicker` does not send its action for the keyboard, so the calendar hears
+/// the change through the cell's delegate and reads the value once it is in.
+fn calendar_follows_the_arrow_keys(ui: &Ui) -> Result<()> {
+    let window = ui.window("カレンダーのキー", 320.0, 240.0)?;
+    let calendar = ui.calendar()?;
+    window.set_child(&calendar);
+    window.show();
+    calendar.set_value(DateTime::new(2026, 11, 18, 9, 30));
+    let native = calendar.native_picker();
+    let ns_window = window.native_window();
+    assert!(ns_window.makeFirstResponder(Some(&native)));
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    calendar.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+    let arrow = |key_code: u16, character: char| {
+        let text = NSString::from_str(&character.to_string());
+        let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+            NSEventType::KeyDown,
+            NSPoint::new(0.0, 0.0),
+            NSEventModifierFlags::NumericPad | NSEventModifierFlags::Function,
+            0.0,
+            ns_window.windowNumber(),
+            None,
+            &text,
+            &text,
+            false,
+            key_code,
+        )
+        .expect("キーイベント");
+        // 窓が画面に出ていない環境でも届くよう、暦へ直接渡す。
+        native.keyDown(&event);
+    };
+
+    // → で翌日、↓ で翌週。時刻はそのまま。
+    arrow(124, '\u{F703}');
+    pump_until(2.0, || seen.borrow().len() == 1);
+    assert_eq!(calendar.value(), DateTime::new(2026, 11, 19, 9, 30));
+    assert_eq!(*seen.borrow(), vec![DateTime::new(2026, 11, 19, 9, 30)]);
+    arrow(125, '\u{F701}');
+    pump_until(2.0, || seen.borrow().len() == 2);
+    assert_eq!(calendar.value(), DateTime::new(2026, 11, 26, 9, 30));
+    assert_eq!(seen.borrow().len(), 2, "キー 1 回につき 1 度だけ通知する");
+
+    // 書き込みとクリック (アクション) は、後から読み直しても重ねて通知しない。
+    calendar.set_value(DateTime::new(2026, 11, 2, 9, 30));
+    edit_natively(&native, DateTime::date(2026, 11, 5));
+    pump(0.1);
+    assert_eq!(seen.borrow().len(), 3);
+    assert_eq!(calendar.value(), DateTime::new(2026, 11, 5, 9, 30));
+
+    // 範囲で値が寄っても、読み直しで通知しない。
+    calendar.set_range(Some(DateTime::date(2026, 11, 10)), None);
+    pump(0.1);
+    assert_eq!(calendar.value(), DateTime::new(2026, 11, 10, 9, 30));
+    assert_eq!(seen.borrow().len(), 3, "set_range は通知しない");
+
+    // 通知の中で書いた値が、キーの値に上書きされない。
+    calendar.on_change({
+        let seen = seen.clone();
+        let calendar = calendar.clone();
+        move |value| {
+            seen.borrow_mut().push(value);
+            calendar.set_value(DateTime::new(2026, 12, 24, 9, 30));
+        }
+    });
+    arrow(123, '\u{F702}');
+    arrow(124, '\u{F703}');
+    pump_until(2.0, || seen.borrow().len() == 4);
+    pump(0.1);
+    assert_eq!(calendar.value(), DateTime::new(2026, 12, 24, 9, 30));
+    let gregorian = NSCalendar::initWithCalendarIdentifier(NSCalendar::alloc(), unsafe {
+        NSCalendarIdentifierGregorian
+    })
+    .expect("グレゴリオ暦");
+    let shown = gregorian.components_fromDate(
+        NSCalendarUnit::Year | NSCalendarUnit::Month | NSCalendarUnit::Day,
+        &native.dateValue(),
+    );
+    assert_eq!((shown.year(), shown.month(), shown.day()), (2026, 12, 24));
+
+    // 無効の間はキーが効かない。
+    calendar.set_enabled(false);
+    arrow(124, '\u{F703}');
+    pump(0.1);
+    assert_eq!(calendar.value(), DateTime::new(2026, 12, 24, 9, 30));
+    window.native_window().close();
     Ok(())
 }
 

@@ -662,6 +662,410 @@ fn radio_group_notifies_the_clicked_index() {
 
 // -------------------------------------------------------- ColorPicker
 
+/// The day buttons of a calendar's table, in order.
+fn calendar_days(calendar: &naui_web::Calendar) -> Vec<HtmlElement> {
+    let list = calendar
+        .native_table()
+        .query_selector_all("tbody button[data-day]")
+        .expect("日のボタン");
+    (0..list.length())
+        .filter_map(|i| list.item(i))
+        .map(|node| node.unchecked_into())
+        .collect()
+}
+
+/// The column (0..7) of a day's button in the table.
+fn calendar_column(calendar: &naui_web::Calendar, day: u8) -> u32 {
+    let button = calendar
+        .native_table()
+        .query_selector(&format!("button[data-day=\"{day}\"]"))
+        .ok()
+        .flatten()
+        .expect("日のボタン");
+    let cell = button.parent_element().expect("td");
+    let mut column = 0;
+    let mut previous = cell.previous_element_sibling();
+    while let Some(sibling) = previous {
+        column += 1;
+        previous = sibling.previous_element_sibling();
+    }
+    column
+}
+
+/// The selected day: the button with `aria-pressed="true"`, its number in `<mark>`.
+fn calendar_selected_day(calendar: &naui_web::Calendar) -> Option<String> {
+    let button = calendar
+        .native_table()
+        .query_selector("button[aria-pressed=\"true\"]")
+        .ok()
+        .flatten()?;
+    let mark = button.query_selector("mark").ok().flatten()?;
+    button
+        .get_attribute("data-day")
+        .filter(|_| mark.text_content().is_some())
+}
+
+#[wasm_bindgen_test]
+fn calendar_lays_out_the_month_with_dom_parts() {
+    with_ui(|ui| {
+        let calendar = ui.calendar()?;
+        let _mounted = Mounted::new(&calendar);
+        assert!(calendar.value().is_valid(), "初期値は現在日時");
+        calendar.set_value(naui_core::DateTime::new(2026, 11, 22, 9, 30));
+
+        // 6 週 × 7 日の表に、その月の日だけボタンが入る。
+        let table = calendar.native_table();
+        assert_eq!(table.query_selector_all("tbody tr").unwrap().length(), 6);
+        assert_eq!(table.query_selector_all("tbody td").unwrap().length(), 42);
+        assert_eq!(table.query_selector_all("thead th").unwrap().length(), 7);
+        assert_eq!(calendar_days(&calendar).len(), 30);
+        assert_eq!(calendar_selected_day(&calendar).as_deref(), Some("22"));
+        assert_eq!(
+            table
+                .query_selector_all("button[aria-pressed=\"true\"]")
+                .unwrap()
+                .length(),
+            1
+        );
+        // 見出しと読み上げ名は Intl で書く。
+        let (previous, next) = calendar.native_month_buttons();
+        let heading = previous.next_element_sibling().expect("見出し");
+        assert!(!heading.text_content().unwrap_or_default().is_empty());
+        assert!(previous.get_attribute("aria-label").is_some());
+        assert!(next.get_attribute("aria-label").is_some());
+        // 2026-11-01 は日曜日、11-04 は水曜日。週の始まりにかかわらず 3 列ずれる。
+        assert_eq!(
+            (calendar_column(&calendar, 4) + 7 - calendar_column(&calendar, 1)) % 7,
+            3
+        );
+        // Tab で止まるのは選んだ日だけ。
+        let stops: Vec<_> = calendar_days(&calendar)
+            .into_iter()
+            .filter(|button| button.tab_index() == 0)
+            .collect();
+        assert_eq!(stops.len(), 1);
+        assert_eq!(stops[0].get_attribute("data-day").as_deref(), Some("22"));
+        // 日の数字だけを書く (日本語の「22日」のような語は付けない)。
+        let number = stops[0].text_content().unwrap_or_default();
+        assert!(
+            !number.is_empty() && number.chars().all(char::is_numeric),
+            "日の数字だけ: {number}"
+        );
+        // 2026 年 11 月は 5 週で終わるが、6 週目も同じ高さを取る。
+        let rows = table.query_selector_all("tbody tr").unwrap();
+        let height = |i: u32| {
+            rows.item(i)
+                .unwrap()
+                .unchecked_into::<Element>()
+                .get_bounding_client_rect()
+                .height()
+        };
+        assert!(height(0) > 0.0);
+        assert_eq!(height(5), height(0), "日の無い週も同じ高さ");
+        // 見た目は付けない (ボタンの幅だけ)。
+        assert_eq!(computed(&stops[0], "background-color"), {
+            let plain = calendar_days(&calendar)[0].clone();
+            computed(&plain, "background-color")
+        });
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn calendar_pick_and_clicks_notify_like_the_user() {
+    with_ui(|ui| {
+        use naui_core::DateTime;
+        let calendar = ui.calendar()?;
+        let _mounted = Mounted::new(&calendar);
+        calendar.set_value(DateTime::new(2026, 8, 22, 9, 30));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        calendar.on_change({
+            let seen = seen.clone();
+            move |value| seen.borrow_mut().push(value)
+        });
+
+        calendar.set_value(DateTime::new(2026, 11, 31, 9, 30));
+        assert_eq!(
+            calendar.value(),
+            DateTime::new(2026, 11, 30, 9, 30),
+            "丸める"
+        );
+        assert!(seen.borrow().is_empty(), "set_value は通知しない");
+
+        // 日のボタンを押すと、時刻はそのままで日付だけ変わる。
+        let third = calendar_days(&calendar)[2].clone();
+        third.click();
+        assert_eq!(calendar.value(), DateTime::new(2026, 11, 3, 9, 30));
+        assert_eq!(calendar_selected_day(&calendar).as_deref(), Some("3"));
+
+        calendar.pick(DateTime::new(2027, 1, 5, 18, 0));
+        assert_eq!(calendar.value(), DateTime::new(2027, 1, 5, 9, 30));
+        assert_eq!(calendar_selected_day(&calendar).as_deref(), Some("5"));
+        calendar.pick(DateTime::date(2027, 1, 5));
+        assert_eq!(
+            *seen.borrow(),
+            vec![
+                DateTime::new(2026, 11, 3, 9, 30),
+                DateTime::new(2027, 1, 5, 9, 30)
+            ],
+            "選ばれている日なら通知しない"
+        );
+
+        calendar.set_enabled(false);
+        assert!(calendar_days(&calendar)
+            .iter()
+            .all(|button| button.has_attribute("disabled")));
+        calendar.pick(DateTime::date(2027, 1, 9));
+        assert_eq!(calendar.value(), DateTime::new(2027, 1, 5, 9, 30));
+        assert_eq!(seen.borrow().len(), 2, "無効なら何もしない");
+
+        // 通知の中で同じカレンダーを触っても二重借用にならない。
+        calendar.set_enabled(true);
+        calendar.on_change({
+            let calendar = calendar.clone();
+            let seen = seen.clone();
+            move |value| {
+                seen.borrow_mut().push(value);
+                calendar.set_value(DateTime::date(2030, 1, 1));
+                calendar.on_change(|_| {});
+            }
+        });
+        calendar.pick(DateTime::date(2027, 1, 9));
+        assert_eq!(seen.borrow().len(), 3);
+        assert_eq!(calendar.value(), DateTime::date(2030, 1, 1));
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn calendar_month_buttons_and_range() {
+    with_ui(|ui| {
+        use naui_core::DateTime;
+        let calendar = ui.calendar()?;
+        let _mounted = Mounted::new(&calendar);
+        calendar.set_value(DateTime::new(2026, 6, 15, 9, 30));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        calendar.on_change({
+            let seen = seen.clone();
+            move |value| seen.borrow_mut().push(value)
+        });
+
+        // 月のボタンは別の月を見せるだけで、選んだ日は動かない。
+        let (previous, next) = calendar.native_month_buttons();
+        next.click();
+        assert_eq!(calendar_days(&calendar).len(), 31, "7 月");
+        assert_eq!(calendar_selected_day(&calendar), None);
+        assert_eq!(calendar.value(), DateTime::new(2026, 6, 15, 9, 30));
+        // 選んだ日が無い月でも Tab で入れる。
+        assert_eq!(
+            calendar_days(&calendar)
+                .iter()
+                .filter(|button| button.tab_index() == 0)
+                .count(),
+            1
+        );
+        previous.click();
+        assert_eq!(calendar_selected_day(&calendar).as_deref(), Some("15"));
+        assert!(seen.borrow().is_empty());
+
+        calendar.set_range(
+            Some(DateTime::new(2026, 6, 10, 12, 0)),
+            Some(DateTime::new(2026, 6, 20, 12, 0)),
+        );
+        // 範囲の外の日と、範囲の外の月へのボタンは押せない。
+        let enabled: Vec<String> = calendar_days(&calendar)
+            .iter()
+            .filter(|button| !button.has_attribute("disabled"))
+            .filter_map(|button| button.get_attribute("data-day"))
+            .collect();
+        assert_eq!(enabled.first().map(String::as_str), Some("10"));
+        assert_eq!(enabled.last().map(String::as_str), Some("20"));
+        assert_eq!(enabled.len(), 11);
+        assert!(previous.disabled() && next.disabled());
+
+        // 端の日は値の時刻にかかわらず選べ、外を渡すと端で止まる。
+        calendar.pick(DateTime::date(2026, 6, 20));
+        assert_eq!(calendar.value(), DateTime::new(2026, 6, 20, 9, 30));
+        calendar.pick(DateTime::date(2026, 1, 1));
+        assert_eq!(calendar.value(), DateTime::new(2026, 6, 10, 9, 30));
+        assert_eq!(seen.borrow().len(), 2);
+        calendar.set_value(DateTime::date(2030, 1, 1));
+        assert_eq!(
+            calendar.value(),
+            DateTime::date(2026, 6, 20),
+            "通知せずに端へ"
+        );
+        assert_eq!(seen.borrow().len(), 2);
+
+        calendar.set_range(None, None);
+        assert!(!previous.disabled() && !next.disabled());
+        assert_eq!(
+            calendar_days(&calendar)
+                .iter()
+                .filter(|button| button.has_attribute("disabled"))
+                .count(),
+            0
+        );
+        Ok(())
+    });
+}
+
+#[wasm_bindgen_test]
+fn calendar_arrow_keys_move_the_selection() {
+    with_ui(|ui| {
+        use naui_core::DateTime;
+        let calendar = ui.calendar()?;
+        let _mounted = Mounted::new(&calendar);
+        calendar.set_value(DateTime::new(2026, 11, 30, 9, 30));
+        let seen = Rc::new(RefCell::new(Vec::new()));
+        calendar.on_change({
+            let seen = seen.clone();
+            move |value| seen.borrow_mut().push(value)
+        });
+        let selected_button = |calendar: &naui_web::Calendar| -> EventTarget {
+            calendar
+                .native_table()
+                .query_selector("button[aria-pressed=\"true\"]")
+                .ok()
+                .flatten()
+                .expect("選んだ日")
+                .unchecked_into()
+        };
+
+        // 本物のキーはフォーカスのある日にだけ届くので、先に選んだ日へ置く。
+        selected_button(&calendar)
+            .unchecked_into::<HtmlElement>()
+            .focus()
+            .unwrap();
+        // 月をまたいで動き、フォーカスも新しい日へ移る。
+        assert!(press_shortcut(
+            &selected_button(&calendar),
+            "ArrowRight",
+            false,
+            false,
+            false
+        ));
+        assert_eq!(calendar.value(), DateTime::new(2026, 12, 1, 9, 30));
+        let focused = web_sys::window()
+            .and_then(|w| w.document())
+            .and_then(|d| d.active_element())
+            .and_then(|e| e.get_attribute("data-day"));
+        assert_eq!(focused.as_deref(), Some("1"), "フォーカスが移る");
+        press_shortcut(&selected_button(&calendar), "ArrowUp", false, false, false);
+        assert_eq!(calendar.value(), DateTime::new(2026, 11, 24, 9, 30));
+        press_shortcut(&selected_button(&calendar), "PageDown", false, false, false);
+        assert_eq!(calendar.value(), DateTime::new(2026, 12, 24, 9, 30));
+        press_shortcut(
+            &selected_button(&calendar),
+            "ArrowLeft",
+            false,
+            false,
+            false,
+        );
+        assert_eq!(calendar.value(), DateTime::new(2026, 12, 23, 9, 30));
+        assert_eq!(seen.borrow().len(), 4);
+
+        // 日のボタンは作り直されるが、押した日にフォーカスがあれば新しい日へ移る。
+        // 通知の中で値を変えても同じ (表の外のフォーカスは奪わない)。
+        let active_day = || {
+            web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.active_element())
+                .and_then(|e| e.get_attribute("data-day"))
+        };
+        let tenth = calendar
+            .native_table()
+            .query_selector("button[data-day=\"10\"]")
+            .ok()
+            .flatten()
+            .expect("10 日")
+            .unchecked_into::<HtmlElement>();
+        tenth.focus().unwrap();
+        tenth.click();
+        assert_eq!(calendar.value(), DateTime::new(2026, 12, 10, 9, 30));
+        assert_eq!(
+            active_day().as_deref(),
+            Some("10"),
+            "押した日にフォーカスが残る"
+        );
+        calendar.on_change({
+            let calendar = calendar.clone();
+            move |_| calendar.set_value(DateTime::new(2026, 12, 23, 9, 30))
+        });
+        press_shortcut(
+            &selected_button(&calendar),
+            "ArrowDown",
+            false,
+            false,
+            false,
+        );
+        assert_eq!(calendar.value(), DateTime::new(2026, 12, 23, 9, 30));
+        assert_eq!(
+            active_day().as_deref(),
+            Some("23"),
+            "通知の中で変えた日へ移る"
+        );
+        calendar.on_change({
+            let seen = seen.clone();
+            move |value| seen.borrow_mut().push(value)
+        });
+        seen.borrow_mut().truncate(4);
+        // 表の外にフォーカスがあるときの pick は、フォーカスを奪わない。
+        let (_, next) = calendar.native_month_buttons();
+        next.focus().unwrap();
+        calendar.pick(DateTime::date(2026, 12, 2));
+        assert_eq!(
+            web_sys::window()
+                .and_then(|w| w.document())
+                .and_then(|d| d.active_element()),
+            Some(next.clone().unchecked_into::<Element>())
+        );
+        calendar.set_value(DateTime::new(2026, 12, 23, 9, 30));
+        seen.borrow_mut().truncate(4);
+
+        // 右から左の配置では左右が入れ替わる。
+        let _ = calendar.native_element().set_attribute("dir", "rtl");
+        press_shortcut(
+            &selected_button(&calendar),
+            "ArrowLeft",
+            false,
+            false,
+            false,
+        );
+        assert_eq!(calendar.value(), DateTime::new(2026, 12, 24, 9, 30));
+
+        // 範囲の端より先へは動かない。
+        calendar.set_range(None, Some(DateTime::date(2026, 12, 24)));
+        press_shortcut(
+            &selected_button(&calendar),
+            "ArrowDown",
+            false,
+            false,
+            false,
+        );
+        assert_eq!(calendar.value(), DateTime::new(2026, 12, 24, 9, 30));
+        assert_eq!(seen.borrow().len(), 5);
+
+        // 修飾キー付きと、関係の無いキーは受け取らない。
+        assert!(!press_shortcut(
+            &selected_button(&calendar),
+            "ArrowUp",
+            true,
+            false,
+            false
+        ));
+        assert!(!press_shortcut(
+            &selected_button(&calendar),
+            "a",
+            false,
+            false,
+            false
+        ));
+        assert_eq!(seen.borrow().len(), 5);
+        Ok(())
+    });
+}
+
 #[wasm_bindgen_test]
 fn color_picker_round_trips() {
     with_ui(|ui| {
@@ -820,6 +1224,185 @@ fn two_bands() -> Vec<u8> {
             }
         })
         .collect()
+}
+
+// ------------------------------------------------------------- NativeHost
+
+/// A `<canvas>` made outside naui, as a drawing crate makes one.
+fn foreign_canvas() -> Element {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .expect("document")
+        .create_element("canvas")
+        .expect("canvas")
+}
+
+#[wasm_bindgen_test]
+async fn native_host_places_a_foreign_element() {
+    let canvas = foreign_canvas();
+    let sizes = Rc::new(RefCell::new(Vec::new()));
+    let attached = Rc::new(RefCell::new(Vec::new()));
+    let mut kept = None;
+    with_ui(|ui| {
+        let host = ui.native_host()?;
+        host.set_sizing(Sizing::fixed(120.0, 80.0));
+        assert!(host.backend_set(&canvas));
+        host.on_resize({
+            let sizes = sizes.clone();
+            move |size| sizes.borrow_mut().push(size)
+        });
+        host.on_attach({
+            let attached = attached.clone();
+            move |value| attached.borrow_mut().push(value)
+        });
+        assert!(!host.is_attached());
+        kept = Some(host);
+        Ok(())
+    });
+    let host = kept.expect("受け皿");
+    let mounted = Mounted::new(&host);
+    assert!(host.is_attached());
+    next_frames().await;
+
+    assert_eq!(*attached.borrow(), vec![true], "ページへ載ったら伝える");
+    assert_eq!(host.size(), (120.0, 80.0), "指定した大きさになること");
+    let rect = canvas.get_bounding_client_rect();
+    assert_eq!(
+        (rect.width(), rect.height()),
+        (120.0, 80.0),
+        "置いた要素が受け皿いっぱいに広がること"
+    );
+    let ratio = web_sys::window().expect("window").device_pixel_ratio();
+    assert_eq!(host.scale_factor(), ratio);
+    assert_eq!(
+        sizes.borrow().last().copied(),
+        Some(naui_core::HostSize::new(120.0, 80.0, ratio)),
+        "大きさと倍率を伝える: {:?}",
+        sizes.borrow()
+    );
+    assert_eq!(
+        sizes.borrow().first().copied(),
+        Some(naui_core::HostSize::new(120.0, 80.0, ratio)),
+        "レイアウト前の 0 x 0 は伝えない"
+    );
+
+    host.set_sizing(Sizing::fixed(150.0, 90.0));
+    next_frames().await;
+    assert_eq!(
+        sizes.borrow().last().copied(),
+        Some(naui_core::HostSize::new(150.0, 90.0, ratio)),
+        "大きさの変化を伝える"
+    );
+
+    drop(mounted);
+    next_frames().await;
+    assert_eq!(
+        *attached.borrow(),
+        vec![true, false],
+        "ページから外れたら伝える"
+    );
+    assert!(!host.is_attached());
+}
+
+#[wasm_bindgen_test]
+async fn native_host_follows_a_natural_size() {
+    let canvas = foreign_canvas();
+    canvas.set_attribute("width", "200").expect("width");
+    canvas.set_attribute("height", "100").expect("height");
+    let button = web_sys::window()
+        .and_then(|w| w.document())
+        .expect("document")
+        .create_element("button")
+        .expect("button");
+    button.set_text_content(Some("Native button"));
+    let mut kept = None;
+    with_ui(|ui| {
+        let stack = ui.stack(Orientation::Vertical)?;
+        let sized = ui.native_host()?;
+        sized.backend_set(&canvas);
+        let control = ui.native_host()?;
+        control.backend_set(&button);
+        // `Fill` の受け皿は、中身 (既定 300 x 150 の <canvas>) で親を押し広げない。
+        let filled = ui.native_host()?;
+        filled.set_sizing(Sizing::fill());
+        filled.backend_set(&foreign_canvas());
+        let frame = ui.stack(Orientation::Vertical)?;
+        frame.set_sizing(Sizing::fixed(160.0, 90.0));
+        frame.append(&filled);
+        stack.append(&sized);
+        stack.append(&control);
+        stack.append(&frame);
+        kept = Some((stack, sized, control, filled));
+        Ok(())
+    });
+    let (stack, sized, control, filled) = kept.expect("受け皿");
+    let _mounted = Mounted::new(&stack);
+    next_frames().await;
+    assert_eq!(
+        sized.size(),
+        (200.0, 100.0),
+        "<canvas> の画素の大きさになること"
+    );
+    let natural = button.get_bounding_client_rect();
+    assert_eq!(
+        control.size(),
+        (natural.width(), natural.height()),
+        "ボタンの自然な大きさになること"
+    );
+    assert!(natural.width() > 0.0);
+    assert_eq!(filled.size(), (160.0, 90.0), "Fill は親の大きさに従うこと");
+}
+
+#[wasm_bindgen_test]
+fn native_host_lets_go_of_elements() {
+    with_ui(|ui| {
+        let host = ui.native_host()?;
+        let frame = host.native_element();
+        let first = foreign_canvas();
+        assert!(host.backend_set(&first));
+        let style = |element: &Element| {
+            element
+                .unchecked_ref::<HtmlElement>()
+                .style()
+                .get_property_value("place-self")
+                .expect("style")
+        };
+        assert_eq!(style(&first), "stretch");
+
+        // ほかの要素に入っている要素は、appendChild と同じく移ってくる。
+        let elsewhere = foreign_canvas();
+        let second = foreign_canvas();
+        elsewhere.append_child(&second).expect("追加");
+        assert!(host.backend_set(&second));
+        assert_eq!(second.parent_element(), Some(frame.clone()));
+        assert_eq!(elsewhere.child_element_count(), 0);
+        assert!(first.parent_element().is_none(), "差し替えた前の要素は外す");
+        assert_eq!(style(&first), "", "外した要素から naui が書いたものを消す");
+
+        // 同じものを渡し直しても何も変わらない。
+        assert!(host.backend_set(&second));
+        assert_eq!(frame.child_element_count(), 1);
+
+        assert!(host.set_hosted_element(None));
+        assert!(second.parent_element().is_none(), "空にすると外す");
+        assert!(host.hosted_element().is_none());
+
+        host.backend_set(&second);
+        drop(host);
+        assert!(second.parent_element().is_none(), "受け皿を落とすと外す");
+        Ok(())
+    });
+}
+
+/// Puts an element into a host. Shorthand for the tests above.
+trait HostElement {
+    fn backend_set(&self, element: &Element) -> bool;
+}
+
+impl HostElement for naui_web::NativeHost {
+    fn backend_set(&self, element: &Element) -> bool {
+        self.set_hosted_element(Some(element))
+    }
 }
 
 /// Clipping, rotation, gradients, images and text measurement, replayed with the 2D

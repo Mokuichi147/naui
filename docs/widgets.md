@@ -57,6 +57,7 @@ Legend:
 | `RadioGroup` | 🟡 `StackPanel` + `RadioButton` | 🟡 `NSStackView` + `NSButton` (radio type) | 🟡 `GtkBox` + grouped `GtkCheckButton`s | 🟡 `<div role="radiogroup">` + `<input type="radio">` |
 | `DatePicker` | ✅ `DatePicker` / `TimePicker` | ✅ `NSDatePicker` | 🟡 `GtkMenuButton` + `GtkCalendar` + `GtkSpinButton` | ✅ `<input type="date">` / `"time"` / `"datetime-local"` |
 | `TimePicker` | ✅ `TimePicker` | ✅ `NSDatePicker` (hours and minutes only) | 🟡 `GtkSpinButton`s for hours and minutes | ✅ `<input type="time">` |
+| `Calendar` | ✅ `CalendarView` | ✅ `NSDatePicker` (calendar style) | ✅ `GtkCalendar` | 🟡 `<button>`s in a `<table>` |
 | `ColorPicker` | 🟡 `Button` + `Flyout` + `ColorPicker` | ✅ `NSColorWell` | ✅ `GtkColorDialogButton` | ✅ `<input type="color">` |
 | `List` | ✅ `ListView` | ✅ `NSTableView` + `NSScrollView` | 🟡 `GtkListBox` + `GtkScrolledWindow` | ✅ `<select size>` / 🟡 `<ul role="listbox">` |
 | `Table` | 🟡 `Grid` + `ListView` (rows are `Grid`s) | ✅ `NSTableView` + `NSTableHeaderView` | 🟡 `GtkListBox` + `GtkSizeGroup` | 🟡 `<table role="grid">` |
@@ -87,6 +88,7 @@ Legend:
 | naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
 | --- | --- | --- | --- | --- |
 | `Canvas` | 🔴 `Grid` + `CompositionDrawingSurface` (Direct2D) | ✅ `NSView` + `drawRect:` | ✅ `GtkDrawingArea` | ✅ `<canvas>` |
+| `NativeHost` | 🟡 A one-cell `Grid` holding the hosted `UIElement` | 🟡 naui's `NSView` holding the hosted `NSView` | 🟡 naui's widget (`NauiNativeHost`) holding the hosted `GtkWidget` | 🟡 A one-cell grid `<div>` holding the hosted element |
 
 ### Navigation
 
@@ -250,6 +252,15 @@ collected in [Known limitations](known-limitations.md).
   changed to equal widths and centered, and the minimum width is tightened.
 - **`TimePicker`**: The same WinUI `TimePicker` as in `DatePicker`. It has no lower
   or upper bound, so `set_range` is clamped by naui.
+- **`Calendar`**: A `CalendarView` in its `Single` selection mode with the
+  Gregorian calendar. `set_range` becomes `MinDate` / `MaxDate` (from 00:00 on the
+  first day to 23:59 on the last); without a range they are widened from WinUI's
+  default of 100 years around today to everything the Gregorian calendar of
+  `Windows.Globalization` covers. `FirstDayOfWeek` is set from the user's locale
+  (`LOCALE_IFIRSTDAYOFWEEK`), since it is otherwise always Sunday. Clicking the
+  selected day again deselects it in `CalendarView`, which naui undoes without
+  notifying, since a `Calendar` always has a day. `pick` puts the day in `SelectedDates` and naui notifies, so it works
+  before the window is drawn.
 - **`ColorPicker`**: WinUI 3's `ColorPicker` is a large surface with a spectrum and
   sliders stacked vertically, so it is put in a `Button`'s `Flyout`, and the button
   shows a swatch of the chosen color (`Border` + `SolidColorBrush`). Only the
@@ -280,7 +291,10 @@ collected in [Known limitations](known-limitations.md).
   a separate `Grid` with the same column definitions to align widths. Only the row
   padding is written with the same value as the header instead of `ListView`'s
   default, to align column positions. Sortable headers are `Button`s with background
-  and border removed (because WinUI has no control for column headers).
+  and border removed (because WinUI has no control for column headers). Each header
+  has a transparent grab area over its trailing edge, built like `SplitView`'s divider
+  (`GridSplitter` is in the Community Toolkit too); dragging it rewrites that column's
+  `ColumnDefinition` as `Pixel` in the header and the rows built.
 - **`Tree`**: A `TreeView`. Items are mapped to `TreeViewNode`s and passed as a
   tree, so indentation, the disclosure chevrons, keyboard operation and the
   selection appearance all come from WinUI. Only the frame is a `Border` with the
@@ -344,6 +358,14 @@ collected in [Known limitations](known-limitations.md).
   mask, and every push is popped before `EndDraw`. Images are decoded by WIC into
   premultiplied pixels and made into a Direct2D bitmap per device. When the GPU is
   reset, the devices are made again and every surface is redrawn.
+- **`NativeHost`**: the hosted element is the only child of a `Grid`, which
+  measures as its child does and stretches it. Any `UIElement` can go in, a
+  `SwapChainPanel` included: naui's projection does not name that type, and needs
+  not to, since an element made by another projection (or by `XamlReader`) is the
+  same COM object and is passed as a `UIElement`. Connecting a swap chain to it is
+  the drawing crate's part. The size comes from `SizeChanged`, the scale from
+  `XamlRoot.RasterizationScale` (watching `XamlRoot.Changed`, as `Canvas` does),
+  and joining and leaving a window from `Loaded` / `Unloaded`.
 - **`Window` position and state**: `position` is `AppWindow.Position` in physical
   pixels divided by this window's `RasterizationScale`. While maximized or
   minimized, `rcNormalPosition` (the frame when restored) of
@@ -445,6 +467,19 @@ collected in [Known limitations](known-limitations.md).
   showing only hours and minutes (the AppKit convention for time input). The date
   part is not shown and is fixed to 1970-01-01, and the lower and upper bounds of
   `set_range` are also passed to the `NSDatePicker` itself.
+- **`Calendar`**: An `NSDatePicker` in the `clockAndCalendar` style showing only
+  `yearMonthDay`, which is the month grid without the clock (the calendar of the
+  Date & Time settings), without a border or background. The calendar is fixed to
+  Gregorian like `DatePicker`'s, with the first day of the week copied from the
+  user's current calendar. `set_range` becomes `minDate` / `maxDate`, and `pick`
+  sets the date and sends the picker's action as a click does. Moving the
+  selection with the arrow keys changes the date **without sending the action**
+  (even with `continuous` set), so naui also listens to the cell delegate's
+  `datePickerCell:validateProposedDateValue:timeInterval:`, which is asked for
+  every change. It is called before the new date is in, so naui reads the date on
+  the run loop's next pass (in the common modes, so inside a modal loop too); a
+  click has already been handled through the action by then and is not notified
+  twice.
 - **`ColorPicker`**: `NSColorWell` itself. Pressing it opens the system color panel.
   The panel also returns catalog colors (such as `systemBlue`), so they are
   converted to sRGB before the components are read. `set_enabled(false)` also cuts
@@ -455,7 +490,12 @@ collected in [Known limitations](known-limitations.md).
   removed, which breaks the table. naui calculates the allocation for columns
   without a specified width because AppKit's automatic column resizing cannot
   distribute all leftover space when there are fixed-width columns, leaving the
-  right side of the table empty.
+  right side of the table empty. Every column has `NSTableColumnUserResizingMask`, so
+  AppKit handles dragging the header edges; a width change made while
+  `NSTableHeaderView.resizedColumn` names a column is the user's, and naui then keeps
+  that column at the dragged width and distributes the rest again. Each column's
+  `maxWidth` leaves the others their width (or 40 px), so a drag cannot push the
+  columns past the table.
 - **`Tree`**: An `NSOutlineView` with one column. Multiple selection is
   `allowsMultipleSelection`. AppKit deselects the rows inside a branch when it is
   collapsed, so naui holds the selection itself, ignores the change that collapsing
@@ -585,6 +625,12 @@ collected in [Known limitations](known-limitations.md).
   shape as the GNOME Clocks app). Spin buttons have no notion of a time range, so
   `set_range` is clamped by naui, and the clamped result is written back to the
   display.
+- **`Calendar`**: A `GtkCalendar` itself, the same control `DatePicker` shows in its
+  popover. It has no range, so `set_range` is enforced by naui: a day clicked
+  outside it is moved back to the nearest end. The arrows in its header move the
+  selection to the next month or year as well; GTK 4.24 reports that only with
+  `next-month` / `prev-month` / `next-year` / `prev-year` (no `day-selected`), so
+  naui listens to those too. `pick` selects the day with `gtk_calendar_select_day`.
 - **`ColorPicker`**: A `GtkColorDialogButton`. Opacity is not handled, so
   `with-alpha` of the `GtkColorDialog` it opens is turned off.
 - **`Popover`**: A `GtkPopover`. A GTK4 popover is a child of the widget it points
@@ -621,6 +667,11 @@ collected in [Known limitations](known-limitations.md).
   a `GListModel`), it is built from `GtkListBox` rows laid out horizontally, with
   column widths aligned by a `GtkSizeGroup` per column. Sortable headers are `flat`
   `GtkButton`s, and the direction is shown by an arrow added to the header text.
+  Columns are resized the way `GtkColumnView` does it, with a `GtkGestureDrag` on the
+  header row (in the capture phase, so pressing an edge does not press a sortable
+  header) and the `col-resize` cursor over the edges; the cells already built get the
+  new width on the spot. The cells of a dragged column do not let their natural width
+  decide it (as in a windowed table), so the column can be made narrower than its text.
 - **`Tree`**: Instead of `GtkTreeExpander` (only for `GtkListView`), it is built
   from `GtkListBox` rows and disclosure buttons. Rows inside collapsed branches are
   only made invisible, so they keep their selection; with `SelectionMode::Multiple`
@@ -695,6 +746,17 @@ collected in [Known limitations](known-limitations.md).
 - **`EditableComboBox`**: `<input list>` and `<datalist>`. naui builds neither the
   visuals nor the narrowing.
 - **`DatePicker`**: Uses `datetime-local` so as not to bring in time zones.
+- **`Calendar`**: Browsers have no always-visible calendar, so it is composed of
+  DOM parts like `Pagination`: previous / next month `<button>`s around the month's
+  name, and a `<table>` of day `<button>`s under the weekday names (six weeks, so
+  the height does not change). naui draws nothing: the selected day's number is in
+  `<mark>` and today's in `<b>`, shown in the browser's default styles, with
+  `aria-pressed` and `aria-current="date"`; days outside the range are `disabled`.
+  The names come from `Intl.DateTimeFormat` (Gregorian, in the app's language if it
+  named one) and the first day of the week from `Intl.Locale`'s week information
+  (Sunday where the browser has none). Only the selected day is a Tab stop; the
+  arrow keys move the selection (swapped left and right in right-to-left text),
+  Page Up / Page Down by a month. The month buttons only show another month.
 - **`List`**: Using `ListItem::detail` or `ListRow` (rows of arbitrary content), having
   more than 200 rows, `set_row_builder`, `set_row_height` or `set_reorderable` (an
   `<option>` cannot be dragged) switches from `<select>` to
@@ -787,7 +849,7 @@ collected in [Known limitations](known-limitations.md).
 - `ListItem` / `ListRow` / `SelectionMode`: simple list items, rows of arbitrary content, single and multiple selection
 - `TableColumn` / `TableRow` / `SortOrder`: table columns, rows and sort direction
 - `TreeItem` / `TreeRow`: tree items of text and of arbitrary content (nesting, expansion, whether they can be chosen)
-- `DateTime` / `DatePickerMode`: values of date and time, and what a date picker lets the user pick
+- `DateTime` / `DatePickerMode`: values of date and time (also the value of a calendar), and what a date picker lets the user pick
 - `Time`: values of hours and minutes only (the values exchanged by time pickers)
 - `NumberSpec`: lower bound, upper bound, step and decimal places of number input
 - `Color`: colors as 8-bit sRGB (the values exchanged by color pickers)
@@ -830,3 +892,22 @@ let element = button.backend().native_element();
 ```
 
 This code depends on the target platform, so split it with `cfg` as needed.
+
+The other way round, a native object made outside naui is placed among naui's
+widgets with [`NativeHost`](https://docs.rs/naui/latest/naui/struct.NativeHost.html):
+make one with `ui.native_host()` and put the object in through its backend
+(`set_hosted_view` with an `NSView` on macOS, `set_hosted_widget` with a
+`GtkWidget` on Linux, `set_hosted_element` with a `UIElement` on Windows and an
+`Element` on the Web). naui places and sizes it and reports its size, the display
+scale and when it joins or leaves a window; drawing into it is left to the crate
+that made it.
+
+```rust,ignore
+let host = ui.native_host()?;
+#[cfg(target_os = "macos")]
+host.backend().set_hosted_view(Some(&my_view));
+host.on_resize(|size| {
+    let (width, height) = size.physical_size();
+    // resize what draws into the view
+});
+```

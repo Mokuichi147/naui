@@ -15,6 +15,9 @@ impl Table {
     /// Rebuilds the columns. Rows and selection stay; only the cells are rearranged.
     ///
     /// The sort setting also stays if that column can still be sorted.
+    ///
+    /// Widths the user dragged a heading edge to (on macOS, Windows and Linux) are
+    /// dropped, and each column starts again from [`TableColumn::width`].
     #[inline]
     pub fn set_columns(&self, columns: &[TableColumn]) {
         self.0.set_columns(columns)

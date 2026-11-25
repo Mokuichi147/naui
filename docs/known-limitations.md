@@ -11,7 +11,7 @@ that shape are covered in
 | --- | --- | --- | --- | --- |
 | Weights of `Grid`'s `Track::Fill` | Works | Works (with one exception, see [macOS](#macos)) | Works | Works |
 | Stacking in the same `Grid` cell | Possible | Only the last placed one remains | Possible | Possible |
-| Dragging `Table` column widths | Not possible | Possible | Not possible | Not possible |
+| Dragging `Table` column widths | Possible (the cursor does not change) | Possible | Possible | Not possible |
 | `EditableComboBox` narrowing options by typed text | No | No (only prefix completion) | No | The browser narrows |
 | Where `Toolbar` goes | Right of the title | Title bar (the title text is hidden) | Left side of the header bar | Start of the window |
 | Where `MenuBar` goes | Below the title bar | The app's menu | Below the header bar | Start of the window |
@@ -34,7 +34,11 @@ that shape are covered in
 | Where a `Toast` appears (`ToastPosition`) | Any of the six | Any of the six | Always the bottom center | Any of the six |
 | Where a `Toast`'s second and later action buttons go | A row below the text | Next to the first, after the text | Next to the first, after the text | Next to the first, after the text |
 | A `Flow` child wider than the flow | Keeps its width and is cut off, unless it has `Fill` on the width | Keeps its width and is cut off, unless it has `Fill` on the width | Narrowed to the flow, down to its minimum | Narrowed to the flow, down to its `min-content` width |
+| `Calendar`'s days outside `set_range` | Not shown | Dimmed; clicking one selects the nearest end (notified) | Look selectable; naui moves the selection back to the end (notified) | Disabled buttons |
+| `Calendar`'s month arrows | Only show another month | Only show another month (`●` shows today's month without selecting today) | Also select a day in that month (notified) | Only show another month |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
+| When a `NativeHost` counts as in a window (`on_attach`) | When XAML loads it (once the window is shown), until it unloads it (also when the window is closed) | Once in the window's view tree, still after the window is closed | Once in the window's widget tree, still after the window is closed | Once in the page (reported in a microtask), still after the window is closed |
+| A view with a parent passed to a `NativeHost` | Refused (`false`) | Moved | Refused (`false`) | Moved |
 
 ## Common
 
@@ -186,6 +190,14 @@ that shape are covered in
   about 2.4 seconds in a `Table` and 0.7 seconds in a plain `ListView`.
 - Sorting by pressing a `Table` header only goes as far as notifying "which column,
   in which direction"; **sorting the rows is the app's job**.
+- Dragging the trailing edge of a `Table` heading changes that column's width on
+  macOS, Windows and Linux (not on the Web). The dragged column keeps that width as if
+  it had been passed with `TableColumn::width`, and the columns without a width share
+  the rest. No column goes below 40 px (`MIN_COLUMN_WIDTH`), and the columns never get
+  wider in total than the table, so widening one stops when the columns without a width
+  reach 40 px (`clamp_column_width`). **The app is not told about a drag and cannot
+  read the widths back**, and `set_columns` drops the dragged widths. Every column can
+  be dragged; there is no switch to keep one from being resized.
 - A `Table` with more than 200 rows builds only the range shown on screen (with
   either `set_rows` or `set_row_builder`). This leads to the following rules.
   - **All rows are assumed to have the same height.** If needed, set it with
@@ -259,6 +271,11 @@ that shape are covered in
   Chromium-based browsers and Firefox deliver them to `on_wheel` as wheel events
   with Ctrl). The amount per wheel notch is normalized to `WHEEL_STEP`, but when a
   browser on the Web passes pixels, the browser's amount is kept.
+- `NativeHost` only places a native view made elsewhere: naui does no GPU setup
+  or drawing, and has no part in keyboard focus, accessibility or pointer input
+  inside the hosted view beyond what the platform does for any child view. Its
+  `scale_factor` before the host is in a window is a guess (1.0 on Windows).
+  `raw-window-handle` is not offered.
 - `on_file_drop` takes only files from the OS. Dragging between widgets (rows from
   one `List` into another, or onto other widgets), dragging out of the app, and
   dropped text or links are not supported. Drops onto text-input widgets go to the
@@ -482,7 +499,8 @@ that shape are covered in
 
 - `ButtonRole::Destructive` **looks like an ordinary button**. WinUI has a style
   only for the primary button (`AccentButtonStyle`), not for destructive actions.
-- Over a `SplitView` divider, no divider-specific cursor (⇔) is shown.
+- Over a `SplitView` divider, no divider-specific cursor (⇔) is shown. Neither is
+  one over the edge of a `Table` heading, where the column width can be dragged.
 - `NumberInput` is limited to **10 significant digits**. `NumberBox` rounds the
   value to 10 significant digits before building its display, so passing
   `set_decimals` a number of digits that would require more than 10 significant
@@ -499,6 +517,12 @@ that shape are covered in
   `DatePicker` and `TimePicker`, the WinUI controls only support a range of years
   (`TimePicker` supports no range at all), so naui clamps out-of-range values the
   user picks to the ends.
+- `Calendar` widens `CalendarView`'s `MinDate` / `MaxDate` beyond WinUI's default
+  of 100 years around today to the whole Gregorian calendar (years 1 to 9999) when
+  there is no range. `CalendarView`'s `FirstDayOfWeek` is Sunday whatever the
+  locale, so naui copies the first day of the week of the user's locale (including
+  the choice in the Region settings) when the calendar is created; changing the
+  setting while the app runs is not reflected.
 - Branches set to `TreeItem::enabled(false)` in a `Tree` can still be expanded and
   collapsed.
 - A `Tree` with `SelectionMode::Multiple` is not a `TreeView` but a `ListView` laid
@@ -515,6 +539,12 @@ that shape are covered in
   from a `Label` of the same size. A surface wider or taller in physical pixels
   than the GPU's texture limit (16384, or 2048 to 8192 on older GPUs) is drawn at
   a lower resolution and stretched, so it looks softer.
+- In a right-to-left layout XAML mirrors the element in a `NativeHost`, as it does
+  every element (other platforms do not mirror a hosted view's drawing). A drawing
+  surface sets its own `FlowDirection` to `LeftToRight`. Drawing into a
+  `SwapChainPanel` in a `NativeHost` has been checked only up to placing it,
+  sizing it and reporting its size and scale: no swap chain is connected in the
+  tests.
 - Two-finger scrolling on a precision touchpad over a `Canvas` inside a `Scroll`
   does not reach `on_wheel`; the outer `Scroll` moves instead. `ScrollViewer`
   receives touchpad gestures itself, and they do not become wheel notifications
@@ -600,6 +630,11 @@ that shape are covered in
   [Widget implementations](widgets.md#windows-construction)).
 - `Toggle` switches **only when the switch is pressed**; pressing the label text
   does not switch it.
+- `Calendar`'s days outside `set_range` are dimmed but **can still be clicked**:
+  `NSDatePicker` then selects the nearest end of the range (`minDate` /
+  `maxDate`), which `on_change` reports like any other click. The arrows in the
+  header keep going past the range into months where every day is dimmed (Windows
+  disables them at the ends).
 - `EditableComboBox` completes the rest when you type characters matching the start
   of an option, but **does not narrow the option list itself**.
 - `Table` row height is a fixed value derived from the system font. Rows do not
@@ -671,6 +706,11 @@ that shape are covered in
   all options).
 - `NumberInput` (`GtkSpinButton`) does not let characters other than digits, a sign
   and a decimal point be typed.
+- `NativeHost::scale_factor` is GTK's whole-number scale factor (GTK 4.10's
+  `gtk_widget_get_scale_factor`), so a fractional scale such as 125% reads 2.
+  GTK4 has no native child windows, so a GPU surface goes into a `NativeHost` as a
+  widget GTK draws (`GtkGLArea`, or a `GtkPicture` of rendered frames), not as a
+  window of its own.
 - `Spinner` is `AdwSpinner`, which arrived in libadwaita 1.6. With libadwaita 1.5 it
   falls back to `GtkSpinner`, which has the same default size and 64 × 64 drawing
   limit but the older look.
@@ -678,12 +718,20 @@ that shape are covered in
   `GtkCalendar` does not distinguish "a day was pressed" from "the month was
   changed"). The date shown on the button follows the locale's format.
 - `ColorPicker` does not handle opacity.
+- `Calendar` is a `GtkCalendar`, which **has no range**: days outside `set_range`
+  are not dimmed, and clicking one moves the selection back to the nearest end.
+  The arrows in its header **select a day in the next month or year** (the same
+  day of the month, clamped), which `on_change` reports like a click; on Windows
+  and the Web they only show another month.
 - In a `Sheet`, **Enter in a text field does not press the primary button**: a
   `GtkText` activates the dialog's default widget only with `activates-default`,
   which naui's text fields leave off. Clicking it or Enter with the focus elsewhere
   in the dialog does.
 - With `List` set to `SelectionMode::Multiple`, selection with Ctrl / Shift is left
   to GTK4, so **row clicks (`ListRow::on_activate`) arrive on a double press**.
+- A `Table` column with a sortable heading cannot be dragged narrower than the heading
+  button's own minimum (its padding and the ellipsis, about 50 px with Adwaita), rather
+  than 40 px.
 - `Fit::None` corresponds to GTK4's `SCALE_DOWN`, so it behaves as "do not enlarge"
   rather than "original size".
 - `Toast` durations are in **seconds**. Values under one second become one second
@@ -727,12 +775,17 @@ that shape are covered in
 - A `Canvas` image made with `Bitmap::from_bytes` is decoded by the browser in the
   background, so it is missing from draws until it has loaded; the surface is
   drawn again then. Images made from pixels are drawn at once.
+- `NativeHost::on_attach` is reported from a `MutationObserver` on the document,
+  so it arrives in a microtask after the host joins or leaves the page, not on the
+  spot (`is_attached` reads `isConnected` and is current).
 - `ButtonRole` **does not change the look**. Browsers have no look for primary or
   destructive buttons, so naui only writes the role as the `data-naui-role`
   attribute (`"primary"` / `"destructive"`). An app that wants a look can select
   it in its own CSS, such as `button[data-naui-role="primary"]`.
 - `Window` is not an OS window; it is represented by an element directly under
   `<body>` and `document.title`.
+- `Table` column widths **cannot be dragged**. `<table>` has no mechanism for it, and
+  naui does not draw grab areas of its own.
 - `FilePicker::open` and `FileSaver::open` must be called inside a user-action
   event.
 - In browsers without `showSaveFilePicker` (Firefox / Safari), `FileSaver` becomes an
@@ -749,6 +802,15 @@ that shape are covered in
   operation differ per browser. `TimePicker` handles values up to minutes even when
   the browser returns seconds. `ColorPicker` notifies only on confirmation
   (`change`).
+- Browsers have no always-visible calendar, so **`Calendar` is composed of
+  `<button>`s in a `<table>`** (🟡). naui adds no look of its own: the selected day
+  is marked only by `<mark>` (the browser's highlight, usually yellow) and today by
+  `<b>`, so it does not look like the native calendars. Days outside the range are
+  disabled buttons. The first day of the week comes from `Intl.Locale`'s
+  `getWeekInfo()` (or `weekInfo`), and is **Sunday in browsers without it**. The
+  month and weekday names follow the browser's language unless the app named one,
+  and the month buttons' accessible names are naui's own strings (English and
+  Japanese).
 - In `EditableComboBox`, the browser narrows options by typed text. It cannot be
   turned off, and how it narrows (prefix or substring match), whether an arrow is
   shown, and how the list opens differ per browser.

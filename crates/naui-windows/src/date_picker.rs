@@ -396,7 +396,7 @@ fn set_template_min_width(root: &FrameworkElement, width: f64) {
     }
 }
 
-fn to_native_date(value: DateTime) -> windows_core::Result<WinDateTime> {
+pub(crate) fn to_native_date(value: DateTime) -> windows_core::Result<WinDateTime> {
     let value = value.normalized();
     let calendar = gregorian_calendar()?;
     calendar.SetToNow()?;
@@ -411,7 +411,7 @@ fn to_native_date(value: DateTime) -> windows_core::Result<WinDateTime> {
     calendar.GetDateTime()
 }
 
-fn from_native_date(value: WinDateTime) -> Option<DateTime> {
+pub(crate) fn from_native_date(value: WinDateTime) -> Option<DateTime> {
     let calendar = gregorian_calendar().ok()?;
     calendar.SetDateTime(value).ok()?;
     Some(DateTime::date(
@@ -421,7 +421,7 @@ fn from_native_date(value: WinDateTime) -> Option<DateTime> {
     ))
 }
 
-fn gregorian_calendar() -> windows_core::Result<Calendar> {
+pub(crate) fn gregorian_calendar() -> windows_core::Result<Calendar> {
     let calendar = Calendar::new()?;
     calendar.ChangeCalendarSystem(&CalendarIdentifiers::Gregorian()?)?;
     Ok(calendar)

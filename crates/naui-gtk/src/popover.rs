@@ -128,7 +128,7 @@ impl Popover {
             native.set_parent(&target);
             *self.0.anchor.borrow_mut() = Some(target);
         }
-        native.popup();
+        popup(native);
         self.0.open.set(native.is_visible());
     }
 
@@ -182,6 +182,36 @@ impl Drop for PopoverInner {
     fn drop(&mut self) {
         // GTK4 では、親を持ったまま壊すと警告が出る。
         self.detach();
+    }
+}
+
+/// Shows `native`, moving the focus into it the way `gtk_popover_popup` does.
+///
+/// Works around a GTK bug (seen in 4.22, still in its main branch). On showing, an
+/// autohide popover with nothing focused inside asks itself for the focus, and when
+/// nothing inside takes it, `gtk_popover_focus` passes the window's focus to
+/// `gtk_widget_is_ancestor` without checking it. While the window has no focus
+/// either (nothing in it takes the focus, or a closed dialog left none), that logs
+/// `gtk_widget_is_ancestor: assertion 'GTK_IS_WIDGET (widget)' failed`.
+///
+/// So when the window has no focus, the popover is shown with its focus child
+/// already set, which makes GTK skip that step, and the focus is then moved into
+/// its content directly, without going through `gtk_popover_focus`.
+fn popup(native: &gtk::Popover) {
+    let unfocused = native.is_autohide()
+        && !native.is_visible()
+        && native.root().is_some_and(|root| root.focus().is_none());
+    // GtkPopover の唯一の子 (中身を入れる箱)。
+    let contents = native.first_child().filter(|_| unfocused);
+    if let Some(contents) = &contents {
+        native.set_focus_child(Some(contents));
+    }
+    native.popup();
+    if let Some(contents) = contents {
+        native.set_focus_child(None::<&gtk::Widget>);
+        if native.is_visible() {
+            contents.child_focus(gtk::DirectionType::TabForward);
+        }
     }
 }
 

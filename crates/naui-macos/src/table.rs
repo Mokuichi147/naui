@@ -14,7 +14,9 @@ use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 
-use naui_core::{Align, Result, SelectionMode, SortOrder, TableColumn, TableRow};
+use naui_core::{
+    clamp_column_width, Align, Result, SelectionMode, SortOrder, TableColumn, TableRow,
+};
 use objc2::rc::Retained;
 use objc2::runtime::{NSObject, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, sel, DefinedClass, MainThreadMarker, MainThreadOnly, Message};
@@ -42,9 +44,9 @@ const CELL_PADDING: f64 = 4.0;
 /// The padding above and below the text. The row height is "the label's height +
 /// twice this".
 const ROW_SPACING: f64 = 5.0;
-/// The minimum width given to columns without a width. They cannot be narrower than
-/// this.
-const MIN_COLUMN_WIDTH: f64 = 40.0;
+/// The width no column can go below: columns without a width are not squeezed past
+/// it, and no heading edge can be dragged past it.
+const MIN_COLUMN_WIDTH: f64 = naui_core::MIN_COLUMN_WIDTH;
 
 /// Extracts the column index from the identifier.
 fn column_index(column: Option<&NSTableColumn>) -> Option<usize> {
@@ -401,44 +403,97 @@ fn sort_from(table: &NSTableView) -> Option<(usize, SortOrder)> {
     ))
 }
 
-/// Distributes the leftover width evenly to the columns without a width.
+/// Distributes the leftover width evenly to the columns without a width, and limits
+/// how wide each column can be dragged.
 ///
 /// AppKit's `columnAutoresizingStyle` **cannot distribute everything when some
 /// columns have a fixed width**. It tries to grow them proportionally, but columns
-/// with `minWidth == maxWidth` cannot move, and their share is left over (leaving
-/// blank space on the right of the table). naui decides the table's width, so it
+/// without `NSTableColumnAutoresizingMask` do not move, and their share is left over
+/// (leaving blank space on the right of the table). naui decides the table's width, so it
 /// decides the distribution too.
+///
+/// `columns` carry the widths the user dragged too ([`column_did_resize`]), so a
+/// dragged column keeps its width and only the untouched columns without a width share
+/// the rest. Each column's `maxWidth` leaves the others their width (or
+/// [`MIN_COLUMN_WIDTH`]), so a drag cannot make the columns wider than the table
+/// (`naui_core::clamp_column_width`, which the other backends follow).
 fn distribute_widths(table: &NSTableView, columns: &[TableColumn]) {
     let available = table.frame().size.width;
     if available <= 0.0 {
         return;
     }
+    let native = table.tableColumns();
+    // AppKit は「列の幅の合計 + 列の間の余白」を表の幅として並べる。
+    let spacing = table.intercellSpacing().width * columns.len() as f64;
+    let room = available - spacing;
     let flexible: Vec<usize> = columns
         .iter()
         .enumerate()
         .filter(|(_, column)| column.width.is_none())
         .map(|(index, _)| index)
         .collect();
-    if flexible.is_empty() {
-        return;
-    }
-    // AppKit は「列の幅の合計 + 列の間の余白」を表の幅として並べる。
     let fixed: f64 = columns.iter().filter_map(|column| column.width).sum();
-    let spacing = table.intercellSpacing().width * columns.len() as f64;
-    let each = ((available - fixed - spacing) / flexible.len() as f64).max(MIN_COLUMN_WIDTH);
+    let each = match flexible.len() {
+        0 => None,
+        count => Some(((room - fixed) / count as f64).max(MIN_COLUMN_WIDTH)),
+    };
 
-    let native = table.tableColumns();
-    for &index in &flexible {
+    for (index, spec) in columns.iter().enumerate() {
         if index >= native.len() {
             continue;
         }
         let column = native.objectAtIndex(index);
+        let width = spec.width.or(each).unwrap_or(MIN_COLUMN_WIDTH);
+        // ドラッグで広げられる上限。いまの幅より下げると AppKit がその場で
+        // 縮めてしまうので、狭い表ではいまの幅を上限にする。
+        let limit = clamp_column_width(columns, index, f64::MAX, room).max(width);
+        if (column.maxWidth() - limit).abs() > 0.5 {
+            column.setMaxWidth(limit);
+        }
         // 同じ幅を書き戻すと `setFrameSize:` が何度も呼ばれて回り続けるので、
         // 変わるときだけ書く。
-        if (column.width() - each).abs() > 0.5 {
-            column.setWidth(each);
+        if spec.width.is_none() && (column.width() - width).abs() > 0.5 {
+            column.setWidth(width);
         }
     }
+}
+
+/// When a column's width changed. **Only the user's drag of a heading edge** is
+/// recorded: that column keeps the width from then on, as if it had been passed with
+/// [`TableColumn::width`], and the rest is shared again.
+///
+/// `NSTableHeaderView::resizedColumn` is the column being dragged, and -1 when the
+/// change came from code (naui's own distribution included).
+fn column_did_resize(columns: &RefCell<Vec<TableColumn>>, notification: &NSNotification) {
+    let Some(table) = notification
+        .object()
+        .and_then(|object| object.downcast::<NSTableView>().ok())
+    else {
+        return;
+    };
+    let Some(index) = table
+        .headerView()
+        .and_then(|header| usize::try_from(header.resizedColumn()).ok())
+    else {
+        return;
+    };
+    let native = table.tableColumns();
+    if index >= native.len() {
+        return;
+    }
+    let width = native.objectAtIndex(index).width();
+    // 配り直しの中からも呼ばれるので、借りられないときは何もしない。
+    let snapshot = {
+        let Ok(mut columns) = columns.try_borrow_mut() else {
+            return;
+        };
+        let Some(column) = columns.get_mut(index) else {
+            return;
+        };
+        column.width = Some(width);
+        columns.clone()
+    };
+    distribute_widths(&table, &snapshot);
 }
 
 /// The state kept for distributing widths. Shared with the handle.
@@ -461,7 +516,10 @@ define_class!(
         #[unsafe(method(setFrameSize:))]
         fn set_frame_size(&self, size: NSSize) {
             let _: () = unsafe { msg_send![super(self), setFrameSize: size] };
-            distribute_widths(self, &self.ivars().columns.borrow());
+            // 配る途中で列の通知 (`column_did_resize`) が書き換えられるよう、
+            // 借りたまま配らない。
+            let columns = self.ivars().columns.borrow().clone();
+            distribute_widths(self, &columns);
         }
     }
 );
@@ -561,6 +619,11 @@ define_class!(
             if let Ok(row) = usize::try_from(row) {
                 self.ivars().rows.forget_row(row);
             }
+        }
+
+        #[unsafe(method(tableViewColumnDidResize:))]
+        fn column_did_resize(&self, notification: &NSNotification) {
+            column_did_resize(&self.ivars().columns, notification);
         }
 
         #[unsafe(method(tableViewSelectionDidChange:))]
@@ -876,6 +939,9 @@ impl Table {
     }
 
     /// Rebuilds the columns. Rows and selection stay; only the cells are rearranged.
+    ///
+    /// Widths the user dragged a heading edge to are dropped, and each column starts
+    /// again from [`TableColumn::width`].
     pub fn set_columns(&self, columns: &[TableColumn]) {
         // 列を入れ替えると AppKit は選択も並べ替えの指定も落とすので、
         // どちらも覚えて書き戻す。
@@ -904,18 +970,20 @@ impl Table {
             }
             // 見出しの揃えは、その列のセルに合わせる。
             column.headerCell().setAlignment(text_alignment(spec.align));
+            // どの列も見出しの端を掴んで幅を変えられる。上限は配るときに決める。
+            column.setMinWidth(MIN_COLUMN_WIDTH);
             match spec.width {
-                // 幅の指定がある列は、自動調整の対象から外して固定する。
+                // 幅の指定がある列は、自動調整の対象から外す。
                 Some(width) => {
                     column.setWidth(width);
-                    column.setMinWidth(width);
-                    column.setMaxWidth(width);
                     column.setResizingMask(NSTableColumnResizingOptions::UserResizingMask);
                 }
                 // 指定が無い列だけで、余った幅を分け合う。
                 None => {
-                    column.setMinWidth(MIN_COLUMN_WIDTH);
-                    column.setResizingMask(NSTableColumnResizingOptions::AutoresizingMask);
+                    column.setResizingMask(
+                        NSTableColumnResizingOptions::AutoresizingMask
+                            | NSTableColumnResizingOptions::UserResizingMask,
+                    );
                 }
             }
             self.0.table.addTableColumn(&column);
@@ -928,7 +996,8 @@ impl Table {
         });
         // 大きさが決まっていれば、この場で余りを配る。まだなら
         // `setFrameSize:` が決まった時点で配る。
-        distribute_widths(&self.0.table, &self.0.columns.borrow());
+        let columns = self.0.columns.borrow().clone();
+        distribute_widths(&self.0.table, &columns);
     }
 
     /// The number of columns.

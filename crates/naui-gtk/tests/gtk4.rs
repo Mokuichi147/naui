@@ -77,6 +77,18 @@ fn main() {
             color_picker_set_is_silent,
         ),
         (
+            "NativeHost が外で作った GtkWidget を置き、大きさ・倍率・窓への出入りを伝える",
+            native_host_places_a_foreign_widget,
+        ),
+        (
+            "NativeHost は大きさを知るウィジェットならその大きさになる",
+            native_host_follows_a_natural_size,
+        ),
+        (
+            "NativeHost は親のあるウィジェットを断り、差し替えと破棄で外して放す",
+            native_host_lets_go_of_widgets,
+        ),
+        (
             "描画面が on_draw の命令を cairo で画素に落とす",
             canvas_paints_recorded_commands,
         ),
@@ -167,6 +179,22 @@ fn main() {
         (
             "日付ピッカーのプログラム変更は通知しない",
             date_picker_programmatic_changes_are_silent,
+        ),
+        (
+            "カレンダーが GtkCalendar を置き、値が往復して時刻を保つ",
+            calendar_value_round_trips,
+        ),
+        (
+            "カレンダーの pick が day-selected の経路で通知する",
+            calendar_pick_acts_like_a_click,
+        ),
+        (
+            "カレンダーが範囲の外の日を端へ戻す",
+            calendar_stays_inside_the_range,
+        ),
+        (
+            "カレンダーの見出しの矢印で月を送ると選んだ日も動く",
+            calendar_month_arrows_move_the_selection,
         ),
         (
             "時刻ピッカーが時と分のスピンボタンを並べ、値が往復する",
@@ -798,6 +826,10 @@ fn main() {
             table_columns_follow_the_spec,
         ),
         (
+            "テーブルの見出しの端をドラッグすると列の幅が変わり、残りの列が余りを分ける",
+            table_column_widths_follow_header_drags,
+        ),
+        (
             "GtkListBox 側のテーブルの選択がクロージャへ届く",
             table_native_selection_notifies,
         ),
@@ -1003,6 +1035,10 @@ fn main() {
         (
             "画面に出ていないウィジェットにはポップオーバーを開かない",
             popover_needs_a_shown_widget,
+        ),
+        (
+            "焦点の無い窓でポップオーバーを開いても critical が出ず、焦点は中身へ移る",
+            popover_opens_in_a_window_without_focus,
         ),
         (
             "ポップアップが GMenu へ写る",
@@ -1781,6 +1817,162 @@ fn toggle_set_is_silent(ui: &Ui) -> Result<()> {
 /// The drawing surface is a `GtkDrawingArea`, and the commands recorded by
 /// `on_draw` are painted with cairo. The widget's snapshot is drawn into a cairo
 /// image, and pixels inside and outside the painted rectangle are read.
+fn native_host_places_a_foreign_widget(ui: &Ui) -> Result<()> {
+    let host = ui.native_host()?;
+    host.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(120.0))
+            .height(Length::Fixed(80.0)),
+    );
+    // GPU の面 (GtkGLArea など) のように、自然な大きさを持たないウィジェット。
+    let foreign = gtk::DrawingArea::new();
+    assert!(host.set_hosted_widget(Some(&foreign)));
+    assert!(host.hosted_widget().is_some_and(|widget| widget == foreign));
+
+    let (sizes, sink) = recorder::<naui_core::HostSize>();
+    host.on_resize(sink);
+    let (attached, sink) = recorder::<bool>();
+    host.on_attach(sink);
+    assert!(!host.is_attached());
+
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&host);
+    let window = ui.window("native host", 240.0, 200.0)?;
+    window.set_child(&stack);
+    assert_eq!(*attached.borrow(), vec![true], "窓の木へ入ったら伝える");
+    assert!(host.is_attached());
+    window.show();
+    tick(&foreign);
+
+    assert_eq!(host.size(), (120.0, 80.0), "指定した大きさになること");
+    assert_eq!(
+        (foreign.width(), foreign.height()),
+        (120, 80),
+        "置いたウィジェットが受け皿いっぱいに広がること"
+    );
+    let scale = f64::from(foreign.scale_factor());
+    assert_eq!(host.scale_factor(), scale);
+    assert_eq!(
+        sizes.borrow().last().copied(),
+        Some(naui_core::HostSize::new(120.0, 80.0, scale)),
+        "大きさと倍率を伝える: {:?}",
+        sizes.borrow()
+    );
+
+    host.set_sizing(
+        Sizing::new()
+            .width(Length::Fixed(150.0))
+            .height(Length::Fixed(90.0)),
+    );
+    tick(&foreign);
+    assert_eq!((foreign.width(), foreign.height()), (150, 90));
+    assert_eq!(
+        sizes.borrow().last().copied(),
+        Some(naui_core::HostSize::new(150.0, 90.0, scale)),
+        "大きさの変化を伝える"
+    );
+    let reports = sizes.borrow().len();
+    foreign.queue_resize();
+    tick(&foreign);
+    assert_eq!(sizes.borrow().len(), reports, "変わらなければ伝えない");
+
+    window.set_child(&ui.label("other")?);
+    assert_eq!(
+        *attached.borrow(),
+        vec![true, false],
+        "窓から外れたら伝える"
+    );
+    assert!(!host.is_attached());
+    window.close();
+    assert_eq!(
+        sizes.borrow().first().copied(),
+        Some(naui_core::HostSize::new(120.0, 80.0, scale)),
+        "レイアウト前の 0 x 0 は伝えない: {:?}",
+        sizes.borrow()
+    );
+
+    // 閉じても窓の木からは外れないので、外れたとは伝えない (中身を外せば伝える)。
+    let closing = ui.window("native host closing", 240.0, 200.0)?;
+    closing.set_child(&stack);
+    closing.show();
+    tick(&foreign);
+    closing.close();
+    pump();
+    assert_eq!(*attached.borrow(), vec![true, false, true]);
+    Ok(())
+}
+
+fn native_host_follows_a_natural_size(ui: &Ui) -> Result<()> {
+    let host = ui.native_host()?;
+    let button = gtk::Button::with_label("Native button");
+    host.set_hosted_widget(Some(&button));
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&host);
+    stack.append(&ui.label("below")?);
+    let window = ui.window("native host natural", 320.0, 200.0)?;
+    window.set_child(&stack);
+    window.show();
+    tick(&button);
+    let natural_width = button.measure(gtk::Orientation::Horizontal, -1).1;
+    let natural_height = button.measure(gtk::Orientation::Vertical, natural_width).1;
+    assert_eq!(
+        host.size(),
+        (f64::from(natural_width), f64::from(natural_height)),
+        "中身の自然な大きさになること"
+    );
+    // `measure` は CSS の余白を含み、`width` は含まない。
+    assert!(button.width() > 0 && button.width() <= natural_width);
+    window.close();
+    Ok(())
+}
+
+fn native_host_lets_go_of_widgets(ui: &Ui) -> Result<()> {
+    let host = ui.native_host()?;
+    let first_weak = {
+        let first = gtk::DrawingArea::new();
+        host.set_hosted_widget(Some(&first));
+        first.downgrade()
+    };
+    assert!(first_weak.upgrade().is_some(), "置いている間は naui が持つ");
+
+    // ほかの親を持つウィジェットは、GTK の決まりどおり断る。
+    let elsewhere = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    let owned = gtk::DrawingArea::new();
+    elsewhere.append(&owned);
+    let (refused, log) = watch_log(|| host.set_hosted_widget(Some(&owned)));
+    assert!(!refused, "親のあるウィジェットは断る");
+    assert!(owned.parent().is_some_and(|parent| parent == elsewhere));
+    assert!(
+        log.iter()
+            .all(|entry| entry.level != glib::LogLevel::Critical),
+        "断るときに GTK が critical を出さないこと"
+    );
+    assert!(first_weak.upgrade().is_some(), "断ったときは前のものを残す");
+
+    let second = gtk::DrawingArea::new();
+    assert!(host.set_hosted_widget(Some(&second)));
+    assert!(
+        first_weak.upgrade().is_none(),
+        "差し替えた前のウィジェットは放す"
+    );
+    assert!(second
+        .parent()
+        .is_some_and(|parent| parent == host.native_widget()));
+
+    // 同じものを渡し直しても何も変わらない。
+    assert!(host.set_hosted_widget(Some(&second)));
+    assert!(second.next_sibling().is_none() && second.prev_sibling().is_none());
+
+    assert!(host.set_hosted_widget(None::<&gtk::Widget>));
+    assert!(second.parent().is_none(), "空にすると外す");
+    assert!(host.hosted_widget().is_none());
+
+    host.set_hosted_widget(Some(&second));
+    drop(host);
+    assert!(second.parent().is_none(), "受け皿を落とすと外す");
+    Ok(())
+}
+
 fn canvas_paints_recorded_commands(ui: &Ui) -> Result<()> {
     let canvas = ui.canvas()?;
     canvas.set_sizing(
@@ -9043,6 +9235,210 @@ fn table_columns_follow_the_spec(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// Dragging the trailing edge of a heading resizes that column, the columns without a
+/// width share what is left, and the columns never get wider in total than the table
+/// (`naui_core::clamp_column_width`, as on macOS).
+///
+/// The drag goes through the heading row's `GtkGestureDrag`, with its signals emitted
+/// directly as in the `Canvas` test.
+fn table_column_widths_follow_header_drags(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    let columns = [
+        TableColumn::new("都市").sortable(true),
+        TableColumn::new("人口").width(120.0).align(Align::End),
+        TableColumn::new("面積"),
+    ];
+    table.set_columns(&columns);
+    table.set_rows(&TableRow::list([["東京", "13,960,000", "2,194"]]));
+    table.set_sizing(Sizing::fill());
+    let window = ui.window("列の幅のドラッグ", 500.0, 300.0)?;
+    window.set_child(&table);
+    window.show();
+    let (header, list) = table_parts(&table);
+    tick(&header);
+    tick(&header);
+
+    let controllers = header.observe_controllers();
+    let drag = (0..controllers.n_items())
+        .filter_map(|index| controllers.item(index))
+        .find_map(|c| c.downcast::<gtk::GestureDrag>().ok())
+        .expect("見出しに GtkGestureDrag が付いていること");
+    assert_eq!(
+        drag.propagation_phase(),
+        gtk::PropagationPhase::Capture,
+        "並べ替えのボタンより先に端の押下を受けること"
+    );
+
+    let slots = || children(&header);
+    // 並べ替えられる見出しはボタンなので、`width()` (中身の幅) ではなく
+    // 枠を含めた幅で比べる。
+    let outer = |widget: &gtk::Widget, parent: &gtk::Widget| {
+        widget.compute_bounds(parent).expect("位置").width().round() as i32
+    };
+    let widths = || {
+        tick(&header);
+        slots()
+            .iter()
+            .map(|slot| outer(slot, header.upcast_ref()))
+            .collect::<Vec<_>>()
+    };
+    let cell_widths = || {
+        let row = list.row_at_index(0).expect("1 行目").child().expect("中身");
+        children(&row)
+            .iter()
+            .map(|cell| outer(cell, &row))
+            .collect::<Vec<_>>()
+    };
+    // 列 `index` の末尾の端 (見出しと見出しの間) を掴んで `dx` 動かす。
+    let drag_edge = |index: usize, dx: f64| {
+        let bounds = slots()[index]
+            .compute_bounds(&header)
+            .expect("見出しの位置");
+        let x = f64::from(bounds.x() + bounds.width()) + 2.0;
+        drag.emit_by_name::<()>("drag-begin", &[&x, &10.0f64]);
+        drag.emit_by_name::<()>("drag-update", &[&(dx / 2.0), &0.0f64]);
+        drag.emit_by_name::<()>("drag-update", &[&dx, &0.0f64]);
+        drag.emit_by_name::<()>("drag-end", &[&dx, &0.0f64]);
+    };
+    let fills = |label: &str, widths: &[i32]| {
+        let spacing = 12 * (widths.len() as i32 - 1);
+        let total: i32 = widths.iter().sum::<i32>() + spacing;
+        assert!(
+            (total - header.width()).abs() <= 1,
+            "{label}: 幅いっぱいを使い、はみ出さない ({widths:?} / {})",
+            header.width()
+        );
+    };
+
+    let before = widths();
+    assert_eq!(before[1], 120, "指定した幅: {before:?}");
+    fills("はじめ", &before);
+
+    // 見出しの真ん中を押しても幅は変わらない (並べ替えのボタンへ通す)。
+    let bounds = slots()[0].compute_bounds(&header).expect("見出しの位置");
+    let middle = f64::from(bounds.x() + bounds.width() / 2.0);
+    drag.emit_by_name::<()>("drag-begin", &[&middle, &10.0f64]);
+    drag.emit_by_name::<()>("drag-update", &[&40.0f64, &0.0f64]);
+    drag.emit_by_name::<()>("drag-end", &[&40.0f64, &0.0f64]);
+    assert_eq!(widths(), before, "端でなければ幅は変わらない");
+
+    // 幅の無い列を広げると、その列だけが広がり、もう 1 つの幅の無い列が詰める。
+    drag_edge(0, 60.0);
+    let after = widths();
+    assert!(
+        (after[0] - (before[0] + 60)).abs() <= 1,
+        "掴んだ列が広がる: {before:?} → {after:?}"
+    );
+    assert_eq!(after[1], 120, "幅のある列は動かない: {after:?}");
+    fills("広げたあと", &after);
+    // 最後の列は行の枠の分だけ見出しとずれることがある (変更前から) ので、
+    // 幅の決まった 2 列で比べる。
+    assert_eq!(
+        cell_widths()[..2],
+        after[..2],
+        "行のセルも見出しと同じ幅になる"
+    );
+
+    // 幅のある列も掴める。掴んだ列はそのまま、幅の無い列が詰める。
+    drag_edge(1, 30.0);
+    let next = widths();
+    assert_eq!(next[1], 150, "幅のある列も広がる: {next:?}");
+    assert_eq!(
+        next[0], after[0],
+        "掴んだあとの列は余りを受け取らない: {next:?}"
+    );
+    fills("幅のある列を広げたあと", &next);
+
+    // 表より広くはならない。最後の幅の無い列は最小幅まで詰める。
+    drag_edge(0, 1000.0);
+    // 行は見出しより狭いことがあり、狭いほうに収める (見出しの最後の列はその分広い)。
+    let wide = widths();
+    assert_eq!(
+        f64::from(cell_widths()[2]),
+        naui_core::MIN_COLUMN_WIDTH,
+        "残りの列は行で最小幅まで: {wide:?} / {:?}",
+        cell_widths()
+    );
+    fills("広げすぎたあと", &wide);
+
+    // 狭める側も最小幅で止まる。文字が長くても指定より広がらない。
+    // 並べ替えのボタンは枠の分だけ最小の幅が大きいので、そこで止まる。
+    drag_edge(0, -1000.0);
+    let narrow = widths();
+    let floor = measure_width(&slots()[0])
+        .0
+        .max(naui_core::MIN_COLUMN_WIDTH as i32);
+    assert!(
+        narrow[0] <= floor && narrow[0] < 60,
+        "最小幅まで狭まる: {narrow:?} (最小 {floor})"
+    );
+    fills("狭めたあと", &narrow);
+    // そのあと別の列を広げすぎても、表からはみ出さない。
+    drag_edge(1, 1000.0);
+    let crowded = widths();
+    assert_eq!(
+        f64::from(cell_widths()[2]),
+        naui_core::MIN_COLUMN_WIDTH,
+        "{crowded:?} / {:?}",
+        cell_widths()
+    );
+    fills("狭めた列の隣を広げすぎたあと", &crowded);
+    let narrow = crowded;
+
+    // 行を作り直しても、ドラッグした幅は残る。
+    table.set_rows(&TableRow::list([["大阪", "8,838,000", "1,905"]]));
+    tick(&header);
+    assert_eq!(widths(), narrow, "行を渡し直しても列の幅は残る");
+    assert_eq!(cell_widths()[..2], narrow[..2]);
+
+    // 幅の無い列が 1 つも残らなくても、行は表からはみ出さない (行は枠の分だけ
+    // 見出しより狭いことがあるので、行の中身の幅で比べる)。
+    drag_edge(2, 1000.0);
+    let all = widths();
+    let row = list.row_at_index(0).expect("1 行目").child().expect("中身");
+    let cells = cell_widths();
+    let used: i32 = cells.iter().sum::<i32>() + 12 * (cells.len() as i32 - 1);
+    assert!(
+        used <= row.width(),
+        "全部の列を掴んでも行に収まる: {cells:?} / {}",
+        row.width()
+    );
+    assert_eq!(cells, all, "全部の列を掴むと、行も見出しも同じ幅: {all:?}");
+    // `measure` は左右の余白 (`margin`) を含み、`width()` は含まない。
+    let margins = row.margin_start() + row.margin_end();
+    assert!(
+        measure_width(&row).0 <= row.width() + margins,
+        "行の最小の幅が行より広くならない (表が窓を押し広げない): {} / {} + {margins}",
+        measure_width(&row).0,
+        row.width()
+    );
+
+    // 列を渡し直すと、ドラッグした幅は捨てて渡した指定に戻る。
+    table.set_columns(&columns);
+    assert_eq!(widths(), before, "渡した指定の幅に戻る");
+
+    // 右から左の並びでは、末尾の端は左にあり、左へ動かすと広がる。
+    // 子は親の向きを継がない (GTK4 は既定の向きを返す) ので、アプリ全体の向きを替える。
+    let previous = gtk::Widget::default_direction();
+    naui_gtk::apply_layout_direction(Some(LayoutDirection::Rtl));
+    tick(&header);
+    let mirrored = widths();
+    let bounds = slots()[0].compute_bounds(&header).expect("見出しの位置");
+    let x = f64::from(bounds.x()) - 2.0;
+    drag.emit_by_name::<()>("drag-begin", &[&x, &10.0f64]);
+    drag.emit_by_name::<()>("drag-update", &[&-30.0f64, &0.0f64]);
+    drag.emit_by_name::<()>("drag-end", &[&-30.0f64, &0.0f64]);
+    let rtl = widths();
+    // 落ちても後のケースへ向きを持ち越さないよう、確かめる前に戻す。
+    gtk::Widget::set_default_direction(previous);
+    assert!(
+        (rtl[0] - (mirrored[0] + 30)).abs() <= 1,
+        "右から左でも掴んだ列が広がる: {mirrored:?} → {rtl:?}"
+    );
+    window.close();
+    Ok(())
+}
+
 fn table_native_selection_notifies(ui: &Ui) -> Result<()> {
     let table = ui.table()?;
     table.set_columns(&TableColumn::list(["時間帯"]));
@@ -10145,6 +10541,63 @@ fn popover_follows_its_content_on_a_scroll(ui: &Ui) -> Result<()> {
         native.height()
     );
     popover.close();
+    window.close();
+    Ok(())
+}
+
+/// Opening a popover in a window where nothing is focused logs nothing, and the
+/// focus still moves into its content when something there takes it.
+///
+/// On showing, GTK asks the popover for the focus, and when nothing inside takes it,
+/// `gtk_popover_focus` passed the window's focus (none) to `gtk_widget_is_ancestor`,
+/// logging a critical.
+fn popover_opens_in_a_window_without_focus(ui: &Ui) -> Result<()> {
+    let window = ui.window("ポップオーバー", 360.0, 240.0)?;
+    let anchor = ui.label("ここから")?;
+    window.set_child(&anchor);
+    window.show();
+    tick(&anchor.native_widget());
+    let native_window = window.native_window();
+    assert!(
+        GtkWindowExt::focus(&native_window).is_none(),
+        "前提: 窓の中に焦点を持つものが無いこと"
+    );
+
+    let popover = ui.popover()?;
+    let native = popover.native_popover();
+    // 開いて critical が出ないことを見て、閉じる前の (ポップオーバーの焦点の子,
+    // 窓の焦点) を返す。
+    let open = |what: &str| {
+        let (_, log) = watch_log(|| popover.open(&anchor));
+        assert!(popover.is_open(), "{what}: 開くこと");
+        let criticals: Vec<_> = log
+            .iter()
+            .filter(|entry| entry.level == glib::LogLevel::Critical)
+            .map(|entry| format!("{}: {}", entry.domain, entry.message))
+            .collect();
+        assert!(
+            criticals.is_empty(),
+            "{what}: GTK が critical を出した {criticals:?}"
+        );
+        let focus = (native.focus_child(), GtkWindowExt::focus(&native_window));
+        popover.close();
+        pump();
+        focus
+    };
+
+    popover.set_child(&ui.label("中身")?);
+    let (focus_child, focus) = open("焦点を受けるものが無い中身");
+    assert_eq!(focus_child, None, "焦点の子を仮に置いたままにしないこと");
+    assert_eq!(focus, None);
+
+    let button = ui.button("押す")?;
+    popover.set_child(&button);
+    let (_, focus) = open("ボタンを入れた中身");
+    assert_eq!(
+        focus,
+        Some(button.native_widget()),
+        "中身の焦点を受けるものへ焦点が移ること"
+    );
     window.close();
     Ok(())
 }
@@ -12259,6 +12712,179 @@ fn date_picker_programmatic_changes_are_silent(ui: &Ui) -> Result<()> {
     hour.set_value(8.0);
     assert_eq!(seen.get(), Some(DateTime::new(2027, 1, 5, 8, 45)));
     assert_eq!(picker.value(), DateTime::new(2026, 12, 31, 0, 0));
+    Ok(())
+}
+
+/// The day shown selected on the `GtkCalendar`.
+fn calendar_shown_day(calendar: &gtk::Calendar) -> (i32, i32, i32) {
+    let date = calendar.date();
+    (date.year(), date.month(), date.day_of_month())
+}
+
+/// The calendar is a `GtkCalendar` itself. Writing the value is silent, and a day
+/// selected on the native side keeps the time the value had.
+fn calendar_value_round_trips(ui: &Ui) -> Result<()> {
+    let calendar = ui.calendar()?;
+    let native = calendar.native_calendar();
+    assert!(calendar.native_widget().is::<gtk::Calendar>());
+    assert!(calendar.value().is_valid(), "初期値は現在日時");
+
+    let (log, sink) = recorder::<DateTime>();
+    calendar.on_change(sink);
+    calendar.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    assert_eq!(calendar.value(), DateTime::new(2026, 8, 22, 9, 30));
+    assert_eq!(calendar_shown_day(&native), (2026, 8, 22));
+    calendar.set_value(DateTime::new(2026, 11, 31, 9, 30));
+    assert_eq!(
+        calendar.value(),
+        DateTime::new(2026, 11, 30, 9, 30),
+        "丸める"
+    );
+    assert!(log.borrow().is_empty(), "set_value は通知しない");
+
+    // ネイティブ側で日を選ぶと、時刻はそのままで日付だけ変わる。
+    let date = glib::DateTime::from_local(2027, 1, 5, 18, 0, 0.0).expect("日時");
+    native.select_day(&date);
+    assert_eq!(calendar.value(), DateTime::new(2027, 1, 5, 9, 30));
+    assert_eq!(*log.borrow(), vec![DateTime::new(2027, 1, 5, 9, 30)]);
+
+    calendar.set_enabled(false);
+    assert!(!native.is_sensitive());
+    Ok(())
+}
+
+/// `pick` selects the day through `day-selected`, and does nothing while disabled.
+fn calendar_pick_acts_like_a_click(ui: &Ui) -> Result<()> {
+    let calendar = ui.calendar()?;
+    calendar.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    let (log, sink) = recorder::<DateTime>();
+    calendar.on_change(sink);
+
+    calendar.pick(DateTime::new(2026, 9, 3, 18, 0));
+    assert_eq!(calendar.value(), DateTime::new(2026, 9, 3, 9, 30));
+    assert_eq!(
+        calendar_shown_day(&calendar.native_calendar()),
+        (2026, 9, 3)
+    );
+    assert_eq!(*log.borrow(), vec![DateTime::new(2026, 9, 3, 9, 30)]);
+
+    calendar.pick(DateTime::date(2026, 9, 3));
+    assert_eq!(log.borrow().len(), 1, "選ばれている日なら通知しない");
+
+    calendar.set_enabled(false);
+    calendar.pick(DateTime::date(2026, 10, 1));
+    assert_eq!(calendar.value(), DateTime::new(2026, 9, 3, 9, 30));
+    assert_eq!(log.borrow().len(), 1, "無効なら何もしない");
+
+    // 通知の中で同じカレンダーを触っても二重借用にならない。
+    calendar.set_enabled(true);
+    calendar.on_change({
+        let calendar = calendar.clone();
+        let log = log.clone();
+        move |value| {
+            log.borrow_mut().push(value);
+            calendar.set_value(DateTime::date(2030, 1, 1));
+            calendar.on_change(|_| {});
+        }
+    });
+    calendar.pick(DateTime::date(2026, 10, 1));
+    assert_eq!(log.borrow().len(), 2);
+    assert_eq!(calendar.value(), DateTime::date(2030, 1, 1));
+    assert_eq!(
+        calendar_shown_day(&calendar.native_calendar()),
+        (2030, 1, 1)
+    );
+    Ok(())
+}
+
+/// `GtkCalendar` has no range, so naui moves a day outside it back to the end.
+fn calendar_stays_inside_the_range(ui: &Ui) -> Result<()> {
+    let calendar = ui.calendar()?;
+    let native = calendar.native_calendar();
+    calendar.set_value(DateTime::new(2026, 6, 15, 9, 30));
+    calendar.set_range(
+        Some(DateTime::new(2026, 6, 10, 12, 0)),
+        Some(DateTime::new(2026, 6, 20, 12, 0)),
+    );
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 15, 9, 30));
+    let (log, sink) = recorder::<DateTime>();
+    calendar.on_change(sink);
+
+    // 端の日は、値の時刻にかかわらず選べる。
+    calendar.pick(DateTime::date(2026, 6, 20));
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 20, 9, 30));
+
+    // 範囲の外の日を押すと、端へ戻して表示も直す。
+    let outside = glib::DateTime::from_local(2026, 7, 1, 0, 0, 0.0).expect("日時");
+    native.select_day(&outside);
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 20, 9, 30));
+    assert_eq!(calendar_shown_day(&native), (2026, 6, 20), "表示も端へ戻る");
+    native.select_day(&glib::DateTime::from_local(2026, 6, 1, 0, 0, 0.0).expect("日時"));
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 10, 9, 30));
+    assert_eq!(
+        *log.borrow(),
+        vec![
+            DateTime::new(2026, 6, 20, 9, 30),
+            DateTime::new(2026, 6, 10, 9, 30)
+        ]
+    );
+
+    // 範囲の外を渡すと、通知せずに端へ寄る。
+    calendar.set_value(DateTime::date(1990, 1, 1));
+    assert_eq!(calendar.value(), DateTime::date(2026, 6, 10));
+    assert_eq!(log.borrow().len(), 2);
+
+    calendar.set_range(None, None);
+    calendar.pick(DateTime::date(1990, 1, 1));
+    assert_eq!(calendar.value(), DateTime::date(1990, 1, 1));
+    Ok(())
+}
+
+/// The arrows in `GtkCalendar`'s header select a day in the next month, which
+/// naui notifies like a click (documented as a difference from the other
+/// platforms).
+fn calendar_month_arrows_move_the_selection(ui: &Ui) -> Result<()> {
+    let calendar = ui.calendar()?;
+    calendar.set_value(DateTime::new(2026, 1, 31, 9, 30));
+    let (log, sink) = recorder::<DateTime>();
+    calendar.on_change(sink);
+
+    let mut buttons = Vec::new();
+    let mut stack = vec![calendar.native_calendar().upcast::<gtk::Widget>()];
+    while let Some(widget) = stack.pop() {
+        if let Ok(button) = widget.clone().downcast::<gtk::Button>() {
+            buttons.push(button);
+        }
+        let mut child = widget.last_child();
+        while let Some(c) = child {
+            child = c.prev_sibling();
+            stack.push(c);
+        }
+    }
+    // 見出しには「前の月・次の月・前の年・次の年」の 4 つの矢印が並ぶ。
+    assert_eq!(buttons.len(), 4, "見出しの矢印");
+    buttons[1].emit_clicked();
+    assert_eq!(
+        calendar.value(),
+        DateTime::new(2026, 2, 28, 9, 30),
+        "次の月へ移り、日はその月に収まる"
+    );
+    assert_eq!(*log.borrow(), vec![DateTime::new(2026, 2, 28, 9, 30)]);
+    // 年の矢印と前の月の矢印も同じ。
+    buttons[3].emit_clicked();
+    assert_eq!(calendar.value(), DateTime::new(2027, 2, 28, 9, 30));
+    buttons[0].emit_clicked();
+    assert_eq!(calendar.value(), DateTime::new(2027, 1, 28, 9, 30));
+    assert_eq!(log.borrow().len(), 3);
+
+    // 範囲の外へ送ったときは端へ戻す。
+    calendar.set_range(None, Some(DateTime::date(2027, 1, 31)));
+    buttons[1].emit_clicked();
+    assert_eq!(calendar.value(), DateTime::new(2027, 1, 31, 9, 30));
+    assert_eq!(
+        calendar_shown_day(&calendar.native_calendar()),
+        (2027, 1, 31)
+    );
     Ok(())
 }
 

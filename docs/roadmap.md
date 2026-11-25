@@ -130,7 +130,7 @@ Heavier items, `NativeHost`, which the drawing crates, a WebView and the
 extension widgets build on, passing types made outside naui to containers,
 shortcuts that are not in a menu, and the always-visible calendar.
 
-- [ ] *(drawing)* **`NativeHost`.** A widget that places a native view created by
+- [x] *(drawing)* **`NativeHost`.** A widget that places a native view created by
       another crate: an `NSView` on macOS, a `GtkWidget` on Linux, a XAML element
       on Windows, a DOM element on the Web. The view is platform-specific, so how
       the crate receives the native object (and whether `raw-window-handle` fits,
@@ -140,6 +140,15 @@ shortcuts that are not in a menu, and the always-visible calendar.
       wgpu's GL backend, or rendering offscreen and handing frames over as
       textures (`GdkDmabufTexture` from GTK 4.14). Windows needs `SwapChainPanel`
       in the projection, and the Web a `<canvas>` for WebGPU or WebGL.
+      Done as `NativeHost` (`ui.native_host()`): the view goes in through the
+      backend with the platform's own type (`NSView`, any `GtkWidget`, a
+      `UIElement`, an `Element`), fills naui's own view around it, and takes the
+      content's size where it has one. `on_resize` reports the size with the
+      display scale (`HostSize`) and `on_attach` joining and leaving a window.
+      `raw-window-handle` is not used, the GPU surface on Linux is any widget GTK
+      draws (`GtkGLArea` or a `GtkPicture` of frames, left to `naui-wgpu`), and
+      a `SwapChainPanel` is passed as a `UIElement`, so the projection is
+      unchanged.
 - [x] **Passing a type made outside naui to containers.** `Stack::append` and
       the like take `&dyn Widget`, which is sealed, so a crate's own type (a
       composition of naui widgets, or one wrapping a `NativeHost`) has to hand
@@ -178,9 +187,12 @@ shortcuts that are not in a menu, and the always-visible calendar.
       widget's `on_key_down`, the widgets' shortcuts from the inside out, the
       window's `on_key_down` and shortcuts, then the menu bar; `Window::send_key`
       delivers a key through that order in tests.
-- [ ] **Make dragging `Table` column widths work on Windows and Linux too.** Linux
+- [x] **Make dragging `Table` column widths work on Windows and Linux too.** Linux
       has the native feature in `GtkColumnView`, while Windows uses a custom table,
       so it is heavy.
+      Done as a heading-edge drag on macOS, Windows and Linux that follows
+      `naui_core::clamp_column_width` everywhere (macOS, which could not actually
+      be dragged before, is fixed too).
 - [x] **Placing widgets in `Tree` items.** Items hold only strings today, while
       `List` and `Table` can hold widgets.
       Done as `TreeRow` and `Tree::set_rows`, beside `TreeItem` as `ListRow` is
@@ -189,10 +201,14 @@ shortcuts that are not in a menu, and the always-visible calendar.
       choose the item nor expand it, and `selectable(false)` leaves the row undimmed
       with its controls working. Every row is built when passed; building only the
       rows on screen is left for later.
-- [ ] **Always-visible calendar widget.** WinUI's `CalendarView`, `GtkCalendar`
+- [x] **Always-visible calendar widget.** WinUI's `CalendarView`, `GtkCalendar`
       and `NSDatePicker` (calendar style) exist. The Web has no always-visible
       control, only the popup of `<input type="date">`, so it would be composed
       from buttons there (🟡), as `Toast` is where no DOM element exists.
+      Done as `Calendar`, which picks one day as a `DateTime` (like `DatePicker`
+      in `DatePickerMode::Date`) with `set_range` and `pick`; range and multiple
+      selection, the first day of the week and the locale are left to the
+      platforms, and the Web composes it from `<button>`s in a `<table>`.
 
 ## v0.21.0
 

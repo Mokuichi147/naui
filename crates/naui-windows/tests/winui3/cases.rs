@@ -19,10 +19,10 @@ use naui_windows::{run_for_test, MenuEntry, Ui, Widget};
 use crate::automation;
 use naui_winui3::Microsoft::UI::Windowing::TitleBarTheme;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Border, Button as XamlButton, Canvas as XamlCanvas, CheckBox as XamlCheckBox,
-    ComboBox as XamlComboBox, Grid, Image as XamlImage, InfoBar, ListView, ListViewItem,
-    MenuFlyoutItem, ProgressRing, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock,
-    TextBox, ToggleSwitch,
+    Border, Button as XamlButton, CalendarView, CalendarViewSelectionMode, Canvas as XamlCanvas,
+    CheckBox as XamlCheckBox, ComboBox as XamlComboBox, Grid, Image as XamlImage, InfoBar,
+    ListView, ListViewItem, MenuFlyoutItem, ProgressRing, ScrollViewer, Slider as XamlSlider,
+    StackPanel, TextBlock, TextBox, ToggleSwitch,
 };
 use naui_winui3::Microsoft::UI::Xaml::Documents::{Hyperlink, Inline, Run};
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::{BitmapImage, SvgImageSource};
@@ -78,6 +78,14 @@ const CASES: &[Case] = &[
     (
         "コンボボックスの選択がネイティブと往復する",
         combo_box_selection_round_trips,
+    ),
+    (
+        "カレンダーが単一選択の CalendarView になり、値が往復して時刻を保つ",
+        calendar_value_round_trips,
+    ),
+    (
+        "カレンダーの範囲が MinDate / MaxDate へ届き、外の日は端で止まる",
+        calendar_stays_inside_the_range,
     ),
     (
         "ラジオグループの選択が 1 つだけ点いて通知する",
@@ -819,6 +827,20 @@ const CASES: &[Case] = &[
     (
         "ツリーの行は親の無い子だけを置き、作り直しやモード切り替えで奪わない",
         crate::moved_child::tree_rows_take_only_free_children,
+    ),
+    // 並びに依存するケースがあるので、新しいケースは末尾に足す
+    // (シャードは連続した範囲で切っている)。
+    (
+        "表の見出しの端を本物のマウスでドラッグすると列の幅が変わり、残りの列が余りを分ける",
+        table_column_widths_follow_header_drags,
+    ),
+    (
+        "NativeHost が SwapChainPanel を置き、大きさ・倍率・窓への出入りを伝える",
+        native_host_places_a_swap_chain_panel,
+    ),
+    (
+        "NativeHost は親のある要素を断り、差し替えと破棄で外して放す",
+        native_host_lets_go_of_elements,
     ),
 ];
 
@@ -2403,6 +2425,191 @@ fn combo_box_selection_round_trips(ui: &Ui) -> Result<()> {
     combo.set_selected(2);
     assert_eq!(combo.selected(), Some(2));
     assert_eq!(seen.borrow().len(), 1, "set_selected では通知しないこと");
+    Ok(())
+}
+
+/// The days in a `CalendarView`'s `SelectedDates`, as (year, month, day) in the
+/// Gregorian calendar.
+fn calendar_selected_days(view: &CalendarView) -> Vec<(i32, i32, i32)> {
+    let dates = view.SelectedDates().expect("SelectedDates");
+    let calendar = windows::Globalization::Calendar::new().expect("Calendar");
+    calendar
+        .ChangeCalendarSystem(&windows::Globalization::CalendarIdentifiers::Gregorian().unwrap())
+        .unwrap();
+    (0..dates.Size().unwrap_or(0))
+        .filter_map(|i| dates.GetAt(i).ok())
+        .map(|date| {
+            calendar.SetDateTime(date).unwrap();
+            (
+                calendar.Year().unwrap(),
+                calendar.Month().unwrap(),
+                calendar.Day().unwrap(),
+            )
+        })
+        .collect()
+}
+
+fn calendar_value_round_trips(ui: &Ui) -> Result<()> {
+    use naui_core::DateTime;
+    let calendar = ui.calendar()?;
+    let view = calendar.native_calendar_view();
+    assert_eq!(
+        view.SelectionMode().unwrap(),
+        CalendarViewSelectionMode::Single,
+        "1 日だけ選ばせること"
+    );
+    assert_eq!(
+        view.CalendarIdentifier().unwrap().to_string(),
+        "GregorianCalendar",
+        "暦は西暦に固定すること"
+    );
+    // 週の始まりはユーザーのロケール (地域の設定) の LOCALE_IFIRSTDAYOFWEEK
+    // (月曜日 = 0 … 日曜日 = 6) に従うこと。
+    let mut first = [0u16; 2];
+    let written = unsafe {
+        windows::Win32::Globalization::GetLocaleInfoEx(
+            windows_core::PCWSTR::null(),
+            windows::Win32::Globalization::LOCALE_IFIRSTDAYOFWEEK
+                | windows::Win32::Globalization::LOCALE_RETURN_NUMBER,
+            Some(&mut first),
+        )
+    };
+    assert_ne!(written, 0, "週の始まりを読めること");
+    assert_eq!(
+        view.FirstDayOfWeek().unwrap(),
+        windows::Globalization::DayOfWeek((i32::from(first[0]) + 1) % 7),
+        "週の始まりがユーザーの設定に従うこと"
+    );
+    assert!(calendar.value().is_valid(), "初期値は現在日時");
+    assert_eq!(
+        calendar_selected_days(&view).len(),
+        1,
+        "はじめから 1 日選ばれていること"
+    );
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    calendar.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+    calendar.set_value(DateTime::new(2026, 11, 31, 9, 30));
+    assert_eq!(
+        calendar.value(),
+        DateTime::new(2026, 11, 30, 9, 30),
+        "丸めること"
+    );
+    assert_eq!(calendar_selected_days(&view), vec![(2026, 11, 30)]);
+    assert!(seen.borrow().is_empty(), "set_value は通知しないこと");
+
+    calendar.pick(DateTime::new(2027, 1, 5, 18, 0));
+    assert_eq!(
+        calendar.value(),
+        DateTime::new(2027, 1, 5, 9, 30),
+        "時刻を保つこと"
+    );
+    assert_eq!(calendar_selected_days(&view), vec![(2027, 1, 5)]);
+    calendar.pick(DateTime::date(2027, 1, 5));
+    assert_eq!(
+        seen.borrow().as_slice(),
+        [DateTime::new(2027, 1, 5, 9, 30)].as_slice(),
+        "選ばれている日なら通知しないこと"
+    );
+
+    calendar.set_enabled(false);
+    calendar.pick(DateTime::date(2027, 1, 9));
+    assert_eq!(calendar.value(), DateTime::new(2027, 1, 5, 9, 30));
+    assert_eq!(seen.borrow().len(), 1, "無効なら何もしないこと");
+    calendar.set_enabled(true);
+
+    // ネイティブ側の選択の変化。コードからの変更で SelectedDatesChanged が
+    // その場で出るときだけ確かめる (出ない環境では利用者の操作でしか届かない)。
+    let fired = Arc::new(AtomicUsize::new(0));
+    let token = view
+        .SelectedDatesChanged(&windows::Foundation::TypedEventHandler::new({
+            let fired = fired.clone();
+            move |_, _| {
+                fired.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        }))
+        .unwrap();
+    view.SelectedDates().unwrap().Clear().unwrap();
+    let _ = view.RemoveSelectedDatesChanged(token);
+    if fired.load(Ordering::SeqCst) > 0 {
+        // 選んでいた日を外すと、通知せずに選び直す。
+        assert_eq!(
+            calendar_selected_days(&view),
+            vec![(2027, 1, 5)],
+            "選び直すこと"
+        );
+        assert_eq!(seen.borrow().len(), 1);
+    } else {
+        eprintln!("SKIP: コードからの SelectedDates の変更では SelectedDatesChanged が出なかった");
+        calendar.set_value(calendar.value());
+    }
+    Ok(())
+}
+
+fn calendar_stays_inside_the_range(ui: &Ui) -> Result<()> {
+    use naui_core::DateTime;
+    let calendar = ui.calendar()?;
+    let view = calendar.native_calendar_view();
+    let widest = (view.MinDate().unwrap(), view.MaxDate().unwrap());
+    calendar.set_value(DateTime::new(2026, 6, 15, 9, 30));
+    calendar.set_range(
+        Some(DateTime::new(2026, 6, 10, 12, 0)),
+        Some(DateTime::new(2026, 6, 20, 12, 0)),
+    );
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 15, 9, 30));
+    let ranged = (view.MinDate().unwrap(), view.MaxDate().unwrap());
+    assert!(
+        ranged.0.UniversalTime > widest.0.UniversalTime
+            && ranged.1.UniversalTime < widest.1.UniversalTime,
+        "MinDate / MaxDate が狭まること: 範囲なし {} .. {}、範囲あり {} .. {}",
+        widest.0.UniversalTime,
+        widest.1.UniversalTime,
+        ranged.0.UniversalTime,
+        ranged.1.UniversalTime
+    );
+    assert!(
+        ranged.1.UniversalTime - ranged.0.UniversalTime > 10 * 24 * 3_600 * 10_000_000,
+        "端の日を丸ごと含むこと"
+    );
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    calendar.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+    calendar.pick(DateTime::date(2026, 6, 20));
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 20, 9, 30));
+    calendar.pick(DateTime::date(2026, 1, 1));
+    assert_eq!(
+        calendar.value(),
+        DateTime::new(2026, 6, 10, 9, 30),
+        "下限で止まること"
+    );
+    assert_eq!(calendar_selected_days(&view), vec![(2026, 6, 10)]);
+    assert_eq!(seen.borrow().len(), 2);
+
+    calendar.set_value(DateTime::date(2030, 1, 1));
+    assert_eq!(
+        calendar.value(),
+        DateTime::date(2026, 6, 20),
+        "通知せずに端へ寄ること"
+    );
+    assert_eq!(seen.borrow().len(), 2);
+
+    // 範囲を外すと、既定の前後 100 年より広く戻ること。
+    calendar.set_range(None, None);
+    assert_eq!(
+        (view.MinDate().unwrap(), view.MaxDate().unwrap()),
+        widest,
+        "範囲なしの広さへ戻ること"
+    );
+    calendar.pick(DateTime::date(1900, 1, 1));
+    assert_eq!(calendar.value(), DateTime::date(1900, 1, 1));
+    assert_eq!(calendar_selected_days(&view), vec![(1900, 1, 1)]);
     Ok(())
 }
 
@@ -14681,5 +14888,435 @@ fn check_url_reads_without_opening(ui: &Ui) -> Result<()> {
     // 開くなら既定のブラウザが立ち上がる。読むだけなので何も出ない。
     assert!(ui.check_url("https://example.com/naui").is_ok());
     assert!(ui.check_url("mailto:someone@example.com").is_ok());
+    Ok(())
+}
+
+/// Dragging the trailing edge of a heading with the real mouse resizes that column, the
+/// `Star` columns share what is left, and the columns never get wider in total than the
+/// table (`naui_core::clamp_column_width`, as on macOS and Linux). Pressing the edge does
+/// not sort, even over a sortable heading.
+///
+/// As with the other real-input cases, it passes without checking where the window
+/// cannot be brought to the front.
+fn table_column_widths_follow_header_drags(ui: &Ui) -> Result<()> {
+    use windows::Foundation::Point as XamlPoint;
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
+    use windows::Win32::UI::HiDpi::GetDpiForWindow;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetCursorPos, GetWindowThreadProcessId, SetCursorPos, WindowFromPoint,
+    };
+
+    let window = ui.window("列の幅のドラッグ", 520.0, 300.0)?;
+    let table = ui.table()?;
+    let columns = [
+        naui_core::TableColumn::new("都市").sortable(true),
+        naui_core::TableColumn::new("人口")
+            .width(120.0)
+            .align(Align::End),
+        naui_core::TableColumn::new("面積"),
+    ];
+    table.set_columns(&columns);
+    table.set_rows(&naui_core::TableRow::list([
+        ["東京", "13,960,000", "2,194"],
+        ["大阪", "8,838,000", "1,905"],
+    ]));
+    table.set_sizing(Sizing::fill());
+    let sorts: Rc<RefCell<Vec<usize>>> = Rc::default();
+    table.on_sort({
+        let sorts = sorts.clone();
+        move |column, _| sorts.borrow_mut().push(column)
+    });
+    window.set_child(&table);
+
+    let header = table
+        .native_element()
+        .cast::<Grid>()
+        .and_then(|root| root.Children())
+        .and_then(|children| children.GetAt(0))
+        .and_then(|child| child.cast::<Grid>())
+        .expect("見出しの Grid");
+    let widths_of = |grid: &Grid| -> Vec<f64> {
+        let definitions = grid.ColumnDefinitions().expect("列の定義");
+        (0..definitions.Size().unwrap_or(0))
+            .map(|i| {
+                definitions
+                    .GetAt(i)
+                    .and_then(|definition| definition.ActualWidth())
+                    .unwrap_or(0.0)
+            })
+            .collect()
+    };
+    let widths = || {
+        pump_until(Duration::from_millis(100), || false);
+        widths_of(&header)
+    };
+    let row_widths = || {
+        let item = table
+            .native_list_view()
+            .Items()
+            .and_then(|items| items.GetAt(0))
+            .and_then(|item| item.cast::<ListViewItem>())
+            .expect("1 行目");
+        let grid = item
+            .Content()
+            .and_then(|content| content.cast::<Grid>())
+            .expect("行の Grid");
+        widths_of(&grid)
+    };
+    let room = || {
+        let padding = header.Padding().map(|p| p.Left + p.Right).unwrap_or(0.0);
+        header.ActualWidth().unwrap_or(0.0) - padding
+    };
+    let fills = |label: &str, widths: &[f64]| {
+        let total: f64 = widths.iter().sum::<f64>() + 12.0 * (widths.len() - 1) as f64;
+        assert!(
+            (total - room()).abs() < 2.0,
+            "{label}: 幅いっぱいを使い、はみ出さない ({widths:?} / {})",
+            room()
+        );
+    };
+
+    let mut pointer = POINT::default();
+    // SAFETY: `pointer` はこの関数の中で生きている。
+    let _ = unsafe { GetCursorPos(&mut pointer) };
+    let scenario = || -> Option<()> {
+        window.show();
+        pump_until(Duration::from_secs(5), || {
+            header.ActualWidth().unwrap_or(0.0) > 0.0 && table.row_height() > 0.0
+        });
+        if header.ActualWidth().unwrap_or(0.0) <= 0.0 || table.row_height() <= 0.0 {
+            println!("     (見出しに実寸が付かない環境なので、確かめずに通す)");
+            return None;
+        }
+        let hwnd = bring_to_front(&window)?;
+        pump_until(Duration::from_millis(500), || false);
+        // 本物のマウスが届く環境かを、行のクリックで先に確かめる。届かなければ
+        // 確かめずに通し、届いたのに幅が変わらなければ落とす。
+        first_click_on_list_row(hwnd, &table, 0)?;
+
+        // 列 `index` の末尾の端 (見出しと見出しの間) の画面上の位置。
+        let edge = |index: usize| -> Option<POINT> {
+            let widths = widths_of(&header);
+            let left = header.Padding().map(|p| p.Left).unwrap_or(0.0);
+            let x = left + widths[..=index].iter().sum::<f64>() + 12.0 * index as f64 + 4.0;
+            let y = header.ActualHeight().unwrap_or(0.0) / 2.0;
+            let at = header
+                .TransformToVisual(None)
+                .and_then(|to| {
+                    to.TransformPoint(XamlPoint {
+                        X: x as f32,
+                        Y: y as f32,
+                    })
+                })
+                .expect("見出しの位置");
+            // SAFETY: HWND は window が閉じるまで有効で、UI スレッドから読んでいる。
+            let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
+            let mut point = POINT {
+                x: (at.X * scale) as i32,
+                y: (at.Y * scale) as i32,
+            };
+            // SAFETY: `point` はこの関数の中で生きている。
+            let _ = unsafe { ClientToScreen(hwnd, &mut point) };
+            let mut owner = 0;
+            // SAFETY: `owner` はこの関数の中で生きている。
+            unsafe { GetWindowThreadProcessId(WindowFromPoint(point), Some(&mut owner)) };
+            if !foreground_is_ours() || owner != std::process::id() {
+                println!("     (押す位置がテストのウィンドウの上に無いので、押さずに通す)");
+                return None;
+            }
+            Some(point)
+        };
+        // 本物のマウスで、列 `index` の端を `dx` (画素) 動かす。
+        let drag = |index: usize, dx: i32| -> Option<()> {
+            let from = edge(index)?;
+            // SAFETY: 引数は値だけ。
+            let _ = unsafe { SetCursorPos(from.x, from.y) };
+            pump_until(Duration::from_millis(100), || false);
+            send_input(mouse_move_to(from));
+            send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
+            const STEPS: i32 = 6;
+            for step in 1..=STEPS {
+                send_input(mouse_move_to(POINT {
+                    x: from.x + dx * step / STEPS,
+                    y: from.y,
+                }));
+            }
+            send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
+            pump_until(Duration::from_millis(200), || false);
+            Some(())
+        };
+        // SAFETY: HWND は window が閉じるまで有効。
+        let scale = f64::from(unsafe { GetDpiForWindow(hwnd) }) / 96.0;
+        let px = |logical: f64| (logical * scale).round() as i32;
+
+        let before = widths();
+        assert_eq!(before[1], 120.0, "指定した幅: {before:?}");
+        fills("はじめ", &before);
+
+        // 幅の無い列を広げると、その列だけが広がり、もう 1 つの幅の無い列が詰める。
+        drag(0, px(60.0))?;
+        let after = widths();
+        assert!(
+            (after[0] - (before[0] + 60.0)).abs() < 3.0,
+            "掴んだ列が広がる: {before:?} → {after:?}"
+        );
+        assert_eq!(after[1], 120.0, "幅のある列は動かない: {after:?}");
+        fills("広げたあと", &after);
+        // 幅の無い列は行の枠の分だけ見出しとずれうるので、`Pixel` の 2 列で比べる。
+        assert_eq!(row_widths()[..2], after[..2], "行も見出しと同じ幅になる");
+        assert!(
+            sorts.borrow().is_empty(),
+            "端を押しても並べ替えない: {:?}",
+            sorts.borrow()
+        );
+
+        // 幅のある列も掴める。掴んだ列はそのまま、幅の無い列が詰める。
+        drag(1, px(30.0)).expect("2 回目のドラッグ");
+        let next = widths();
+        assert!(
+            (next[1] - 150.0).abs() < 3.0,
+            "幅のある列も広がる: {next:?}"
+        );
+        assert_eq!(
+            next[0], after[0],
+            "掴んだあとの列は余りを受け取らない: {next:?}"
+        );
+        fills("幅のある列を広げたあと", &next);
+
+        // 表より広くはならない。最後の幅の無い列は最小幅まで詰める。
+        drag(0, px(1000.0).min(px(room()))).expect("3 回目のドラッグ");
+        let wide = widths();
+        assert!(
+            (wide[2] - naui_core::MIN_COLUMN_WIDTH).abs() < 1.0,
+            "残りの列は最小幅まで: {wide:?}"
+        );
+        fills("広げすぎたあと", &wide);
+
+        // 狭める側も最小幅で止まる。
+        drag(0, -px(wide[0])).expect("4 回目のドラッグ");
+        let narrow = widths();
+        assert!(
+            (narrow[0] - naui_core::MIN_COLUMN_WIDTH).abs() < 1.0,
+            "最小幅より狭くならない: {narrow:?}"
+        );
+        fills("狭めたあと", &narrow);
+        assert!(sorts.borrow().is_empty(), "並べ替えは起きない");
+
+        // 幅の無い列が 1 つも残らなくても、表からはみ出さない。最後の幅の無い列は
+        // すでに残りを全部持っているので、広げようとしても上限のいまの幅で止まり、
+        // その幅の `Pixel` の列になる。
+        drag(2, px(room())).expect("5 回目のドラッグ");
+        let all = widths();
+        assert!(
+            (all[2] - narrow[2]).abs() < 1.0,
+            "最後の列は表の幅で止まる: {narrow:?} → {all:?}"
+        );
+        let last = header
+            .ColumnDefinitions()
+            .and_then(|definitions| definitions.GetAt(2))
+            .and_then(|definition| definition.Width())
+            .expect("最後の列の定義");
+        assert_eq!(
+            last.GridUnitType,
+            GridUnitType::Pixel,
+            "掴んだ最後の列は幅の決まった列になる: {last:?}"
+        );
+        fills("全部の列を掴んだあと", &all);
+        assert_eq!(row_widths(), all, "全部の列を掴むと、行も見出しと同じ幅");
+        // 全部の列が決まった幅なので、ほかの列を広げようとしても表からはみ出さない。
+        drag(0, px(100.0)).expect("6 回目のドラッグ");
+        let still = widths();
+        assert_eq!(still, all, "広げる余地が無ければ動かない");
+        fills("余地の無い列を広げようとしたあと", &still);
+
+        // 列を渡し直すと、ドラッグした幅は捨てて渡した指定に戻る。
+        table.set_columns(&columns);
+        let reset = widths();
+        assert_eq!(reset[1], 120.0, "渡した幅に戻る: {reset:?}");
+        assert!((reset[0] - reset[2]).abs() < 1.0, "等分に戻る: {reset:?}");
+        Some(())
+    };
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        let _ = scenario();
+    }));
+    // SAFETY: 引数は値だけ。
+    let _ = unsafe { SetCursorPos(pointer.x, pointer.y) };
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+// ------------------------------------------------------------ NativeHost
+
+/// How long to wait for XAML to lay out or load a host.
+const HOST_TIMEOUT: Duration = Duration::from_secs(3);
+
+/// A `SwapChainPanel` made by XAML itself. naui's projection does not name the type,
+/// as a drawing crate's projection would, so it goes through `UIElement`.
+fn swap_chain_panel() -> UIElement {
+    use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+    XamlReader::Load(&HSTRING::from(
+        r#"<SwapChainPanel xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"/>"#,
+    ))
+    .and_then(|object| object.cast::<UIElement>())
+    .expect("SwapChainPanel を作れること")
+}
+
+fn native_host_places_a_swap_chain_panel(ui: &Ui) -> Result<()> {
+    let host = ui.native_host()?;
+    host.set_sizing(Sizing::fixed(120.0, 80.0));
+    let panel = swap_chain_panel();
+    assert!(host.set_hosted_element(Some(&panel)));
+    assert!(host
+        .hosted_element()
+        .is_some_and(|element| element == panel));
+    let children = native::<Grid>(&host).Children().expect("Children");
+    assert_eq!(children.Size().expect("数"), 1);
+    assert!(
+        children.GetAt(0).expect("子") == panel,
+        "受け皿の子になること"
+    );
+
+    let sizes = Rc::new(RefCell::new(Vec::new()));
+    host.on_resize({
+        let sizes = sizes.clone();
+        move |size| sizes.borrow_mut().push(size)
+    });
+    let attached = Rc::new(RefCell::new(Vec::new()));
+    host.on_attach({
+        let attached = attached.clone();
+        move |value| attached.borrow_mut().push(value)
+    });
+    assert!(!host.is_attached());
+    assert_eq!(host.scale_factor(), 1.0, "窓に入る前は 1");
+
+    let window = ui.window("NativeHost", 240.0, 200.0)?;
+    let outcome = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
+        let stack = ui.stack(Orientation::Vertical)?;
+        stack.append(&host);
+        window.set_child(&stack);
+        window.show();
+        pump_until(HOST_TIMEOUT, || !sizes.borrow().is_empty());
+        if sizes.borrow().is_empty() {
+            println!("     (受け皿に実寸が付かない環境なので、大きさは確かめない)");
+        } else {
+            assert_eq!(host.size(), (120.0, 80.0), "指定した大きさになること");
+            let element: FrameworkElement = panel.cast().expect("FrameworkElement");
+            assert_eq!(
+                (
+                    element.ActualWidth().expect("幅"),
+                    element.ActualHeight().expect("高さ")
+                ),
+                (120.0, 80.0),
+                "置いた要素が受け皿いっぱいに広がること"
+            );
+            assert_eq!(
+                sizes.borrow().last().copied(),
+                Some(naui_core::HostSize::new(120.0, 80.0, host.scale_factor())),
+                "大きさと倍率を伝える: {:?}",
+                sizes.borrow()
+            );
+            assert_eq!(
+                sizes.borrow().first().copied(),
+                Some(naui_core::HostSize::new(120.0, 80.0, host.scale_factor())),
+                "レイアウト前の 0 x 0 は伝えない"
+            );
+        }
+
+        pump_until(HOST_TIMEOUT, || !attached.borrow().is_empty());
+        if attached.borrow().is_empty() {
+            println!("     (Loaded が届かない環境なので、窓への出入りは確かめない)");
+            return Ok(());
+        }
+        assert_eq!(*attached.borrow(), vec![true], "窓に載ったら伝える");
+        assert!(host.is_attached());
+        window.set_child(&ui.label("空")?);
+        pump_until(HOST_TIMEOUT, || attached.borrow().len() == 2);
+        assert_eq!(
+            *attached.borrow(),
+            vec![true, false],
+            "窓から外れたら伝える"
+        );
+        assert!(!host.is_attached());
+
+        // 窓を閉じると XAML が中身を下ろすので、外れたと伝える (ほかの環境とは違う)。
+        let closing = ui.window("NativeHost を閉じる", 240.0, 200.0)?;
+        closing.set_child(&stack);
+        closing.show();
+        pump_until(HOST_TIMEOUT, || attached.borrow().len() == 3);
+        closing.close();
+        pump_until(HOST_TIMEOUT, || attached.borrow().len() == 4);
+        assert_eq!(
+            *attached.borrow(),
+            vec![true, false, true, false],
+            "窓を閉じたら外れたと伝える"
+        );
+        assert!(!host.is_attached());
+        Ok(())
+    }));
+    window.close();
+    match outcome {
+        Ok(result) => result,
+        Err(panic) => std::panic::resume_unwind(panic),
+    }
+}
+
+fn native_host_lets_go_of_elements(ui: &Ui) -> Result<()> {
+    let host = ui.native_host()?;
+    let children = native::<Grid>(&host).Children().expect("Children");
+    let first: UIElement = TextBlock::new()
+        .expect("TextBlock")
+        .cast()
+        .expect("UIElement");
+    assert!(host.set_hosted_element(Some(&first)));
+
+    // ほかの親を持つ要素は XAML が断るので、前のものを残して false を返す。
+    let elsewhere = StackPanel::new().expect("StackPanel");
+    let owned: UIElement = TextBlock::new()
+        .expect("TextBlock")
+        .cast()
+        .expect("UIElement");
+    elsewhere
+        .Children()
+        .expect("Children")
+        .Append(&owned)
+        .expect("追加");
+    assert!(!host.set_hosted_element(Some(&owned)), "親のある要素は断る");
+    assert_eq!(children.Size().expect("数"), 1);
+    assert!(
+        children.GetAt(0).expect("子") == first,
+        "断ったときは前のものを残す"
+    );
+    assert!(host
+        .hosted_element()
+        .is_some_and(|element| element == first));
+
+    let second = swap_chain_panel();
+    assert!(host.set_hosted_element(Some(&second)));
+    assert_eq!(children.Size().expect("数"), 1);
+    assert!(children.GetAt(0).expect("子") == second);
+    // 外した要素は親を持たないので、ほかへ入れられる。
+    StackPanel::new()
+        .expect("StackPanel")
+        .Children()
+        .expect("Children")
+        .Append(&first)
+        .expect("差し替えた前の要素は受け皿から外れていること");
+
+    // 同じものを渡し直しても何も変わらない。
+    assert!(host.set_hosted_element(Some(&second)));
+    assert_eq!(children.Size().expect("数"), 1);
+
+    assert!(host.set_hosted_element(None));
+    assert_eq!(children.Size().expect("数"), 0, "空にすると外す");
+    assert!(host.hosted_element().is_none());
+
+    assert!(host.set_hosted_element(Some(&second)));
+    drop(host);
+    assert_eq!(children.Size().expect("数"), 0, "受け皿を落とすと外す");
     Ok(())
 }

@@ -12,8 +12,16 @@
 //! | Selection | `ListView`'s standard template (light fill + indicator at the left edge) |
 //!
 //! Headings and rows align their widths by **being given the same column
-//! definitions**. Column widths cannot be changed by dragging (unlike `NSTableView`,
-//! WinUI has no standard control for it).
+//! definitions**.
+//!
+//! WinUI has no standard control for resizing columns (the Community Toolkit's
+//! `DataGrid` and `GridSplitter` are not in the Windows App SDK), so each heading gets a
+//! transparent grab area over its trailing edge, the way `SplitView`'s divider is built.
+//! Dragging it turns the column into a `Pixel` column of that width in the headings and
+//! the rows built, as if it had been passed with [`TableColumn::width`]; the `Star`
+//! columns share the rest, within `naui_core::clamp_column_width` as on the other
+//! platforms. The cursor does not change over the edge (`ProtectedCursor` is not in the
+//! projection, as with `Sidebar`'s grip).
 //!
 //! Colors and rounded corners are all taken with `{ThemeResource ...}`, so they
 //! follow light / dark switching as is. Where theme resources cannot be obtained, it
@@ -32,9 +40,9 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{
-    keeps_row_window, merge_hidden_selection, row_window, Align, Modifiers, Result, RowSource,
-    RowWindow, SelectionGesture, SelectionMode, SortOrder, TableColumn, TableRow,
-    ROW_WINDOW_OVERSCAN,
+    clamp_column_width, keeps_row_window, merge_hidden_selection, row_window, Align, Modifiers,
+    Result, RowSource, RowWindow, SelectionGesture, SelectionMode, SortOrder, TableColumn,
+    TableRow, ROW_WINDOW_OVERSCAN,
 };
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
     Button, ColumnDefinition, Control, Grid as XamlGrid, ListView, ListViewItem,
@@ -78,6 +86,18 @@ const ROW_PADDING: Thickness = Thickness {
 
 /// The minimum row height. The same as `List` rows.
 const ROW_MIN_HEIGHT: f64 = 36.0;
+
+/// The spacing between columns, in headings and rows alike.
+const COLUMN_SPACING: f64 = 12.0;
+
+/// The grab area over a heading's trailing edge. It reaches 5 px into the heading and
+/// across the gap to the next one (`Width` = 5 + [`COLUMN_SPACING`], with the gap's
+/// part pushed out by the negative right margin). Unlike `null`, `Transparent` keeps
+/// hit-testing. `Right` is the trailing side, so it follows `FlowDirection` as is.
+const COLUMN_GRIP_XAML: &str = r#"<Grid
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    Background="Transparent" Width="17" Margin="0,0,-12,0"
+    HorizontalAlignment="Right" VerticalAlignment="Stretch"/>"#;
 
 /// The headings' `Padding` is aligned so that it has the same horizontal position as
 /// the rows' `Padding` ([`ROW_PADDING`]). Putting `Padding` on the body would shift
@@ -316,7 +336,7 @@ fn text_alignment(align: Align) -> TextAlignment {
 ///
 /// Giving the same ones to both headings and rows aligns the widths.
 fn apply_columns(grid: &XamlGrid, columns: &[TableColumn]) -> Result<()> {
-    grid.SetColumnSpacing(12.0)
+    grid.SetColumnSpacing(COLUMN_SPACING)
         .map_err(|e| to_error("set the column spacing", e))?;
     let definitions = grid
         .ColumnDefinitions()
@@ -327,25 +347,39 @@ fn apply_columns(grid: &XamlGrid, columns: &[TableColumn]) -> Result<()> {
     for column in columns {
         let definition =
             ColumnDefinition::new().map_err(|e| to_error("create the column definition", e))?;
-        // 幅の指定が無い列だけで、余りを分け合う。
-        let width = match column.width {
-            Some(width) => GridLength {
-                Value: width,
-                GridUnitType: GridUnitType::Pixel,
-            },
-            None => GridLength {
-                Value: 1.0,
-                GridUnitType: GridUnitType::Star,
-            },
-        };
         definition
-            .SetWidth(width)
+            .SetWidth(column_length(column.width))
             .map_err(|e| to_error("set the column width", e))?;
         definitions
             .Append(&definition)
             .map_err(|e| to_error("add the column definition", e))?;
     }
     Ok(())
+}
+
+/// The `GridLength` of a column: its width as `Pixel`, or a share of the rest.
+fn column_length(width: Option<f64>) -> GridLength {
+    // 幅の指定が無い列だけで、余りを分け合う。
+    match width {
+        Some(width) => GridLength {
+            Value: width,
+            GridUnitType: GridUnitType::Pixel,
+        },
+        None => GridLength {
+            Value: 1.0,
+            GridUnitType: GridUnitType::Star,
+        },
+    }
+}
+
+/// Rewrites one column's width in a `Grid` that has the table's column definitions.
+fn set_column_width(grid: &XamlGrid, index: usize, width: f64) {
+    if let Ok(definition) = grid
+        .ColumnDefinitions()
+        .and_then(|definitions| definitions.GetAt(index as u32))
+    {
+        let _ = definition.SetWidth(column_length(Some(width)));
+    }
 }
 
 /// Places one cell's `TextBlock` at the column's position.
@@ -697,6 +731,9 @@ struct TableInner {
     header_buttons: RefCell<Vec<Option<Button>>>,
     /// The look applied to heading buttons. `None` only when it could not be read.
     header_style: Option<Style>,
+    /// The column whose heading edge is being dragged, with its width and the pointer's
+    /// position in the headings when the drag started.
+    column_drag: Cell<Option<(usize, f64, f64)>>,
     /// Stops notifications only while the selection is being changed from code, since
     /// rewriting `IsSelected` also fires `SelectionChanged`.
     silent: Rc<Cell<bool>>,
@@ -800,6 +837,7 @@ impl Table {
             sort_handler: SortHandler::new(),
             header_buttons: RefCell::new(Vec::new()),
             header_style: header_style(),
+            column_drag: Cell::new(None),
             silent: Rc::new(Cell::new(false)),
             hovered,
         }));
@@ -889,6 +927,9 @@ impl Table {
     /// Rebuilds the columns. Rows and selection stay; only the cells are rearranged.
     ///
     /// The sort setting also stays if that column can still be sorted.
+    ///
+    /// Widths the user dragged a heading edge to are dropped, and each column starts
+    /// again from [`TableColumn::width`].
     pub fn set_columns(&self, columns: &[TableColumn]) {
         // 行を組み直すと `IsSelected` が落ちるので、選択は覚えて書き戻す。
         let picked = self.selection();
@@ -1231,9 +1272,187 @@ impl Table {
             buttons.push(Some(button));
         }
         *self.0.header_buttons.borrow_mut() = buttons;
+        // 端を掴む場所は見出しより後に足して、見出しのボタンより上に置く。
+        for index in 0..columns.len() {
+            let grip = self.column_grip(index)?;
+            children
+                .Append(&grip)
+                .map_err(|e| to_error("add the column grip", e))?;
+        }
         drop(columns);
         self.apply_sort();
         Ok(())
+    }
+
+    /// Creates the grab area over column `index`'s trailing edge
+    /// ([`COLUMN_GRIP_XAML`]) and connects the drag.
+    ///
+    /// The press is marked handled, so it does not reach the heading button under it.
+    /// The subscriptions hold the `Table` weakly, as the heading buttons do.
+    fn column_grip(&self, index: usize) -> Result<UIElement> {
+        let grip = XamlReader::Load(&HSTRING::from(COLUMN_GRIP_XAML))
+            .and_then(|element| element.cast::<XamlGrid>())
+            .map_err(|e| to_error("create the column grip", e))?;
+        let framework = grip
+            .cast::<FrameworkElement>()
+            .map_err(|e| to_error("convert the column grip", e))?;
+        XamlGrid::SetColumn(&framework, index as i32)
+            .map_err(|e| to_error("set the column grip's column", e))?;
+
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let pressed = PointerEventHandler::new(move |sender, args| {
+            let Some(args) = args.as_ref() else {
+                return Ok(());
+            };
+            state.with_mut(|weak| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let table = Table(inner);
+                let Some(x) = table.pointer_x(args) else {
+                    return;
+                };
+                if let (Some(sender), Ok(pointer)) = (sender.as_ref(), args.Pointer()) {
+                    if let Ok(element) = sender.cast::<UIElement>() {
+                        let _ = element.CapturePointer(&pointer);
+                    }
+                }
+                let width = table.column_actual_width(index);
+                table.0.column_drag.set(Some((index, width, x)));
+                let _ = args.SetHandled(true);
+            });
+            Ok(())
+        });
+        grip.PointerPressed(&pressed)
+            .map_err(|e| to_error("subscribe to the column grip", e))?;
+
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let moved = PointerEventHandler::new(move |_, args| {
+            let Some(args) = args.as_ref() else {
+                return Ok(());
+            };
+            state.with_mut(|weak| {
+                let Some(inner) = weak.upgrade() else {
+                    return;
+                };
+                let table = Table(inner);
+                let Some((column, start, from)) = table.0.column_drag.get() else {
+                    return;
+                };
+                // 右から左の並びでは、見出しの座標そのものが左右反転しているので、
+                // 末尾の端へ向かう動きはそのまま正の向きになる。
+                if let Some(x) = table.pointer_x(args) {
+                    table.resize_column(column, start + x - from);
+                    let _ = args.SetHandled(true);
+                }
+            });
+            Ok(())
+        });
+        grip.PointerMoved(&moved)
+            .map_err(|e| to_error("subscribe to the column grip", e))?;
+
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let released = PointerEventHandler::new(move |sender, args| {
+            if let (Some(sender), Some(args)) = (sender.as_ref(), args.as_ref()) {
+                if let (Ok(element), Ok(pointer)) = (sender.cast::<UIElement>(), args.Pointer()) {
+                    let _ = element.ReleasePointerCapture(&pointer);
+                }
+            }
+            state.with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.column_drag.set(None);
+                }
+            });
+            Ok(())
+        });
+        grip.PointerReleased(&released)
+            .map_err(|e| to_error("subscribe to the column grip", e))?;
+
+        let state = UiThreadCell::new(Rc::downgrade(&self.0));
+        let lost = PointerEventHandler::new(move |_, _| {
+            state.with_mut(|weak| {
+                if let Some(inner) = weak.upgrade() {
+                    inner.column_drag.set(None);
+                }
+            });
+            Ok(())
+        });
+        grip.PointerCaptureLost(&lost)
+            .map_err(|e| to_error("subscribe to the column grip", e))?;
+
+        grip.cast::<UIElement>()
+            .map_err(|e| to_error("convert the column grip", e))
+    }
+
+    /// The pointer's horizontal position in the headings' coordinates.
+    fn pointer_x(
+        &self,
+        args: &naui_winui3::Microsoft::UI::Xaml::Input::PointerRoutedEventArgs,
+    ) -> Option<f64> {
+        let header = self.0.header.cast::<UIElement>().ok()?;
+        let point = args.GetCurrentPoint(&header).ok()?.Position().ok()?;
+        Some(f64::from(point.X))
+    }
+
+    /// The width column `index` has in the headings now.
+    fn column_actual_width(&self, index: usize) -> f64 {
+        self.0
+            .header
+            .ColumnDefinitions()
+            .and_then(|definitions| definitions.GetAt(index as u32))
+            .and_then(|definition| definition.ActualWidth())
+            .unwrap_or(0.0)
+    }
+
+    /// Gives column `index` the width `width`, as the user's drag of its heading edge
+    /// does, and returns the width it got.
+    ///
+    /// The width is kept until [`Table::set_columns`], as if it had been passed with
+    /// [`TableColumn::width`]; the headings and the rows already built get it on the
+    /// spot, without rebuilding the rows.
+    pub(crate) fn resize_column(&self, index: usize, width: f64) -> f64 {
+        let count = self.0.columns.borrow().len();
+        if index >= count {
+            return width;
+        }
+        let header = &self.0.header;
+        let inner = |grid: &XamlGrid| {
+            let padding = grid
+                .Padding()
+                .map(|padding| padding.Left + padding.Right)
+                .unwrap_or(0.0);
+            grid.ActualWidth().unwrap_or(0.0) - padding
+        };
+        // 行の `Grid` が見出しより狭ければ (行の余白の当て方しだい)、狭いほうに
+        // 収める。幅の無い列が残らないとき、行の列が切れないように。
+        let row = self
+            .0
+            .row_items
+            .borrow()
+            .first()
+            .and_then(|item| item.Content().ok())
+            .and_then(|content| content.cast::<XamlGrid>().ok())
+            .map(|grid| inner(&grid))
+            .filter(|&width| width > 0.0);
+        let room = match row {
+            Some(row) => row.min(inner(header)),
+            None => inner(header),
+        };
+        let spacing = COLUMN_SPACING * count.saturating_sub(1) as f64;
+        let available = room - spacing;
+        let width = clamp_column_width(&self.0.columns.borrow(), index, width, available).round();
+        self.0.columns.borrow_mut()[index].width = Some(width);
+        set_column_width(header, index, width);
+        for item in self.0.row_items.borrow().iter() {
+            if let Some(grid) = item
+                .Content()
+                .ok()
+                .and_then(|content| content.cast::<XamlGrid>().ok())
+            {
+                set_column_width(&grid, index, width);
+            }
+        }
+        width
     }
 
     /// When a heading is clicked. The same column reverses direction; a different

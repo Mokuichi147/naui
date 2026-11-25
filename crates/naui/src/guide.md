@@ -1752,6 +1752,49 @@ valid clock times (such as 25:70) are clamped to the ends. There is no carry, so
 to 06:00 the next day) cannot be specified — [`Time`] has no date, and when the
 lower bound is after the upper bound, the upper bound wins.
 
+## A calendar on screen
+
+To keep a month calendar on screen instead of a field that opens one, use
+[`Calendar`]. The user picks one day, and the value is a [`DateTime`] of which
+only the date is picked, the same as a [`DatePicker`] in
+[`DatePickerMode::Date`]: the time part stays as it was set.
+
+```no_run
+# use naui::{DateTime, Result, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let day = ui.calendar()?;
+day.set_value(DateTime::date(2026, 8, 22)); // select a day without notifying
+day.set_range(Some(DateTime::date(2026, 8, 1)), None); // only a lower bound
+day.on_change(|value| println!("{value} was chosen"));
+# Ok(())
+# }
+```
+
+| naui | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| `Calendar` | `CalendarView` | `NSDatePicker` (calendar style) | `GtkCalendar` | `<button>`s in a `<table>` |
+
+A day is always selected, and the value right after creation is **the platform's
+current date and time (local time)**. The calendar is the Gregorian one; the month
+and weekday names, the first day of the week and the layout follow the platform's
+locale. Only one day can be picked: picking a range of days (AppKit's range mode)
+or several days (WinUI's multiple selection) is something only one platform has.
+
+[`set_value`](Calendar::set_value) does not notify and shows the value's month.
+[`set_range`](Calendar::set_range) compares only the dates. Where the platform has
+a range (Windows, and the Web, which composes the calendar from buttons), the
+days outside it cannot be clicked. macOS dims them, but clicking one selects the
+nearest end of the range, and `GtkCalendar` has no range, so there naui moves the
+selection back to the nearest end; both notify. On Linux the arrows in the header
+also move the selection to the next month or year, which notifies; on macOS,
+Windows and the Web they only show another month. (`on_change` reports whatever the native calendar
+selects, so an app need not care which.)
+
+The Web has no always-visible calendar control, so naui composes one from DOM
+parts without drawing anything itself: the selected day is marked with `<mark>`
+and today with `<b>`, in the browser's default styles. See the
+[known limitations](https://github.com/mokuichi147/naui/blob/main/docs/known-limitations.md).
+
 ## Picking a color
 
 To let the user pick a color, use [`ColorPicker`]. Values are exchanged as
@@ -2022,6 +2065,109 @@ either).
 Only on Windows, **the Windows App SDK has no surface for drawing pixels** (Win2D
 is a separate package). So naui places a Composition drawing surface over a
 `Grid` and replays the commands onto it with Direct2D and DirectWrite.
+
+## Hosting native views
+
+A view naui does not have, made by another crate (a surface a GPU draws into, a
+web view, a control of the platform's own), is placed among ordinary widgets with
+a [`NativeHost`]. naui places it, sizes it, shows and hides it, reports its size
+and the display scale, and tells when it joins or leaves a window. What the view
+draws, the GPU setup and any loop driving it are the other crate's; naui has no
+GPU dependency.
+
+The view's type is the platform's own, so it goes in through the backend, and
+that code is split with `cfg`:
+
+```ignore
+let host = ui.native_host()?;
+host.set_sizing(naui::Sizing::fill()); // a GPU surface has no size of its own
+#[cfg(target_os = "macos")]
+host.backend().set_hosted_view(Some(&ns_view)); // &NSView
+#[cfg(all(unix, not(target_os = "macos"), not(target_arch = "wasm32")))]
+host.backend().set_hosted_widget(Some(&gl_area)); // &impl IsA<gtk::Widget>
+#[cfg(target_os = "windows")]
+host.backend().set_hosted_element(Some(&panel)); // &UIElement (naui-winui3)
+#[cfg(target_arch = "wasm32")]
+host.backend().set_hosted_element(Some(&canvas)); // &web_sys::Element
+```
+
+The rest is common:
+
+```no_run
+# use naui::{Orientation, Result, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+# let host = ui.native_host()?;
+host.on_resize(|size| {
+    // Logical size, and physical pixels for a buffer the view draws into.
+    let (width, height) = size.physical_size();
+    println!("{} x {} at {}x: {width} x {height}", size.width, size.height, size.scale);
+});
+host.on_attach(|attached| {
+    // Start or stop whatever drives the view.
+    println!("in a window: {attached}");
+});
+let stack = ui.stack(Orientation::Vertical)?;
+stack.append(&host);
+# Ok(())
+# }
+```
+
+| naui | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| `NativeHost` | A one-cell `Grid` | An `NSView` of naui's | A widget of naui's (`NauiNativeHost`) | A one-cell grid `<div>` |
+| What goes in | `UIElement` | `NSView` | `GtkWidget` | `Element` |
+| Size | `SizeChanged` | `setFrameSize:` | `size_allocate` | `ResizeObserver` |
+| Scale | `XamlRoot.RasterizationScale` | `backingScaleFactor` | `scale-factor` (whole numbers) | `devicePixelRatio` |
+| Joins a window | `Loaded` (once the window is shown) | `viewDidMoveToWindow` | `root` | in the page (`MutationObserver`) |
+
+**The hosted view fills the host.** Where the view knows its own size (a control,
+a `<canvas>` with its pixel size), the host takes that size, as other widgets take
+their content's; where it does not (a GPU surface), set the size with
+`set_sizing`, as for a [`Canvas`]. naui's size settings apply to its own view
+around the hosted one, so the hosted view is only stretched, never given a size
+of its own: on macOS naui pins it to the four edges with Auto Layout (turning off
+its `translatesAutoresizingMaskIntoConstraints`), and on the Web it writes
+`place-self: stretch` and zero minimum sizes in its `style` (removed again when it
+leaves).
+
+**naui holds the view until it is replaced or the host is dropped**, and then
+takes it out of the host. A view that is already in another parent follows each
+platform's rule: macOS and the Web move it, as `addSubview:` and `appendChild` do;
+GTK and WinUI give a widget one parent, so `set_hosted_widget` and
+`set_hosted_element` return `false` and change nothing.
+
+[`on_resize`](NativeHost::on_resize) runs whenever the size or the scale changes,
+once the host is laid out for the first time and each time after. It runs inside
+the layout pass on macOS and Linux, so resize the drawing there but change other
+widgets later. [`on_attach`](NativeHost::on_attach) runs when the host joins or
+leaves a window. When it counts as joined differs: once it is in the window's
+widget tree on macOS and Linux (whether or not the window is shown), once XAML
+loads it on Windows (when the window is shown), and once it is in the page on the
+Web (reported in a microtask after the change). Closing a window does not take its
+content out of it, so on macOS, Linux and the Web a host in a closed window still
+counts as joined; take it out (or replace the window's content) to have
+`on_attach(false)`. On Windows XAML unloads the content of a window when it
+closes, so closing it reports `on_attach(false)`. The first `on_resize` has a size with some area, never the 0 ×
+0 a host has before its first layout.
+
+Each platform has a view for GPU drawing that the host can hold:
+
+- **macOS**: any `NSView`; a GPU library makes a `CAMetalLayer` on it.
+- **Linux**: GTK4 has no native child windows, so a GPU surface cannot be placed
+  as one. A drawing crate either uses a `GtkGLArea` (OpenGL, with wgpu's GL
+  backend for example) or renders offscreen and shows the frames in a
+  `GtkPicture` (`GdkDmabufTexture` from GTK 4.14, or memory textures). The host
+  places either; which one to use is the drawing crate's choice.
+- **Windows**: a `SwapChainPanel`, made with the drawing crate's own projection of
+  WinUI 3 (or with `XamlReader`) and passed as a `UIElement`. Connecting the swap
+  chain (`ISwapChainPanelNative`) is the drawing crate's part. In a right-to-left
+  layout XAML mirrors the hosted element, so a drawing surface sets its own
+  `FlowDirection` to `LeftToRight`.
+- **Web**: a `<canvas>` for WebGPU or WebGL.
+
+`raw-window-handle` is not used: it has no form for a GTK widget or a WinUI
+`SwapChainPanel`, and the views it does describe (an `NSView`, a `<canvas>`) are
+the ones the drawing crate made, so it can make the handle itself.
 
 ## Navigation
 
@@ -3538,6 +3684,7 @@ that notify **like the user's own action**, and checks what the app did:
 | [`Pagination`] | `select`, `go_previous`, `go_next` | `set_page` |
 | [`Toolbar`], [`MenuBar`] | `activate` | |
 | [`ColorPicker`] | `pick` | `set_value` |
+| [`Calendar`] | `pick` | `set_value` |
 | [`SplitView`] | `drag_to` | `set_position` |
 | [`AdaptivePanes`] | `go_back` | |
 | [`Popover`] | `dismiss` | `close` |

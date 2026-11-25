@@ -10,6 +10,7 @@
 #![allow(unsafe_code)]
 
 mod adaptive_panes;
+mod calendar;
 mod canvas;
 mod clipboard;
 mod color_picker;
@@ -33,6 +34,7 @@ mod list;
 mod main_thread;
 mod media;
 mod menu_bar;
+mod native_host;
 mod navigation;
 mod number_input;
 mod popover;
@@ -68,6 +70,7 @@ use objc2_app_kit::{
 use objc2_foundation::NSNotification;
 
 pub use adaptive_panes::AdaptivePanes;
+pub use calendar::Calendar;
 pub use canvas::Canvas;
 pub use clipboard::Clipboard;
 pub use color_picker::ColorPicker;
@@ -89,6 +92,7 @@ pub use layout::{Grid, Scroll, Spacer};
 pub use list::{List, ListRow};
 pub use media::{Audio, Image, Video};
 pub use menu_bar::MenuBar;
+pub use native_host::NativeHost;
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use number_input::NumberInput;
 pub use popover::Popover;
@@ -277,6 +281,12 @@ impl Ui {
         Ok(DatePicker::new(self.0.mtm, mode))
     }
 
+    /// A month calendar that stays on screen and lets the user pick one day. The
+    /// initial value is the current date and time.
+    pub fn calendar(&self) -> Result<Calendar> {
+        Ok(Calendar::new(self.0.mtm))
+    }
+
     /// A control for picking only a time of day. The initial value is the current time.
     pub fn time_picker(&self) -> Result<TimePicker> {
         Ok(TimePicker::new(self.0.mtm))
@@ -290,6 +300,12 @@ impl Ui {
     /// A surface the app draws on itself. Set its size with `set_sizing`.
     pub fn canvas(&self) -> Result<Canvas> {
         Ok(Canvas::new(self.0.mtm))
+    }
+
+    /// An empty place for an `NSView` made outside naui. Put the view in with
+    /// [`NativeHost::set_hosted_view`].
+    pub fn native_host(&self) -> Result<NativeHost> {
+        Ok(NativeHost::new(self.0.mtm))
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {
