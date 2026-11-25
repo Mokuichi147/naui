@@ -1,6 +1,6 @@
 # Roadmap
 
-This lists features commonly expected of a GUI toolkit that naui (as of v0.19.0)
+This lists features commonly expected of a GUI toolkit that naui (as of v0.20.0)
 does not have yet, with priorities.
 
 The native counterparts written for each item are estimates. When work starts,
@@ -82,21 +82,21 @@ investigated against those and moved to Not planned.
 
 Widening what apps can draw (charts, GPU-rendered 2D and 3D, viewers, CAD, games)
 while naui stays a light toolkit of native UI. naui is not to become a rendering or
-game engine: it gains one widget that hosts a native view made elsewhere, and the
-drawing is done by separate crates.
+game engine: it has gained one widget that hosts a native view made elsewhere, and
+the drawing is done by separate crates.
 
 ### Approach
 
-- **naui adds only `NativeHost`.** It places a native view created by another
-  crate among ordinary widgets. naui handles its layout, size and scale-factor
-  changes, and its lifecycle (when it is attached and released), and has no part
-  in GPU setup, drawing or game loops.
+- **naui adds only `NativeHost`** (released in v0.20.0). It places a native view
+  created by another crate among ordinary widgets. naui handles its layout, size
+  and scale-factor changes, and its lifecycle (when it is attached and released),
+  and has no part in GPU setup, drawing or game loops.
 - **`Widget` stays sealed.** Extension goes through `NativeHost`, not through
   widget types implemented outside naui: `Widget` hands out the backend's own
   widget, whose trait has methods for naui's internal use, so opening it would
   put them under the API promise. A type made outside naui is passed to
-  containers through a second trait that only names the naui widget inside it
-  (v0.20.0).
+  containers through `AsWidget` (released in v0.20.0), which only names the
+  naui widget inside it.
 - **No GPU dependencies in naui.** wgpu and the like are dependencies of the
   separate crates only.
 - **`Canvas` stays for simple 2D.** Static shapes and charts keep using `Canvas`,
@@ -106,8 +106,8 @@ drawing is done by separate crates.
   | Crate | Role | Needs from naui |
   | --- | --- | --- |
   | `naui-charts` | Line, bar and scatter charts (released in v0.19.0) | Nothing new (draws on `Canvas`) |
-  | An extension widget crate | Tags, badges and other widgets no platform has | `NativeHost`, and passing its types to containers |
-  | `naui-wgpu` | Fast 2D and 3D drawing with wgpu | `NativeHost` |
+  | An extension widget crate | Tags, badges and other widgets no platform has | Nothing new (`NativeHost` and `AsWidget`) |
+  | `naui-wgpu` | Fast 2D and 3D drawing with wgpu | Nothing new (`NativeHost`) |
   | A scene crate | 3D models, cameras, lights | Nothing beyond `naui-wgpu` |
   | Game crates | ECS, physics, audio, game loop | Nothing beyond `naui-wgpu` |
 
@@ -115,100 +115,17 @@ drawing is done by separate crates.
 
 ### Order
 
-1. **`NativeHost`** (v0.20.0), placing an external view on all four platforms.
-2. **`naui-wgpu`** (v0.21.0), connecting a GPU surface through it and checking
-   basic 2D and 3D drawing and resizing.
+`NativeHost`, which the other crates build on, was released in v0.20.0, along
+with `AsWidget` for passing their types to containers. What remains is in this
+order:
+
+1. **`naui-wgpu`** (v0.21.0), connecting a GPU surface through `NativeHost` and
+   checking basic 2D and 3D drawing and resizing.
+2. **The extension widget crate** (v0.22.0), building its widgets from native
+   pieces through `NativeHost`.
 
 `naui-charts`, released in v0.19.0, draws on `Canvas`, so it does not wait for
 these; its tooltips and zooming (v0.21.0) come after cursor shapes on `Canvas`.
-The extension widget crate (v0.22.0) builds its widgets from native pieces
-through `NativeHost`, so it comes after it.
-
-## v0.20.0
-
-Heavier items, `NativeHost`, which the drawing crates, a WebView and the
-extension widgets build on, passing types made outside naui to containers,
-shortcuts that are not in a menu, and the always-visible calendar.
-
-- [x] *(drawing)* **`NativeHost`.** A widget that places a native view created by
-      another crate: an `NSView` on macOS, a `GtkWidget` on Linux, a XAML element
-      on Windows, a DOM element on the Web. The view is platform-specific, so how
-      the crate receives the native object (and whether `raw-window-handle` fits,
-      which has no form for GTK widgets or WinUI's `SwapChainPanel`) is decided
-      first. Linux needs the most checking: GTK4 has no native child windows, so a
-      GPU surface cannot simply be placed, and the candidates are `GtkGLArea` with
-      wgpu's GL backend, or rendering offscreen and handing frames over as
-      textures (`GdkDmabufTexture` from GTK 4.14). Windows needs `SwapChainPanel`
-      in the projection, and the Web a `<canvas>` for WebGPU or WebGL.
-      Done as `NativeHost` (`ui.native_host()`): the view goes in through the
-      backend with the platform's own type (`NSView`, any `GtkWidget`, a
-      `UIElement`, an `Element`), fills naui's own view around it, and takes the
-      content's size where it has one. `on_resize` reports the size with the
-      display scale (`HostSize`) and `on_attach` joining and leaving a window.
-      `raw-window-handle` is not used, the GPU surface on Linux is any widget GTK
-      draws (`GtkGLArea` or a `GtkPicture` of frames, left to `naui-wgpu`), and
-      a `SwapChainPanel` is passed as a `UIElement`, so the projection is
-      unchanged.
-- [x] **Passing a type made outside naui to containers.** `Stack::append` and
-      the like take `&dyn Widget`, which is sealed, so a crate's own type (a
-      composition of naui widgets, or one wrapping a `NativeHost`) has to hand
-      out the widget inside it at every call (`tag.root()`), as `naui-app`'s
-      `Mounted::root` does. A public trait with one method returning that
-      widget, taken by the containers, lets `stack.append(&tag)` be written
-      while `Widget` stays sealed. Decided first: whether the containers take
-      the new trait in place of `&dyn Widget` (every `Widget` would implement
-      it) or beside it, and that the common methods (`set_sizing`,
-      `set_visible`) reach the inner widget.
-      Done as `naui::AsWidget`, taken in place of `&dyn Widget`: every widget
-      implements it (a `&dyn Widget` still passes, as `Widget` builds on it),
-      and its provided methods (`set_sizing`, `set_visible` and the other
-      common operations) reach the widget it returns. `ChartView` implements it
-      in place of `root()` (its `Canvas` is `canvas()`), and `naui-app`'s
-      `Mounted` implements it beside `root()`.
-- [x] **Keyboard shortcuts outside the menu bar.** A shortcut is given today
-      only to a `MenuBar` item (`MenuShortcut`); anything else is matched by
-      hand in `on_key_down`, whose order relative to menu shortcuts differs by
-      platform. All four have a counterpart: WinUI's `KeyboardAccelerator` on
-      any element, `GtkShortcutController`, AppKit's key equivalents
-      (`performKeyEquivalent:`), and `keydown` on the Web
-      (`KeyboardAccelerator` is not in naui's WinUI projection yet; the menu
-      bar's shortcuts are matched from keys that reach the window's root).
-      Decided first: whether
-      a shortcut belongs to a window or to a widget and its descendants (the
-      scope `GtkShortcutController` and `KeyboardAccelerator` both have), and
-      whether it reuses `MenuShortcut`. Naming commands, binding them from a
-      keymap the user can edit, and choosing by context are an app's own layer
-      on top (they fit `naui-app` or a separate crate), not the core.
-      Done as `on_shortcut` / `remove_shortcut` on every widget (while focus is
-      inside it) and on `Window`, taking `MenuShortcut` renamed to `Shortcut`
-      (the old name stays as a deprecated alias, and windows and widgets also take
-      named keys such as Escape and Delete), matched by naui in each platform's
-      existing key receiver so that the order is the same everywhere: the focused
-      widget's `on_key_down`, the widgets' shortcuts from the inside out, the
-      window's `on_key_down` and shortcuts, then the menu bar; `Window::send_key`
-      delivers a key through that order in tests.
-- [x] **Make dragging `Table` column widths work on Windows and Linux too.** Linux
-      has the native feature in `GtkColumnView`, while Windows uses a custom table,
-      so it is heavy.
-      Done as a heading-edge drag on macOS, Windows and Linux that follows
-      `naui_core::clamp_column_width` everywhere (macOS, which could not actually
-      be dragged before, is fixed too).
-- [x] **Placing widgets in `Tree` items.** Items hold only strings today, while
-      `List` and `Table` can hold widgets.
-      Done as `TreeRow` and `Tree::set_rows`, beside `TreeItem` as `ListRow` is
-      beside `ListItem`, so `TreeItem` keeps its fields and nothing breaks. Widgets
-      are handed over by the same rules as `List` rows, controls inside a row neither
-      choose the item nor expand it, and `selectable(false)` leaves the row undimmed
-      with its controls working. Every row is built when passed; building only the
-      rows on screen is left for later.
-- [x] **Always-visible calendar widget.** WinUI's `CalendarView`, `GtkCalendar`
-      and `NSDatePicker` (calendar style) exist. The Web has no always-visible
-      control, only the popup of `<input type="date">`, so it would be composed
-      from buttons there (🟡), as `Toast` is where no DOM element exists.
-      Done as `Calendar`, which picks one day as a `DateTime` (like `DatePicker`
-      in `DatePickerMode::Date`) with `set_range` and `pick`; range and multiple
-      selection, the first day of the week and the locale are left to the
-      platforms, and the Web composes it from `<button>`s in a `<table>`.
 
 ## v0.21.0
 
@@ -218,8 +135,14 @@ distributed.
 
 - [ ] *(drawing)* **`naui-wgpu`.** A separate crate that connects a wgpu surface
       through `NativeHost` on all four platforms, and checks basic 2D and 3D
-      drawing, resizing and scale-factor changes. It waits for `NativeHost`,
-      including the Linux approach.
+      drawing, resizing and scale-factor changes. `NativeHost` (v0.20.0) takes
+      any view as it is and reports the size with the display scale, so the
+      surface is the crate's own choice: a `CAMetalLayer`-backed `NSView`, a
+      `SwapChainPanel` passed as a `UIElement`, a `<canvas>`, and on Linux,
+      where GTK 4 has no native child windows, a `GtkGLArea` with wgpu's GL
+      backend or a `GtkPicture` of frames rendered offscreen
+      (`GdkDmabufTexture` from GTK 4.14). Which of the two Linux ways it takes
+      is decided first.
 - [ ] **WebView, a code editor, Markdown rendering.** Markdown can use `RichText`
       (added in v0.16.0) for inline parts and `Stack` for blocks, so it fits a
       separate crate. A WebView builds on `NativeHost` (`WKWebView`, WebKitGTK,
@@ -257,17 +180,32 @@ distributed.
 
 ## v0.22.0
 
-Printing and dragging between widgets, the heaviest of the features, what
-windows tell and take about activation and focus, and the extension crate for
-widgets no platform has.
+Printing and dragging between widgets, the heaviest of the features, with
+building only the `Tree` rows on screen before the dragging, what windows tell
+and take about activation and focus, and the extension crate for widgets no
+platform has.
 
+- [ ] **Building only the `Tree` rows on screen.** `Tree` builds every item
+      when it is passed, including the widgets of every `TreeRow` and items
+      inside collapsed branches, while `List` and `Table` build only the rows
+      on screen (`List::set_row_builder`); it was left out of `TreeRow` in
+      v0.20.0. The native trees already ask for items as they are shown
+      (`NSOutlineView`'s data source, `GtkTreeListModel` creating children on
+      expansion, WinUI's `TreeViewNode::HasUnrealizedChildren` with the
+      `Expanding` event), and the Web builds its own rows as `List` does.
+      Decided first: whether rows are built per visible row through naui-core's
+      window, as in `List`, or a branch's children only when it is first
+      expanded, and how either fits paths (`&[usize]`) and the selection of
+      items not built yet. It comes before the dragging below, which drags
+      `Tree` rows.
 - [ ] **Dragging between widgets and out of the app.** A drag today stays
       inside one `List` (reordering, v0.18.0) or comes in as files
-      (`on_file_drop`). Dragging a row to another `List` or a `Tree`, onto any
-      widget, and out to other apps as files or text use the same native
-      machinery (`NSDraggingSource`, `GtkDragSource` and `GtkDropTarget`,
-      WinUI's `CanDragItems` and `DragStarting`, HTML drag and drop), and the
-      mark a drag already carries for its list is the shape they grow from.
+      (`on_file_drop`). Rearranging the items of a `Tree`, dragging a row to
+      another `List` or a `Tree`, onto any widget, and out to other apps as
+      files or text use the same native machinery (`NSDraggingSource`,
+      `GtkDragSource` and `GtkDropTarget`, WinUI's `CanDragItems` and
+      `DragStarting`, HTML drag and drop), and the mark a drag already carries
+      for its list is the shape they grow from.
       Decided first: what a drag carries (rows of a known widget, or data by
       type as a clipboard holds), and which widgets take drops.
 - [ ] **Printing.** All four have a print pipeline (`NSPrintOperation`,
@@ -290,7 +228,6 @@ widgets no platform has.
       element, so what all four can do is checked first: moving may be offered
       without setting the order, or the item moves to
       [Not planned](#not-planned) with "add the widgets in Tab order".
-
 - [ ] *(drawing)* **An extension crate for widgets no platform has.** Tags,
       badges, avatars and the like are common in current UIs but are not
       controls of any of the four toolkits, so naui itself does not carry
@@ -303,10 +240,11 @@ widgets no platform has.
       `Canvas` drawing would have to be given by hand; `Canvas` is the
       fallback where a platform has no piece to build from. The colors and
       corner radii naui does not set per widget are set here with each
-      platform's API. Decided first: which widgets come first (tags and
-      badges are the candidates), and how the crate depends on the native
-      crates: on Windows it needs naui's own WinUI projection (`naui-winui3`),
-      so its versions move with naui's.
+      platform's API. Its widgets implement `AsWidget` (v0.20.0), so they are
+      passed to containers as naui's own are. Decided first: which widgets
+      come first (tags and badges are the candidates), and how the crate
+      depends on the native crates: on Windows it needs naui's own WinUI
+      projection (`naui-winui3`), so its versions move with naui's.
 
 ## v0.23.0
 
@@ -374,13 +312,16 @@ conditions for making that promise. They are a draft, settled before v1.0.0 is
 planned, and the versions above may change to meet them.
 
 - **Items that change existing API come first.** Items on this page that would
-  change what is public rather than add to it are done before v1.0.0. Widgets in
-  `Tree` items change `TreeItem`, whose fields are public, so a new field breaks
-  apps that build it with a struct literal (more than one action on a toast,
-  which changed `Toast::action` and `on_action`, was done in v0.18.0).
-  Shortcuts outside the menu bar may rename or move `MenuShortcut` (colors by
-  role in `Canvas` added `Paint::Role` in v0.19.0, since `Paint` is not
-  `#[non_exhaustive]`).
+  change what is public rather than add to it are done before v1.0.0. None of
+  the items left on this page is known to (more than one action on a toast
+  changed `Toast::action` and `on_action` in v0.18.0, colors by role in `Canvas`
+  added `Paint::Role` in v0.19.0, since `Paint` is not `#[non_exhaustive]`, and
+  in v0.20.0 containers took `AsWidget` in place of `&dyn Widget` and
+  `MenuShortcut` was renamed to `Shortcut`; widgets in `Tree` items came as
+  `TreeRow` beside `TreeItem`, so its public fields did not change).
+- **Deprecated names are removed.** Names kept as deprecated aliases (such as
+  `MenuShortcut`, deprecated in v0.20.0) are removed before v1.0.0, so that the
+  promise does not cover them.
 - **Public types are reviewed for growth.** Each public struct and enum is
   checked for whether it may gain fields or variants later. Those that may get
   `#[non_exhaustive]`, or private fields with constructors, as `PointerEvent`
