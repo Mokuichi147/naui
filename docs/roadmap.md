@@ -335,9 +335,9 @@ planned, and the versions above may change to meet them.
   builds with it on Windows. When it may be raised, and in which kind of
   version, is decided and written down.
 - **Decided before v1.0.0: which crates go to 1.0 together.** `naui` re-exports
-  `naui-core`'s types, so the two move together. Whether `naui-app`, first
-  released in v0.15.0, goes to 1.0 at the same time or stays at 0.x for a while
-  is decided.
+  `naui-core`'s types, so the two move together. Whether `naui-app`, in the
+  repository since v0.15.0 but first published to crates.io in v0.20.1, goes to
+  1.0 at the same time or stays at 0.x for a while is decided.
 - **The four platforms stay checked.** CI builds and tests all four, and every
   difference found between them is in [Known limitations](known-limitations.md)
   or fixed.
