@@ -1,6 +1,6 @@
 # Roadmap
 
-This lists features commonly expected of a GUI toolkit that naui (as of v0.20.0)
+This lists features commonly expected of a GUI toolkit that naui (as of v0.20.1)
 does not have yet, with priorities.
 
 The native counterparts written for each item are estimates. When work starts,
