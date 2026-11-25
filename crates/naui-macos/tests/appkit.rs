@@ -452,6 +452,14 @@ fn main() {
             stack_cross_align_respects_uneven_padding,
         ),
         (
+            "Align::Fill の Stack は指定のない子も伸ばし、固定の大きさの子は中央に置く",
+            stack_align_fill_stretches_children,
+        ),
+        (
+            "Align::Fill は窓を縮めず、中身に合わせる Align::Fill の Stack は中身の大きさのまま",
+            stack_align_fill_keeps_window_and_auto_size,
+        ),
+        (
             "追加したあとの余白・揃え・向きの変更にも交差軸の子が追従する",
             stack_cross_align_follows_changes,
         ),
@@ -4183,9 +4191,12 @@ fn stack_fill_cross_after_append(ui: &Ui) -> Result<()> {
 ///
 /// For a vertical stack the start is the left (the app is left to right); for a
 /// horizontal one it is the top, whichever way the stack's coordinates run.
+///
+/// It measures the alignment rect, which is what the constraints place (a label's
+/// frame reaches 2 points past it on each side).
 fn cross_span(stack: &NSView, child: &NSView, vertical: bool) -> (f64, f64, f64) {
     let outer = stack.bounds().size;
-    let frame = child.frame();
+    let frame = child.alignmentRectForFrame(child.frame());
     if vertical {
         let start = frame.origin.x;
         let end = outer.width - frame.origin.x - frame.size.width;
@@ -4231,9 +4242,153 @@ fn assert_cross_span(
         // 余白を除いた範囲の中心にそろう。半端な幅は AppKit が画素へ丸めるので、
         // 左右の差は 1 まで許す (1x の画面では 1 点単位に丸まる)。
         Align::Center => ((gap_start - start) - (gap_end - end)).abs() <= 1.0 + 1e-6,
-        Align::Fill => true,
+        Align::Fill => unreachable!("Align::Fill の子は伸びる"),
     };
     assert!(placed, "{what}: {align:?} の位置にあること: {span:?}");
+}
+
+/// `Align::Fill` stretches every child on the cross axis, as GTK, WinUI and the Web
+/// do, and a nested stack too, so it gets the width it needs to switch orientation.
+/// A child with a fixed size cannot stretch and is centered. Going back to another
+/// alignment gives the children their own size again.
+fn stack_align_fill_stretches_children(ui: &Ui) -> Result<()> {
+    const SIZE: f64 = 300.0;
+    for vertical in [true, false] {
+        let orientation = if vertical {
+            Orientation::Vertical
+        } else {
+            Orientation::Horizontal
+        };
+        let stack = ui.stack(orientation)?;
+        stack.set_padding(Padding::all(10.0));
+        let label = ui.label("ラベル")?;
+        let button = ui.button("ボタン")?;
+        let nested = ui.stack(orientation)?;
+        nested.append(&ui.label("入れ子")?);
+        let fixed = ui.label("固定")?;
+        fixed.set_sizing(if vertical {
+            Sizing::new().width(Length::Fixed(50.0))
+        } else {
+            Sizing::new().height(Length::Fixed(50.0))
+        });
+        stack.append(&label);
+        stack.append(&button);
+        stack.append(&nested);
+        stack.append(&fixed);
+        let root = stack.native_view();
+        root.setFrameSize(NSSize::new(SIZE, SIZE));
+        root.layoutSubtreeIfNeeded();
+        let natural = |view: &NSView| cross_span(&root, view, vertical).1;
+        let label_natural = natural(&label.native_view());
+        let button_natural = natural(&button.native_view());
+        assert!(
+            label_natural < SIZE - 20.0 && button_natural < SIZE - 20.0,
+            "{orientation:?}: Center では中身の大きさであること"
+        );
+
+        // 子を足したあとで揃えを変えても効く。
+        stack.set_align(Align::Fill);
+        root.layoutSubtreeIfNeeded();
+        for (name, view) in [
+            ("ラベル", label.native_view()),
+            ("ボタン", button.native_view()),
+            ("入れ子の Stack", nested.native_view()),
+        ] {
+            assert_cross_span(
+                cross_span(&root, &view, vertical),
+                SIZE,
+                (10.0, 10.0),
+                Align::Fill,
+                true,
+                &format!("{orientation:?} / {name}"),
+            );
+        }
+        let (start, length, end) = cross_span(&root, &fixed.native_view(), vertical);
+        assert!(
+            (length - 50.0).abs() < 1e-6 && (start - end).abs() <= 1.0 + 1e-6,
+            "{orientation:?}: 固定の大きさの子は伸びずに中央に置かれること: {:?}",
+            (start, length, end)
+        );
+
+        stack.set_align(Align::Start);
+        root.layoutSubtreeIfNeeded();
+        for (name, view, expected) in [
+            ("ラベル", label.native_view(), label_natural),
+            ("ボタン", button.native_view(), button_natural),
+        ] {
+            let (start, length, _) = cross_span(&root, &view, vertical);
+            assert!(
+                (length - expected).abs() < 1e-6 && (start - 10.0).abs() < 1e-6,
+                "{orientation:?} / {name}: 揃えを戻せば中身の大きさで端に寄ること: {:?}",
+                (start, length)
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Stretching with `Align::Fill` pulls nothing in.
+///
+/// A label hugs its height at 750, above a window keeping its size (500). If the
+/// stretched children kept that hugging, a horizontal stack would shrink its window
+/// to the height of its labels. And an `Align::Fill` stack that fits its content
+/// (inside a centering parent) stays as wide as its children, as on GTK, instead of
+/// being pulled out to its parent's edges.
+fn stack_align_fill_keeps_window_and_auto_size(ui: &Ui) -> Result<()> {
+    for vertical in [true, false] {
+        let orientation = if vertical {
+            Orientation::Vertical
+        } else {
+            Orientation::Horizontal
+        };
+        let window = ui.window("Align::Fill", 400.0, 300.0)?;
+        let root = ui.stack(orientation)?;
+        root.set_sizing(Sizing::fill());
+        root.set_padding(Padding::all(10.0));
+        root.set_align(Align::Fill);
+        let label = ui.label("伸びる")?;
+        root.append(&label);
+        // 中央に寄せる親の中で、中身に合わせる Align::Fill の Stack。
+        let centering = ui.stack(orientation)?;
+        let inner = ui.stack(orientation)?;
+        inner.set_align(Align::Fill);
+        inner.append(&ui.label("短い")?);
+        inner.append(&ui.label("いちばん長いラベル")?);
+        centering.append(&inner);
+        root.append(&centering);
+        window.set_child(&root);
+        window.show();
+        let view = root.native_view();
+        view.layoutSubtreeIfNeeded();
+
+        let size = view.frame().size;
+        assert!(
+            (size.width - 400.0).abs() < 1e-6 && (size.height - 300.0).abs() < 1e-6,
+            "{orientation:?}: 窓の中身の大きさが変わらないこと: {size:?}"
+        );
+        assert_cross_span(
+            cross_span(&view, &label.native_view(), vertical),
+            if vertical { 400.0 } else { 300.0 },
+            (10.0, 10.0),
+            Align::Fill,
+            true,
+            &format!("{orientation:?} / ラベル"),
+        );
+        let inner_view = inner.native_view();
+        let longest = inner_view.fittingSize();
+        let inner_size = inner_view.frame().size;
+        let (got, natural) = if vertical {
+            (inner_size.width, longest.width)
+        } else {
+            (inner_size.height, longest.height)
+        };
+        assert!(
+            (got - natural).abs() < 1e-6,
+            "{orientation:?}: 中身に合わせる Align::Fill の Stack は中身の大きさのまま: {got} / {natural}"
+        );
+        window.close();
+    }
+    Ok(())
 }
 
 /// A stack's alignment places its children inside the padding even when the two
@@ -4297,12 +4452,13 @@ fn stack_cross_align_respects_uneven_padding(ui: &Ui) -> Result<()> {
                     // 縦並びの 1 行入力は横に伸びたがる。横並びでは高さは中身のまま。
                     ("指定のない 1 行入力", input.native_view(), vertical),
                 ] {
+                    // `Align::Fill` は指定のない子も伸ばす。
                     assert_cross_span(
                         cross_span(&root, &view, vertical),
                         SIZE,
                         (start, end),
                         align,
-                        fills,
+                        fills || align == Align::Fill,
                         &format!("{case} / {name}"),
                     );
                 }

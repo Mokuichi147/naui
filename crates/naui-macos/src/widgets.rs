@@ -1964,6 +1964,7 @@ impl Stack {
         // 入れ子の扱いは、もう新しい親のもの。
         if held {
             child.left_stack();
+            crate::layout::release_align_fill(&view, self.is_vertical());
         }
     }
 
@@ -2002,6 +2003,10 @@ impl Stack {
 
     /// Places a child on the cross axis inside the padding: the alignment, and for
     /// `Fill`, the size of the area inside the padding.
+    ///
+    /// With [`Align::Fill`], every child is stretched to the area inside the padding,
+    /// as `Fill` on the child would. A fixed size or a maximum on that axis is required
+    /// and wins, and such a child is centered (GTK and WinUI do the same).
     fn place_cross(&self, view: &NSView) {
         let previous = self
             .0
@@ -2025,15 +2030,20 @@ impl Stack {
         let guide = &self.0.padding_guide;
         let mut constraints = Vec::new();
         // 縦並びの交差軸は横方向。
+        let stretch = self.0.align.get() == Align::Fill;
         let align = match (self.0.align.get(), vertical) {
-            (Align::Fill, _) => None,
+            // 伸ばしきれない子 (固定の大きさや上限) は中央に置く。
+            (Align::Fill | Align::Center, true) => Some(
+                view.centerXAnchor()
+                    .constraintEqualToAnchor(&guide.centerXAnchor()),
+            ),
+            (Align::Fill | Align::Center, false) => Some(
+                view.centerYAnchor()
+                    .constraintEqualToAnchor(&guide.centerYAnchor()),
+            ),
             (Align::Start, true) => Some(
                 view.leadingAnchor()
                     .constraintEqualToAnchor(&guide.leadingAnchor()),
-            ),
-            (Align::Center, true) => Some(
-                view.centerXAnchor()
-                    .constraintEqualToAnchor(&guide.centerXAnchor()),
             ),
             (Align::End, true) => Some(
                 view.trailingAnchor()
@@ -2042,10 +2052,6 @@ impl Stack {
             (Align::Start, false) => {
                 Some(view.topAnchor().constraintEqualToAnchor(&guide.topAnchor()))
             }
-            (Align::Center, false) => Some(
-                view.centerYAnchor()
-                    .constraintEqualToAnchor(&guide.centerYAnchor()),
-            ),
             (Align::End, false) => Some(
                 view.bottomAnchor()
                     .constraintEqualToAnchor(&guide.bottomAnchor()),
@@ -2067,6 +2073,23 @@ impl Stack {
             let equal = child.constraintEqualToAnchor(&inside);
             equal.setPriority(crate::layout::CROSS_FILL_PRIORITY);
             constraints.extend([at_most, equal]);
+        } else if stretch && !crate::layout::is_capped(view, vertical) {
+            // `Align::Fill` は中身の大きさの子も、余白の内側の大きさまで伸ばす
+            // (GTK の halign = Fill)。「以上」にするのは、中身のほうが大きい子を
+            // 縮めないため。伸びない子には張らない。優先度と hugging は
+            // `ALIGN_FILL_PRIORITY` の説明に。
+            crate::layout::allow_align_fill(view, vertical);
+            let at_least = if vertical {
+                view.widthAnchor()
+                    .constraintGreaterThanOrEqualToAnchor(&guide.widthAnchor())
+            } else {
+                view.heightAnchor()
+                    .constraintGreaterThanOrEqualToAnchor(&guide.heightAnchor())
+            };
+            at_least.setPriority(crate::layout::ALIGN_FILL_PRIORITY);
+            constraints.push(at_least);
+        } else {
+            crate::layout::release_align_fill(view, vertical);
         }
         for constraint in &constraints {
             constraint.setActive(true);
