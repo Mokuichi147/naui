@@ -45,6 +45,11 @@ naui-gtk.workspace = true
 name = "actions"
 harness = false
 
+# naui の外の型を AsWidget でコンテナへ渡す経路を、全環境の本物のループで確かめる。
+[[test]]
+name = "as_widget"
+harness = false
+
 # Web ではケースごとに #[wasm_bindgen_test] をブラウザで走らせる。
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"

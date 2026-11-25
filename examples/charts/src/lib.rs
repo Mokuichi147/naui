@@ -47,14 +47,14 @@ fn build(ui: &Ui) -> Result<()> {
     let signal = ChartView::new(ui, signal_chart())?;
     grid.attach(&controls, GridCell::new(0, 0).span(2, 1));
     grid.attach(&heading(ui, "Visits by month")?, GridCell::new(0, 1));
-    grid.attach(monthly.root(), GridCell::new(0, 2));
+    grid.attach(&monthly, GridCell::new(0, 2));
     grid.attach(&heading(ui, "Height and weight")?, GridCell::new(1, 1));
-    grid.attach(scatter.root(), GridCell::new(1, 2));
+    grid.attach(&scatter, GridCell::new(1, 2));
     grid.attach(
         &heading(ui, "100,000 points")?,
         GridCell::new(0, 3).span(2, 1),
     );
-    grid.attach(signal.root(), GridCell::new(0, 4).span(2, 1));
+    grid.attach(&signal, GridCell::new(0, 4).span(2, 1));
 
     dark.on_toggle({
         let ui = ui.clone();

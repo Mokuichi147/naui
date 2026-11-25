@@ -21,8 +21,7 @@
 //!             .series(Series::bar("2025", [120.0, 90.0, 140.0, 160.0]))
 //!             .series(Series::line("2026", [130.0, 110.0, 150.0, 175.0]));
 //!         let view = ChartView::new(ui, chart)?;
-//!         // Containers take naui's own widgets, so pass the `Canvas` inside.
-//!         window.set_child(view.root());
+//!         window.set_child(&view);
 //!         window.show();
 //!         Ok(())
 //!     })
@@ -59,7 +58,7 @@ mod tests;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use naui::{Canvas, Painter, Result, Sizing, Ui};
+use naui::{AsWidget, Canvas, Painter, Result, Sizing, Ui, Widget};
 
 pub use chart::{Axis, Chart, ChartLayout, Legend, Series, SeriesKind};
 pub use palette::{series_color, PALETTE_LEN};
@@ -71,19 +70,20 @@ pub use ticks::Ticks;
 /// [`update`](Self::update)), when the surface changes size and when the appearance
 /// switches between light and dark.
 ///
-/// naui's containers take only naui's own widgets, so put the view in one through
-/// the `Canvas` inside it ([`root`](Self::root)), which is also where its size is
-/// set. A `Canvas` has no size of its own; the view starts filling its parent and
-/// at least 160 by 120 pixels.
+/// It implements [`AsWidget`], so it goes into a container as it is
+/// (`stack.append(&view)`), and the common methods ([`set_sizing`](AsWidget::set_sizing),
+/// [`set_visible`](AsWidget::set_visible) and the others) reach the `Canvas` inside
+/// it. A `Canvas` has no size of its own; the view starts filling its parent and at
+/// least 160 by 120 pixels.
 ///
 /// ```no_run
-/// # use naui::{Orientation, Result, Sizing, Ui};
+/// # use naui::{AsWidget, Orientation, Result, Sizing, Ui};
 /// # use naui_charts::{Chart, ChartView, Series};
 /// # fn build(ui: &Ui) -> Result<()> {
 /// let stack = ui.stack(Orientation::Vertical)?;
 /// let view = ChartView::new(ui, Chart::new().series(Series::line("Load", [0.2, 0.5, 0.4])))?;
-/// view.root().set_sizing(Sizing::fill_width().height(naui::Length::Fixed(240.0)));
-/// stack.append(view.root());
+/// view.set_sizing(Sizing::fill_width().height(naui::Length::Fixed(240.0)));
+/// stack.append(&view);
 /// // Later, add the latest value; the chart draws itself again.
 /// view.update(|chart| chart.series_mut()[0].points_mut().push((3.0, 0.7)));
 /// # Ok(())
@@ -125,9 +125,13 @@ impl ChartView {
         Ok(ChartView { canvas, state })
     }
 
-    /// The `Canvas` the chart is drawn on: put it in a container, size it, or listen
-    /// to the pointer on it.
-    pub fn root(&self) -> &Canvas {
+    /// The `Canvas` the chart is drawn on: listen to the pointer on it
+    /// ([`Canvas::on_pointer`], with [`layout`](Self::layout) to turn positions into
+    /// values) or read its size.
+    ///
+    /// To put the chart in a container or size it, use the view itself: it
+    /// implements [`AsWidget`].
+    pub fn canvas(&self) -> &Canvas {
         &self.canvas
     }
 
@@ -156,5 +160,12 @@ impl ChartView {
     /// drawn.
     pub fn layout(&self) -> Option<ChartLayout> {
         self.state.borrow().layout
+    }
+}
+
+impl AsWidget for ChartView {
+    /// The `Canvas` the chart is drawn on.
+    fn as_widget(&self) -> &dyn Widget {
+        &self.canvas
     }
 }

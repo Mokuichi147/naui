@@ -320,12 +320,12 @@ fn build(ui: &Ui, dispatch: &Dispatch<Message>) -> naui::Result<View> {
     let left = ui.stack(Orientation::Vertical)?;
     left.set_sizing(Sizing::fill());
     left.append(sidebar.folder_bar());
-    left.append(list.root());
+    left.append(&list);
     left.append(&notice);
 
     let split = ui.split_view(Orientation::Horizontal)?;
     split.set_start(&left);
-    split.set_end(editor.root());
+    split.set_end(&editor);
     split.set_min_sizes(220.0, 300.0);
     split.set_position(280.0);
     split.set_sizing(Sizing::fill());

@@ -192,6 +192,53 @@ on Windows). **It loses the keyboard focus**, and text being composed with an IM
 ends with it (on macOS it is committed into the field). Call `request_focus` after
 adding it again if it should keep the focus.
 
+## Passing your own types to containers
+
+Containers take children as [`&dyn AsWidget`](AsWidget): every naui widget, a
+`&dyn Widget`, and any type of your own that implements [`AsWidget`]. A type that
+puts a few widgets together (a tag, a labeled field, a whole screen in its own
+crate) implements it by returning the widget it places, usually its outermost
+container. It is then passed as it is, without handing out the widget inside at
+every call:
+
+```no_run
+# use naui::{AsWidget, Orientation, Result, Sizing, Ui, Widget};
+struct LabeledField {
+    root: naui::Stack,
+    field: naui::TextInput,
+}
+
+impl AsWidget for LabeledField {
+    fn as_widget(&self) -> &dyn Widget {
+        &self.root
+    }
+}
+
+# fn build(ui: &Ui, form: &naui::Stack) -> Result<()> {
+let root = ui.stack(Orientation::Vertical)?;
+let field = ui.text_input("")?;
+root.append(&ui.label("Name")?);
+root.append(&field);
+let name = LabeledField { root, field };
+
+form.append(&name);
+name.set_sizing(Sizing::fill_width()); // reaches `name.root`
+name.field.request_focus();
+# Ok(())
+# }
+```
+
+The operations every widget has ([`set_sizing`](AsWidget::set_sizing),
+[`set_visible`](AsWidget::set_visible), [`request_focus`](AsWidget::request_focus),
+[`set_tooltip`](AsWidget::set_tooltip) and the others) are methods of `AsWidget`
+too, and reach the widget it returns, so they work on your own type with the trait
+in scope, and on a `&dyn Widget`. Each naui widget's methods of the same name are
+what they call. The container holds the returned widget, so your value can be
+dropped once it is placed if nothing else needs it.
+
+[`Widget`] itself cannot be implemented outside naui: what goes into a container
+is always one of naui's widgets, reached through `as_widget`.
+
 ## Themes
 
 The default, [`Theme::System`], follows the OS or browser setting. Use
