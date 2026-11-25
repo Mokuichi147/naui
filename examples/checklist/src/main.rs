@@ -131,7 +131,7 @@ fn build(ui: &Ui, dispatch: &Dispatch<Message>) -> naui::Result<View> {
     footer.append(&ui.spacer()?);
     footer.append(&clear);
 
-    root.append(entry.root());
+    root.append(&entry);
     root.append(&scroll);
     root.append(&footer);
     window.set_child(&root);

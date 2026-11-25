@@ -1,5 +1,5 @@
 use crate::sys;
-use crate::Widget;
+use crate::AsWidget;
 use naui_core::Padding;
 
 /// A thin line that divides controls (`GtkSeparator`).
@@ -50,7 +50,7 @@ impl Group {
     /// The content fills the inside of the frame. To put several controls in a group,
     /// put them in a [`Stack`](crate::Stack) and set that.
     #[inline]
-    pub fn set_child(&self, child: &dyn Widget) {
-        self.0.set_child(child.as_backend())
+    pub fn set_child(&self, child: &dyn AsWidget) {
+        self.0.set_child(child.as_widget().as_backend())
     }
 }

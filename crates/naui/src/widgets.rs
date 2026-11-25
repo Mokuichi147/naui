@@ -1,5 +1,5 @@
 use crate::sys;
-use crate::Widget;
+use crate::AsWidget;
 use naui_core::{
     Align, Breakpoint, ButtonRole, EventResponse, KeyEvent, Orientation, Padding, RichText,
     TextColor, TextStyle,
@@ -559,15 +559,15 @@ impl Stack {
     }
 
     #[inline]
-    pub fn append(&self, child: &dyn Widget) {
-        self.0.append(child.as_backend())
+    pub fn append(&self, child: &dyn AsWidget) {
+        self.0.append(child.as_widget().as_backend())
     }
 
     /// Inserts a child at the given position. If `index` is at least the current
     /// count, it is appended at the end.
     #[inline]
-    pub fn insert(&self, index: usize, child: &dyn Widget) {
-        self.0.insert(index, child.as_backend())
+    pub fn insert(&self, index: usize, child: &dyn AsWidget) {
+        self.0.insert(index, child.as_widget().as_backend())
     }
 
     /// Removes the child at the given position. Does nothing if out of range.

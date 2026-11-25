@@ -250,9 +250,12 @@ pub fn build(ui: &Ui, dispatch: &Dispatch<Message>) -> naui::Result<View> {
     // …
 }
 
-impl View {
-    pub fn root(&self) -> &dyn naui::Widget { &self.root }
+// The app places the view itself: `left.append(&list)`.
+impl naui::AsWidget for View {
+    fn as_widget(&self) -> &dyn naui::Widget { &self.root }
+}
 
+impl View {
     /// Sets the strings that do not depend on the notes, when the language changes.
     pub fn translate(&self, tr: &Translations) {
         self.search.set_placeholder(&tr.get("list-search"));
@@ -270,7 +273,8 @@ public methods (`visible`, `selected`, `folders`), which are what it depends on.
 screen gets a dispatch for its own messages only, so the sidebar has no way to
 delete a note.
 
-A screen hands the app what the app places. Most give a root widget for a layout;
+A screen hands the app what the app places. Most implement `naui::AsWidget`,
+returning their root widget, so the app passes the view itself to a container;
 the sidebar is attached to the window instead of placed, so `notes-sidebar`'s view
 gives its `naui::Sidebar` (`View::sidebar`) and the app calls `Window::set_sidebar`
 with it.

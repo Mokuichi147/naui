@@ -1,5 +1,5 @@
 use crate::sys;
-use crate::Widget;
+use crate::AsWidget;
 use naui_core::Orientation;
 
 /// A container that divides two panes with a movable divider (`GtkPaned`).
@@ -18,14 +18,14 @@ impl SplitView {
 
     /// The left (or top) pane. Each call replaces it.
     #[inline]
-    pub fn set_start(&self, child: &dyn Widget) {
-        self.0.set_start(child.as_backend())
+    pub fn set_start(&self, child: &dyn AsWidget) {
+        self.0.set_start(child.as_widget().as_backend())
     }
 
     /// The right (or bottom) pane. Each call replaces it.
     #[inline]
-    pub fn set_end(&self, child: &dyn Widget) {
-        self.0.set_end(child.as_backend())
+    pub fn set_end(&self, child: &dyn AsWidget) {
+        self.0.set_end(child.as_widget().as_backend())
     }
 
     /// The current divider position (size of the start side, logical pixels).

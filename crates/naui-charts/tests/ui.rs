@@ -10,7 +10,7 @@
 use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
-use naui::{testing, Color, DrawCommand, Paint, Result, Sizing, Theme, Ui};
+use naui::{testing, AsWidget, Color, DrawCommand, Paint, Result, Sizing, Theme, Ui};
 use naui_charts::{series_color, Axis, Chart, ChartView, Series};
 
 naui::test_cases!(
@@ -32,11 +32,11 @@ fn sales() -> Chart {
 async fn chart_view_draws_and_redraws(ui: Ui) -> Result<()> {
     let window = ui.window("chart", 480.0, 320.0)?;
     let view = ChartView::new(&ui, sales())?;
-    window.set_child(view.root());
+    window.set_child(&view);
     window.show();
     testing::wait_until(&ui, || view.layout().is_some()).await?;
-    testing::wait_until(&ui, || view.root().size().0 > 0.0).await?;
-    let (width, height) = view.root().size();
+    testing::wait_until(&ui, || view.canvas().size().0 > 0.0).await?;
+    let (width, height) = view.canvas().size();
     let layout = view.layout().unwrap();
     let plot = layout.plot();
     assert!(
@@ -60,13 +60,17 @@ async fn chart_view_draws_and_redraws(ui: Ui) -> Result<()> {
     })
     .await?;
 
-    // 大きさが変わっても描き直す。
-    view.root().set_sizing(Sizing::fixed(300.0, 200.0));
+    // 大きさが変わっても描き直す。大きさは AsWidget を通して Canvas へ届く。
+    view.set_sizing(Sizing::fixed(300.0, 200.0));
     testing::wait_until(&ui, || {
         view.layout()
             .is_some_and(|layout| layout.plot().right() <= 300.0)
     })
     .await?;
+    testing::wait_until(&ui, || view.canvas().size() == (300.0, 200.0)).await?;
+    view.set_visible(false);
+    assert!(!view.canvas().is_visible());
+    assert!(!view.is_visible());
     window.close();
     Ok(())
 }
@@ -85,7 +89,7 @@ async fn a_dropped_view_keeps_drawing(ui: Ui) -> Result<()> {
         }
     }));
     let view = ChartView::new(&ui, chart)?;
-    window.set_child(view.root());
+    window.set_child(&view);
     drop(view);
     window.show();
     testing::wait_until(&ui, || labels.get() > 0).await?;

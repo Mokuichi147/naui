@@ -767,6 +767,7 @@ version = "0.19.0"
 dependencies = [
  "naui",
  "naui-core",
+ "wasm-bindgen-test",
 ]
 
 [[package]]

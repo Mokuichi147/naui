@@ -1,5 +1,5 @@
 use crate::sys;
-use crate::Widget;
+use crate::AsWidget;
 use naui_core::PopoverPosition;
 
 /// A panel shown beside a widget, holding any widget as its content.
@@ -10,7 +10,7 @@ use naui_core::PopoverPosition;
 /// is the native popover's own behavior (`NSPopover`, `GtkPopover`, `Flyout`, the
 /// HTML `popover` attribute).
 ///
-/// It is not a widget laid out on screen, so it is not a [`Widget`]. See
+/// It is not a widget laid out on screen, so it is not a [`Widget`](crate::Widget). See
 /// [Popovers](crate::guide#popovers) for how to open one from a button.
 #[derive(Clone)]
 pub struct Popover(pub(crate) sys::Popover);
@@ -24,8 +24,8 @@ impl Popover {
     /// [`set_sizing`](crate::Label::set_sizing) has nothing to fill. Give a fixed size
     /// or a minimum to make it larger.
     #[inline]
-    pub fn set_child(&self, child: &dyn Widget) {
-        self.0.set_child(child.as_backend())
+    pub fn set_child(&self, child: &dyn AsWidget) {
+        self.0.set_child(child.as_widget().as_backend())
     }
 
     /// The side it prefers to appear on. [`PopoverPosition::Bottom`] by default.
@@ -45,8 +45,8 @@ impl Popover {
     ///
     /// Does nothing while `widget` is not shown in a window.
     #[inline]
-    pub fn open(&self, widget: &dyn Widget) {
-        self.0.open(widget.as_backend())
+    pub fn open(&self, widget: &dyn AsWidget) {
+        self.0.open(widget.as_widget().as_backend())
     }
 
     /// Closes it. [`on_close`](Self::on_close) is not called. Does nothing if it is
