@@ -808,6 +808,14 @@ const CASES: &[Case] = &[
         "check_url が open_url と同じく読めない URL を断り、読めるものは開かずに通す",
         check_url_reads_without_opening,
     ),
+    (
+        "ツリーの set_rows は行にウィジェットを置き、選択・開閉・モード切り替え・set_items が文字の項目と同じに動く",
+        tree_rows_hold_widgets,
+    ),
+    (
+        "ツリーの行は親の無い子だけを置き、作り直しやモード切り替えで奪わない",
+        crate::moved_child::tree_rows_take_only_free_children,
+    ),
 ];
 
 fn sheet_configuration_reaches_the_content_dialog(ui: &Ui) -> Result<()> {
@@ -8953,6 +8961,242 @@ fn tree_multiple_selection_uses_a_list_view(ui: &Ui) -> Result<()> {
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
     }
+    Ok(())
+}
+
+/// `Tree::set_rows` puts each widget in its row, in the `TreeView` and in the multiple
+/// selection `ListView` alike. Paths, selection and expansion work as for text items,
+/// and an item that cannot be selected is not dimmed. Switching the selection mode
+/// moves the widgets to the new surface's rows without an exception (an element can be
+/// in only one parent, so the old rows let go first), and `set_items` goes back to text
+/// and lets go of the widgets.
+fn tree_rows_hold_widgets(ui: &Ui) -> Result<()> {
+    use naui_core::{SelectionMode, TreeItem};
+    use naui_windows::TreeRow;
+    use naui_winui3::Microsoft::UI::Xaml::Controls::{Panel, TreeViewNode};
+    use windows_collections::IVector;
+    use windows_core::{IInspectable, IUnknown};
+
+    fn key<T: Interface>(object: &T) -> usize {
+        object
+            .cast::<IUnknown>()
+            .map_or(0, |unknown| Interface::as_raw(&unknown) as usize)
+    }
+    /// The first child of a row's holder (a `Panel`), by identity. `None` if the
+    /// content is not a panel or is empty.
+    fn held(content: Option<IInspectable>) -> Option<usize> {
+        let children = content?.cast::<Panel>().ok()?.Children().ok()?;
+        if children.Size().ok()? == 0 {
+            return None;
+        }
+        children.GetAt(0).ok().map(|child| key(&child))
+    }
+    /// What each node's row holds, depth-first (every node, collapsed or not).
+    fn node_widgets(nodes: &IVector<TreeViewNode>, out: &mut Vec<Option<usize>>) {
+        for node in nodes {
+            out.push(held(node.Content().ok()));
+            node_widgets(&node.Children().expect("子"), out);
+        }
+    }
+
+    let tree = ui.tree()?;
+    let src = ui.label("src")?;
+    let main = ui.checkbox("main.rs")?;
+    let lib = ui.button("lib.rs")?;
+    let docs = ui.label("docs")?;
+    let guide = ui.text_input("guide")?;
+    let widgets: Vec<usize> = [
+        src.native_element(),
+        main.native_element(),
+        lib.native_element(),
+        docs.native_element(),
+        guide.native_element(),
+    ]
+    .iter()
+    .map(key)
+    .collect();
+    let rows = [
+        TreeRow::new(&src)
+            .expanded(true)
+            .children([TreeRow::new(&main), TreeRow::new(&lib)]),
+        TreeRow::new(&docs)
+            .selectable(false)
+            .child(TreeRow::new(&guide)),
+    ];
+    assert!(rows[0].is_expanded() && !rows[1].is_selectable() && !rows[1].is_leaf());
+    tree.set_rows(&rows);
+    let in_nodes = || {
+        let mut out = Vec::new();
+        node_widgets(&tree.native_tree_view().RootNodes().expect("根"), &mut out);
+        out
+    };
+    let all: Vec<Option<usize>> = widgets.iter().copied().map(Some).collect();
+    assert_eq!(tree.len(), 5, "子孫も数える");
+    assert_eq!(in_nodes(), all, "節の行にウィジェットが入る");
+    assert!(tree.is_expanded(&[0]), "TreeRow::expanded が効く");
+    assert!(!tree.is_expanded(&[1]));
+
+    // 選べない項目も淡くしない (行の受け皿にもウィジェットにも透明度を書かない)。
+    let docs_node = tree
+        .native_tree_view()
+        .RootNodes()
+        .and_then(|roots| roots.GetAt(1))
+        .expect("docs の節");
+    let holder = docs_node
+        .Content()
+        .and_then(|content| content.cast::<UIElement>())
+        .expect("docs の受け皿");
+    assert_eq!(
+        holder.Opacity().expect("Opacity"),
+        1.0,
+        "受け皿は淡くしない"
+    );
+    assert_eq!(
+        docs.native_element().Opacity().expect("Opacity"),
+        1.0,
+        "ウィジェットは淡くしない"
+    );
+
+    // 選択と開閉は文字の項目と同じ。選べない項目とその子孫は選べない。
+    let seen = Rc::new(RefCell::new(Vec::<Vec<usize>>::new()));
+    tree.on_select({
+        let seen = seen.clone();
+        move |path| seen.borrow_mut().push(path.to_vec())
+    });
+    let expanded = Rc::new(RefCell::new(Vec::<(Vec<usize>, bool)>::new()));
+    tree.on_expand({
+        let expanded = expanded.clone();
+        move |path, open| expanded.borrow_mut().push((path.to_vec(), open))
+    });
+    tree.set_selected(&[0, 1]);
+    assert_eq!(tree.selected(), Some(vec![0, 1]));
+    tree.set_selected(&[1]);
+    assert_eq!(tree.selected(), None, "選べない項目は選べない");
+    tree.set_selected(&[1, 0]);
+    assert_eq!(tree.selected(), None, "選べない項目の子孫も選べない");
+    assert!(seen.borrow().is_empty(), "set_selected は通知しない");
+    tree.select(&[0, 0]);
+    assert_eq!(seen.borrow().last(), Some(&vec![0, 0]), "select は通知する");
+    tree.expand(&[1]);
+    assert!(tree.is_expanded(&[1]));
+    tree.collapse(&[1]);
+    assert!(!tree.is_expanded(&[1]));
+    assert_eq!(
+        *expanded.borrow(),
+        vec![(vec![1], true), (vec![1], false)],
+        "開閉を 1 回ずつ通知する"
+    );
+
+    // 行の中のボタンを押しても、項目は選ばれない (UI オートメーションの Invoke)。
+    let clicked = Rc::new(Cell::new(0));
+    lib.on_click({
+        let clicked = clicked.clone();
+        move || clicked.set(clicked.get() + 1)
+    });
+    let notified = seen.borrow().len();
+    automation::invoke(&lib.native_element());
+    pump_until(Duration::from_millis(300), || false);
+    assert_eq!(clicked.get(), 1, "行の中のボタンが押せる");
+    assert_eq!(
+        tree.selected(),
+        Some(vec![0, 0]),
+        "ボタンでは選択が変わらない"
+    );
+    assert_eq!(seen.borrow().len(), notified);
+
+    // 複数選択へ切り替えると、ウィジェットは ListView の行へ移り、節の行は空になる。
+    let row_widgets = || -> Vec<Option<usize>> {
+        let Some(list) = tree.native_list_view() else {
+            return Vec::new();
+        };
+        let items = list.Items().expect("Items");
+        (0..items.Size().expect("Size"))
+            .map(|index| {
+                let line = items
+                    .GetAt(index)
+                    .and_then(|item| item.cast::<ListViewItem>())
+                    .and_then(|item| item.Content())
+                    .and_then(|content| content.cast::<Grid>())
+                    .expect("行の中身は Grid");
+                let holder = line
+                    .Children()
+                    .and_then(|children| children.GetAt(1))
+                    .ok()
+                    .and_then(|holder| holder.cast::<IInspectable>().ok());
+                held(holder)
+            })
+            .collect()
+    };
+    let none = vec![None; 5];
+    for round in 0..2 {
+        tree.set_selection_mode(SelectionMode::Multiple);
+        // 0 src, 1 main.rs, 2 lib.rs, 3 docs (閉じている)。
+        assert_eq!(
+            row_widgets(),
+            all[..4].to_vec(),
+            "{round} 回目: 複数選択の行にウィジェットが入る"
+        );
+        assert_eq!(
+            in_nodes(),
+            none,
+            "{round} 回目: 節の行はウィジェットを手放す"
+        );
+        tree.set_selection(&[vec![0, 0], vec![0, 1], vec![1], vec![1, 0]]);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0, 0], vec![0, 1]],
+            "{round} 回目: 選べない項目とその子孫は落とす"
+        );
+        tree.expand(&[1]);
+        assert_eq!(row_widgets(), all, "{round} 回目: 開いた枝の行にも入る");
+        tree.collapse(&[1]);
+
+        tree.set_selection_mode(SelectionMode::Single);
+        assert_eq!(
+            in_nodes(),
+            all,
+            "{round} 回目: 単一選択へ戻すと節の行へ戻る"
+        );
+        assert_eq!(
+            row_widgets(),
+            none[..4].to_vec(),
+            "{round} 回目: 複数選択の行はウィジェットを手放す"
+        );
+        tree.set_selected(&[0, 1]);
+        assert_eq!(tree.selected(), Some(vec![0, 1]));
+    }
+
+    // set_items で文字へ戻すと、ウィジェットを手放す。ほかの親へ入れられる。
+    let free = |what: &str| {
+        let stack = ui.stack(Orientation::Vertical).expect("Stack");
+        stack.append(&src);
+        stack.append(&guide);
+        assert_eq!(stack.len(), 2, "{what}: ウィジェットを手放す");
+        stack.clear();
+    };
+    tree.set_items(&[TreeItem::new("a").child(TreeItem::new("b"))]);
+    assert_eq!(tree.len(), 2);
+    let texts = in_nodes();
+    assert_eq!(texts.len(), 2);
+    assert!(
+        texts.iter().flatten().all(|held| !widgets.contains(held)),
+        "文字の項目に戻る"
+    );
+    free("単一選択の set_items");
+
+    tree.set_rows(&rows);
+    assert_eq!(in_nodes(), all, "文字の後でもう一度渡せる");
+    tree.set_selection_mode(SelectionMode::Multiple);
+    tree.set_items(&[TreeItem::new("a"), TreeItem::new("b")]);
+    let texts = row_widgets();
+    assert_eq!(texts.len(), 2);
+    assert!(
+        texts.iter().flatten().all(|held| !widgets.contains(held)),
+        "複数選択でも文字の項目に戻る"
+    );
+    free("複数選択の set_items");
+    tree.set_selection_mode(SelectionMode::Single);
+    free("単一選択へ戻したあと");
     Ok(())
 }
 
