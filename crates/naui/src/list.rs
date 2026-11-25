@@ -1,5 +1,5 @@
 use crate::sys;
-use crate::Widget;
+use crate::AsWidget;
 use naui_core::{ListItem, Point, Result, RowMove, SelectionMode};
 
 /// A list of selectable rows. It scrolls by itself.
@@ -287,8 +287,8 @@ impl List {
 /// settings screen, are built with `Grid` / `Stack` and wrapped in a `ListRow`.
 ///
 /// ```no_run
-/// # use naui::{ListRow, Widget};
-/// # fn row(content: &dyn Widget) {
+/// # use naui::{AsWidget, ListRow};
+/// # fn row(content: &dyn AsWidget) {
 /// let row = ListRow::new(content).selectable(false);
 /// row.on_activate(|| println!("row clicked"));
 /// # let _ = row;
@@ -303,8 +303,8 @@ impl ListRow {
     /// Uses a widget as the content of one row. By default the whole row can be
     /// selected too.
     #[inline]
-    pub fn new(content: &dyn Widget) -> Self {
-        Self(sys::ListRow::new(content.as_backend()))
+    pub fn new(content: &dyn AsWidget) -> Self {
+        Self(sys::ListRow::new(content.as_widget().as_backend()))
     }
 
     /// Set to `false` for rows where only the controls inside are operated.

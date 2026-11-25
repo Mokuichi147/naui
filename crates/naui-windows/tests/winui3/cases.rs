@@ -6987,7 +6987,8 @@ fn scroll_notifies_only_moves(ui: &Ui) -> Result<()> {
 /// Unnamed, a `List` / `Table` row (`ListViewItem`) is read as nothing and a `Tree` row
 /// (`TreeViewItem`) as "Microsoft.UI.Xaml.Controls.TreeViewNode". A control in a row
 /// gives its own name (an unlabeled check box gives none), and a `Tree`'s rows, which
-/// WinUI makes and reuses, follow new items.
+/// WinUI makes and reuses, follow new items. A `Tree` row with no text is read as
+/// nothing, and a multiple-selection `Tree`'s rows are named too.
 fn rows_are_named_after_their_text(ui: &Ui) -> Result<()> {
     use naui_core::{ListItem, TableColumn, TableRow, TreeItem};
     use naui_windows::ListRow;
@@ -7078,6 +7079,24 @@ fn rows_are_named_after_their_text(ui: &Ui) -> Result<()> {
         tree.set_items(&[TreeItem::new("docs").detail("説明")]);
         pump_until(SCROLL_LAYOUT_TIMEOUT, || tree_names() == ["docs 説明"]);
         assert_eq!(tree_names(), ["docs 説明"], "作り直した木の行");
+
+        // 文字の無い木の行は、`TreeViewNode` の型名ではなく何も読まない名前になる。
+        // (`TreeViewItem` は空の名前を未設定とみなすので、空白だけの名前を付ける。)
+        tree.set_items(&[TreeItem::new("docs").detail("説明"), TreeItem::new("")]);
+        let trimmed = || -> Vec<String> {
+            tree_names()
+                .iter()
+                .map(|name| name.trim().to_owned())
+                .collect()
+        };
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || trimmed() == ["docs 説明", ""]);
+        assert_eq!(trimmed(), ["docs 説明", ""], "文字の無い木の行");
+
+        // 複数選択の木 (`ListView` の行) も、行の文字から名前が付く。
+        tree.set_selection_mode(naui_core::SelectionMode::Multiple);
+        let multi_names = || names_within(tree.native_list_view().expect("複数選択の ListView"));
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || multi_names() == ["docs 説明", ""]);
+        assert_eq!(multi_names(), ["docs 説明", ""], "複数選択の木の行");
     }));
     window.close();
     if let Err(panic) = outcome {

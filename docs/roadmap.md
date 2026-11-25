@@ -140,7 +140,7 @@ shortcuts that are not in a menu, and the always-visible calendar.
       wgpu's GL backend, or rendering offscreen and handing frames over as
       textures (`GdkDmabufTexture` from GTK 4.14). Windows needs `SwapChainPanel`
       in the projection, and the Web a `<canvas>` for WebGPU or WebGL.
-- [ ] **Passing a type made outside naui to containers.** `Stack::append` and
+- [x] **Passing a type made outside naui to containers.** `Stack::append` and
       the like take `&dyn Widget`, which is sealed, so a crate's own type (a
       composition of naui widgets, or one wrapping a `NativeHost`) has to hand
       out the widget inside it at every call (`tag.root()`), as `naui-app`'s
@@ -149,9 +149,13 @@ shortcuts that are not in a menu, and the always-visible calendar.
       while `Widget` stays sealed. Decided first: whether the containers take
       the new trait in place of `&dyn Widget` (every `Widget` would implement
       it) or beside it, and that the common methods (`set_sizing`,
-      `set_visible`) reach the inner widget. `naui-charts`'s `ChartView`
-      implements it in place of handing out its `Canvas` (`root()`), and
-      `naui-app`'s `Mounted::root` is looked at with it.
+      `set_visible`) reach the inner widget.
+      Done as `naui::AsWidget`, taken in place of `&dyn Widget`: every widget
+      implements it (a `&dyn Widget` still passes, as `Widget` builds on it),
+      and its provided methods (`set_sizing`, `set_visible` and the other
+      common operations) reach the widget it returns. `ChartView` implements it
+      in place of `root()` (its `Canvas` is `canvas()`), and `naui-app`'s
+      `Mounted` implements it beside `root()`.
 - [x] **Keyboard shortcuts outside the menu bar.** A shortcut is given today
       only to a `MenuBar` item (`MenuShortcut`); anything else is matched by
       hand in `on_key_down`, whose order relative to menu shortcuts differs by

@@ -1,5 +1,5 @@
 use crate::sys;
-use crate::Widget;
+use crate::AsWidget;
 use naui_core::Pane;
 
 /// A list and its detail: side by side when wide, one at a time when narrow
@@ -69,14 +69,14 @@ impl_widget!(AdaptivePanes);
 impl AdaptivePanes {
     /// The list pane. Each call replaces it.
     #[inline]
-    pub fn set_list(&self, child: &dyn Widget) {
-        self.0.set_list(child.as_backend())
+    pub fn set_list(&self, child: &dyn AsWidget) {
+        self.0.set_list(child.as_widget().as_backend())
     }
 
     /// The detail pane. Each call replaces it.
     #[inline]
-    pub fn set_detail(&self, child: &dyn Widget) {
-        self.0.set_detail(child.as_backend())
+    pub fn set_detail(&self, child: &dyn AsWidget) {
+        self.0.set_detail(child.as_widget().as_backend())
     }
 
     /// The narrowest width (logical pixels) at which both panes are shown. The

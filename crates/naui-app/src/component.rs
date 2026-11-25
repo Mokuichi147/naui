@@ -9,7 +9,7 @@ use std::hash::Hash;
 use std::panic::{catch_unwind, resume_unwind, AssertUnwindSafe};
 use std::rc::{Rc, Weak};
 
-use naui::{Ui, Widget};
+use naui::{AsWidget, Ui, Widget};
 
 use crate::error::report;
 use crate::{Dispatch, Program, ReportKind, Running};
@@ -142,7 +142,8 @@ pub trait Component: Program {
     fn mount(ui: &Ui, dispatch: &Dispatch<Self::Message>) -> naui::Result<Self::View>;
 
     /// The widget the parent places in a container. Usually the outermost container
-    /// built in `mount`.
+    /// built in `mount`. A view type that implements [`AsWidget`] returns
+    /// `view.as_widget()`.
     fn root(view: &Self::View) -> &dyn Widget;
 
     /// Cleans up before the root widget is removed from its container: undoes what
@@ -169,7 +170,8 @@ pub trait Component: Program {
 /// connected.
 ///
 /// Keep it in the parent's view. For a component that is always there, mount it
-/// in `build` and place its [`root`](Self::root):
+/// in `build` and place it: it implements [`AsWidget`](naui::AsWidget), so it goes
+/// into a container as it is, which places its [`root`](Self::root):
 ///
 /// ```no_run
 /// # use naui::{Orientation, Ui};
@@ -188,7 +190,7 @@ pub trait Component: Program {
 /// # enum Message { Search(()) }
 /// # fn build(ui: &Ui, dispatch: &Dispatch<Message>, stack: &naui::Stack) -> naui::Result<()> {
 /// let search = Mounted::<Search>::new(ui, dispatch, Message::Search)?;
-/// stack.append(search.root());
+/// stack.append(&search);
 /// // In the parent's `render`: search.render(&self.search);
 /// # Ok(())
 /// # }
@@ -231,7 +233,10 @@ impl<C: Component> Mounted<C> {
         )
     }
 
-    /// The widget to place in a container.
+    /// The widget to place in a container: [`Component::root`] of its view.
+    ///
+    /// A `Mounted` can be passed to a container itself (`stack.append(&search)`),
+    /// which places this widget.
     pub fn root(&self) -> &dyn Widget {
         C::root(&self.view)
     }
@@ -241,6 +246,14 @@ impl<C: Component> Mounted<C> {
     /// of its container, and drops the widgets.
     pub fn unmount(self, remove: impl FnOnce(&dyn Widget)) {
         self.unmount_with(|view| remove(C::root(view)));
+    }
+}
+
+/// Places [`root`](Mounted::root), and the common methods (`set_sizing`,
+/// `set_visible` and the others) reach it.
+impl<C: Component> AsWidget for Mounted<C> {
+    fn as_widget(&self) -> &dyn Widget {
+        C::root(&self.view)
     }
 }
 
