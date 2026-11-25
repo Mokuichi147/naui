@@ -24,7 +24,7 @@ use naui_core::{
     Theme, Time, ToastPosition, ToastPriority, ToolbarIcon, ToolbarItem, Track, TreeItem,
     WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
 };
-use naui_macos::{run_for_test, ListRow, TableCells, Ui, Widget};
+use naui_macos::{run_for_test, ListRow, TableCells, TreeRow, Ui, Widget};
 use objc2::rc::{autoreleasepool, Retained};
 use objc2::runtime::AnyObject;
 use objc2::runtime::{NSObjectProtocol, ProtocolObject};
@@ -377,6 +377,14 @@ fn main() {
             tree_rows_are_native_views,
         ),
         (
+            "ツリーの項目にウィジェットを置ける",
+            tree_rows_hold_widgets,
+        ),
+        (
+            "ツリーの行の中のコントロールを押しても項目は選ばれない",
+            tree_row_controls_do_not_select,
+        ),
+        (
             "ツリーの通知の中からツリーを操作できる",
             tree_callback_can_touch_the_tree,
         ),
@@ -480,7 +488,7 @@ fn main() {
             containers_leave_a_child_moved_without_removal_alone,
         ),
         (
-            "List の行・Table のセル・Dialog の中身は作り直しても戻り、移した先からは取り返さない",
+            "List の行・Table のセル・Tree の行・Dialog の中身は作り直しても戻り、移した先からは取り返さない",
             widget_rows_come_back_after_rebuilding,
         ),
         (
@@ -5085,6 +5093,31 @@ fn containers_leave_a_child_moved_without_removal_alone(ui: &Ui) -> Result<()> {
                 Ok(())
             }))
         })?;
+        check_moved_child(ui, "Tree の行", into_grid, |child| {
+            let tree = ui.tree()?;
+            let label = ui.label("親")?;
+            tree.set_rows(&[TreeRow::new(&label)
+                .expanded(true)
+                .child(TreeRow::new(child))]);
+            let native = tree.native_outline_view();
+            let _ = native.viewAtColumn_row_makeIfNecessary(0, 1, true);
+            Ok(Box::new(move || {
+                // 出し直し・閉じて開く・選択の切り替えでは取り返さない。
+                native.reloadData();
+                let _ = native.viewAtColumn_row_makeIfNecessary(0, 1, true);
+                tree.collapse_all();
+                tree.expand_all();
+                let _ = native.viewAtColumn_row_makeIfNecessary(0, 1, true);
+                tree.set_selection_mode(SelectionMode::Multiple);
+                tree.select(&[0, 1]);
+                // 中身の移った行は空になるが、1 行分の高さは残る。
+                assert!(
+                    native.rectOfRow(1).size.height > 0.0,
+                    "Tree: 空の行にも高さがあること"
+                );
+                Ok(())
+            }))
+        })?;
         check_moved_child(ui, "Table のセル", into_grid, |child| {
             let table = ui.table()?;
             table.set_columns(&TableColumn::list(["名前", "中身"]));
@@ -5354,6 +5387,92 @@ fn widget_rows_come_back_after_rebuilding(ui: &Ui) -> Result<()> {
     assert!(
         is_in_cell(&last.native_table(), &pending_view, 0, 0),
         "Dialog・Table → List: 前の持ち主が先に組み立て直しても、List の行に入ること"
+    );
+
+    // Tree: 渡した行。開閉や出し直しで作り直しても行へ戻る。
+    let leaf = ui.label("葉の中身")?;
+    let leaf_view = leaf.native_view();
+    let tree = ui.tree()?;
+    tree.set_rows(&[TreeRow::new(&ui.label("枝")?)
+        .expanded(true)
+        .child(TreeRow::new(&leaf))]);
+    let tree_native = tree.native_outline_view();
+    let outline_table: &objc2_app_kit::NSTableView = &tree_native;
+    assert!(
+        is_in_cell(outline_table, &leaf_view, 0, 1),
+        "Tree: 最初は行の中にあること"
+    );
+    for step in ["reloadData", "閉じて開く", "一括の開閉", "選択の切り替え"] {
+        match step {
+            "閉じて開く" => {
+                tree.collapse(&[0]);
+                tree.expand(&[0]);
+            }
+            "一括の開閉" => {
+                tree.collapse_all();
+                tree.expand_all();
+            }
+            "選択の切り替え" => {
+                tree.set_selection_mode(SelectionMode::Multiple);
+                tree.select_many(&[vec![0], vec![0, 0]]);
+            }
+            _ => tree_native.reloadData(),
+        }
+        assert!(
+            is_in_cell(outline_table, &leaf_view, 0, 1),
+            "Tree: {step} のあとも行の中にあること"
+        );
+    }
+    // 別の Tree へ渡すと、そちらへ移り、前の Tree は取り返さない。
+    let other_tree = ui.tree()?;
+    other_tree.set_rows(&[TreeRow::new(&leaf)]);
+    let other_native = other_tree.native_outline_view();
+    assert!(
+        is_in_cell(&other_native, &leaf_view, 0, 0),
+        "Tree: 別の Tree へ渡すとそちらへ移ること"
+    );
+    tree_native.reloadData();
+    tree.collapse_all();
+    tree.expand_all();
+    let _ = tree_native.viewAtColumn_row_makeIfNecessary(0, 1, true);
+    assert!(
+        is_in_cell(&other_native, &leaf_view, 0, 0),
+        "Tree: 後から渡した Tree から取り返さないこと"
+    );
+    // List へ渡しても同じ。
+    let to_list = ui.list()?;
+    to_list.set_rows(&[ListRow::new(&leaf)]);
+    other_native.reloadData();
+    let _ = other_native.viewAtColumn_row_makeIfNecessary(0, 0, true);
+    assert!(
+        is_in_cell(&to_list.native_table(), &leaf_view, 0, 0),
+        "Tree → List: 前の Tree が出し直しても List の行に入ること"
+    );
+    // Stack の中の子を渡すと、行へ移る。
+    let tree_stack = ui.stack(Orientation::Vertical)?;
+    let from_stack = ui.label("Stack から")?;
+    tree_stack.append(&from_stack);
+    other_tree.set_rows(&[TreeRow::new(&from_stack)]);
+    assert!(
+        is_in_cell(&other_native, &from_stack.native_view(), 0, 0),
+        "Tree: Stack の中の子を渡すと行へ移ること"
+    );
+    tree_stack.set_spacing(2.0);
+    tree_stack.native_view().layoutSubtreeIfNeeded();
+    // 移したあと set_rows で渡し直すと行へ戻る。
+    let tree_holder = ui.stack(Orientation::Vertical)?;
+    tree_holder.append(&from_stack);
+    other_native.reloadData();
+    let _ = other_native.viewAtColumn_row_makeIfNecessary(0, 0, true);
+    assert!(
+        unsafe { from_stack.native_view().superview() }
+            .is_some_and(|parent| std::ptr::eq::<NSView>(&*parent, &*tree_holder.native_view())),
+        "Tree: 移したあとの出し直しでは奪わないこと"
+    );
+    other_tree.set_rows(&[TreeRow::new(&from_stack)]);
+    assert!(
+        is_in_cell(&other_native, &from_stack.native_view(), 0, 0),
+        "Tree: set_rows で渡し直すと行へ戻ること"
     );
 
     // Dialog: 続けて組み立てても、中身は新しい alert へ移る。
@@ -14075,6 +14194,241 @@ fn tree_rows_are_native_views(ui: &Ui) -> Result<()> {
         "2 行の中身が収まる高さであること: {two_lines} / {}",
         cell.fittingSize().height
     );
+    Ok(())
+}
+
+/// Items made from widgets (`TreeRow`) put the widget in the row's cell, select and
+/// expand as text items do, and `set_items` turns them back into text.
+fn tree_rows_hold_widgets(ui: &Ui) -> Result<()> {
+    let tree = ui.tree()?;
+    let folder = ui.stack(Orientation::Vertical)?;
+    folder.append(&ui.label("src")?);
+    folder.append(&ui.label("3 ファイル")?);
+    let main_rs = ui.checkbox("main.rs")?;
+    let locked = ui.button("ロック")?;
+    let inside_locked = ui.label("中身")?;
+    tree.set_rows(&[
+        TreeRow::new(&folder)
+            .expanded(true)
+            .children([TreeRow::new(&main_rs), TreeRow::new(&ui.label("lib.rs")?)]),
+        TreeRow::new(&locked)
+            .selectable(false)
+            .child(TreeRow::new(&inside_locked)),
+    ]);
+    tree.set_sizing(Sizing::fixed(260.0, 200.0));
+    let stack = ui.stack(Orientation::Vertical)?;
+    stack.append(&tree);
+    let root = stack.native_view();
+    root.setFrameSize(NSSize::new(400.0, 300.0));
+    root.layoutSubtreeIfNeeded();
+
+    assert_eq!(tree.len(), 5, "子孫まで数えること");
+    let outline = tree.native_outline_view();
+    assert_eq!(
+        outline.numberOfRows(),
+        4,
+        "TreeRow::expanded のとおりに開くこと"
+    );
+    assert!(tree.is_expanded(&[0]));
+    assert!(!tree.is_expanded(&[1]));
+    let table: &objc2_app_kit::NSTableView = &outline;
+    assert!(
+        is_in_cell(table, &folder.native_view(), 0, 0),
+        "枝の中身が行に入ること"
+    );
+    assert!(
+        is_in_cell(table, &main_rs.native_view(), 0, 1),
+        "葉の中身が行に入ること"
+    );
+    assert!(is_in_cell(table, &locked.native_view(), 0, 3));
+
+    // 高さは中身に合わせる (2 行の Stack は 1 行の葉より高い)。
+    let folder_height = outline.rectOfRow(0).size.height;
+    let leaf_height = outline.rectOfRow(2).size.height;
+    assert!(
+        folder_height + 0.5 >= folder.native_view().fittingSize().height,
+        "中身が収まる高さであること: {folder_height}"
+    );
+    assert!(
+        folder_height > leaf_height,
+        "2 行の中身の行のほうが高いこと: {folder_height} / {leaf_height}"
+    );
+    assert!(
+        !outline.usesAutomaticRowHeights(),
+        "行の高さは naui が答えること"
+    );
+
+    // 選択と開閉は文字の項目と同じ。
+    tree.select(&[0, 1]);
+    assert_eq!(tree.selected(), Some(vec![0, 1]));
+    assert_eq!(outline.selectedRow(), 2);
+    tree.select(&[1]);
+    assert_eq!(
+        tree.selected(),
+        None,
+        "selectable(false) の項目は選べないこと"
+    );
+    tree.set_selected(&[1, 0]);
+    assert_eq!(tree.selected(), None, "選べない項目の子も選べないこと");
+    let locked_button = locked
+        .native_view()
+        .downcast::<objc2_app_kit::NSButton>()
+        .expect("ボタンであること");
+    assert!(
+        locked_button.isEnabled(),
+        "選べない項目の中のコントロールは有効なままであること"
+    );
+    assert_eq!(locked.native_view().alphaValue(), 1.0, "淡くしないこと");
+    tree.expand(&[1]);
+    assert_eq!(outline.numberOfRows(), 5, "選べない枝も開けること");
+    assert!(is_in_cell(table, &inside_locked.native_view(), 0, 4));
+
+    // 閉じて開き直しても、中身は行へ戻る。
+    tree.collapse_all();
+    tree.expand_all();
+    assert!(
+        is_in_cell(table, &main_rs.native_view(), 0, 1),
+        "開き直すと行へ戻ること"
+    );
+
+    // 枝の中の枝を開いたまま親を閉じて開き直す。AppKit は中の枝の開閉を
+    // 親の開閉のデリゲートの中で戻すので、行の高さを答える経路が再入しないこと
+    // (警告は stderr に出る。自動の行の高さにすると出る)。
+    let deep = ui.label("孫")?;
+    tree.set_rows(&[TreeRow::new(&ui.label("親")?).expanded(true).child(
+        TreeRow::new(&ui.label("子の枝")?)
+            .expanded(true)
+            .child(TreeRow::new(&deep)),
+    )]);
+    assert_eq!(outline.numberOfRows(), 3);
+    tree.collapse(&[0]);
+    assert_eq!(outline.numberOfRows(), 1);
+    tree.expand(&[0]);
+    assert_eq!(outline.numberOfRows(), 3, "中の枝の開閉も戻ること");
+    assert!(
+        is_in_cell(table, &deep.native_view(), 0, 2),
+        "開き直した中の枝の行にも中身が入ること"
+    );
+
+    // set_items で文字の項目へ戻る。
+    tree.set_items(&[TreeItem::new("文字")]);
+    assert_eq!(tree.len(), 1);
+    let cell = outline
+        .viewAtColumn_row_makeIfNecessary(0, 0, true)
+        .expect("1 行目のビューが作られること")
+        .downcast::<objc2_app_kit::NSTableCellView>()
+        .expect("行は NSTableCellView であること");
+    let field = unsafe { cell.textField() }.expect("行に文字が入っていること");
+    assert_eq!(field.stringValue().to_string(), "文字");
+    Ok(())
+}
+
+/// Pressing a control inside a tree row reaches the control and neither selects the
+/// item nor expands it; clicking a label in the same row selects it.
+///
+/// Real events are delivered, as in [`list_row_activation_notifies`].
+fn tree_row_controls_do_not_select(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+
+    let window = ui.window("ツリーの行のクリック", 480.0, 320.0)?;
+    let content = ui.stack(Orientation::Horizontal)?;
+    let title = ui.label("フォルダ")?;
+    content.append(&title);
+    let action = ui.button("開く")?;
+    let clicks = Rc::new(Cell::new(0));
+    action.on_click({
+        let clicks = clicks.clone();
+        move || clicks.set(clicks.get() + 1)
+    });
+    content.append(&action);
+    let check = ui.checkbox("同期")?;
+    content.append(&check);
+
+    let field = ui.text_input("メモ")?;
+    content.append(&field);
+
+    let tree = ui.tree()?;
+    tree.set_rows(&[TreeRow::new(&content).child(TreeRow::new(&ui.label("子")?))]);
+    tree.set_sizing(Sizing::fill());
+    // ツリーの外のボタン。本物のクリックを配送できる環境かは、これで見分ける。
+    let probe = ui.button("配送の確認")?;
+    let probe_clicks = Rc::new(Cell::new(0));
+    probe.on_click({
+        let probe_clicks = probe_clicks.clone();
+        move || probe_clicks.set(probe_clicks.get() + 1)
+    });
+    let root = ui.stack(Orientation::Vertical)?;
+    root.set_sizing(Sizing::fill());
+    root.append(&probe);
+    root.append(&tree);
+    let selections = Rc::new(Cell::new(0));
+    tree.on_select({
+        let selections = selections.clone();
+        move |_| selections.set(selections.get() + 1)
+    });
+    window.set_child(&root);
+
+    app.setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+    #[allow(deprecated)]
+    app.activateIgnoringOtherApps(true);
+    window.show();
+    let native = window.native_window();
+    for _ in 0..40 {
+        if native.isKeyWindow() {
+            break;
+        }
+        pump(0.05);
+        deliver_events(&app);
+    }
+    let content_view = native.contentView().expect("contentView");
+    content_view.layoutSubtreeIfNeeded();
+    let _ = tree
+        .native_outline_view()
+        .viewAtColumn_row_makeIfNecessary(0, 0, true);
+    content_view.layoutSubtreeIfNeeded();
+    content_view.display();
+
+    // 窓が key でなくても届く環境がある。ツリーの外のボタンに届いたかで、
+    // 確かめられるかを決める。届くなら、行の中のボタンにも届かなければならない。
+    click_view(&app, &native, &probe.native_view());
+    if probe_clicks.get() == 1 {
+        click_view(&app, &native, &action.native_view());
+        assert_eq!(clicks.get(), 1, "行の中のボタンにクリックが届くこと");
+        click_view(&app, &native, &check.native_view());
+        assert!(
+            check.is_checked(),
+            "行の中のチェックボックスが切り替わること"
+        );
+        assert_eq!(
+            tree.selected(),
+            None,
+            "中のコントロールを押しても選ばれないこと"
+        );
+        assert_eq!(selections.get(), 0, "選択の通知も起きないこと");
+        assert!(
+            !tree.is_expanded(&[0]),
+            "中のコントロールを押しても開かないこと"
+        );
+        click_view(&app, &native, &field.native_view());
+        assert_eq!(
+            tree.selected(),
+            None,
+            "行の中の入力欄を押しても選ばれないこと"
+        );
+
+        click_view(&app, &native, &title.native_view());
+        assert_eq!(
+            tree.selected(),
+            Some(vec![0]),
+            "行の文字を押すと選ばれること"
+        );
+    } else {
+        skip("本物のクリックを配送できなかった");
+    }
+
+    window.close();
+    app.setActivationPolicy(NSApplicationActivationPolicy::Prohibited);
     Ok(())
 }
 

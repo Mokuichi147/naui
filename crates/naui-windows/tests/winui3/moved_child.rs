@@ -1185,3 +1185,179 @@ pub(crate) fn rows_take_only_free_children_on_screen(ui: &Ui) -> Result<()> {
     report(&problems);
     Ok(())
 }
+
+// ------------------------------------------------------------ ツリーの行
+
+/// Whether the tree shows the widget in a row, in either surface: a `TreeViewNode`'s
+/// content (the `TreeView` is not on screen, so its rows are found from the nodes) or
+/// the multiple selection `ListView`.
+fn tree_holds(tree: &naui_windows::Tree, widget: &dyn Widget) -> bool {
+    use naui_winui3::Microsoft::UI::Xaml::Controls::TreeViewNode;
+    use windows_collections::IVector;
+
+    fn in_nodes(nodes: &IVector<TreeViewNode>, widget: &dyn Widget) -> bool {
+        nodes.into_iter().any(|node| {
+            node.Content()
+                .is_ok_and(|content| contains(&content, widget))
+                || node
+                    .Children()
+                    .is_ok_and(|children| in_nodes(&children, widget))
+        })
+    }
+    let in_tree_view = tree
+        .native_tree_view()
+        .RootNodes()
+        .is_ok_and(|roots| in_nodes(&roots, widget));
+    let in_list_view = tree
+        .native_list_view()
+        .and_then(|list| list.cast::<IInspectable>().ok())
+        .is_some_and(|root| contains(&root, widget));
+    in_tree_view || in_list_view
+}
+
+/// Tree rows follow the rules of list rows: a child with no parent goes in and stays
+/// through rebuilding and switching the selection mode (which moves it between the
+/// `TreeView` and the `ListView`); a child in a `Stack` / `Grid` leaves its row empty,
+/// is not written to, and is not taken even after it leaves that container; a child in
+/// another tree's row is not taken until that tree lets go of it, and the tree that let
+/// go does not take it back.
+pub(crate) fn tree_rows_take_only_free_children(ui: &Ui) -> Result<()> {
+    use naui_core::{SelectionMode, TreeItem};
+    use naui_windows::TreeRow;
+
+    let mut problems = Vec::new();
+
+    guarded(
+        &mut problems,
+        "Tree::set_rows (親の無い子)",
+        |problems| {
+            let (Ok(tree), Ok(c)) = (ui.tree(), ui.label("c")) else {
+                return;
+            };
+            let mut check = |when: &str| {
+                if !tree_holds(&tree, &c) {
+                    problems.push(format!("Tree::set_rows (親の無い子): {when}のあと行に無い"));
+                }
+            };
+            tree.set_rows(&[TreeRow::new(&c)]);
+            check("set_rows ");
+            tree.set_selection_mode(SelectionMode::Multiple);
+            check("複数選択への切り替え ");
+            tree.set_rows(&[TreeRow::new(&c)]);
+            check("複数選択での同じ子の set_rows ");
+            tree.set_selection_mode(SelectionMode::Single);
+            check("単一選択への切り替え ");
+            tree.set_rows(&[TreeRow::new(&c)]);
+            check("同じ子での set_rows ");
+        },
+    );
+
+    for kind in TARGETS {
+        let what = format!("Tree::set_rows ({kind:?} の中の子)");
+        guarded(&mut problems, &what, |problems| {
+            let (Ok(tree), Ok(target), Ok(c), Ok(text)) = (
+                ui.tree(),
+                target(ui, kind),
+                ui.label("c"),
+                ui.label("同じ木の文字"),
+            ) else {
+                return;
+            };
+            c.set_sizing(Sizing::AUTO);
+            (target.put)(&c);
+            let before = placement(&c);
+            tree.set_rows(&[TreeRow::new(&c), TreeRow::new(&text)]);
+            let mut check = |when: &str| {
+                if tree_holds(&tree, &c) {
+                    problems.push(format!("{what}: {when}のあと行に置いた"));
+                }
+                if placement(&c) != before {
+                    problems.push(format!(
+                        "{what}: {when}のあと子を書き換えた\n         前 {before}\n         後 {}",
+                        placement(&c)
+                    ));
+                }
+                if !tree_holds(&tree, &text) {
+                    problems.push(format!("{what}: {when}のあとほかの行が無い"));
+                }
+            };
+            check("set_rows ");
+            tree.set_selection_mode(SelectionMode::Multiple);
+            check("複数選択への切り替え ");
+            tree.set_selection_mode(SelectionMode::Single);
+            check("単一選択への切り替え ");
+            // 移す先が手放して親が無くなっても、断った子は拾わない。
+            (target.exercise)();
+            tree.set_selection_mode(SelectionMode::Multiple);
+            tree.set_selection_mode(SelectionMode::Single);
+            if tree_holds(&tree, &c) {
+                problems.push(format!(
+                    "{what}: 移す先が手放したあとのモード切り替えで、断った子を置いた"
+                ));
+            }
+        });
+    }
+
+    guarded(
+        &mut problems,
+        "Tree::set_rows (別の木の行の子)",
+        |problems| {
+            let what = "Tree::set_rows (別の木の行の子)";
+            let (Ok(first), Ok(second), Ok(c), Ok(text)) = (
+                ui.tree(),
+                ui.tree(),
+                ui.label("c"),
+                ui.label("同じ木の文字"),
+            ) else {
+                return;
+            };
+            first.set_rows(&[TreeRow::new(&c)]);
+            let before = placement(&c);
+            second.set_rows(&[TreeRow::new(&c), TreeRow::new(&text)]);
+            if tree_holds(&second, &c) || !tree_holds(&first, &c) {
+                problems.push(format!("{what}: 前の木の行にいる子を後の木が取った"));
+            }
+            if placement(&c) != before {
+                problems.push(format!(
+                    "{what}: 断った木が子を書き換えた\n         前 {before}\n         後 {}",
+                    placement(&c)
+                ));
+            }
+            if !tree_holds(&second, &text) {
+                problems.push(format!("{what}: 断った木のほかの行が無い"));
+            }
+            second.set_selection_mode(SelectionMode::Multiple);
+            second.set_selection_mode(SelectionMode::Single);
+            if tree_holds(&second, &c) || !tree_holds(&first, &c) {
+                problems.push(format!(
+                    "{what}: 断った木のモード切り替えで、前の木から子を取った"
+                ));
+            }
+
+            // 前の木が手放せば、次に渡した木が置く。手放した木は取り返さない。
+            first.set_items(&[TreeItem::new("文字")]);
+            if tree_holds(&first, &c) {
+                problems.push(format!("{what}: set_items のあとも前の木の行に残る"));
+            }
+            second.set_rows(&[TreeRow::new(&c), TreeRow::new(&text)]);
+            if !tree_holds(&second, &c) {
+                problems.push(format!("{what}: 前の木が手放した子を後の木が置けない"));
+            }
+            first.set_selection_mode(SelectionMode::Multiple);
+            first.set_selection_mode(SelectionMode::Single);
+            second.set_selection_mode(SelectionMode::Multiple);
+            if tree_holds(&first, &c) || !tree_holds(&second, &c) {
+                problems.push(format!(
+                    "{what}: モード切り替えのあと、手放した木が子を取り返した"
+                ));
+            }
+            second.set_selection_mode(SelectionMode::Single);
+            if !tree_holds(&second, &c) {
+                problems.push(format!("{what}: 後の木の単一選択へ戻したあと行に無い"));
+            }
+        },
+    );
+
+    report(&problems);
+    Ok(())
+}

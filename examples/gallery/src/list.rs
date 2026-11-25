@@ -3,13 +3,14 @@ use std::rc::Rc;
 
 use naui::{
     Align, GridCell, Length, ListItem, ListRow, Orientation, PopupItem, Result, SelectionMode,
-    Sizing, Track, TreeItem, Ui,
+    Sizing, Track, TreeItem, TreeRow, Ui,
 };
 
 use crate::parts::{self, Notice};
 
 /// List の補足表示、無効な行、単一・複数選択、行の起動と行ごとのコンテキストメニュー、
-/// 行がとても多いリスト、ListRow の任意内容の行と行クリック、Tree の開閉・選択。
+/// 行がとても多いリスト、ListRow の任意内容の行と行クリック、Tree の開閉・選択、
+/// TreeRow のウィジェットの項目。
 pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let pane = parts::pane(ui)?;
 
@@ -174,6 +175,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     build_dynamic_rows(ui, &pane)?;
 
     build_tree(ui, &pane, notice)?;
+    build_widget_tree(ui, &pane, notice)?;
     Ok(pane)
 }
 
@@ -457,6 +459,77 @@ fn build_tree(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
     });
     pane.append(&mode_row);
     pane.append(&actions);
+    pane.append(&tree);
+    Ok(())
+}
+
+/// 項目にウィジェットを置いた Tree (`TreeRow`)。チェックボックスやボタンを押しても
+/// 項目は選ばれない。
+fn build_widget_tree(ui: &Ui, pane: &naui::Stack, notice: &Notice) -> Result<()> {
+    parts::section(ui, pane, "Tree with widgets")?;
+
+    // 同期するフォルダを選ぶ画面のような行: チェックボックスと、末尾の大きさ。
+    let folder = |name: &str, size: &str, synced: bool| -> Result<naui::Stack> {
+        let content = ui.stack(Orientation::Horizontal)?;
+        content.set_align(Align::Center);
+        let check = ui.checkbox(name)?;
+        check.set_checked(synced);
+        check.on_toggle({
+            let notice = notice.clone();
+            let name = name.to_string();
+            move |checked| {
+                let state = if checked { "Syncing" } else { "Not syncing" };
+                notice.show(&format!("{state} {name}"));
+            }
+        });
+        content.append(&check);
+        let spacer = ui.spacer()?;
+        content.append(&spacer);
+        content.append(&ui.label(size)?);
+        content.set_sizing(Sizing::fill_width());
+        Ok(content)
+    };
+    let shared = ui.stack(Orientation::Horizontal)?;
+    shared.set_align(Align::Center);
+    shared.append(&ui.label("Shared with me")?);
+    let spacer = ui.spacer()?;
+    shared.append(&spacer);
+    let refresh = ui.button("Refresh")?;
+    refresh.on_click({
+        let notice = notice.clone();
+        move || notice.show("Refreshed the shared folders")
+    });
+    shared.append(&refresh);
+    shared.set_sizing(Sizing::fill_width());
+
+    let rows = [
+        TreeRow::new(&folder("Documents", "1.2 GB", true)?)
+            .expanded(true)
+            .children([
+                TreeRow::new(&folder("Invoices", "48 MB", true)?),
+                TreeRow::new(&folder("Photos", "860 MB", false)?),
+            ]),
+        TreeRow::new(&folder("Music", "12 GB", false)?),
+        // 選べない項目でも、中のボタンは押せる。
+        TreeRow::new(&shared)
+            .selectable(false)
+            .child(TreeRow::new(&folder("Team", "3.4 GB", false)?)),
+    ];
+
+    let tree = ui.tree()?;
+    tree.set_rows(&rows);
+    tree.set_sizing(
+        Sizing::new()
+            .width(Length::Fill)
+            .height(Length::Fixed(200.0)),
+    );
+    tree.on_select({
+        let notice = notice.clone();
+        move |path| match path.is_empty() {
+            true => notice.show("Selected: none"),
+            false => notice.show(&format!("Selected item {path:?}")),
+        }
+    });
     pane.append(&tree);
     Ok(())
 }

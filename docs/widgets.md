@@ -786,7 +786,7 @@ collected in [Known limitations](known-limitations.md).
 - `NavItem`: navigation items
 - `ListItem` / `ListRow` / `SelectionMode`: simple list items, rows of arbitrary content, single and multiple selection
 - `TableColumn` / `TableRow` / `SortOrder`: table columns, rows and sort direction
-- `TreeItem`: tree items (nesting, expansion, whether they can be chosen)
+- `TreeItem` / `TreeRow`: tree items of text and of arbitrary content (nesting, expansion, whether they can be chosen)
 - `DateTime` / `DatePickerMode`: values of date and time, and what a date picker lets the user pick
 - `Time`: values of hours and minutes only (the values exchanged by time pickers)
 - `NumberSpec`: lower bound, upper bound, step and decimal places of number input

@@ -27,31 +27,46 @@
 //! descendants, which is not what naui's multiple selection means. With
 //! [`SelectionMode::Multiple`] the frame holds a `ListView` laid out as a tree instead
 //! ([`multi`]).
+//!
+//! Items made from widgets ([`TreeRow`]) follow the same rules as `List` rows: the tree
+//! takes each widget that has no parent (or is in one of its rows) when it is handed
+//! over, and puts it in a holder of its own (a transparent `Grid`) when the rows are
+//! built, only while nothing else holds it. Before building again, in either surface,
+//! the holders let go of their widgets, since an element can be in only one parent.
+//! Controls inside a row take their own presses and keys, as in `List`; the holder
+//! keeps taps on them and the movement keys typed in a text field from the row.
 
 mod multi;
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use naui_core::{Result, SelectionMode, TreeItem};
 use naui_winui3::Microsoft::UI::Dispatching::{DispatcherQueue, DispatcherQueueHandler};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Border, Grid as XamlGrid, ListViewBase, TreeView, TreeViewCollapsedEventArgs,
-    TreeViewExpandingEventArgs, TreeViewNode, TreeViewSelectionChangedEventArgs,
-    TreeViewSelectionMode,
+    Border, Grid as XamlGrid, ListViewBase, PasswordBox, TextBox, TreeView,
+    TreeViewCollapsedEventArgs, TreeViewExpandingEventArgs, TreeViewNode,
+    TreeViewSelectionChangedEventArgs, TreeViewSelectionMode,
 };
-use naui_winui3::Microsoft::UI::Xaml::Input::PointerEventHandler;
+use naui_winui3::Microsoft::UI::Xaml::Input::{
+    DoubleTappedEventHandler, KeyEventHandler, PointerEventHandler, TappedEventHandler,
+};
 use naui_winui3::Microsoft::UI::Xaml::Markup::XamlReader;
+use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
 use naui_winui3::Microsoft::UI::Xaml::{
-    DataTemplate, ResourceDictionary, RoutedEventHandler, Style, UIElement,
+    DataTemplate, DependencyObject, ResourceDictionary, RoutedEventHandler, Style, UIElement,
 };
 use windows::Foundation::{PropertyValue, TypedEventHandler};
+use windows::System::VirtualKey;
 use windows_core::{IInspectable, Interface, HSTRING};
 
 use crate::layout::ListScrollTarget;
-use crate::list::{item_content, name_tree_view_row_on_load, SelectionHandler};
+use crate::list::{
+    hold_unselectable_press, item_content, name_tree_view_row_on_load, pressed_on_control,
+    transparent_grid, SelectionHandler,
+};
 use crate::to_error;
 use crate::ui_thread::{HandlerCell, UiThreadCell};
 use crate::widgets::{impl_widget, Widget};
@@ -110,6 +125,118 @@ const BLOCKER_XAML: &str = r##"<Grid
     Background="Transparent"
     HorizontalAlignment="Stretch" VerticalAlignment="Stretch"/>"##;
 
+/// The widgets of items made from [`TreeRow`]s, by path.
+type Contents = HashMap<Vec<usize>, Box<dyn Widget>>;
+
+/// One item to put in a tree, with a widget as its content.
+///
+/// [`TreeItem`] is a convenience API for trees that need only strings. To combine
+/// icons, several labels, check boxes, buttons and so on, build the content with
+/// `Grid` / `Stack` and wrap it in this type.
+///
+/// ```no_run
+/// # use naui_windows::{TreeRow, Widget};
+/// # fn row(folder: &dyn Widget, file: &dyn Widget) {
+/// let row = TreeRow::new(folder)
+///     .expanded(true)
+///     .child(TreeRow::new(file).selectable(false));
+/// # let _ = row;
+/// # }
+/// ```
+pub struct TreeRow {
+    content: Box<dyn Widget>,
+    selectable: bool,
+    expanded: bool,
+    children: Vec<TreeRow>,
+}
+
+impl Clone for TreeRow {
+    fn clone(&self) -> Self {
+        Self {
+            content: self.content.boxed_clone(),
+            selectable: self.selectable,
+            expanded: self.expanded,
+            children: self.children.clone(),
+        }
+    }
+}
+
+impl TreeRow {
+    /// Uses a widget as the content of one item. By default the item can be selected,
+    /// starts collapsed and has no children.
+    pub fn new(content: &dyn Widget) -> Self {
+        Self {
+            content: content.boxed_clone(),
+            selectable: true,
+            expanded: false,
+            children: Vec::new(),
+        }
+    }
+
+    /// Set to `false` for items where only the controls inside are operated.
+    ///
+    /// Its descendants cannot be selected either, as with [`TreeItem::enabled`]. The row
+    /// is not dimmed, and the controls inside keep working.
+    pub fn selectable(mut self, selectable: bool) -> Self {
+        self.selectable = selectable;
+        self
+    }
+
+    pub fn is_selectable(&self) -> bool {
+        self.selectable
+    }
+
+    /// Sets whether it is shown expanded from the start (collapsed by default).
+    pub fn expanded(mut self, expanded: bool) -> Self {
+        self.expanded = expanded;
+        self
+    }
+
+    pub fn is_expanded(&self) -> bool {
+        self.expanded
+    }
+
+    /// Replaces the child items.
+    pub fn children(mut self, children: impl IntoIterator<Item = TreeRow>) -> Self {
+        self.children = children.into_iter().collect();
+        self
+    }
+
+    /// Adds one child item.
+    pub fn child(mut self, child: TreeRow) -> Self {
+        self.children.push(child);
+        self
+    }
+
+    /// Whether the item has no children (cannot be expanded).
+    pub fn is_leaf(&self) -> bool {
+        self.children.is_empty()
+    }
+
+    /// The shape of the rows as items without text: selection and expansion are
+    /// handled by the same code as for [`TreeItem`]s.
+    fn skeleton(rows: &[TreeRow]) -> Vec<TreeItem> {
+        rows.iter()
+            .map(|row| {
+                TreeItem::new("")
+                    .enabled(row.selectable)
+                    .expanded(row.expanded)
+                    .children(TreeRow::skeleton(&row.children))
+            })
+            .collect()
+    }
+
+    /// Collects the widgets by path.
+    fn collect(rows: &[TreeRow], path: &mut Vec<usize>, out: &mut Contents) {
+        for (index, row) in rows.iter().enumerate() {
+            path.push(index);
+            out.insert(path.clone(), row.content.boxed_clone());
+            TreeRow::collect(&row.children, path, out);
+            path.pop();
+        }
+    }
+}
+
 /// The notification receiving the path of the expanded or collapsed branch and
 /// whether it expanded.
 type ExpandCallback = dyn FnMut(&[usize], bool);
@@ -154,6 +281,16 @@ struct TreeInner {
     /// to on `Loaded`, when the inner list is assembled.
     pending_scroll: RefCell<Option<Vec<usize>>>,
     items: RefCell<Vec<TreeItem>>,
+    /// The widgets of items made from [`TreeRow`]s, by path. Text items have none.
+    contents: RefCell<Contents>,
+    /// The widgets this tree took when they were handed over ([`Tree::set_rows`]), by
+    /// [`crate::layout::element_key`]. Only these are placed, and only while this tree
+    /// is the last to have taken them and nothing holds them.
+    taken: RefCell<HashSet<usize>>,
+    /// The holders this tree made for widgets, in both surfaces (the `TreeView`'s nodes
+    /// and the multiple selection rows). They let go of their widgets before the rows
+    /// are built again ([`Tree::release_holders`]).
+    holders: RefCell<Vec<XamlGrid>>,
     /// The nodes for the items. In depth-first order by path (parents first), that is,
     /// lexicographic order of paths, so lookups by path can use binary search.
     nodes: RefCell<Vec<(Vec<usize>, TreeViewNode)>>,
@@ -214,6 +351,9 @@ impl Tree {
             wheel: RefCell::new(None),
             pending_scroll: RefCell::new(None),
             items: RefCell::new(Vec::new()),
+            contents: RefCell::new(Contents::new()),
+            taken: RefCell::new(HashSet::new()),
+            holders: RefCell::new(Vec::new()),
             nodes: RefCell::new(Vec::new()),
             expanded: RefCell::new(HashSet::new()),
             selected: RefCell::new(Vec::new()),
@@ -236,6 +376,28 @@ impl Tree {
     ///
     /// Expansion returns to what [`TreeItem::expanded`] says.
     pub fn set_items(&self, items: &[TreeItem]) {
+        self.0.taken.borrow_mut().clear();
+        self.load(items, Contents::new());
+    }
+
+    /// Rebuilds the items with widgets as their content. Paths change meaning, so the
+    /// selection is cleared.
+    ///
+    /// Expansion returns to what [`TreeRow::expanded`] says. Every row is built at once,
+    /// so each widget is put in its row right away. A widget still in another container
+    /// is not taken: its row stays empty, also after that container lets go of it, until
+    /// it is given again. A widget already in one of this tree's rows can be given
+    /// again. To give one to another container, replace this tree's items first.
+    pub fn set_rows(&self, rows: &[TreeRow]) {
+        let mut contents = Contents::new();
+        TreeRow::collect(rows, &mut Vec::new(), &mut contents);
+        self.take(&contents);
+        self.load(&TreeRow::skeleton(rows), contents);
+    }
+
+    /// Replaces the items and their widgets, and shows them anew.
+    fn load(&self, items: &[TreeItem], contents: Contents) {
+        *self.0.contents.borrow_mut() = contents;
         *self.0.items.borrow_mut() = items.to_vec();
         self.0.selected.borrow_mut().clear();
         let mut expanded = HashSet::new();
@@ -606,6 +768,9 @@ impl Tree {
 
     /// Maps the items onto a tree of `TreeViewNode`s.
     fn rebuild(&self) -> Result<()> {
+        // 前の節 (や複数選択の行) の受け皿にいるウィジェットは、新しい受け皿へ
+        // 入れる前に外す。XAML の要素は親を 1 つしか持てない。
+        self.release_holders();
         let mut nodes = Vec::new();
         {
             let items = self.0.items.borrow();
@@ -616,7 +781,7 @@ impl Tree {
                     .and_then(|roots| roots.Clear())
                     .map_err(|e| to_error("clear the tree", e))?;
                 let mut path = Vec::new();
-                append_nodes(&this.0.tree_view, None, &items, true, &mut path, &mut nodes)
+                this.append_nodes(None, &items, true, &mut path, &mut nodes)
             })?;
         }
         *self.0.nodes.borrow_mut() = nodes;
@@ -629,6 +794,146 @@ impl Tree {
             self.write_native_expanded(path, true);
         }
         Ok(())
+    }
+
+    /// Maps items onto `TreeViewNode`s and adds them to the tree.
+    ///
+    /// It walks depth-first (parents first), so `out` ends up in lexicographic order of
+    /// paths. `enabled` is whether all ancestors are enabled, the same check as
+    /// [`TreeItem::selectable`].
+    fn append_nodes(
+        &self,
+        parent: Option<&TreeViewNode>,
+        items: &[TreeItem],
+        enabled: bool,
+        path: &mut Vec<usize>,
+        out: &mut Vec<(Vec<usize>, TreeViewNode)>,
+    ) -> Result<()> {
+        let target = match parent {
+            Some(node) => node.Children(),
+            None => self.0.tree_view.RootNodes(),
+        }
+        .map_err(|e| to_error("get the tree children", e))?;
+        for (index, item) in items.iter().enumerate() {
+            path.push(index);
+            let selectable = enabled && item.enabled;
+            let node = TreeViewNode::new().map_err(|e| to_error("create the TreeViewNode", e))?;
+            let content = match self.widget_at(path) {
+                // 選べない行は受け皿が押下を受け止める。中のコントロールは受け皿の子
+                // なので、自分の押下を先に受けて止める。
+                Some(widget) => self
+                    .widget_holder(widget.as_ref(), !selectable)?
+                    .cast::<UIElement>()
+                    .map_err(|e| to_error("convert the row to UIElement", e))?,
+                None => row_content(item, selectable)?,
+            };
+            // 行の `TreeViewItem` は WinUI が作って使い回すので、中身が載るたびに名前を付ける。
+            name_tree_view_row_on_load(&content);
+            let content = content
+                .cast::<IInspectable>()
+                .map_err(|e| to_error("convert the row to UIElement", e))?;
+            node.SetContent(&content)
+                .map_err(|e| to_error("set the row content", e))?;
+            target
+                .Append(&node)
+                .map_err(|e| to_error("add to the tree", e))?;
+            out.push((path.clone(), node.clone()));
+            self.append_nodes(Some(&node), &item.children, selectable, path, out)?;
+            path.pop();
+        }
+        Ok(())
+    }
+
+    // ------------------------------------------------- ウィジェットの項目
+
+    /// The key of this tree as the last to take a widget
+    /// ([`crate::layout::last_row_owner`]).
+    fn owner(&self) -> usize {
+        Rc::as_ptr(&self.0) as usize
+    }
+
+    /// Takes the widgets handed over with [`Tree::set_rows`] that have no parent or are in
+    /// one of this tree's holders, and remembers them. The same rule as `List::set_rows`.
+    fn take(&self, contents: &Contents) {
+        // 自分の受け皿にいるウィジェット。画面に出ていない要素は `Parent` が空なので、
+        // 受け皿の子から引く。
+        let in_holders: HashSet<usize> = self
+            .0
+            .holders
+            .borrow()
+            .iter()
+            .filter_map(|holder| holder.Children().ok())
+            .flat_map(|children| {
+                (0..children.Size().unwrap_or(0))
+                    .filter_map(move |index| children.GetAt(index).ok())
+            })
+            .map(|element| crate::layout::element_key(&element))
+            .collect();
+        let mut taken = HashSet::new();
+        for content in contents.values() {
+            let element = content.native_element();
+            let key = crate::layout::element_key(&element);
+            if in_holders.contains(&key) || !crate::layout::has_parent(&element) {
+                crate::layout::set_last_row_owner(&element, self.owner());
+                taken.insert(key);
+            }
+        }
+        *self.0.taken.borrow_mut() = taken;
+    }
+
+    /// The widget of the item at `path`. `None` for a text item; `Some(None)` for an
+    /// item whose widget is not this tree's to place now (its row stays empty, and
+    /// nothing is written to the widget).
+    ///
+    /// The holders must have let go of their widgets first ([`Tree::release_holders`]),
+    /// so a widget still in a parent is in someone else's.
+    fn widget_at(&self, path: &[usize]) -> Option<Option<UIElement>> {
+        let element = self.0.contents.borrow().get(path)?.native_element();
+        let ours = !crate::layout::has_parent(&element)
+            && crate::layout::last_row_owner(&element) == Some(self.owner())
+            && self
+                .0
+                .taken
+                .borrow()
+                .contains(&crate::layout::element_key(&element));
+        Some(ours.then_some(element))
+    }
+
+    /// Creates the holder of a widget item's row and puts the widget in it (none for a
+    /// widget this tree cannot place).
+    ///
+    /// `hold_presses` is for rows that cannot be selected when nothing around the holder
+    /// holds the press already (the `TreeView`'s rows; the multiple selection rows hold
+    /// it on the whole line). The row is not dimmed.
+    fn widget_holder(&self, widget: Option<&UIElement>, hold_presses: bool) -> Result<XamlGrid> {
+        let holder = transparent_grid()?;
+        // 失敗しても次の組み立てで外せるよう、ウィジェットを入れる前に覚える。
+        self.0.holders.borrow_mut().push(holder.clone());
+        if let Some(widget) = widget {
+            holder
+                .Children()
+                .and_then(|children| children.Append(widget))
+                .map_err(|e| to_error("add to the tree row", e))?;
+            crate::layout::note_place(widget, crate::layout::Place::panel(&holder));
+        }
+        keep_input_in_controls(&holder)?;
+        if hold_presses {
+            hold_unselectable_press(&holder)?;
+        }
+        Ok(holder)
+    }
+
+    /// Takes the widgets out of every holder this tree made, so they can go in new rows.
+    ///
+    /// A widget the app has moved elsewhere is no longer in the holder, so it is not
+    /// touched.
+    fn release_holders(&self) {
+        let holders = std::mem::take(&mut *self.0.holders.borrow_mut());
+        for holder in holders {
+            if let Ok(children) = holder.Children() {
+                let _ = children.Clear();
+            }
+        }
     }
 
     /// The node the path points at. `None` if there is none.
@@ -914,53 +1219,6 @@ impl Drop for TreeInner {
     }
 }
 
-/// Maps items onto `TreeViewNode`s and adds them to the tree.
-///
-/// It walks depth-first (parents first), so `out` ends up in lexicographic order of
-/// paths. `enabled` is whether all ancestors are enabled, the same check as
-/// [`TreeItem::selectable`].
-fn append_nodes(
-    tree_view: &TreeView,
-    parent: Option<&TreeViewNode>,
-    items: &[TreeItem],
-    enabled: bool,
-    path: &mut Vec<usize>,
-    out: &mut Vec<(Vec<usize>, TreeViewNode)>,
-) -> Result<()> {
-    let target = match parent {
-        Some(node) => node.Children(),
-        None => tree_view.RootNodes(),
-    }
-    .map_err(|e| to_error("get the tree children", e))?;
-    for (index, item) in items.iter().enumerate() {
-        path.push(index);
-        let selectable = enabled && item.enabled;
-        let node = TreeViewNode::new().map_err(|e| to_error("create the TreeViewNode", e))?;
-        let content = row_content(item, selectable)?;
-        // 行の `TreeViewItem` は WinUI が作って使い回すので、中身が載るたびに名前を付ける。
-        name_tree_view_row_on_load(&content);
-        let content = content
-            .cast::<IInspectable>()
-            .map_err(|e| to_error("convert the row to UIElement", e))?;
-        node.SetContent(&content)
-            .map_err(|e| to_error("set the row content", e))?;
-        target
-            .Append(&node)
-            .map_err(|e| to_error("add to the tree", e))?;
-        out.push((path.clone(), node.clone()));
-        append_nodes(
-            tree_view,
-            Some(&node),
-            &item.children,
-            selectable,
-            path,
-            out,
-        )?;
-        path.pop();
-    }
-    Ok(())
-}
-
 /// Builds a row's content. The text is built the same way as in `List` (two lines
 /// if there is secondary text).
 fn row_content(item: &TreeItem, selectable: bool) -> Result<UIElement> {
@@ -1004,6 +1262,96 @@ fn pointer_blocker() -> Result<XamlGrid> {
         .PointerReleased(&swallow)
         .map_err(|e| to_error("subscribe to the row cover", e))?;
     Ok(blocker)
+}
+
+/// Keeps what is done to a control inside a widget row in that control.
+///
+/// Presses are already the control's: buttons, check boxes and fields stop
+/// `PointerPressed`, so the row is not selected (the same division as `List`). Buttons
+/// do not stop `DoubleTapped` (see `List`'s row activation), and possibly not `Tapped`
+/// either, so in case `TreeViewItem` / `ListViewItem` act on them, the holder stops
+/// those when they come from a control ([`pressed_on_control`]). And the movement keys
+/// and Space typed in a text field are stopped here once the field has had them, so the
+/// tree does not move the selection or expand and collapse while typing. Keys with
+/// Ctrl, Alt or the Windows key go on (menu shortcuts are picked up on the way up), and
+/// so does Enter (it may be meant for something above, as in `List`).
+fn keep_input_in_controls(holder: &XamlGrid) -> Result<()> {
+    let tapped = TappedEventHandler::new(|sender, args| {
+        if let (Some(sender), Some(args)) = (sender.as_ref(), args.as_ref()) {
+            if args
+                .OriginalSource()
+                .is_ok_and(|source| pressed_on_control(&source, sender))
+            {
+                let _ = args.SetHandled(true);
+            }
+        }
+        Ok(())
+    });
+    holder
+        .Tapped(&tapped)
+        .map_err(|e| to_error("subscribe to tree row taps", e))?;
+    let double = DoubleTappedEventHandler::new(|sender, args| {
+        if let (Some(sender), Some(args)) = (sender.as_ref(), args.as_ref()) {
+            if args
+                .OriginalSource()
+                .is_ok_and(|source| pressed_on_control(&source, sender))
+            {
+                let _ = args.SetHandled(true);
+            }
+        }
+        Ok(())
+    });
+    holder
+        .DoubleTapped(&double)
+        .map_err(|e| to_error("subscribe to tree row double taps", e))?;
+    let keyed = KeyEventHandler::new(|sender, args| {
+        let (Some(sender), Some(args)) = (sender.as_ref(), args.as_ref()) else {
+            return Ok(());
+        };
+        let modifiers = crate::keys::modifiers();
+        let plain = !modifiers.control && !modifiers.alt && !modifiers.meta;
+        let movement = matches!(
+            args.Key().unwrap_or(VirtualKey::None),
+            VirtualKey::Left
+                | VirtualKey::Right
+                | VirtualKey::Up
+                | VirtualKey::Down
+                | VirtualKey::Home
+                | VirtualKey::End
+                | VirtualKey::PageUp
+                | VirtualKey::PageDown
+                | VirtualKey::Space
+        );
+        if plain
+            && movement
+            && args
+                .OriginalSource()
+                .is_ok_and(|source| typed_in_text_field(&source, sender))
+        {
+            let _ = args.SetHandled(true);
+        }
+        Ok(())
+    });
+    holder
+        .KeyDown(&keyed)
+        .map_err(|e| to_error("subscribe to tree row keys", e))?;
+    Ok(())
+}
+
+/// Whether `source`, which got a key inside the row holder `holder`, is in a text field
+/// (`AutoSuggestBox` and `NumberBox` have a `TextBox` inside).
+fn typed_in_text_field(source: &IInspectable, holder: &IInspectable) -> bool {
+    let mut current = source.cast::<DependencyObject>().ok();
+    while let Some(object) = current {
+        if crate::keys::same(&object, holder) {
+            return false;
+        }
+        if object.cast::<TextBox>().is_ok() || object.cast::<PasswordBox>().is_ok() {
+            return true;
+        }
+        current = VisualTreeHelper::GetParent(&object).ok();
+    }
+    false
 }
 
 /// Loads the themed frame. Falls back to a plain `Border` + `TreeView` if it cannot

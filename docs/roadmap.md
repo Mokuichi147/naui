@@ -181,8 +181,14 @@ shortcuts that are not in a menu, and the always-visible calendar.
 - [ ] **Make dragging `Table` column widths work on Windows and Linux too.** Linux
       has the native feature in `GtkColumnView`, while Windows uses a custom table,
       so it is heavy.
-- [ ] **Placing widgets in `Tree` items.** Items hold only strings today, while
+- [x] **Placing widgets in `Tree` items.** Items hold only strings today, while
       `List` and `Table` can hold widgets.
+      Done as `TreeRow` and `Tree::set_rows`, beside `TreeItem` as `ListRow` is
+      beside `ListItem`, so `TreeItem` keeps its fields and nothing breaks. Widgets
+      are handed over by the same rules as `List` rows, controls inside a row neither
+      choose the item nor expand it, and `selectable(false)` leaves the row undimmed
+      with its controls working. Every row is built when passed; building only the
+      rows on screen is left for later.
 - [ ] **Always-visible calendar widget.** WinUI's `CalendarView`, `GtkCalendar`
       and `NSDatePicker` (calendar style) exist. The Web has no always-visible
       control, only the popup of `<input type="date">`, so it would be composed

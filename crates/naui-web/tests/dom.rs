@@ -31,7 +31,7 @@ use naui_core::{
     ToolbarIcon, ToolbarItem, WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
     ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
 };
-use naui_web::{run_for_test, ListRow, TableCells, Ui, WebWidgetExt, Widget};
+use naui_web::{run_for_test, ListRow, TableCells, TreeRow, Ui, WebWidgetExt, Widget};
 use wasm_bindgen::{JsCast, JsValue};
 use wasm_bindgen_test::{wasm_bindgen_test, wasm_bindgen_test_configure};
 use web_sys::{
@@ -11151,6 +11151,296 @@ fn tree_keeps_a_single_selection_inside_a_collapsed_branch() {
     });
 }
 
+/// The `role="treeitem"` that holds the widget.
+fn tree_item_of(widget: &dyn Widget) -> Element {
+    widget
+        .native_element()
+        .closest("[role=treeitem]")
+        .expect("検索")
+        .expect("項目の中にあること")
+}
+
+/// The line (expander mark and content) of the tree item that holds the widget.
+fn tree_line_of(widget: &dyn Widget) -> HtmlElement {
+    tree_item_of(widget)
+        .first_element_child()
+        .expect("項目の行")
+        .unchecked_into()
+}
+
+/// Items made from widgets (`TreeRow`) put the widget in the item, count, select and
+/// expand as text items do, keep `selectable(false)` items undimmed with working
+/// controls, and `set_items` turns them back into text.
+#[wasm_bindgen_test]
+fn tree_rows_hold_widgets() {
+    with_ui(|ui| {
+        let tree = ui.tree()?;
+        let folder = ui.stack(Orientation::Vertical)?;
+        let folder_name = ui.label("src")?;
+        folder.append(&folder_name);
+        folder.append(&ui.label("3 ファイル")?);
+        let main_rs = ui.checkbox("main.rs")?;
+        let lib_rs = ui.label("lib.rs")?;
+        let locked = ui.button("ロック")?;
+        let pressed = Rc::new(Cell::new(0));
+        locked.on_click({
+            let pressed = pressed.clone();
+            move || pressed.set(pressed.get() + 1)
+        });
+        let inside_locked = ui.label("中身")?;
+        tree.set_rows(&[
+            TreeRow::new(&folder)
+                .expanded(true)
+                .children([TreeRow::new(&main_rs), TreeRow::new(&lib_rs)]),
+            TreeRow::new(&locked)
+                .selectable(false)
+                .child(TreeRow::new(&inside_locked)),
+        ]);
+        tree.set_sizing(Sizing::fixed(260.0, 300.0));
+        let mounted = Mounted::new(&tree);
+        let root = &mounted.0;
+
+        assert_eq!(tree.len(), 5, "子孫まで数えること");
+        assert_eq!(
+            root.query_selector_all("[role=treeitem]")
+                .expect("項目")
+                .length(),
+            5
+        );
+        assert!(
+            tree.is_expanded(&[0]),
+            "TreeRow::expanded のとおりに開くこと"
+        );
+        assert!(!tree.is_expanded(&[1]));
+        for (widget, what) in [
+            (&folder as &dyn Widget, "枝"),
+            (&main_rs, "葉"),
+            (&locked, "選べない枝"),
+            (&inside_locked, "閉じた枝の中"),
+        ] {
+            assert!(
+                root.contains(Some(widget.native_element().as_ref())),
+                "{what}の中身が項目に入ること"
+            );
+        }
+        assert!(
+            tree_item_of(&main_rs)
+                .parent_element()
+                .and_then(|group| group.closest("[role=treeitem]").ok().flatten())
+                .is_some_and(|parent| parent == tree_item_of(&folder)),
+            "子の項目は親の項目の group の中にあること"
+        );
+        // 段付けは文字の項目と同じ。高さは中身に合わせる。
+        let indent = |widget: &dyn Widget| computed(&tree_line_of(widget), "padding-left");
+        assert_ne!(indent(&main_rs), indent(&folder), "子は段を下げること");
+        let height = |widget: &dyn Widget| tree_line_of(widget).get_bounding_client_rect().height();
+        assert!(
+            height(&folder) > height(&lib_rs),
+            "2 行の中身の行のほうが高いこと: {} / {}",
+            height(&folder),
+            height(&lib_rs)
+        );
+        assert!(
+            height(&folder) >= folder.native_element().get_bounding_client_rect().height(),
+            "中身が収まる高さであること"
+        );
+
+        // 選択と開閉は文字の項目と同じ。中身のラベルの上を押しても選べる。
+        let seen = Rc::new(RefCell::new(Vec::<Vec<usize>>::new()));
+        tree.on_select({
+            let seen = seen.clone();
+            move |path| seen.borrow_mut().push(path.to_vec())
+        });
+        lib_rs
+            .native_element()
+            .unchecked_into::<HtmlElement>()
+            .click();
+        assert_eq!(tree.selected(), Some(vec![0, 1]), "ラベルを押すと選ぶこと");
+        assert_eq!(
+            tree_item_of(&lib_rs)
+                .get_attribute("aria-selected")
+                .as_deref(),
+            Some("true")
+        );
+        folder_name
+            .native_element()
+            .unchecked_into::<HtmlElement>()
+            .click();
+        assert_eq!(tree.selected(), Some(vec![0]));
+        assert_eq!(*seen.borrow(), vec![vec![0, 1], vec![0]]);
+        tree.collapse(&[0]);
+        assert!(!tree.is_expanded(&[0]));
+        assert_eq!(
+            tree_item_of(&folder)
+                .get_attribute("aria-expanded")
+                .as_deref(),
+            Some("false")
+        );
+        assert!(
+            main_rs.native_element().get_bounding_client_rect().height() == 0.0,
+            "閉じた枝の中身は見えないこと"
+        );
+        tree.expand(&[0]);
+        assert!(tree.is_expanded(&[0]));
+
+        // selectable(false) の項目とその子は選べない。
+        tree.select(&[1]);
+        assert_eq!(
+            tree.selected(),
+            None,
+            "selectable(false) の項目は選べないこと"
+        );
+        tree.set_selected(&[1, 0]);
+        assert_eq!(tree.selected(), None, "選べない項目の子も選べないこと");
+        tree_line_of(&locked).click();
+        assert_eq!(tree.selected(), None, "行を押しても選ばれないこと");
+        // 淡くせず、中のコントロールは動く。
+        let locked_item = tree_item_of(&locked);
+        assert!(
+            !locked_item.has_attribute("aria-disabled"),
+            "無効と伝えないこと"
+        );
+        assert!(
+            !locked_item.outer_html().contains("GrayText"),
+            "淡い文字色を当てないこと"
+        );
+        assert!(
+            !locked.native_element().has_attribute("disabled"),
+            "中のボタンは有効なままであること"
+        );
+        locked
+            .native_element()
+            .unchecked_into::<HtmlElement>()
+            .click();
+        assert_eq!(pressed.get(), 1, "中のボタンは押せること");
+        tree.expand(&[1]);
+        assert!(tree.is_expanded(&[1]), "選べない枝も開けること");
+        assert!(!tree_item_of(&inside_locked).has_attribute("aria-disabled"));
+
+        // set_items で文字の項目に戻る。中身は木から外れる。
+        tree.set_items(&[naui_core::TreeItem::new("文字")
+            .expanded(true)
+            .child(naui_core::TreeItem::new("子"))]);
+        assert_eq!(tree.len(), 2);
+        assert!(tree.selection().is_empty());
+        for widget in [&folder as &dyn Widget, &main_rs, &locked] {
+            assert!(
+                !root.contains(Some(widget.native_element().as_ref())),
+                "set_items のあとは中身が残らないこと"
+            );
+        }
+        click_tree_row(root, "子", false, false);
+        assert_eq!(tree.selected(), Some(vec![0, 0]));
+        Ok(())
+    });
+}
+
+/// Controls inside an item take their own clicks and keys: pressing them or typing
+/// in them neither selects the item nor expands it, and the tree does not prevent
+/// the keys' default action. The rest of the row still selects.
+#[wasm_bindgen_test]
+fn tree_row_controls_do_not_select() {
+    with_ui(|ui| {
+        let tree = ui.tree()?;
+        let line = ui.stack(Orientation::Horizontal)?;
+        let name = ui.label("名前")?;
+        let field = ui.text_input("メモ")?;
+        let button = ui.button("開く")?;
+        let check = ui.checkbox("済み")?;
+        line.append(&name);
+        line.append(&field);
+        line.append(&button);
+        line.append(&check);
+        let pressed = Rc::new(Cell::new(0));
+        button.on_click({
+            let pressed = pressed.clone();
+            move || pressed.set(pressed.get() + 1)
+        });
+        tree.set_rows(&[
+            TreeRow::new(&line).child(TreeRow::new(&ui.label("子")?)),
+            TreeRow::new(&ui.label("隣")?),
+        ]);
+        tree.set_selection_mode(SelectionMode::Multiple);
+        tree.set_sizing(Sizing::fixed(400.0, 200.0));
+        let mounted = Mounted::new(&tree);
+        let root = &mounted.0;
+        let expanded = Rc::new(Cell::new(0));
+        tree.on_expand({
+            let expanded = expanded.clone();
+            move |_, _| expanded.set(expanded.get() + 1)
+        });
+
+        // ボタンとチェックボックスは押せて、項目は選ばれない。
+        button
+            .native_element()
+            .unchecked_into::<HtmlElement>()
+            .click();
+        assert_eq!(pressed.get(), 1, "ボタン自身は押せること");
+        first_input(&check.native_element()).click();
+        assert!(check.is_checked(), "チェックボックス自身は押せること");
+        field
+            .native_element()
+            .unchecked_into::<HtmlInputElement>()
+            .click();
+        assert!(
+            tree.selection().is_empty(),
+            "中のコントロールを押しても選ばれないこと"
+        );
+        assert_eq!(expanded.get(), 0, "開閉もしないこと");
+
+        // 入力欄で打つキーは、ツリーが食わない。
+        let input = field.native_element().unchecked_into::<HtmlInputElement>();
+        for key in [
+            "ArrowRight",
+            "ArrowDown",
+            "ArrowLeft",
+            "Home",
+            " ",
+            "Enter",
+            "x",
+        ] {
+            assert!(
+                !press_shortcut(&input, key, false, false, false),
+                "入力欄の {key:?} の既定動作を止めないこと"
+            );
+        }
+        assert!(
+            !press_shortcut(&input, "a", true, false, false),
+            "入力欄の Ctrl + A は全文選択に任せること"
+        );
+        let check_input = first_input(&check.native_element());
+        assert!(
+            !press_shortcut(&check_input, " ", false, false, false),
+            "チェックボックスの Space を止めないこと"
+        );
+        assert!(tree.selection().is_empty(), "キーでも選ばれないこと");
+        assert!(!tree.is_expanded(&[0]), "キーで開かないこと");
+        assert_eq!(expanded.get(), 0);
+
+        // 同じ行でも、コントロールの外を押せば選ぶ。その後のキーはツリーのもの。
+        name.native_element()
+            .unchecked_into::<HtmlElement>()
+            .click();
+        assert_eq!(tree.selection(), vec![vec![0]], "ラベルを押すと選ぶこと");
+        assert!(
+            !press_shortcut(&input, "ArrowDown", false, false, false),
+            "選んだあとも入力欄のキーは止めないこと"
+        );
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0]],
+            "入力欄の ↓ で選択は動かないこと"
+        );
+        assert!(
+            press_shortcut(root, "ArrowRight", false, false, false),
+            "ツリーへ送ったキーは処理すること"
+        );
+        assert!(tree.is_expanded(&[0]), "ツリーへ送った → で開くこと");
+        assert_eq!(expanded.get(), 1);
+        Ok(())
+    });
+}
+
 // ------------------------------------------------------------- WebWidgetExt
 
 #[wasm_bindgen_test]
@@ -11876,6 +12166,43 @@ fn holders(ui: &Ui, anchor: &naui_web::Button) -> Result<Vec<Holder>> {
         }),
         takes_on_refresh: None,
     });
+    let tree = ui.tree()?;
+    tree.set_sizing(Sizing::fixed(200.0, 120.0));
+    all.push(Holder {
+        name: "Tree::set_rows",
+        put: Box::new({
+            let tree = tree.clone();
+            let label = label.clone();
+            move |child| {
+                tree.set_rows(&[TreeRow::new(&label("枝"))
+                    .expanded(true)
+                    .children([TreeRow::new(child), TreeRow::new(&label("隣"))])])
+            }
+        }),
+        native: Box::new({
+            let tree = tree.clone();
+            move || tree.native_element()
+        }),
+        exercise: Box::new({
+            let tree = tree.clone();
+            let label = label.clone();
+            move || {
+                tree.collapse(&[0]);
+                tree.expand(&[0]);
+                tree.collapse_all();
+                tree.expand_all();
+                tree.set_selection_mode(SelectionMode::Multiple);
+                tree.set_selection(&[vec![0], vec![0, 0]]);
+                tree.set_selection_mode(SelectionMode::Single);
+                tree.scroll_to_item(&[0, 0]);
+                tree.select(&[0, 1]);
+                // 移った子を含まない行や文字の項目で出し直しても、取り返さない。
+                tree.set_rows(&[TreeRow::new(&label("別の枝")).child(TreeRow::new(&label("葉")))]);
+                tree.set_items(&[naui_core::TreeItem::new("文字")]);
+            }
+        }),
+        takes_on_refresh: None,
+    });
     let list = ui.list()?;
     list.set_sizing(Sizing::fixed(200.0, 120.0));
     all.push(Holder {
@@ -12254,6 +12581,66 @@ fn rows_leave_a_child_moved_without_removal_alone() {
                 .contains(Some(child.native_element().as_ref())),
             || "List → Dialog: 一覧が取り返す".to_string(),
         );
+
+        // Tree の行の受け渡し。前の持ち主は取り返さない。
+        let holds = |widget: &dyn Widget, child: &dyn Widget| {
+            widget
+                .native_element()
+                .contains(Some(child.native_element().as_ref()))
+        };
+        let shake = |tree: &naui_web::Tree| {
+            tree.collapse_all();
+            tree.expand_all();
+            tree.set_selection_mode(SelectionMode::Multiple);
+            tree.select_many(&[vec![0], vec![0, 0]]);
+            tree.set_selection_mode(SelectionMode::Single);
+        };
+        let child = ui.text_input("子")?;
+        let first = ui.tree()?;
+        let _first_mounted = Mounted::new(&first);
+        first.set_rows(&[TreeRow::new(&ui.label("枝")?)
+            .expanded(true)
+            .child(TreeRow::new(&child))]);
+        violations.check(holds(&first, &child), || {
+            "Tree: 最初の行に入らない".to_string()
+        });
+        let second = ui.tree()?;
+        // まだ文書に無いツリーへ渡す。
+        second.set_rows(&[TreeRow::new(&child)]);
+        shake(&first);
+        violations.check(!holds(&first, &child), || {
+            "Tree → Tree: 前のツリーが取り返す".to_string()
+        });
+        let _second_mounted = Mounted::new(&second);
+        shake(&second);
+        violations.check(holds(&second, &child), || {
+            "Tree → Tree: 後のツリーに入らない".to_string()
+        });
+
+        let (list, _list_mounted) = mounted_list(ui)?;
+        list.set_rows(&[ListRow::new(&child)]);
+        shake(&second);
+        violations.check(holds(&list, &child), || {
+            "Tree → List: ツリーが取り返す".to_string()
+        });
+        second.set_rows(&[TreeRow::new(&child)]);
+        list.refresh();
+        list.set_row_height(30.0);
+        violations.check(holds(&second, &child), || {
+            "List → Tree: 一覧が取り返す".to_string()
+        });
+
+        // 外さずに Stack へ移したあとは残り、set_rows で渡し直すと行へ戻る。
+        let stack = ui.stack(Orientation::Vertical)?;
+        let _stack_mounted = Mounted::new(&stack);
+        stack.append(&child);
+        let before = placed(&child);
+        shake(&second);
+        violations.unchanged(&child, &before, "Tree → Stack: ツリーを操作したあと");
+        second.set_rows(&[TreeRow::new(&child)]);
+        violations.check(holds(&second, &child), || {
+            "Tree: set_rows で渡し直しても行へ戻らない".to_string()
+        });
         violations.assert_none();
         Ok(())
     });
