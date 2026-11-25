@@ -12,7 +12,7 @@ use naui_core::MenuSpec;
 /// its path. Separators and submenu headings are never returned.
 ///
 /// ```no_run
-/// # use naui::{MenuBar, MenuItem, MenuShortcut, MenuSpec};
+/// # use naui::{MenuBar, MenuItem, Shortcut, MenuSpec};
 /// # fn build(menu_bar: &MenuBar) {
 /// menu_bar.set_menus(&[MenuSpec::new(
 ///     "View",
@@ -20,7 +20,7 @@ use naui_core::MenuSpec;
 ///         MenuItem::new("Show Sidebar").checked(true),
 ///         MenuItem::submenu("Zoom", ["Zoom In", "Zoom Out"]),
 ///         MenuItem::separator(),
-///         MenuItem::new("Full Screen").shortcut(MenuShortcut::function(11)),
+///         MenuItem::new("Full Screen").shortcut(Shortcut::function(11)),
 ///     ],
 /// )]);
 /// menu_bar.on_activate(|path| match path {

@@ -127,6 +127,25 @@ macro_rules! impl_widget {
                 crate::file_drop::dispatch_drop(&<$t as Widget>::native_element(self), files);
             }
 
+            /// Runs `f` when `shortcut` is pressed while keyboard focus is inside this
+            /// widget (on it or on anything it contains). Giving the same shortcut again
+            /// replaces the closure.
+            ///
+            /// The focused widget's `on_key_down` comes first, then the shortcuts of the
+            /// widgets around the focus from the inside out, then the window's
+            /// `on_key_down` and shortcuts, then the menu bar. A shortcut that fires
+            /// takes the key (its default action is prevented), so the focused control
+            /// does not get it. Invalid shortcuts never fire.
+            pub fn on_shortcut(&self, shortcut: naui_core::Shortcut, f: impl FnMut() + 'static) {
+                crate::keys::set_element_shortcut(&<$t as Widget>::native_element(self), shortcut, f);
+            }
+
+            /// Removes a shortcut given with [`on_shortcut`](Self::on_shortcut). Nothing
+            /// happens if it was not given.
+            pub fn remove_shortcut(&self, shortcut: naui_core::Shortcut) {
+                crate::keys::remove_element_shortcut(&<$t as Widget>::native_element(self), shortcut);
+            }
+
             /// Creates a weak reference. Capture it when touching this widget from its own
             /// notification closures (capturing a `clone()` creates a cycle and it is never
             /// freed).

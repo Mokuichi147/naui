@@ -1,5 +1,5 @@
 use crate::sys;
-use crate::Widget;
+use crate::AsWidget;
 use naui_core::{Result, SelectionMode, SortOrder, TableColumn, TableRow};
 
 /// A table with column headings. It scrolls by itself.
@@ -15,6 +15,9 @@ impl Table {
     /// Rebuilds the columns. Rows and selection stay; only the cells are rearranged.
     ///
     /// The sort setting also stays if that column can still be sorted.
+    ///
+    /// Widths the user dragged a heading edge to (on macOS, Windows and Linux) are
+    /// dropped, and each column starts again from [`TableColumn::width`].
     #[inline]
     pub fn set_columns(&self, columns: &[TableColumn]) {
         self.0.set_columns(columns)
@@ -263,8 +266,8 @@ impl TableCells {
 
     /// Adds one widget cell.
     #[inline]
-    pub fn cell(self, content: &dyn Widget) -> Self {
-        Self(self.0.cell(content.as_backend()))
+    pub fn cell(self, content: &dyn AsWidget) -> Self {
+        Self(self.0.cell(content.as_widget().as_backend()))
     }
 
     /// Whether the whole row can be selected (it can by default).

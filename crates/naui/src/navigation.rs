@@ -1,5 +1,5 @@
 use crate::sys;
-use crate::Widget;
+use crate::AsWidget;
 use naui_core::NavItem;
 
 /// Breadcrumbs. Lays out the current position in a hierarchy from left to right.
@@ -342,8 +342,8 @@ impl_widget!(Tabs);
 impl Tabs {
     /// Adds one tab. `child` becomes that tab's content.
     #[inline]
-    pub fn add_tab(&self, label: &str, child: &dyn Widget) {
-        self.0.add_tab(label, child.as_backend())
+    pub fn add_tab(&self, label: &str, child: &dyn AsWidget) {
+        self.0.add_tab(label, child.as_widget().as_backend())
     }
 
     /// Removes one tab. Does nothing if out of range.

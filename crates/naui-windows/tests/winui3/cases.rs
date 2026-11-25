@@ -9,8 +9,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use naui_core::{
-    Align, Bitmap, ButtonRole, Color, Gradient, GridCell, LayoutDirection, MenuItem, MenuShortcut,
-    MenuSpec, Orientation, Point, Rect, Result, RichText, ScrollPolicy, SidebarItem,
+    Align, Bitmap, ButtonRole, Color, Gradient, GridCell, LayoutDirection, MenuItem, MenuSpec,
+    Orientation, Point, Rect, Result, RichText, ScrollPolicy, Shortcut, SidebarItem,
     SidebarSection, Sizing, TextColor, TextStyle, Theme, ToolbarIcon, WindowPlacement, WindowState,
     DEFAULT_SIDEBAR_WIDTH,
 };
@@ -720,6 +720,10 @@ const CASES: &[Case] = &[
         editable_combo_box_commits_and_reverts_text,
     ),
     (
+        "シートの中のキーは中のウィジェットのショートカットへ届き、窓の Esc に取られない",
+        sheet_keys_skip_the_window_shortcuts,
+    ),
+    (
         "OS の優先言語を読め、WM_SETTINGCHANGE の intl で変わると知らせる",
         preferred_languages_follow_settingchange,
     ),
@@ -807,6 +811,20 @@ const CASES: &[Case] = &[
     (
         "check_url が open_url と同じく読めない URL を断り、読めるものは開かずに通す",
         check_url_reads_without_opening,
+    ),
+    (
+        "ツリーの set_rows は行にウィジェットを置き、選択・開閉・モード切り替え・set_items が文字の項目と同じに動く",
+        tree_rows_hold_widgets,
+    ),
+    (
+        "ツリーの行は親の無い子だけを置き、作り直しやモード切り替えで奪わない",
+        crate::moved_child::tree_rows_take_only_free_children,
+    ),
+    // 並びに依存するケースがあるので、新しいケースは末尾に足す
+    // (シャードは連続した範囲で切っている)。
+    (
+        "表の見出しの端を本物のマウスでドラッグすると列の幅が変わり、残りの列が余りを分ける",
+        table_column_widths_follow_header_drags,
     ),
     (
         "NativeHost が SwapChainPanel を置き、大きさ・倍率・窓への出入りを伝える",
@@ -5364,10 +5382,10 @@ fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
         MenuSpec::new(
             "ファイル",
             [
-                MenuItem::new("新規").shortcut(MenuShortcut::new('n')),
+                MenuItem::new("新規").shortcut(Shortcut::new('n')),
                 MenuItem::separator(),
                 MenuItem::new("保存")
-                    .shortcut(MenuShortcut::new('s').shift(true))
+                    .shortcut(Shortcut::new('s').shift(true))
                     .enabled(false),
             ],
         ),
@@ -5530,10 +5548,10 @@ fn menu_bar_submenus_and_checks_map_to_native(ui: &Ui) -> Result<()> {
                 [
                     MenuItem::new("拡大"),
                     MenuItem::new("開発")
-                        .shortcut(MenuShortcut::function(12).primary(true).shift(true)),
+                        .shortcut(Shortcut::function(12).primary(true).shift(true)),
                 ],
             ),
-            MenuItem::new("全画面").shortcut(MenuShortcut::function(11)),
+            MenuItem::new("全画面").shortcut(Shortcut::function(11)),
         ],
     )]);
 
@@ -6991,7 +7009,8 @@ fn scroll_notifies_only_moves(ui: &Ui) -> Result<()> {
 /// Unnamed, a `List` / `Table` row (`ListViewItem`) is read as nothing and a `Tree` row
 /// (`TreeViewItem`) as "Microsoft.UI.Xaml.Controls.TreeViewNode". A control in a row
 /// gives its own name (an unlabeled check box gives none), and a `Tree`'s rows, which
-/// WinUI makes and reuses, follow new items.
+/// WinUI makes and reuses, follow new items. A `Tree` row with no text is read as
+/// nothing, and a multiple-selection `Tree`'s rows are named too.
 fn rows_are_named_after_their_text(ui: &Ui) -> Result<()> {
     use naui_core::{ListItem, TableColumn, TableRow, TreeItem};
     use naui_windows::ListRow;
@@ -7082,6 +7101,24 @@ fn rows_are_named_after_their_text(ui: &Ui) -> Result<()> {
         tree.set_items(&[TreeItem::new("docs").detail("説明")]);
         pump_until(SCROLL_LAYOUT_TIMEOUT, || tree_names() == ["docs 説明"]);
         assert_eq!(tree_names(), ["docs 説明"], "作り直した木の行");
+
+        // 文字の無い木の行は、`TreeViewNode` の型名ではなく何も読まない名前になる。
+        // (`TreeViewItem` は空の名前を未設定とみなすので、空白だけの名前を付ける。)
+        tree.set_items(&[TreeItem::new("docs").detail("説明"), TreeItem::new("")]);
+        let trimmed = || -> Vec<String> {
+            tree_names()
+                .iter()
+                .map(|name| name.trim().to_owned())
+                .collect()
+        };
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || trimmed() == ["docs 説明", ""]);
+        assert_eq!(trimmed(), ["docs 説明", ""], "文字の無い木の行");
+
+        // 複数選択の木 (`ListView` の行) も、行の文字から名前が付く。
+        tree.set_selection_mode(naui_core::SelectionMode::Multiple);
+        let multi_names = || names_within(tree.native_list_view().expect("複数選択の ListView"));
+        pump_until(SCROLL_LAYOUT_TIMEOUT, || multi_names() == ["docs 説明", ""]);
+        assert_eq!(multi_names(), ["docs 説明", ""], "複数選択の木の行");
     }));
     window.close();
     if let Err(panic) = outcome {
@@ -8945,6 +8982,242 @@ fn tree_multiple_selection_uses_a_list_view(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
+/// `Tree::set_rows` puts each widget in its row, in the `TreeView` and in the multiple
+/// selection `ListView` alike. Paths, selection and expansion work as for text items,
+/// and an item that cannot be selected is not dimmed. Switching the selection mode
+/// moves the widgets to the new surface's rows without an exception (an element can be
+/// in only one parent, so the old rows let go first), and `set_items` goes back to text
+/// and lets go of the widgets.
+fn tree_rows_hold_widgets(ui: &Ui) -> Result<()> {
+    use naui_core::{SelectionMode, TreeItem};
+    use naui_windows::TreeRow;
+    use naui_winui3::Microsoft::UI::Xaml::Controls::{Panel, TreeViewNode};
+    use windows_collections::IVector;
+    use windows_core::{IInspectable, IUnknown};
+
+    fn key<T: Interface>(object: &T) -> usize {
+        object
+            .cast::<IUnknown>()
+            .map_or(0, |unknown| Interface::as_raw(&unknown) as usize)
+    }
+    /// The first child of a row's holder (a `Panel`), by identity. `None` if the
+    /// content is not a panel or is empty.
+    fn held(content: Option<IInspectable>) -> Option<usize> {
+        let children = content?.cast::<Panel>().ok()?.Children().ok()?;
+        if children.Size().ok()? == 0 {
+            return None;
+        }
+        children.GetAt(0).ok().map(|child| key(&child))
+    }
+    /// What each node's row holds, depth-first (every node, collapsed or not).
+    fn node_widgets(nodes: &IVector<TreeViewNode>, out: &mut Vec<Option<usize>>) {
+        for node in nodes {
+            out.push(held(node.Content().ok()));
+            node_widgets(&node.Children().expect("子"), out);
+        }
+    }
+
+    let tree = ui.tree()?;
+    let src = ui.label("src")?;
+    let main = ui.checkbox("main.rs")?;
+    let lib = ui.button("lib.rs")?;
+    let docs = ui.label("docs")?;
+    let guide = ui.text_input("guide")?;
+    let widgets: Vec<usize> = [
+        src.native_element(),
+        main.native_element(),
+        lib.native_element(),
+        docs.native_element(),
+        guide.native_element(),
+    ]
+    .iter()
+    .map(key)
+    .collect();
+    let rows = [
+        TreeRow::new(&src)
+            .expanded(true)
+            .children([TreeRow::new(&main), TreeRow::new(&lib)]),
+        TreeRow::new(&docs)
+            .selectable(false)
+            .child(TreeRow::new(&guide)),
+    ];
+    assert!(rows[0].is_expanded() && !rows[1].is_selectable() && !rows[1].is_leaf());
+    tree.set_rows(&rows);
+    let in_nodes = || {
+        let mut out = Vec::new();
+        node_widgets(&tree.native_tree_view().RootNodes().expect("根"), &mut out);
+        out
+    };
+    let all: Vec<Option<usize>> = widgets.iter().copied().map(Some).collect();
+    assert_eq!(tree.len(), 5, "子孫も数える");
+    assert_eq!(in_nodes(), all, "節の行にウィジェットが入る");
+    assert!(tree.is_expanded(&[0]), "TreeRow::expanded が効く");
+    assert!(!tree.is_expanded(&[1]));
+
+    // 選べない項目も淡くしない (行の受け皿にもウィジェットにも透明度を書かない)。
+    let docs_node = tree
+        .native_tree_view()
+        .RootNodes()
+        .and_then(|roots| roots.GetAt(1))
+        .expect("docs の節");
+    let holder = docs_node
+        .Content()
+        .and_then(|content| content.cast::<UIElement>())
+        .expect("docs の受け皿");
+    assert_eq!(
+        holder.Opacity().expect("Opacity"),
+        1.0,
+        "受け皿は淡くしない"
+    );
+    assert_eq!(
+        docs.native_element().Opacity().expect("Opacity"),
+        1.0,
+        "ウィジェットは淡くしない"
+    );
+
+    // 選択と開閉は文字の項目と同じ。選べない項目とその子孫は選べない。
+    let seen = Rc::new(RefCell::new(Vec::<Vec<usize>>::new()));
+    tree.on_select({
+        let seen = seen.clone();
+        move |path| seen.borrow_mut().push(path.to_vec())
+    });
+    let expanded = Rc::new(RefCell::new(Vec::<(Vec<usize>, bool)>::new()));
+    tree.on_expand({
+        let expanded = expanded.clone();
+        move |path, open| expanded.borrow_mut().push((path.to_vec(), open))
+    });
+    tree.set_selected(&[0, 1]);
+    assert_eq!(tree.selected(), Some(vec![0, 1]));
+    tree.set_selected(&[1]);
+    assert_eq!(tree.selected(), None, "選べない項目は選べない");
+    tree.set_selected(&[1, 0]);
+    assert_eq!(tree.selected(), None, "選べない項目の子孫も選べない");
+    assert!(seen.borrow().is_empty(), "set_selected は通知しない");
+    tree.select(&[0, 0]);
+    assert_eq!(seen.borrow().last(), Some(&vec![0, 0]), "select は通知する");
+    tree.expand(&[1]);
+    assert!(tree.is_expanded(&[1]));
+    tree.collapse(&[1]);
+    assert!(!tree.is_expanded(&[1]));
+    assert_eq!(
+        *expanded.borrow(),
+        vec![(vec![1], true), (vec![1], false)],
+        "開閉を 1 回ずつ通知する"
+    );
+
+    // 行の中のボタンを押しても、項目は選ばれない (UI オートメーションの Invoke)。
+    let clicked = Rc::new(Cell::new(0));
+    lib.on_click({
+        let clicked = clicked.clone();
+        move || clicked.set(clicked.get() + 1)
+    });
+    let notified = seen.borrow().len();
+    automation::invoke(&lib.native_element());
+    pump_until(Duration::from_millis(300), || false);
+    assert_eq!(clicked.get(), 1, "行の中のボタンが押せる");
+    assert_eq!(
+        tree.selected(),
+        Some(vec![0, 0]),
+        "ボタンでは選択が変わらない"
+    );
+    assert_eq!(seen.borrow().len(), notified);
+
+    // 複数選択へ切り替えると、ウィジェットは ListView の行へ移り、節の行は空になる。
+    let row_widgets = || -> Vec<Option<usize>> {
+        let Some(list) = tree.native_list_view() else {
+            return Vec::new();
+        };
+        let items = list.Items().expect("Items");
+        (0..items.Size().expect("Size"))
+            .map(|index| {
+                let line = items
+                    .GetAt(index)
+                    .and_then(|item| item.cast::<ListViewItem>())
+                    .and_then(|item| item.Content())
+                    .and_then(|content| content.cast::<Grid>())
+                    .expect("行の中身は Grid");
+                let holder = line
+                    .Children()
+                    .and_then(|children| children.GetAt(1))
+                    .ok()
+                    .and_then(|holder| holder.cast::<IInspectable>().ok());
+                held(holder)
+            })
+            .collect()
+    };
+    let none = vec![None; 5];
+    for round in 0..2 {
+        tree.set_selection_mode(SelectionMode::Multiple);
+        // 0 src, 1 main.rs, 2 lib.rs, 3 docs (閉じている)。
+        assert_eq!(
+            row_widgets(),
+            all[..4].to_vec(),
+            "{round} 回目: 複数選択の行にウィジェットが入る"
+        );
+        assert_eq!(
+            in_nodes(),
+            none,
+            "{round} 回目: 節の行はウィジェットを手放す"
+        );
+        tree.set_selection(&[vec![0, 0], vec![0, 1], vec![1], vec![1, 0]]);
+        assert_eq!(
+            tree.selection(),
+            vec![vec![0, 0], vec![0, 1]],
+            "{round} 回目: 選べない項目とその子孫は落とす"
+        );
+        tree.expand(&[1]);
+        assert_eq!(row_widgets(), all, "{round} 回目: 開いた枝の行にも入る");
+        tree.collapse(&[1]);
+
+        tree.set_selection_mode(SelectionMode::Single);
+        assert_eq!(
+            in_nodes(),
+            all,
+            "{round} 回目: 単一選択へ戻すと節の行へ戻る"
+        );
+        assert_eq!(
+            row_widgets(),
+            none[..4].to_vec(),
+            "{round} 回目: 複数選択の行はウィジェットを手放す"
+        );
+        tree.set_selected(&[0, 1]);
+        assert_eq!(tree.selected(), Some(vec![0, 1]));
+    }
+
+    // set_items で文字へ戻すと、ウィジェットを手放す。ほかの親へ入れられる。
+    let free = |what: &str| {
+        let stack = ui.stack(Orientation::Vertical).expect("Stack");
+        stack.append(&src);
+        stack.append(&guide);
+        assert_eq!(stack.len(), 2, "{what}: ウィジェットを手放す");
+        stack.clear();
+    };
+    tree.set_items(&[TreeItem::new("a").child(TreeItem::new("b"))]);
+    assert_eq!(tree.len(), 2);
+    let texts = in_nodes();
+    assert_eq!(texts.len(), 2);
+    assert!(
+        texts.iter().flatten().all(|held| !widgets.contains(held)),
+        "文字の項目に戻る"
+    );
+    free("単一選択の set_items");
+
+    tree.set_rows(&rows);
+    assert_eq!(in_nodes(), all, "文字の後でもう一度渡せる");
+    tree.set_selection_mode(SelectionMode::Multiple);
+    tree.set_items(&[TreeItem::new("a"), TreeItem::new("b")]);
+    let texts = row_widgets();
+    assert_eq!(texts.len(), 2);
+    assert!(
+        texts.iter().flatten().all(|held| !widgets.contains(held)),
+        "複数選択でも文字の項目に戻る"
+    );
+    free("複数選択の set_items");
+    tree.set_selection_mode(SelectionMode::Single);
+    free("単一選択へ戻したあと");
+    Ok(())
+}
+
 /// A selection set while the list is not on screen yet shows once it is, without
 /// notifying. Also after the list leaves the window and comes back.
 fn list_shows_the_selection_set_before_it_is_on_screen(ui: &Ui) -> Result<()> {
@@ -10198,6 +10471,106 @@ fn editable_combo_box_commits_and_reverts_text(ui: &Ui) -> Result<()> {
         );
         assert_eq!(*seen.borrow(), ["q", "w", "foo", "w", "", "z"]);
     }));
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
+    Ok(())
+}
+
+/// Keys pressed in a sheet reach the shortcuts of the widgets in it, but not the
+/// window's `on_key_down` or shortcuts, so a window's Escape does not keep the sheet
+/// from closing.
+///
+/// The `ContentDialog` is a popup outside the window's content, yet its keys tunnel
+/// through the window root's `PreviewKeyDown` too, so this needs real keys
+/// (`SendInput`). It passes without checking when the window cannot come to the
+/// front.
+fn sheet_keys_skip_the_window_shortcuts(ui: &Ui) -> Result<()> {
+    use naui_core::{DialogButtons, DialogResponse, EventResponse, Key};
+    use naui_winui3::Microsoft::UI::Xaml::FocusState;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{VK_ESCAPE, VK_F5, VK_F7};
+
+    let window = ui.window("シートの中のキー", 320.0, 200.0)?;
+    let outside = ui.text_input("")?;
+    window.set_child(&outside);
+    let log = Rc::new(RefCell::new(Vec::<&'static str>::new()));
+    let note = |name: &'static str| {
+        let log = log.clone();
+        move || log.borrow_mut().push(name)
+    };
+    window.on_shortcut(Shortcut::from_key(Key::Escape), note("窓の Esc"));
+    window.on_shortcut(Shortcut::function(5), note("窓の F5"));
+    window.on_key_down({
+        let log = log.clone();
+        move |_| {
+            log.borrow_mut().push("窓の on_key_down");
+            EventResponse::Continue
+        }
+    });
+    let sheet = ui.sheet("シート")?;
+    let field = ui.text_input("")?;
+    field.on_shortcut(Shortcut::function(7), note("欄の F7"));
+    sheet.set_child(&field);
+    sheet.set_buttons(DialogButtons::new().primary("作成").cancel("やめる"));
+    let responses = Rc::new(RefCell::new(Vec::<DialogResponse>::new()));
+    sheet.on_response({
+        let responses = responses.clone();
+        move |response| responses.borrow_mut().push(response)
+    });
+    // フォーカスを移してから、それが立つまで待つ。
+    let focus = |text_box: &TextBox| {
+        let focused = || {
+            text_box
+                .FocusState()
+                .is_ok_and(|state| state != FocusState::Unfocused)
+        };
+        pump_until(KEY_INPUT_TIMEOUT, || {
+            let _ = text_box.Focus(FocusState::Programmatic);
+            focused()
+        });
+        focused()
+    };
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        window.show();
+        if bring_to_front(&window).is_none() {
+            return;
+        }
+        sheet.open();
+        if !focus(&native::<TextBox>(&field)) {
+            println!("     (シートの欄へフォーカスを移せない環境なので、確かめずに通す)");
+            return;
+        }
+        if !type_keys(&[VK_F7, VK_F5]) {
+            return;
+        }
+        assert_eq!(
+            *log.borrow(),
+            ["欄の F7"],
+            "シートの中の欄のショートカットは届き、窓のものは届かない"
+        );
+        if !type_keys(&[VK_ESCAPE]) {
+            return;
+        }
+        pump_until(KEY_INPUT_TIMEOUT, || !sheet.is_open());
+        assert_eq!(
+            *responses.borrow(),
+            [DialogResponse::Cancel],
+            "Esc はシートが受け取って閉じる"
+        );
+        assert_eq!(*log.borrow(), ["欄の F7"], "窓の Esc は取らない");
+
+        // 窓の中へ戻れば、窓のショートカットは届く。
+        if !focus(&native::<TextBox>(&outside)) {
+            println!("     (窓の欄へフォーカスを戻せない環境なので、残りは確かめずに通す)");
+            return;
+        }
+        if !type_keys(&[VK_F5]) {
+            return;
+        }
+        assert_eq!(*log.borrow(), ["欄の F7", "窓の on_key_down", "窓の F5"]);
+    }));
+    sheet.close();
     window.close();
     if let Err(panic) = outcome {
         std::panic::resume_unwind(panic);
@@ -14322,6 +14695,265 @@ fn check_url_reads_without_opening(ui: &Ui) -> Result<()> {
     // 開くなら既定のブラウザが立ち上がる。読むだけなので何も出ない。
     assert!(ui.check_url("https://example.com/naui").is_ok());
     assert!(ui.check_url("mailto:someone@example.com").is_ok());
+    Ok(())
+}
+
+/// Dragging the trailing edge of a heading with the real mouse resizes that column, the
+/// `Star` columns share what is left, and the columns never get wider in total than the
+/// table (`naui_core::clamp_column_width`, as on macOS and Linux). Pressing the edge does
+/// not sort, even over a sortable heading.
+///
+/// As with the other real-input cases, it passes without checking where the window
+/// cannot be brought to the front.
+fn table_column_widths_follow_header_drags(ui: &Ui) -> Result<()> {
+    use windows::Foundation::Point as XamlPoint;
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
+    use windows::Win32::UI::HiDpi::GetDpiForWindow;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetCursorPos, GetWindowThreadProcessId, SetCursorPos, WindowFromPoint,
+    };
+
+    let window = ui.window("列の幅のドラッグ", 520.0, 300.0)?;
+    let table = ui.table()?;
+    let columns = [
+        naui_core::TableColumn::new("都市").sortable(true),
+        naui_core::TableColumn::new("人口")
+            .width(120.0)
+            .align(Align::End),
+        naui_core::TableColumn::new("面積"),
+    ];
+    table.set_columns(&columns);
+    table.set_rows(&naui_core::TableRow::list([
+        ["東京", "13,960,000", "2,194"],
+        ["大阪", "8,838,000", "1,905"],
+    ]));
+    table.set_sizing(Sizing::fill());
+    let sorts: Rc<RefCell<Vec<usize>>> = Rc::default();
+    table.on_sort({
+        let sorts = sorts.clone();
+        move |column, _| sorts.borrow_mut().push(column)
+    });
+    window.set_child(&table);
+
+    let header = table
+        .native_element()
+        .cast::<Grid>()
+        .and_then(|root| root.Children())
+        .and_then(|children| children.GetAt(0))
+        .and_then(|child| child.cast::<Grid>())
+        .expect("見出しの Grid");
+    let widths_of = |grid: &Grid| -> Vec<f64> {
+        let definitions = grid.ColumnDefinitions().expect("列の定義");
+        (0..definitions.Size().unwrap_or(0))
+            .map(|i| {
+                definitions
+                    .GetAt(i)
+                    .and_then(|definition| definition.ActualWidth())
+                    .unwrap_or(0.0)
+            })
+            .collect()
+    };
+    let widths = || {
+        pump_until(Duration::from_millis(100), || false);
+        widths_of(&header)
+    };
+    let row_widths = || {
+        let item = table
+            .native_list_view()
+            .Items()
+            .and_then(|items| items.GetAt(0))
+            .and_then(|item| item.cast::<ListViewItem>())
+            .expect("1 行目");
+        let grid = item
+            .Content()
+            .and_then(|content| content.cast::<Grid>())
+            .expect("行の Grid");
+        widths_of(&grid)
+    };
+    let room = || {
+        let padding = header.Padding().map(|p| p.Left + p.Right).unwrap_or(0.0);
+        header.ActualWidth().unwrap_or(0.0) - padding
+    };
+    let fills = |label: &str, widths: &[f64]| {
+        let total: f64 = widths.iter().sum::<f64>() + 12.0 * (widths.len() - 1) as f64;
+        assert!(
+            (total - room()).abs() < 2.0,
+            "{label}: 幅いっぱいを使い、はみ出さない ({widths:?} / {})",
+            room()
+        );
+    };
+
+    let mut pointer = POINT::default();
+    // SAFETY: `pointer` はこの関数の中で生きている。
+    let _ = unsafe { GetCursorPos(&mut pointer) };
+    let scenario = || -> Option<()> {
+        window.show();
+        pump_until(Duration::from_secs(5), || {
+            header.ActualWidth().unwrap_or(0.0) > 0.0 && table.row_height() > 0.0
+        });
+        if header.ActualWidth().unwrap_or(0.0) <= 0.0 || table.row_height() <= 0.0 {
+            println!("     (見出しに実寸が付かない環境なので、確かめずに通す)");
+            return None;
+        }
+        let hwnd = bring_to_front(&window)?;
+        pump_until(Duration::from_millis(500), || false);
+        // 本物のマウスが届く環境かを、行のクリックで先に確かめる。届かなければ
+        // 確かめずに通し、届いたのに幅が変わらなければ落とす。
+        first_click_on_list_row(hwnd, &table, 0)?;
+
+        // 列 `index` の末尾の端 (見出しと見出しの間) の画面上の位置。
+        let edge = |index: usize| -> Option<POINT> {
+            let widths = widths_of(&header);
+            let left = header.Padding().map(|p| p.Left).unwrap_or(0.0);
+            let x = left + widths[..=index].iter().sum::<f64>() + 12.0 * index as f64 + 4.0;
+            let y = header.ActualHeight().unwrap_or(0.0) / 2.0;
+            let at = header
+                .TransformToVisual(None)
+                .and_then(|to| {
+                    to.TransformPoint(XamlPoint {
+                        X: x as f32,
+                        Y: y as f32,
+                    })
+                })
+                .expect("見出しの位置");
+            // SAFETY: HWND は window が閉じるまで有効で、UI スレッドから読んでいる。
+            let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
+            let mut point = POINT {
+                x: (at.X * scale) as i32,
+                y: (at.Y * scale) as i32,
+            };
+            // SAFETY: `point` はこの関数の中で生きている。
+            let _ = unsafe { ClientToScreen(hwnd, &mut point) };
+            let mut owner = 0;
+            // SAFETY: `owner` はこの関数の中で生きている。
+            unsafe { GetWindowThreadProcessId(WindowFromPoint(point), Some(&mut owner)) };
+            if !foreground_is_ours() || owner != std::process::id() {
+                println!("     (押す位置がテストのウィンドウの上に無いので、押さずに通す)");
+                return None;
+            }
+            Some(point)
+        };
+        // 本物のマウスで、列 `index` の端を `dx` (画素) 動かす。
+        let drag = |index: usize, dx: i32| -> Option<()> {
+            let from = edge(index)?;
+            // SAFETY: 引数は値だけ。
+            let _ = unsafe { SetCursorPos(from.x, from.y) };
+            pump_until(Duration::from_millis(100), || false);
+            send_input(mouse_move_to(from));
+            send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
+            const STEPS: i32 = 6;
+            for step in 1..=STEPS {
+                send_input(mouse_move_to(POINT {
+                    x: from.x + dx * step / STEPS,
+                    y: from.y,
+                }));
+            }
+            send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
+            pump_until(Duration::from_millis(200), || false);
+            Some(())
+        };
+        // SAFETY: HWND は window が閉じるまで有効。
+        let scale = f64::from(unsafe { GetDpiForWindow(hwnd) }) / 96.0;
+        let px = |logical: f64| (logical * scale).round() as i32;
+
+        let before = widths();
+        assert_eq!(before[1], 120.0, "指定した幅: {before:?}");
+        fills("はじめ", &before);
+
+        // 幅の無い列を広げると、その列だけが広がり、もう 1 つの幅の無い列が詰める。
+        drag(0, px(60.0))?;
+        let after = widths();
+        assert!(
+            (after[0] - (before[0] + 60.0)).abs() < 3.0,
+            "掴んだ列が広がる: {before:?} → {after:?}"
+        );
+        assert_eq!(after[1], 120.0, "幅のある列は動かない: {after:?}");
+        fills("広げたあと", &after);
+        // 幅の無い列は行の枠の分だけ見出しとずれうるので、`Pixel` の 2 列で比べる。
+        assert_eq!(row_widths()[..2], after[..2], "行も見出しと同じ幅になる");
+        assert!(
+            sorts.borrow().is_empty(),
+            "端を押しても並べ替えない: {:?}",
+            sorts.borrow()
+        );
+
+        // 幅のある列も掴める。掴んだ列はそのまま、幅の無い列が詰める。
+        drag(1, px(30.0)).expect("2 回目のドラッグ");
+        let next = widths();
+        assert!(
+            (next[1] - 150.0).abs() < 3.0,
+            "幅のある列も広がる: {next:?}"
+        );
+        assert_eq!(
+            next[0], after[0],
+            "掴んだあとの列は余りを受け取らない: {next:?}"
+        );
+        fills("幅のある列を広げたあと", &next);
+
+        // 表より広くはならない。最後の幅の無い列は最小幅まで詰める。
+        drag(0, px(1000.0).min(px(room()))).expect("3 回目のドラッグ");
+        let wide = widths();
+        assert!(
+            (wide[2] - naui_core::MIN_COLUMN_WIDTH).abs() < 1.0,
+            "残りの列は最小幅まで: {wide:?}"
+        );
+        fills("広げすぎたあと", &wide);
+
+        // 狭める側も最小幅で止まる。
+        drag(0, -px(wide[0])).expect("4 回目のドラッグ");
+        let narrow = widths();
+        assert!(
+            (narrow[0] - naui_core::MIN_COLUMN_WIDTH).abs() < 1.0,
+            "最小幅より狭くならない: {narrow:?}"
+        );
+        fills("狭めたあと", &narrow);
+        assert!(sorts.borrow().is_empty(), "並べ替えは起きない");
+
+        // 幅の無い列が 1 つも残らなくても、表からはみ出さない。最後の幅の無い列は
+        // すでに残りを全部持っているので、広げようとしても上限のいまの幅で止まり、
+        // その幅の `Pixel` の列になる。
+        drag(2, px(room())).expect("5 回目のドラッグ");
+        let all = widths();
+        assert!(
+            (all[2] - narrow[2]).abs() < 1.0,
+            "最後の列は表の幅で止まる: {narrow:?} → {all:?}"
+        );
+        let last = header
+            .ColumnDefinitions()
+            .and_then(|definitions| definitions.GetAt(2))
+            .and_then(|definition| definition.Width())
+            .expect("最後の列の定義");
+        assert_eq!(
+            last.GridUnitType,
+            GridUnitType::Pixel,
+            "掴んだ最後の列は幅の決まった列になる: {last:?}"
+        );
+        fills("全部の列を掴んだあと", &all);
+        assert_eq!(row_widths(), all, "全部の列を掴むと、行も見出しと同じ幅");
+        // 全部の列が決まった幅なので、ほかの列を広げようとしても表からはみ出さない。
+        drag(0, px(100.0)).expect("6 回目のドラッグ");
+        let still = widths();
+        assert_eq!(still, all, "広げる余地が無ければ動かない");
+        fills("余地の無い列を広げようとしたあと", &still);
+
+        // 列を渡し直すと、ドラッグした幅は捨てて渡した指定に戻る。
+        table.set_columns(&columns);
+        let reset = widths();
+        assert_eq!(reset[1], 120.0, "渡した幅に戻る: {reset:?}");
+        assert!((reset[0] - reset[2]).abs() < 1.0, "等分に戻る: {reset:?}");
+        Some(())
+    };
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        let _ = scenario();
+    }));
+    // SAFETY: 引数は値だけ。
+    let _ = unsafe { SetCursorPos(pointer.x, pointer.y) };
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
     Ok(())
 }
 

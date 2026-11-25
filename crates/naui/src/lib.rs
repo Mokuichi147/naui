@@ -1,16 +1,18 @@
 #![doc = include_str!("../README.md")]
 #![forbid(unsafe_code)]
 
+#[allow(deprecated)]
+pub use naui_core::MenuShortcut;
 pub use naui_core::{
     accept_attribute, clamp_split_position, days_in_month, default_extension, is_leap_year, media,
     with_default_extension, Align, Bitmap, BitmapData, Breakpoint, ButtonRole, ChannelCloser,
     CloseResponse, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse, DrawCommand,
     Error, EventResponse, FileEntry, FileFilter, FilePickerMode, Fit, Gradient, GradientShape,
     GradientStop, GridCell, HostSize, Ink, Key, KeyEvent, LayoutDirection, Length, ListItem,
-    MenuItem, MenuShortcut, MenuSpec, Modifiers, NavItem, NumberSpec, Orientation, Padding, Paint,
-    Painter, Pane, Path, PathSegment, PlaybackState, Point, PointerButton, PointerEvent,
-    PointerPhase, PopoverPosition, PopupItem, Rect, Result, RichText, RowMove, ScrollMetrics,
-    ScrollPolicy, SelectionMode, Sender, Settings, SidebarItem, SidebarSection, Sizing, Sleep,
+    MenuItem, MenuSpec, Modifiers, NavItem, NumberSpec, Orientation, Padding, Paint, Painter, Pane,
+    Path, PathSegment, PlaybackState, Point, PointerButton, PointerEvent, PointerPhase,
+    PopoverPosition, PopupItem, Rect, Result, RichText, RowMove, ScrollMetrics, ScrollPolicy,
+    SelectionMode, Sender, Settings, Shortcut, SidebarItem, SidebarSection, Sizing, Sleep,
     SortOrder, TableColumn, TableRow, Task, Tasks, TextColor, TextRun, TextStyle, Theme, Time,
     Timer, ToastPosition, ToastPriority, ToastSpec, ToolbarIcon, ToolbarItem, Track, Transform,
     TreeItem, WeakWidget, WindowPlacement, WindowState, DEFAULT_GROUP_PADDING,
@@ -120,9 +122,9 @@ pub use time_picker::TimePicker;
 pub use toast::Toast;
 pub use toggle::Toggle;
 pub use toolbar::Toolbar;
-pub use tree::Tree;
+pub use tree::{Tree, TreeRow};
 pub use ui::{run, Ui};
-pub use widget::Widget;
+pub use widget::{AsWidget, Widget};
 pub use widgets::{
     Button, Checkbox, Label, PasswordInput, ProgressBar, SearchInput, Slider, Spinner, Stack,
     TextArea, TextInput,
@@ -167,32 +169,33 @@ pub mod web {
     /// Handles the CSS classes and attributes of a widget's element. Web only.
     ///
     /// The target is the element placed into the parent
-    /// ([`naui_web::Widget::native_element`]). naui uses no classes, so you can add and
+    /// ([`naui_web::Widget::native_element`]); on a type of your own implementing
+    /// [`AsWidget`](crate::AsWidget), the element of the widget it returns. naui uses no classes, so you can add and
     /// remove classes freely. Among attributes, naui also writes `role`, `aria-*`,
     /// `tabindex` and others, so overwriting them can change the widget's behavior or
     /// how it is read aloud. `title` is the same attribute that `set_tooltip` writes,
     /// so whichever is written last wins.
-    pub trait WebWidgetExt: crate::Widget {
+    pub trait WebWidgetExt: crate::AsWidget {
         /// Adds a CSS class.
         fn add_class(&self, name: &str) {
-            naui_web::WebWidgetExt::add_class(self.as_backend(), name)
+            naui_web::WebWidgetExt::add_class(self.as_widget().as_backend(), name)
         }
 
         /// Removes a CSS class.
         fn remove_class(&self, name: &str) {
-            naui_web::WebWidgetExt::remove_class(self.as_backend(), name)
+            naui_web::WebWidgetExt::remove_class(self.as_widget().as_backend(), name)
         }
 
         /// Whether a CSS class is present.
         fn has_class(&self, name: &str) -> bool {
-            naui_web::WebWidgetExt::has_class(self.as_backend(), name)
+            naui_web::WebWidgetExt::has_class(self.as_widget().as_backend(), name)
         }
 
         /// Writes an attribute. `true` if it was written.
         ///
         /// naui uses `style` and `data-naui-*`, so they are not written (returns `false`).
         fn set_attribute(&self, name: &str, value: &str) -> bool {
-            naui_web::WebWidgetExt::set_attribute(self.as_backend(), name, value)
+            naui_web::WebWidgetExt::set_attribute(self.as_widget().as_backend(), name, value)
         }
 
         /// Removes an attribute. `true` if it was removed (including when it was not there
@@ -200,16 +203,16 @@ pub mod web {
         ///
         /// naui uses `style` and `data-naui-*`, so they are not removed (returns `false`).
         fn remove_attribute(&self, name: &str) -> bool {
-            naui_web::WebWidgetExt::remove_attribute(self.as_backend(), name)
+            naui_web::WebWidgetExt::remove_attribute(self.as_widget().as_backend(), name)
         }
 
         /// The attribute's value. `None` if absent.
         fn attribute(&self, name: &str) -> Option<String> {
-            naui_web::WebWidgetExt::attribute(self.as_backend(), name)
+            naui_web::WebWidgetExt::attribute(self.as_widget().as_backend(), name)
         }
     }
 
-    impl<T: crate::Widget + ?Sized> WebWidgetExt for T {}
+    impl<T: crate::AsWidget + ?Sized> WebWidgetExt for T {}
 }
 
 /// A re-export of wasm-bindgen for `entry!`. Not meant to be used directly.

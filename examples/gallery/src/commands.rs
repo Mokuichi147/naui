@@ -14,8 +14,8 @@
 use std::rc::Rc;
 
 use naui::{
-    Dialog, MenuBar, MenuItem, MenuShortcut, MenuSpec, Result, Toolbar, ToolbarIcon, ToolbarItem,
-    Ui, Window, WindowState,
+    Dialog, MenuBar, MenuItem, MenuSpec, Result, Shortcut, Toolbar, ToolbarIcon, ToolbarItem, Ui,
+    Window, WindowState,
 };
 
 use crate::parts::Notice;
@@ -173,10 +173,10 @@ fn menus(sections: &[&str]) -> Vec<MenuSpec> {
     let file = FILE_MENU.iter().map(|entry| match entry {
         Some((label, command)) => {
             let shortcut = match command {
-                Command::New => MenuShortcut::new('n'),
-                Command::Open => MenuShortcut::new('o'),
-                Command::Save => MenuShortcut::new('s'),
-                Command::SaveAs => MenuShortcut::new('s').shift(true),
+                Command::New => Shortcut::new('n'),
+                Command::Open => Shortcut::new('o'),
+                Command::Save => Shortcut::new('s'),
+                Command::SaveAs => Shortcut::new('s').shift(true),
             };
             MenuItem::new(*label)
                 .shortcut(shortcut)
@@ -188,7 +188,7 @@ fn menus(sections: &[&str]) -> Vec<MenuSpec> {
         MenuItem::submenu("Sections", sections.iter().copied()),
         MenuItem::separator(),
         MenuItem::new("Show Toolbar").checked(true),
-        MenuItem::new("Full Screen").shortcut(MenuShortcut::function(11)),
+        MenuItem::new("Full Screen").shortcut(Shortcut::function(11)),
     ];
     vec![
         MenuSpec::new("File", file),

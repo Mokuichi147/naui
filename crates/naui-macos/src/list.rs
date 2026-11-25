@@ -839,7 +839,7 @@ fn cell_with_content(
 ///
 /// If the app moved the widget to another parent after handing it to the list, the
 /// row stays empty rather than taking it back (see [`crate::row_cell`]).
-fn custom_cell_view(
+pub(crate) fn custom_cell_view(
     mtm: MainThreadMarker,
     content: &dyn Widget,
     min_height: Option<f64>,

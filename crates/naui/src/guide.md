@@ -192,6 +192,53 @@ on Windows). **It loses the keyboard focus**, and text being composed with an IM
 ends with it (on macOS it is committed into the field). Call `request_focus` after
 adding it again if it should keep the focus.
 
+## Passing your own types to containers
+
+Containers take children as [`&dyn AsWidget`](AsWidget): every naui widget, a
+`&dyn Widget`, and any type of your own that implements [`AsWidget`]. A type that
+puts a few widgets together (a tag, a labeled field, a whole screen in its own
+crate) implements it by returning the widget it places, usually its outermost
+container. It is then passed as it is, without handing out the widget inside at
+every call:
+
+```no_run
+# use naui::{AsWidget, Orientation, Result, Sizing, Ui, Widget};
+struct LabeledField {
+    root: naui::Stack,
+    field: naui::TextInput,
+}
+
+impl AsWidget for LabeledField {
+    fn as_widget(&self) -> &dyn Widget {
+        &self.root
+    }
+}
+
+# fn build(ui: &Ui, form: &naui::Stack) -> Result<()> {
+let root = ui.stack(Orientation::Vertical)?;
+let field = ui.text_input("")?;
+root.append(&ui.label("Name")?);
+root.append(&field);
+let name = LabeledField { root, field };
+
+form.append(&name);
+name.set_sizing(Sizing::fill_width()); // reaches `name.root`
+name.field.request_focus();
+# Ok(())
+# }
+```
+
+The operations every widget has ([`set_sizing`](AsWidget::set_sizing),
+[`set_visible`](AsWidget::set_visible), [`request_focus`](AsWidget::request_focus),
+[`set_tooltip`](AsWidget::set_tooltip) and the others) are methods of `AsWidget`
+too, and reach the widget it returns, so they work on your own type with the trait
+in scope, and on a `&dyn Widget`. Each naui widget's methods of the same name are
+what they call. The container holds the returned widget, so your value can be
+dropped once it is placed if nothing else needs it.
+
+[`Widget`] itself cannot be implemented outside naui: what goes into a container
+is always one of naui's widgets, reached through `as_widget`.
+
 ## Themes
 
 The default, [`Theme::System`], follows the OS or browser setting. Use
@@ -641,7 +688,8 @@ yet). Returning `Continue` for character keys lets composition start.
 Keys are delivered **to the focused widget, then the window**, and keys for
 which the widget returned `Handled` do not reach the window. The window's
 [`on_key_down`](Window::on_key_down) also receives keys while something other
-than a text input (a button, for example) has focus.
+than a text input (a button, for example) has focus. Where
+[shortcuts](#keyboard-shortcuts) fit in this order is described below.
 
 Modifier keys (⇧, Ctrl, Alt, ⌘ / Windows key) are not delivered when pressed on
 their own. Check whether they were held together with another key through
@@ -649,18 +697,93 @@ their own. Check whether they were held together with another key through
 
 | naui | Windows | macOS | Linux | Web |
 | --- | --- | --- | --- | --- |
-| Receiver | `PreviewKeyDown` on the window root | A local `NSEvent` monitor | The window's `GtkEventControllerKey` (capture) | The element's `keydown` (capture) and `document` |
+| Receiver | `PreviewKeyDown` on the window root | A local `NSEvent` monitor | The window's `GtkEventControllerKey` (capture) | `keydown` on the `document` (capture) |
 | Detecting composition | `VK_PROCESSKEY` and `TextCompositionStarted` / `Ended` | `hasMarkedText` | `preedit-changed` | `isComposing` and `keyCode` 229 |
 
 Letters in [`Key::Character`] are normalized to lowercase (the same as
-[`MenuShortcut`]). Check [`Modifiers::shift`] for whether ⇧ was held. Which
+[`Shortcut`]). Check [`Modifiers::shift`] for whether ⇧ was held. Which
 character a symbol key gives with ⇧ depends on the platform and keyboard layout.
 [`Modifiers::primary`] returns whether the primary modifier (⌘ on macOS, Ctrl
 elsewhere) was held.
 
-**The order of `on_key_down` relative to menu bar shortcuts differs by
-platform** (on macOS it arrives before the shortcut; on other platforms it may
-come after). Do not assign the same key to both a shortcut and `on_key_down`.
+### Keyboard shortcuts
+
+Any widget and the [`Window`] can be given [`Shortcut`]s with `on_shortcut`
+([`Window::on_shortcut`], [`Button::on_shortcut`] and the same method on every
+widget). A widget's shortcut fires **while keyboard focus is inside it** (on it or
+on anything it contains), and a window's while the window has focus. Giving the
+same shortcut again replaces the closure, and `remove_shortcut` takes it away, so
+an app can rebind keys at run time.
+
+```no_run
+# use naui::{Key, Orientation, Result, Shortcut, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let window = ui.window("Mail", 800.0, 600.0)?;
+let messages = ui.list()?;
+let editor = ui.text_area("")?;
+let root = ui.stack(Orientation::Horizontal)?;
+root.append(&messages);
+root.append(&editor);
+window.set_child(&root);
+
+// Anywhere in the window.
+window.on_shortcut(Shortcut::new('n'), || println!("new message"));
+window.on_shortcut(Shortcut::function(5), || println!("check mail"));
+// Only while the list has focus: Delete in the editor still deletes text.
+messages.on_shortcut(Shortcut::from_key(Key::Delete), || println!("delete message"));
+// The same key means something else in the editor.
+editor.on_shortcut(Shortcut::new('n'), || println!("new paragraph"));
+# Ok(())
+# }
+```
+
+A key goes, in this order and the same on every platform, to:
+
+1. the focused widget's `on_key_down` (the innermost widget that has one),
+2. the shortcuts of the widgets around the focus, **from the inside out**,
+3. the window's `on_key_down`,
+4. the window's shortcuts.
+
+The first one that takes the key stops it there: an `on_key_down` returning
+`Handled`, or a shortcut that matches. Only after these do the [`MenuBar`]'s
+shortcuts and the focused control itself get the key, in an order that depends on
+the platform (on Windows, a key the focused control handles itself never reaches
+the menu bar). So **a shortcut that fires takes the key from the focused control
+and the menu bar**: a widget's `Ctrl+A` beats a text field's select-all, a
+window's `Ctrl+S` beats a menu item's, and on the Web a window's `⌘S` / `Ctrl+S`
+keeps the browser from saving the page.
+
+Windows and widgets take more keys than menus do: besides the primary modifier
+with an alphanumeric character and the function keys, a named key (Enter, Escape,
+Tab, Backspace, Delete, the arrow keys, Home, End, Page Up, Page Down) works on its
+own or with modifiers ([`Shortcut::from_key`]), and Space with the primary
+modifier ([`Shortcut::is_valid`]). A character key without the primary modifier is
+never valid, since it would take typing away from text fields.
+
+Keys pressed in a [`Dialog`] or [`Sheet`] do not reach the window's `on_key_down`
+or shortcuts (on macOS those are windows of their own; naui does the same on
+Windows, Linux and the Web), so a window's Escape does not keep a dialog from
+closing. The shortcuts of the widgets inside a `Sheet` do work. Keys pressed while
+an IME is composing reach no shortcut.
+
+| naui | Windows | macOS | Linux | Web |
+| --- | --- | --- | --- | --- |
+| Matching | naui, in the root's `PreviewKeyDown` | naui, in the `NSEvent` monitor | naui, in the window's capture-phase `GtkEventControllerKey` | naui, in the `document`'s capture-phase `keydown` |
+
+naui matches shortcuts itself in the receiver above, rather than registering
+them as WinUI's `KeyboardAccelerator`, a `GtkShortcutController` or AppKit's key
+equivalents, so that the scope and the order are the same everywhere: AppKit
+offers key equivalents to every view of the window whatever has focus, and on
+Linux the menu bar's accelerators run in the window's capture phase, before any
+controller on a widget. In return, the shortcuts are not announced by screen
+readers (WinUI announces a `KeyboardAccelerator`); mention them in a tooltip or
+label ([`Shortcut::label`]) if they matter. Naming commands, binding them from a
+keymap the user edits, and choosing them by context belong to the app's own layer
+on top of `on_shortcut`.
+
+Test shortcuts with [`Window::send_key`], which delivers a [`KeyEvent`] from the
+focused widget through the order above, menu bar included (see
+[Testing apps](#testing-apps)).
 
 ## Focus entering and leaving
 
@@ -2110,7 +2233,7 @@ When an item is pressed, [`MenuBar::on_activate`] is called with its path, which
 slice patterns take apart nicely.
 
 ```no_run
-# use naui::{MenuItem, MenuShortcut, MenuSpec, Result, Ui};
+# use naui::{MenuItem, MenuSpec, Result, Shortcut, Ui};
 # fn build(ui: &Ui) -> Result<()> {
 let window = ui.window("Editor", 800.0, 600.0)?;
 
@@ -2119,10 +2242,10 @@ menu_bar.set_menus(&[
     MenuSpec::new(
         "File",
         [
-            MenuItem::new("New").shortcut(MenuShortcut::new('n')),
-            MenuItem::new("Open").shortcut(MenuShortcut::new('o')),
+            MenuItem::new("New").shortcut(Shortcut::new('n')),
+            MenuItem::new("Open").shortcut(Shortcut::new('o')),
             MenuItem::separator(),      // cannot be pressed, so no notification either
-            MenuItem::new("Save").shortcut(MenuShortcut::new('s')).enabled(false),
+            MenuItem::new("Save").shortcut(Shortcut::new('s')).enabled(false),
         ],
     ),
     MenuSpec::new(
@@ -2131,7 +2254,7 @@ menu_bar.set_menus(&[
             MenuItem::new("Show Sidebar").checked(true),
             // A sequence of strings can also be passed as is.
             MenuItem::submenu("Zoom", ["Zoom In", "Zoom Out"]),
-            MenuItem::new("Full Screen").shortcut(MenuShortcut::function(11)),
+            MenuItem::new("Full Screen").shortcut(Shortcut::function(11)),
         ],
     ),
 ]);
@@ -2177,15 +2300,19 @@ from the app's side (for example when the sidebar is closed some other way), use
 
 ### Shortcuts
 
-A [`MenuShortcut`] is either **the primary modifier key and one alphanumeric
-character** ([`MenuShortcut::new`]; the primary modifier is ⌘ on macOS and Ctrl
-elsewhere) or **a function key** from F1 to F24 ([`MenuShortcut::function`]),
+A menu item's [`Shortcut`] is either **the primary modifier key and one
+alphanumeric character** ([`Shortcut::new`]; the primary modifier is ⌘ on macOS
+and Ctrl elsewhere) or **a function key** from F1 to F24 ([`Shortcut::function`]),
 which works on its own. ⇧, ⌥ / Alt and the primary modifier are added with
-[`shift`](MenuShortcut::shift), [`alt`](MenuShortcut::alt) and
-[`primary`](MenuShortcut::primary). Symbol keys and character keys without the
-primary modifier are not registered anywhere ([`MenuShortcut::is_valid`]).
-Shortcuts work for items inside submenus too, but not while the submenu leading
-to them is disabled.
+[`shift`](Shortcut::shift), [`alt`](Shortcut::alt) and
+[`primary`](Shortcut::primary). Other shortcuts, such as named keys, symbol keys
+and character keys without the primary modifier, are not registered on any
+platform's menu ([`Shortcut::is_valid_for_menu`]); windows and widgets take the
+named keys ([keyboard shortcuts](#keyboard-shortcuts)). Shortcuts work for items
+inside submenus too, but not while the submenu leading to them is disabled.
+
+A window's or widget's own shortcut for the same key comes first (see the order
+in [Keyboard shortcuts](#keyboard-shortcuts)).
 
 On macOS and Linux, the OS (AppKit / GTK4) receives the key and invokes the item,
 and the OS also builds the label at the item's right edge. Windows and the Web have
@@ -2715,6 +2842,40 @@ a `ListView` (with the same chevrons and indentation) instead.
 Setting [`TreeItem::enabled`] to `false` **makes all its descendants unselectable
 too**. Expansion is remembered per item, so collapsing a parent and expanding it
 again brings back the expansion inside as it was (the same as macOS's Finder).
+
+### Widgets in tree items
+
+To put check boxes, icons or buttons in items, build each item's content as a
+widget, wrap it in a [`TreeRow`] and pass the rows to [`Tree::set_rows`], as rows of
+a `List` are wrapped in a [`ListRow`]. Selection, expansion and paths work the same
+as with `TreeItem`s, and [`Tree::set_items`] turns the tree back into text items.
+
+```no_run
+# use naui::{Orientation, Result, TreeRow, Ui};
+# fn build(ui: &Ui) -> Result<()> {
+let tree = ui.tree()?;
+let file = |name: &str| -> Result<TreeRow> {
+    let content = ui.stack(Orientation::Horizontal)?;
+    content.append(&ui.checkbox(name)?);
+    content.append(&ui.label("12 KB")?);
+    Ok(TreeRow::new(&content))
+};
+tree.set_rows(&[TreeRow::new(&ui.label("src")?)
+    .expanded(true)
+    .children([file("main.rs")?, file("lib.rs")?])]);
+# Ok(())
+# }
+```
+
+**Pressing a control inside a row does not choose the item** or expand it.
+[`TreeRow::selectable(false)`](TreeRow::selectable) makes the item and its
+descendants unselectable, as `TreeItem::enabled(false)` does, but the row is not dimmed and the controls inside
+keep working.
+
+Every row is built when it is passed, including those inside collapsed branches,
+so unlike a long `List` there is no form that builds rows only as they become
+visible. Pass widgets that are in no other container; a widget the app moves
+elsewhere afterwards is left there, and its row stays empty.
 
 ## Tables
 
@@ -3492,7 +3653,7 @@ that notify **like the user's own action**, and checks what the app did:
 | [`Canvas`] | `send_pointer`, `send_wheel` | |
 | [`FilePicker`], [`FileSaver`] | `choose` | |
 | Every widget | `drop_files` | |
-| [`Window`] | `request_close`, `drop_files`, [`testing::resize`] | `close` |
+| [`Window`] | `request_close`, `drop_files`, `send_key`, [`testing::resize`] | `close` |
 
 `click` goes through each platform's own path for a click (`performClick` on
 macOS, the `clicked` / `activate` signals on Linux, UI Automation's Invoke and
@@ -3519,6 +3680,20 @@ app.window.show();
 app.name.enter_text("Ada");
 testing::wait_until(&ui, || app.preview.text() == "Signing up as Ada").await?;
 app.name.submit();
+```
+
+`send_key` delivers a [`KeyEvent`] as a key pressed in the window, starting from
+the widget that has focus (move it there with `request_focus`): the
+`on_key_down`s and [shortcuts](#keyboard-shortcuts) in naui's order, then the
+[`MenuBar`]'s shortcuts. It returns `Handled` if one of them took the key. Like
+`enter_text`, it goes no further than naui: the key does not reach the focused
+control, so no text is typed and a list's arrow keys do not move its selection.
+
+```rust,ignore
+app.messages.request_focus();
+let delete = KeyEvent::new(Key::Delete, Modifiers::default());
+assert_eq!(app.window.send_key(&delete), EventResponse::Handled);
+assert_eq!(app.messages.len(), 2);
 ```
 
 `respond` answers a [`Dialog`] or [`Sheet`] by clicking its button for a role, so

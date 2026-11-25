@@ -1,11 +1,18 @@
-//! `on_key_down` (text-input widgets and `Window`).
+//! `on_key_down` and `on_shortcut` (widgets and `Window`).
 //!
 //! One local `NSEvent` monitor is installed for the whole app, receiving `keyDown`
 //! **before AppKit dispatches it**. It walks up the parent views from the first
-//! responder of the window the key came to, and notifies the first registered
-//! widget found, then the window. With `Handled`, the monitor discards the event,
-//! so it reaches neither the field (inserting a newline, for example) nor menu
-//! shortcuts.
+//! responder of the window the key came to, collects the widgets that have an
+//! `on_key_down` or shortcuts, and delivers the key in naui's order
+//! ([`naui_core::deliver_key`]): the innermost `on_key_down`, the widgets'
+//! shortcuts from the inside out, the window's `on_key_down`, then the window's
+//! shortcuts. With `Handled`, the monitor discards the event, so it reaches neither
+//! the field (inserting a newline, for example) nor menu shortcuts.
+//!
+//! AppKit's own key equivalents (`performKeyEquivalent:`) are not used: they are
+//! offered to every view of the window regardless of focus, after the focused view
+//! has had no say, so they could not give a widget's shortcut the scope "while focus
+//! is inside it", nor the same order as the other platforms.
 //!
 //! Editing in text fields is done by the field editor (a shared `NSTextView`), but
 //! the field editor is placed inside the `NSTextField` being edited, so walking up
@@ -15,25 +22,30 @@
 //! and are not delivered.
 //!
 //! The registry holds views and windows by weak reference. Once all of a widget's
-//! handles are dropped and the view is freed, its handler is removed from the table
-//! too.
+//! handles are dropped and the view is freed, its handlers are removed from the
+//! table too.
 
 use std::cell::RefCell;
 use std::ptr::NonNull;
 use std::rc::Rc;
 
 use block2::RcBlock;
-use naui_core::{EventResponse, Key, KeyEvent, KeyHandler, Modifiers};
+use naui_core::{
+    EventResponse, Key, KeyEvent, KeyHandler, KeyTarget, Modifiers, Shortcut, ShortcutHandlers,
+};
 use objc2::rc::{Retained, Weak};
 use objc2::runtime::{AnyObject, NSObjectProtocol};
 use objc2::{msg_send, sel, MainThreadMarker};
 use objc2_app_kit::{NSEvent, NSEventMask, NSEventModifierFlags, NSResponder, NSView, NSWindow};
 
-type Entries<T> = RefCell<Vec<(Weak<T>, Rc<KeyHandler>)>>;
+type Entries<T, H> = RefCell<Vec<(Weak<T>, Rc<H>)>>;
 
 thread_local! {
-    static VIEWS: Entries<NSView> = const { RefCell::new(Vec::new()) };
-    static WINDOWS: Entries<NSWindow> = const { RefCell::new(Vec::new()) };
+    static VIEWS: Entries<NSView, KeyHandler> = const { RefCell::new(Vec::new()) };
+    static WINDOWS: Entries<NSWindow, KeyHandler> = const { RefCell::new(Vec::new()) };
+    static VIEW_SHORTCUTS: Entries<NSView, ShortcutHandlers> = const { RefCell::new(Vec::new()) };
+    static WINDOW_SHORTCUTS: Entries<NSWindow, ShortcutHandlers> =
+        const { RefCell::new(Vec::new()) };
     /// The monitor's return value. The monitor lives only while it is held.
     static MONITOR: RefCell<Option<Retained<AnyObject>>> = const { RefCell::new(None) };
 }
@@ -53,12 +65,43 @@ pub(crate) fn set_window_handler(
     ensure_monitor();
 }
 
+/// Gives the widget's view a shortcut, replacing the closure it had.
+pub(crate) fn set_view_shortcut(view: &NSView, shortcut: Shortcut, f: impl FnMut() + 'static) {
+    VIEW_SHORTCUTS.with(|entries| handler_for(&mut entries.borrow_mut(), view).set(shortcut, f));
+    ensure_monitor();
+}
+
+/// Removes a shortcut from the widget's view.
+pub(crate) fn remove_view_shortcut(view: &NSView, shortcut: Shortcut) {
+    if let Some(handlers) = lookup(&VIEW_SHORTCUTS, view) {
+        handlers.remove(shortcut);
+    }
+}
+
+/// Gives the window a shortcut, replacing the closure it had.
+pub(crate) fn set_window_shortcut(
+    window: &NSWindow,
+    shortcut: Shortcut,
+    f: impl FnMut() + 'static,
+) {
+    WINDOW_SHORTCUTS
+        .with(|entries| handler_for(&mut entries.borrow_mut(), window).set(shortcut, f));
+    ensure_monitor();
+}
+
+/// Removes a shortcut from the window.
+pub(crate) fn remove_window_shortcut(window: &NSWindow, shortcut: Shortcut) {
+    if let Some(handlers) = lookup(&WINDOW_SHORTCUTS, window) {
+        handlers.remove(shortcut);
+    }
+}
+
 /// The handler for `target`, created if absent. Entries for objects that are gone
 /// are cleaned up here too.
-fn handler_for<T: objc2::Message>(
-    entries: &mut Vec<(Weak<T>, Rc<KeyHandler>)>,
+fn handler_for<T: objc2::Message, H: Default>(
+    entries: &mut Vec<(Weak<T>, Rc<H>)>,
     target: &T,
-) -> Rc<KeyHandler> {
+) -> Rc<H> {
     entries.retain(|(weak, _)| weak.load().is_some());
     if let Some((_, handler)) = entries.iter().find(|(weak, _)| {
         weak.load()
@@ -66,15 +109,15 @@ fn handler_for<T: objc2::Message>(
     }) {
         return handler.clone();
     }
-    let handler = Rc::new(KeyHandler::default());
+    let handler = Rc::new(H::default());
     entries.push((Weak::from(target), handler.clone()));
     handler
 }
 
-fn lookup<T: objc2::Message>(
-    entries: &'static std::thread::LocalKey<Entries<T>>,
+fn lookup<T: objc2::Message, H>(
+    entries: &'static std::thread::LocalKey<Entries<T, H>>,
     target: &T,
-) -> Option<Rc<KeyHandler>> {
+) -> Option<Rc<H>> {
     entries.with(|entries| {
         entries
             .borrow()
@@ -85,6 +128,19 @@ fn lookup<T: objc2::Message>(
             })
             .map(|(_, handler)| handler.clone())
     })
+}
+
+/// What `target` has for keys: its `on_key_down` and its shortcuts (if any are
+/// given).
+fn target_of<T: objc2::Message>(
+    key_downs: &'static std::thread::LocalKey<Entries<T, KeyHandler>>,
+    shortcuts: &'static std::thread::LocalKey<Entries<T, ShortcutHandlers>>,
+    target: &T,
+) -> KeyTarget {
+    KeyTarget {
+        key_down: lookup(key_downs, target),
+        shortcuts: lookup(shortcuts, target).filter(|s| !s.is_empty()),
+    }
 }
 
 fn ensure_monitor() {
@@ -107,7 +163,8 @@ fn ensure_monitor() {
     });
 }
 
-/// Passes the arriving key to the focused widget, then the window.
+/// Delivers the arriving key in naui's order, starting from the window's first
+/// responder.
 pub(crate) fn dispatch(event: &NSEvent) -> EventResponse {
     // モニターはメインスレッドで呼ばれる。
     let Some(mtm) = MainThreadMarker::new() else {
@@ -116,23 +173,27 @@ pub(crate) fn dispatch(event: &NSEvent) -> EventResponse {
     let Some(window) = event.window(mtm) else {
         return EventResponse::Continue;
     };
+    deliver(&window, &to_key_event(event))
+}
+
+/// Delivers `event` to the widgets around the window's first responder and to the
+/// window, in naui's order. Used for real keys and by `Window::send_key`.
+pub(crate) fn deliver(window: &NSWindow, event: &KeyEvent) -> EventResponse {
     let responder = window.firstResponder();
     if responder.as_deref().is_some_and(is_composing) {
         return EventResponse::Continue;
     }
-    let key_event = to_key_event(event);
-
+    let mut widgets = Vec::new();
     let mut view = responder.and_then(|responder| responder.downcast::<NSView>().ok());
     while let Some(current) = view {
-        if let Some(handler) = lookup(&VIEWS, &current) {
-            if handler.emit(&key_event) == EventResponse::Handled {
-                return EventResponse::Handled;
-            }
-            break;
+        let target = target_of(&VIEWS, &VIEW_SHORTCUTS, &current);
+        if !target.is_empty() {
+            widgets.push(target);
         }
         view = unsafe { current.superview() };
     }
-    lookup(&WINDOWS, &window).map_or(EventResponse::Continue, |handler| handler.emit(&key_event))
+    let window = target_of(&WINDOWS, &WINDOW_SHORTCUTS, window);
+    naui_core::deliver_key(event, &widgets, &window)
 }
 
 /// Whether the IME is in the middle of composing (`NSTextInputClient`'s

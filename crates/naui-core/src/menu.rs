@@ -2,7 +2,7 @@
 //!
 //! A menu bar is "a sequence of headings" with "the items hanging under each".
 //! One heading is a [`MenuSpec`], one row in it is a [`MenuItem`], and the key
-//! combination assigned to an item is a [`MenuShortcut`]. An item can hold a
+//! combination assigned to an item is a [`Shortcut`]. An item can hold a
 //! submenu of further items ([`MenuItem::submenu`]), to any depth.
 //!
 //! Items are identified by **a path**: the heading index followed by the item
@@ -10,277 +10,7 @@
 //! second heading, and `[1, 2, 0]` is the first item in the submenu that is the
 //! third item under the second heading.
 
-use crate::Key;
-
-/// A keyboard shortcut assigned to a menu item.
-///
-/// Expressed as a key plus modifiers. A character key is one alphanumeric character
-/// with the primary modifier (⌘ on macOS, Ctrl on Windows, Linux and the Web), and a
-/// function key (F1 to F24) works on its own or with modifiers. **The primary
-/// modifier differs by platform**, as in "⌘S / Ctrl+S", so naui takes only the
-/// meaning of the combination and maps it to that platform's notation. ⇧ and ⌥
-/// (Alt) can be added.
-///
-/// Shortcuts that are not [valid](Self::is_valid) (symbol keys, or a character key
-/// without the primary modifier) are not registered on any platform; the item
-/// itself still appears.
-///
-/// ```
-/// # use naui_core::MenuShortcut;
-/// let save = MenuShortcut::new('s');
-/// assert_eq!(save.label(), "Ctrl+S");
-/// assert_eq!(save.accelerator(), "<Control>s");
-///
-/// let redo = MenuShortcut::new('z').shift(true);
-/// assert_eq!(redo.label(), "Ctrl+Shift+Z");
-///
-/// let full_screen = MenuShortcut::function(11);
-/// assert_eq!(full_screen.label(), "F11");
-/// assert_eq!(full_screen.accelerator(), "F11");
-/// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct MenuShortcut {
-    /// The key in the combination. [`Key::Character`] (stored lowercase) or
-    /// [`Key::F`].
-    pub key: Key,
-    /// Whether the primary modifier (⌘ on macOS, Ctrl elsewhere) is included.
-    pub primary: bool,
-    /// Whether ⇧ (Shift) is included.
-    pub shift: bool,
-    /// Whether ⌥ / Alt is included.
-    pub alt: bool,
-}
-
-impl MenuShortcut {
-    /// Creates the combination of the primary modifier and `key`.
-    ///
-    /// `key` is one alphanumeric character. Uppercase is normalized to lowercase (use
-    /// [`shift`](Self::shift) to include ⇧).
-    pub fn new(key: char) -> Self {
-        Self {
-            key: Key::Character(key.to_ascii_lowercase()),
-            primary: true,
-            shift: false,
-            alt: false,
-        }
-    }
-
-    /// Creates a function key on its own. `function(5)` is F5.
-    ///
-    /// Modifiers can be added with [`primary`](Self::primary), [`shift`](Self::shift)
-    /// and [`alt`](Self::alt). Numbers outside 1 to 24 make an invalid shortcut.
-    pub fn function(number: u8) -> Self {
-        Self {
-            key: Key::F(number),
-            primary: false,
-            shift: false,
-            alt: false,
-        }
-    }
-
-    /// Sets whether the primary modifier is included (included by default for
-    /// characters, not for function keys).
-    pub fn primary(mut self, primary: bool) -> Self {
-        self.primary = primary;
-        self
-    }
-
-    /// Sets whether ⇧ (Shift) is included (not included by default).
-    pub fn shift(mut self, shift: bool) -> Self {
-        self.shift = shift;
-        self
-    }
-
-    /// Sets whether ⌥ / Alt is included (not included by default).
-    pub fn alt(mut self, alt: bool) -> Self {
-        self.alt = alt;
-        self
-    }
-
-    /// Whether every platform can register it: one alphanumeric character with the
-    /// primary modifier, or F1 to F24.
-    ///
-    /// A character key without the primary modifier would take the key away from text
-    /// input, so it is not valid.
-    ///
-    /// ```
-    /// # use naui_core::MenuShortcut;
-    /// assert!(MenuShortcut::new('s').is_valid());
-    /// assert!(MenuShortcut::function(5).is_valid());
-    /// assert!(!MenuShortcut::new('/').is_valid());
-    /// assert!(!MenuShortcut::new('s').primary(false).is_valid());
-    /// assert!(!MenuShortcut::function(25).is_valid());
-    /// ```
-    pub fn is_valid(self) -> bool {
-        match self.key {
-            Key::Character(c) => self.primary && c.is_ascii_alphanumeric(),
-            Key::F(number) => (1..=24).contains(&number),
-            _ => false,
-        }
-    }
-
-    /// The string passed to macOS (AppKit)'s `keyEquivalent`.
-    ///
-    /// ⌘, ⇧ and ⌥ are specified with `keyEquivalentModifierMask`, so only the
-    /// character goes here. Function keys are AppKit's private-use characters
-    /// (`NSF1FunctionKey` and on).
-    ///
-    /// ```
-    /// # use naui_core::MenuShortcut;
-    /// assert_eq!(MenuShortcut::new('S').key_equivalent(), "s");
-    /// assert_eq!(MenuShortcut::function(1).key_equivalent(), "\u{F704}");
-    /// ```
-    pub fn key_equivalent(self) -> String {
-        match self.key {
-            Key::Character(c) => c.to_ascii_lowercase().to_string(),
-            // NSF1FunctionKey は 0xF704 で、F35 まで続き番号になっている。
-            Key::F(number) => char::from_u32(0xF703 + u32::from(number))
-                .map(String::from)
-                .unwrap_or_default(),
-            _ => String::new(),
-        }
-    }
-
-    /// The notation read by Linux (GTK4)'s `gtk_accelerator_parse`.
-    ///
-    /// ```
-    /// # use naui_core::MenuShortcut;
-    /// let s = MenuShortcut::new('o').shift(true).alt(true);
-    /// assert_eq!(s.accelerator(), "<Control><Shift><Alt>o");
-    /// assert_eq!(MenuShortcut::function(5).shift(true).accelerator(), "<Shift>F5");
-    /// ```
-    pub fn accelerator(self) -> String {
-        let mut out = String::new();
-        if self.primary {
-            out.push_str("<Control>");
-        }
-        if self.shift {
-            out.push_str("<Shift>");
-        }
-        if self.alt {
-            out.push_str("<Alt>");
-        }
-        match self.key {
-            Key::Character(c) => out.push(c.to_ascii_lowercase()),
-            Key::F(number) => out.push_str(&format!("F{number}")),
-            _ => {}
-        }
-        out
-    }
-
-    /// The Windows virtual-key code. `0` for invalid shortcuts.
-    ///
-    /// `VK_A`..`VK_Z` and `VK_0`..`VK_9` have the same values as ASCII uppercase
-    /// letters and digits, and `VK_F1`..`VK_F24` run from `0x70`.
-    ///
-    /// ```
-    /// # use naui_core::MenuShortcut;
-    /// assert_eq!(MenuShortcut::new('s').virtual_key(), 0x53);
-    /// assert_eq!(MenuShortcut::new('1').virtual_key(), 0x31);
-    /// assert_eq!(MenuShortcut::function(5).virtual_key(), 0x74);
-    /// ```
-    pub fn virtual_key(self) -> i32 {
-        if !self.is_valid() {
-            return 0;
-        }
-        match self.key {
-            Key::Character(c) => c.to_ascii_uppercase() as i32,
-            Key::F(number) => 0x6F + i32::from(number),
-            _ => 0,
-        }
-    }
-
-    /// The key's own name as shown on screen (`S`, `F5`).
-    fn key_label(self) -> String {
-        match self.key {
-            Key::Character(c) => c.to_ascii_uppercase().to_string(),
-            Key::F(number) => format!("F{number}"),
-            _ => String::new(),
-        }
-    }
-
-    /// The text shown on screen (in the form `Ctrl+Shift+S`).
-    ///
-    /// macOS and GTK4 render the right edge of menu items themselves, so only the
-    /// platforms where naui owns the display (Windows and the Web) use this.
-    pub fn label(self) -> String {
-        let mut out = String::new();
-        if self.primary {
-            out.push_str("Ctrl+");
-        }
-        if self.shift {
-            out.push_str("Shift+");
-        }
-        if self.alt {
-            out.push_str("Alt+");
-        }
-        out.push_str(&self.key_label());
-        out
-    }
-
-    /// The notation of WAI-ARIA's `aria-keyshortcuts` (`Control+Shift+S`, `F5`).
-    ///
-    /// WAI-ARIA requires modifier names to match the DOM's `KeyboardEvent.key`, so it
-    /// is separate from the display-oriented [`label`](Self::label).
-    ///
-    /// ```
-    /// # use naui_core::MenuShortcut;
-    /// assert_eq!(MenuShortcut::new('s').shift(true).aria_key_shortcuts(), "Control+Shift+S");
-    /// assert_eq!(MenuShortcut::function(11).aria_key_shortcuts(), "F11");
-    /// ```
-    pub fn aria_key_shortcuts(self) -> String {
-        let mut out = String::new();
-        if self.primary {
-            out.push_str("Control+");
-        }
-        if self.shift {
-            out.push_str("Shift+");
-        }
-        if self.alt {
-            out.push_str("Alt+");
-        }
-        out.push_str(&self.key_label());
-        out
-    }
-
-    /// Whether the pressed key is this shortcut.
-    ///
-    /// Used on platforms where naui watches pressed keys itself (Windows and the Web).
-    /// `key` is the pressed key's name in the form of the DOM's `KeyboardEvent.key`
-    /// (a character, case-insensitive, or `F5`). `primary` means that either ⌘ or Ctrl
-    /// is held. Invalid shortcuts never match.
-    ///
-    /// ```
-    /// # use naui_core::MenuShortcut;
-    /// let s = MenuShortcut::new('s');
-    /// assert!(s.matches("S", true, false, false));
-    /// assert!(!s.matches("s", false, false, false)); // no modifier
-    /// assert!(!s.matches("s", true, true, false));   // extra ⇧
-    ///
-    /// let f5 = MenuShortcut::function(5);
-    /// assert!(f5.matches("F5", false, false, false));
-    /// assert!(!f5.matches("F5", true, false, false)); // extra primary modifier
-    /// ```
-    pub fn matches(self, key: &str, primary: bool, shift: bool, alt: bool) -> bool {
-        if !self.is_valid() || primary != self.primary || shift != self.shift || alt != self.alt {
-            return false;
-        }
-        match self.key {
-            Key::Character(c) => {
-                key.len() == c.len_utf8()
-                    && key
-                        .chars()
-                        .next()
-                        .is_some_and(|k| k.eq_ignore_ascii_case(&c))
-            }
-            Key::F(number) => key
-                .strip_prefix('F')
-                .and_then(|n| n.parse::<u8>().ok())
-                .is_some_and(|n| n == number),
-            _ => false,
-        }
-    }
-}
+use crate::Shortcut;
 
 /// Holds one callback that receives the path of a chosen menu item. Shared by all
 /// backends for `MenuBar::on_activate` and `PopupMenu::on_select`.
@@ -384,9 +114,9 @@ pub(crate) fn node_walk<T: MenuNode>(
 /// be chosen, so their paths never come back in notifications.
 ///
 /// ```
-/// # use naui_core::{MenuItem, MenuShortcut};
+/// # use naui_core::{MenuItem, Shortcut};
 /// let items = [
-///     MenuItem::new("Open").shortcut(MenuShortcut::new('o')),
+///     MenuItem::new("Open").shortcut(Shortcut::new('o')),
 ///     MenuItem::separator(),
 ///     MenuItem::new("Save").enabled(false),
 ///     MenuItem::new("Show Sidebar").checked(true),
@@ -405,8 +135,9 @@ pub struct MenuItem {
     pub enabled: bool,
     /// Whether this is a separator.
     pub separator: bool,
-    /// The keyboard shortcut assigned to it. Not used for separators and submenus.
-    pub shortcut: Option<MenuShortcut>,
+    /// The keyboard shortcut assigned to it. Not used for separators and submenus,
+    /// and not registered unless it is [valid for a menu](Shortcut::is_valid_for_menu).
+    pub shortcut: Option<Shortcut>,
     /// The check mark. `None` for an ordinary item, `Some(on)` for an item that shows
     /// whether something is on.
     ///
@@ -457,7 +188,7 @@ impl MenuItem {
     }
 
     /// Assigns a keyboard shortcut (none by default).
-    pub fn shortcut(mut self, shortcut: MenuShortcut) -> Self {
+    pub fn shortcut(mut self, shortcut: Shortcut) -> Self {
         self.shortcut = Some(shortcut);
         self
     }
@@ -563,11 +294,11 @@ impl From<String> for MenuItem {
 /// One menu in the menu bar (a heading and the items in it).
 ///
 /// ```
-/// # use naui_core::{MenuItem, MenuShortcut, MenuSpec};
+/// # use naui_core::{MenuItem, Shortcut, MenuSpec};
 /// let file = MenuSpec::new(
 ///     "File",
 ///     [
-///         MenuItem::new("New").shortcut(MenuShortcut::new('n')),
+///         MenuItem::new("New").shortcut(Shortcut::new('n')),
 ///         MenuItem::separator(),
 ///         MenuItem::new("Close"),
 ///     ],
@@ -667,17 +398,17 @@ impl MenuSpec {
     /// Used on platforms where naui matches pressed keys itself (Windows and the Web).
     ///
     /// ```
-    /// # use naui_core::{MenuItem, MenuShortcut, MenuSpec};
+    /// # use naui_core::{MenuItem, Shortcut, MenuSpec};
     /// let menus = [MenuSpec::new(
     ///     "View",
-    ///     [MenuItem::submenu("Zoom", [MenuItem::new("In").shortcut(MenuShortcut::new('i'))])],
+    ///     [MenuItem::submenu("Zoom", [MenuItem::new("In").shortcut(Shortcut::new('i'))])],
     /// )];
     /// let found = MenuSpec::find_shortcut(&menus, |s| s.matches("i", true, false, false));
     /// assert_eq!(found, Some(vec![0, 0, 0]));
     /// ```
     pub fn find_shortcut(
         menus: &[MenuSpec],
-        mut matches: impl FnMut(MenuShortcut) -> bool,
+        mut matches: impl FnMut(Shortcut) -> bool,
     ) -> Option<Vec<usize>> {
         let mut found = None;
         Self::walk(menus, |path, item| {
@@ -687,7 +418,7 @@ impl MenuSpec {
             let Some(shortcut) = item.shortcut else {
                 return;
             };
-            if shortcut.is_valid() && Self::can_choose(menus, path) && matches(shortcut) {
+            if shortcut.is_valid_for_menu() && Self::can_choose(menus, path) && matches(shortcut) {
                 found = Some(path.to_vec());
             }
         });
@@ -809,7 +540,7 @@ mod tests {
 
     #[test]
     fn find_shortcut_skips_what_cannot_be_chosen() {
-        let s = MenuShortcut::new('i');
+        let s = Shortcut::new('i');
         let menus = [
             MenuSpec::new(
                 "a",
@@ -826,7 +557,7 @@ mod tests {
         let found = MenuSpec::find_shortcut(&menus, |c| c == s);
         assert_eq!(found, Some(vec![1, 0, 0]));
         // 有効でないショートカットは見つからない。
-        let bad = MenuShortcut::new('/');
+        let bad = Shortcut::new('/');
         let menus = [MenuSpec::new("a", [MenuItem::new("x").shortcut(bad)])];
         assert_eq!(MenuSpec::find_shortcut(&menus, |_| true), None);
     }
@@ -850,100 +581,5 @@ mod tests {
         handler.emit(&[1, 2]);
         handler.emit(&[3]);
         assert_eq!(*seen.borrow(), vec![vec![1, 2], vec![99]]);
-    }
-
-    /// Even when passed in uppercase, the key is stored lowercase (⇧ is specified
-    /// separately).
-    #[test]
-    fn shortcut_key_is_lowercased() {
-        let s = MenuShortcut::new('S');
-        assert_eq!(s.key, Key::Character('s'));
-        assert!(s.primary);
-        assert!(!s.shift);
-        assert!(!s.alt);
-        assert_eq!(s.key_equivalent(), "s");
-    }
-
-    #[test]
-    fn shortcut_writes_each_backend_notation() {
-        let plain = MenuShortcut::new('s');
-        assert_eq!(plain.accelerator(), "<Control>s");
-        assert_eq!(plain.label(), "Ctrl+S");
-        assert_eq!(plain.virtual_key(), 0x53);
-
-        let full = MenuShortcut::new('z').shift(true).alt(true);
-        assert_eq!(full.accelerator(), "<Control><Shift><Alt>z");
-        assert_eq!(full.label(), "Ctrl+Shift+Alt+Z");
-        assert_eq!(full.virtual_key(), 0x5A);
-    }
-
-    #[test]
-    fn function_keys_write_each_backend_notation() {
-        let f5 = MenuShortcut::function(5);
-        assert!(!f5.primary);
-        assert_eq!(f5.accelerator(), "F5");
-        assert_eq!(f5.label(), "F5");
-        assert_eq!(f5.aria_key_shortcuts(), "F5");
-        assert_eq!(f5.virtual_key(), 0x74);
-        assert_eq!(f5.key_equivalent(), "\u{F708}");
-
-        let ctrl_f12 = MenuShortcut::function(12).primary(true).shift(true);
-        assert_eq!(ctrl_f12.accelerator(), "<Control><Shift>F12");
-        assert_eq!(ctrl_f12.label(), "Ctrl+Shift+F12");
-        assert_eq!(ctrl_f12.aria_key_shortcuts(), "Control+Shift+F12");
-        assert_eq!(MenuShortcut::function(1).virtual_key(), 0x70);
-        assert_eq!(MenuShortcut::function(24).virtual_key(), 0x87);
-        assert_eq!(MenuShortcut::function(0).virtual_key(), 0);
-    }
-
-    #[test]
-    fn digits_map_to_their_ascii_code() {
-        assert_eq!(MenuShortcut::new('0').virtual_key(), 0x30);
-        assert_eq!(MenuShortcut::new('9').virtual_key(), 0x39);
-        assert!(MenuShortcut::new('7').is_valid());
-    }
-
-    /// Non-alphanumeric keys are handled differently per platform, so they have no
-    /// virtual key.
-    #[test]
-    fn non_alphanumeric_keys_are_rejected() {
-        let s = MenuShortcut::new('/');
-        assert!(!s.is_valid());
-        assert_eq!(s.virtual_key(), 0);
-        assert!(!s.matches("/", true, false, false));
-    }
-
-    #[test]
-    fn matches_requires_the_exact_modifiers() {
-        let s = MenuShortcut::new('z').shift(true);
-        assert!(s.matches("Z", true, true, false));
-        assert!(s.matches("z", true, true, false));
-        // 主修飾キーが無い、⇧ が足りない、⌥ が余っている。
-        assert!(!s.matches("z", false, true, false));
-        assert!(!s.matches("z", true, false, false));
-        assert!(!s.matches("z", true, true, true));
-        // 別のキー。
-        assert!(!s.matches("y", true, true, false));
-    }
-
-    #[test]
-    fn function_keys_match_by_name() {
-        let s = MenuShortcut::function(11);
-        assert!(s.matches("F11", false, false, false));
-        assert!(!s.matches("F1", false, false, false));
-        assert!(!s.matches("F111", false, false, false));
-        assert!(!s.matches("F11", false, true, false));
-        let ctrl = s.primary(true);
-        assert!(ctrl.matches("F11", true, false, false));
-        assert!(!ctrl.matches("F11", false, false, false));
-    }
-
-    /// `KeyboardEvent.key` also delivers names such as "Enter". Only single characters
-    /// are considered.
-    #[test]
-    fn matches_ignores_named_keys() {
-        let s = MenuShortcut::new('s');
-        assert!(!s.matches("Enter", true, false, false));
-        assert!(!s.matches("", true, false, false));
     }
 }

@@ -1,5 +1,5 @@
 use crate::sys;
-use crate::Widget;
+use crate::AsWidget;
 use naui_core::{Align, GridCell, Padding, ScrollMetrics, ScrollPolicy, Track};
 
 /// A container that positions children by row and column (`GtkGrid`).
@@ -22,14 +22,14 @@ impl Grid {
     /// Places a child in a cell. It can be stacked onto a cell that already holds
     /// something.
     #[inline]
-    pub fn attach(&self, child: &dyn Widget, cell: GridCell) {
-        self.0.attach(child.as_backend(), cell)
+    pub fn attach(&self, child: &dyn AsWidget, cell: GridCell) {
+        self.0.attach(child.as_widget().as_backend(), cell)
     }
 
     /// Replaces what is in the cell. Whatever was in the same cell is removed.
     #[inline]
-    pub fn replace(&self, child: &dyn Widget, cell: GridCell) {
-        self.0.replace(child.as_backend(), cell)
+    pub fn replace(&self, child: &dyn AsWidget, cell: GridCell) {
+        self.0.replace(child.as_widget().as_backend(), cell)
     }
 
     /// Removes every child. The row and column settings stay.
@@ -153,15 +153,15 @@ impl Flow {
     }
 
     #[inline]
-    pub fn append(&self, child: &dyn Widget) {
-        self.0.append(child.as_backend())
+    pub fn append(&self, child: &dyn AsWidget) {
+        self.0.append(child.as_widget().as_backend())
     }
 
     /// Inserts a child at the given position. If `index` is at least the current
     /// count, it is appended at the end.
     #[inline]
-    pub fn insert(&self, index: usize, child: &dyn Widget) {
-        self.0.insert(index, child.as_backend())
+    pub fn insert(&self, index: usize, child: &dyn AsWidget) {
+        self.0.insert(index, child.as_widget().as_backend())
     }
 
     /// Removes the child at the given position. Does nothing if out of range.
@@ -233,8 +233,8 @@ impl Scroll {
     }
 
     #[inline]
-    pub fn set_child(&self, child: &dyn Widget) {
-        self.0.set_child(child.as_backend())
+    pub fn set_child(&self, child: &dyn AsWidget) {
+        self.0.set_child(child.as_widget().as_backend())
     }
 }
 

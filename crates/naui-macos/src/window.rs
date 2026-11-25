@@ -438,6 +438,42 @@ impl Window {
         crate::keys::set_window_handler(&self.native_window(), f);
     }
 
+    /// Runs `f` when `shortcut` is pressed while this window has keyboard focus.
+    /// Giving the same shortcut again replaces the closure.
+    ///
+    /// The widgets around the focus (their `on_key_down` and shortcuts) and this
+    /// window's `on_key_down` come first, and the menu bar comes after. A shortcut
+    /// that fires takes the key, so neither the focused control nor the menu bar gets
+    /// it. Invalid shortcuts never fire.
+    pub fn on_shortcut(&self, shortcut: naui_core::Shortcut, f: impl FnMut() + 'static) {
+        crate::keys::set_window_shortcut(&self.native_window(), shortcut, f);
+    }
+
+    /// Removes a shortcut given with [`on_shortcut`](Self::on_shortcut). Nothing
+    /// happens if it was not given.
+    pub fn remove_shortcut(&self, shortcut: naui_core::Shortcut) {
+        crate::keys::remove_window_shortcut(&self.native_window(), shortcut);
+    }
+
+    /// Delivers `event` as a key pressed in this window, starting from the widget
+    /// that has keyboard focus: the `on_key_down`s and shortcuts in naui's order,
+    /// then the menu bar's shortcuts. `Handled` if one of them took it. For tests and
+    /// automation.
+    ///
+    /// The key does not reach the focused control (no text is typed), and keys are
+    /// not delivered while an IME is composing.
+    pub fn send_key(&self, event: &naui_core::KeyEvent) -> naui_core::EventResponse {
+        if crate::keys::deliver(&self.native_window(), event) == naui_core::EventResponse::Handled {
+            return naui_core::EventResponse::Handled;
+        }
+        let menu_bar = self.0.menu_bar.borrow().clone();
+        if menu_bar.is_some_and(|menu_bar| menu_bar.press_shortcut(event)) {
+            naui_core::EventResponse::Handled
+        } else {
+            naui_core::EventResponse::Continue
+        }
+    }
+
     pub fn set_title(&self, title: &str) {
         self.0.native.setTitle(&NSString::from_str(title));
     }

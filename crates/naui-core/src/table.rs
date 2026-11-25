@@ -63,6 +63,11 @@ pub struct TableColumn {
     pub title: String,
     /// The column width (logical pixels). If `None`, it grows by sharing the leftover
     /// space.
+    ///
+    /// On macOS, Windows and Linux the user can drag the trailing edge of any column's
+    /// heading to change its width; from then on that column keeps the dragged width
+    /// (as if it were given here) until the columns are passed again
+    /// ([`clamp_column_width`]). The Web has no dragging.
     pub width: Option<f64>,
     /// The alignment of the text in its cells.
     ///
@@ -90,7 +95,8 @@ impl TableColumn {
         }
     }
 
-    /// Fixes the column width in logical pixels.
+    /// Fixes the column width in logical pixels. The user can still drag it on macOS,
+    /// Windows and Linux ([`TableColumn::width`](field@TableColumn::width)).
     pub fn width(mut self, width: f64) -> Self {
         self.width = Some(width);
         self
@@ -135,6 +141,63 @@ impl From<String> for TableColumn {
     fn from(title: String) -> Self {
         TableColumn::new(title)
     }
+}
+
+/// The narrowest a column can be made by dragging its heading's edge, and the
+/// narrowest a column without a width is squeezed to (logical pixels).
+pub const MIN_COLUMN_WIDTH: f64 = 40.0;
+
+/// Clamps the width a column's edge is being dragged to.
+///
+/// Dragging the trailing edge of a column's heading gives that column the width it
+/// is dragged to, as if it had been passed with [`TableColumn::width`]; the columns
+/// without a width share what is left. The columns never take more room in total
+/// than the table has, so the width is clamped:
+///
+/// - `columns` are the columns as they are now (with widths already dragged written
+///   into [`TableColumn::width`]), and `index` is the column being dragged.
+/// - `available` is the width the columns can share, **excluding the spacing
+///   between them**. Pass 0 or less when it is unknown (then only the lower bound is
+///   considered).
+///
+/// The lower bound is [`MIN_COLUMN_WIDTH`]. The upper bound leaves every other column
+/// its width, or [`MIN_COLUMN_WIDTH`] when it has none. When even that does not fit,
+/// the lower bound wins.
+///
+/// ```
+/// # use naui_core::{clamp_column_width, TableColumn, MIN_COLUMN_WIDTH};
+/// let columns = [
+///     TableColumn::new("City"),
+///     TableColumn::new("Population").width(120.0),
+///     TableColumn::new("Area"),
+/// ];
+/// // 400 - 120 - 40 = 240 at most.
+/// assert_eq!(clamp_column_width(&columns, 0, 300.0, 400.0), 240.0);
+/// assert_eq!(clamp_column_width(&columns, 0, 10.0, 400.0), MIN_COLUMN_WIDTH);
+/// assert_eq!(clamp_column_width(&columns, 1, 150.0, 400.0), 150.0);
+/// ```
+pub fn clamp_column_width(
+    columns: &[TableColumn],
+    index: usize,
+    width: f64,
+    available: f64,
+) -> f64 {
+    let low = MIN_COLUMN_WIDTH;
+    if !width.is_finite() {
+        return low;
+    }
+    if !available.is_finite() || available <= 0.0 {
+        return width.max(low);
+    }
+    let others: f64 = columns
+        .iter()
+        .enumerate()
+        .filter(|&(other, _)| other != index)
+        .map(|(_, column)| column.width.unwrap_or(MIN_COLUMN_WIDTH).max(0.0))
+        .sum();
+    // 他の列の分を残せないときは、下限を優先する。
+    let high = (available - others).max(low);
+    width.clamp(low, high)
 }
 
 /// One table row.
@@ -233,6 +296,56 @@ mod tests {
         assert!(SortOrder::Ascending.is_ascending());
         assert!(!SortOrder::Descending.is_ascending());
         assert_eq!(SortOrder::Ascending.reversed(), SortOrder::Descending);
+    }
+
+    #[test]
+    fn dragged_width_leaves_room_for_the_other_columns() {
+        let columns = [
+            TableColumn::new("都市"),
+            TableColumn::new("人口").width(120.0),
+            TableColumn::new("面積"),
+        ];
+        assert_eq!(clamp_column_width(&columns, 0, 200.0, 400.0), 200.0);
+        assert_eq!(
+            clamp_column_width(&columns, 0, 500.0, 400.0),
+            240.0,
+            "幅のある列はその幅、幅の無い列は最小幅を残す"
+        );
+        assert_eq!(clamp_column_width(&columns, 2, 500.0, 400.0), 240.0);
+        assert_eq!(clamp_column_width(&columns, 1, 500.0, 400.0), 320.0);
+    }
+
+    #[test]
+    fn dragged_width_stays_above_the_minimum() {
+        let columns = TableColumn::list(["都市", "人口"]);
+        assert_eq!(
+            clamp_column_width(&columns, 0, 12.0, 400.0),
+            MIN_COLUMN_WIDTH
+        );
+        assert_eq!(
+            clamp_column_width(&columns, 0, -5.0, 400.0),
+            MIN_COLUMN_WIDTH
+        );
+        assert_eq!(
+            clamp_column_width(&columns, 0, f64::NAN, 400.0),
+            MIN_COLUMN_WIDTH
+        );
+        // 他の列の分すら残せない狭い表でも、下限は守る。
+        assert_eq!(
+            clamp_column_width(&columns, 0, 100.0, 60.0),
+            MIN_COLUMN_WIDTH
+        );
+    }
+
+    #[test]
+    fn dragged_width_has_no_upper_bound_before_layout() {
+        let columns = TableColumn::list(["都市", "人口"]);
+        assert_eq!(clamp_column_width(&columns, 0, 900.0, 0.0), 900.0);
+        assert_eq!(clamp_column_width(&columns, 0, 900.0, f64::NAN), 900.0);
+        assert_eq!(
+            clamp_column_width(&columns, 0, 10.0, -1.0),
+            MIN_COLUMN_WIDTH
+        );
     }
 
     #[test]

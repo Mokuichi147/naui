@@ -104,7 +104,7 @@ pub use time_picker::TimePicker;
 pub use toast::Toast;
 pub use toggle::Toggle;
 pub use toolbar::Toolbar;
-pub use tree::Tree;
+pub use tree::{Tree, TreeRow};
 pub use widgets::{
     Button, Checkbox, Label, PasswordInput, ProgressBar, SearchInput, Slider, Spinner, Stack,
     TextArea, TextInput, Widget,

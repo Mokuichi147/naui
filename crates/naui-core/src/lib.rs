@@ -45,6 +45,7 @@ mod popup;
 mod rich_text;
 mod row_window;
 mod scroll;
+mod shortcut;
 mod sidebar;
 mod split;
 mod table;
@@ -92,7 +93,7 @@ pub use layout::{
 pub use list::{ListItem, RowMove, SelectionMode};
 pub use main_thread::{MainThread, Tasks, Work};
 pub use media::{Fit, PlaybackState};
-pub use menu::{MenuHandler, MenuItem, MenuShortcut, MenuSpec};
+pub use menu::{MenuHandler, MenuItem, MenuSpec};
 #[doc(hidden)]
 pub use native_host::HostEvents;
 pub use native_host::HostSize;
@@ -106,13 +107,18 @@ pub use row_window::{
     RowSource, RowWindow, SelectionGesture, ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
 };
 pub use scroll::ScrollNotifier;
+#[allow(deprecated)]
+pub use shortcut::MenuShortcut;
+#[doc(hidden)]
+pub use shortcut::{deliver_key, KeyTarget};
+pub use shortcut::{Shortcut, ShortcutHandlers};
 pub use sidebar::{
     sidebar_item, sidebar_len, sidebar_rows, SidebarAutoChange, SidebarAutoCollapse, SidebarItem,
     SidebarRow, SidebarSection, DEFAULT_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_CONTENT_WIDTH,
     SIDEBAR_MIN_WIDTH,
 };
 pub use split::{clamp_split_position, DEFAULT_SPLIT_POSITION};
-pub use table::{SortOrder, TableColumn, TableRow};
+pub use table::{clamp_column_width, SortOrder, TableColumn, TableRow, MIN_COLUMN_WIDTH};
 pub use task::Task;
 pub use text::{TextColor, TextStyle};
 pub use timer::{Sleep, Timer};
