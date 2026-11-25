@@ -1,10 +1,25 @@
-//! `on_key_down` (text-input widgets and `Window`).
+//! `on_key_down` and `on_shortcut` (widgets and `Window`).
 //!
 //! One `PreviewKeyDown` is attached to the window's root. It is delivered by
 //! tunneling (root to leaf), so keys can be received before they reach the field.
-//! Walking up the parents from the key's source (`OriginalSource`), it notifies the
-//! first registered widget found, then the window. With `Handled`, `Handled` is set,
-//! so the key does not reach the field either (inserting a newline, for example).
+//! Walking up the parents from the key's source (`OriginalSource`), it collects the
+//! widgets that have an `on_key_down` or shortcuts and delivers the key in naui's
+//! order ([`naui_core::deliver_key`]): the innermost `on_key_down`, the widgets'
+//! shortcuts from the inside out, the window's `on_key_down`, then the window's
+//! shortcuts. With `Handled`, `Handled` is set, so the key does not reach the field
+//! either (inserting a newline, for example), nor the menu bar, whose shortcuts are
+//! picked up from the root's bubbling `KeyDown`.
+//!
+//! Keys pressed in a popup (a `Dialog` or `Sheet`'s `ContentDialog`, a `MenuFlyout`,
+//! a drop-down list) also tunnel through the root, but their source is not under it:
+//! popups hang off the XAML root, not the window's content. Those keys reach only the
+//! widgets they come from, not the window's `on_key_down` or shortcuts, so that a
+//! window's Escape does not keep a dialog or a menu from closing (the same as the
+//! other platforms, where these are separate windows or are left out).
+//!
+//! WinUI's `KeyboardAccelerator` is not used: it is not in naui's projection, and
+//! its invocation order relative to the focused control and the root's
+//! `PreviewKeyDown` would differ from the other platforms.
 //!
 //! Modifier keys pressed on their own are not delivered (the same as macOS).
 //!
@@ -21,13 +36,15 @@ use std::collections::HashSet;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use naui_core::{EventResponse, Key, KeyEvent, KeyHandler, Modifiers};
+use naui_core::{
+    EventResponse, Key, KeyEvent, KeyHandler, KeyTarget, Modifiers, Shortcut, ShortcutHandlers,
+};
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    TextBox, TextCompositionEndedEventArgs, TextCompositionStartedEventArgs,
+    Control, TextBox, TextCompositionEndedEventArgs, TextCompositionStartedEventArgs,
 };
 use naui_winui3::Microsoft::UI::Xaml::Input::{KeyEventHandler, KeyRoutedEventArgs};
 use naui_winui3::Microsoft::UI::Xaml::Media::VisualTreeHelper;
-use naui_winui3::Microsoft::UI::Xaml::{DependencyObject, UIElement};
+use naui_winui3::Microsoft::UI::Xaml::{DependencyObject, FocusState, UIElement};
 use windows::Foundation::TypedEventHandler;
 use windows::System::VirtualKey;
 use windows_core::{IUnknown, Interface, Weak};
@@ -37,10 +54,11 @@ use crate::ui_thread::{Registry, UiThreadCell};
 /// A key the IME is processing. `Windows.System.VirtualKey` has no name for it.
 const VK_PROCESSKEY: i32 = 229;
 
-type Entries = Registry<(Weak<UIElement>, Rc<KeyHandler>)>;
+type Entries<H> = Registry<(Weak<UIElement>, Rc<H>)>;
 
 thread_local! {
-    static WIDGETS: Entries = const { Registry::new() };
+    static WIDGETS: Entries<KeyHandler> = const { Registry::new() };
+    static WIDGET_SHORTCUTS: Entries<ShortcutHandlers> = const { Registry::new() };
     /// The `TextBox`es whose composition start and end are already subscribed.
     static WATCHED: RefCell<Vec<Weak<TextBox>>> = const { RefCell::new(Vec::new()) };
     /// The `TextBox`es currently composing.
@@ -61,33 +79,58 @@ pub(crate) fn set_widget_handler(
     element: &UIElement,
     f: impl FnMut(&KeyEvent) -> EventResponse + 'static,
 ) {
-    WIDGETS.with(|entries| {
-        let mut entries = entries.borrow_mut();
-        entries.retain(|(weak, _)| weak.upgrade().is_some());
-        if let Some((_, handler)) = entries
-            .iter()
-            .find(|(weak, _)| weak.upgrade().is_some_and(|other| same(&other, element)))
-        {
-            handler.set(f);
-            return;
-        }
-        let Ok(weak) = element.downgrade() else {
-            return;
-        };
-        let handler = Rc::new(KeyHandler::default());
+    if let Some(handler) = WIDGETS.with(|entries| handler_for(entries, element)) {
         handler.set(f);
-        entries.push((weak, handler));
-    });
+    }
+}
+
+/// Gives the widget's element a shortcut, replacing the closure it had.
+pub(crate) fn set_widget_shortcut(
+    element: &UIElement,
+    shortcut: Shortcut,
+    f: impl FnMut() + 'static,
+) {
+    if let Some(handlers) = WIDGET_SHORTCUTS.with(|entries| handler_for(entries, element)) {
+        handlers.set(shortcut, f);
+    }
+}
+
+/// Removes a shortcut from the widget's element.
+pub(crate) fn remove_widget_shortcut(element: &UIElement, shortcut: Shortcut) {
+    if let Some(handlers) = lookup(&WIDGET_SHORTCUTS, element) {
+        handlers.remove(shortcut);
+    }
+}
+
+/// The handler for `element`, created if absent. Entries for elements that are gone
+/// are cleaned up here too. `None` if the element cannot be held weakly.
+fn handler_for<H: Default>(entries: &Entries<H>, element: &UIElement) -> Option<Rc<H>> {
+    let mut entries = entries.borrow_mut();
+    entries.retain(|(weak, _)| weak.upgrade().is_some());
+    if let Some((_, handler)) = entries
+        .iter()
+        .find(|(weak, _)| weak.upgrade().is_some_and(|other| same(&other, element)))
+    {
+        return Some(handler.clone());
+    }
+    let weak = element.downgrade().ok()?;
+    let handler = Rc::new(H::default());
+    entries.push((weak, handler.clone()));
+    Some(handler)
 }
 
 /// Releases every handler. Called on the shutdown path, before XAML's cleanup.
 pub(crate) fn release_handlers() {
     // 借用の外で捨てる。
     drop(WIDGETS.with(Registry::take));
+    drop(WIDGET_SHORTCUTS.with(Registry::take));
 }
 
-fn lookup(object: &DependencyObject) -> Option<Rc<KeyHandler>> {
-    WIDGETS.with(|entries| {
+fn lookup<H, T: Interface>(
+    entries: &'static std::thread::LocalKey<Entries<H>>,
+    object: &T,
+) -> Option<Rc<H>> {
+    entries.with(|entries| {
         entries
             .borrow()
             .iter()
@@ -96,14 +139,16 @@ fn lookup(object: &DependencyObject) -> Option<Rc<KeyHandler>> {
     })
 }
 
-/// Attaches the key receiver to the window's root. `window` is the window's handler.
-pub(crate) fn install(root: &UIElement, window: Rc<KeyHandler>) -> windows_core::Result<()> {
+/// Attaches the key receiver to the window's root. `window` is what the window has
+/// for keys (its `on_key_down` and its shortcuts).
+pub(crate) fn install(root: &UIElement, window: KeyTarget) -> windows_core::Result<()> {
     // 押しっぱなしの繰り返しを見分けるため、押されているキーを覚える。
     let pressed = Arc::new(UiThreadCell::new(HashSet::<i32>::new()));
     let window = Arc::new(UiThreadCell::new(window));
     let down = KeyEventHandler::new({
         let pressed = pressed.clone();
-        move |_, args| {
+        // 根は送り手として届く (閉包に根を持たせると循環になる)。
+        move |sender, args| {
             let Some(args) = args.as_ref() else {
                 return Ok(());
             };
@@ -114,7 +159,10 @@ pub(crate) fn install(root: &UIElement, window: Rc<KeyHandler>) -> windows_core:
             let Some(window) = window.try_with_mut(|window| window.clone()) else {
                 return Ok(());
             };
-            if dispatch(args, key, repeat, &window) == EventResponse::Handled {
+            let root = sender
+                .as_ref()
+                .and_then(|sender| sender.cast::<DependencyObject>().ok());
+            if dispatch(args, key, repeat, root.as_ref(), &window) == EventResponse::Handled {
                 let _ = args.SetHandled(true);
             }
             Ok(())
@@ -132,12 +180,13 @@ pub(crate) fn install(root: &UIElement, window: Rc<KeyHandler>) -> windows_core:
     Ok(())
 }
 
-/// Passes it to the key's source, then the window.
+/// Delivers an arriving key from its source, in naui's order.
 fn dispatch(
     args: &KeyRoutedEventArgs,
     key: VirtualKey,
     repeat: bool,
-    window: &KeyHandler,
+    root: Option<&DependencyObject>,
+    window: &KeyTarget,
 ) -> EventResponse {
     if key.0 == VK_PROCESSKEY || is_modifier(key.0) {
         return EventResponse::Continue;
@@ -146,25 +195,80 @@ fn dispatch(
         .OriginalSource()
         .ok()
         .and_then(|source| source.cast::<DependencyObject>().ok());
+    let event = KeyEvent::new(key_of(key), modifiers()).repeat(repeat);
+    deliver(source, root, &event, window)
+}
+
+/// Delivers `event` to the widgets from `source` outward and to the window, in
+/// naui's order. Nothing is delivered while `source` is a composing `TextBox`.
+///
+/// The window gets it only when `source` is under `root` (the window's content). A
+/// key from a popup, which hangs off the XAML root instead, reaches only the widgets
+/// it comes from.
+fn deliver(
+    source: Option<DependencyObject>,
+    root: Option<&DependencyObject>,
+    event: &KeyEvent,
+    window: &KeyTarget,
+) -> EventResponse {
     if let Some(text_box) = source.as_ref().and_then(|s| s.cast::<TextBox>().ok()) {
         watch_composition(&text_box);
         if is_composing(&text_box) {
             return EventResponse::Continue;
         }
     }
-    let event = KeyEvent::new(key_of(key), modifiers()).repeat(repeat);
-
+    // 送り元が分からないキーは、これまでどおり窓へ届ける。
+    let mut in_window = source.is_none() || root.is_none();
+    let mut widgets = Vec::new();
     let mut current = source;
     while let Some(object) = current {
-        if let Some(handler) = lookup(&object) {
-            if handler.emit(&event) == EventResponse::Handled {
-                return EventResponse::Handled;
-            }
+        if root.is_some_and(|root| same(&object, root)) {
+            in_window = true;
             break;
+        }
+        let target = KeyTarget {
+            key_down: lookup(&WIDGETS, &object),
+            shortcuts: lookup(&WIDGET_SHORTCUTS, &object).filter(|s| !s.is_empty()),
+        };
+        if !target.is_empty() {
+            widgets.push(target);
         }
         current = VisualTreeHelper::GetParent(&object).ok();
     }
-    window.emit(&event)
+    if in_window {
+        naui_core::deliver_key(event, &widgets, window)
+    } else {
+        // ポップアップ (ダイアログ・メニュー・ドロップダウン) の中のキー。
+        naui_core::deliver_key(event, &widgets, &KeyTarget::default())
+    }
+}
+
+/// Delivers `event` as if pressed with focus where it is now under `root`, for
+/// `Window::send_key`. Starts from the root when nothing under it has focus.
+pub(crate) fn send(root: &UIElement, event: &KeyEvent, window: &KeyTarget) -> EventResponse {
+    let root = root.cast::<DependencyObject>().ok();
+    let focused = root.as_ref().and_then(focused_within);
+    deliver(
+        focused.or_else(|| root.clone()),
+        root.as_ref(),
+        event,
+        window,
+    )
+}
+
+/// The control under `object` that has keyboard focus.
+fn focused_within(object: &DependencyObject) -> Option<DependencyObject> {
+    let focused = object
+        .cast::<Control>()
+        .and_then(|control| control.FocusState())
+        .is_ok_and(|state| state != FocusState::Unfocused);
+    if focused {
+        return Some(object.clone());
+    }
+    let count = VisualTreeHelper::GetChildrenCount(object).unwrap_or(0);
+    (0..count)
+        .filter_map(|index| VisualTreeHelper::GetChild(object, index).ok())
+        .find_map(|child| focused_within(&child))
 }
 
 /// Calls `f` when Enter is pressed in a field (the element's `PreviewKeyDown`).

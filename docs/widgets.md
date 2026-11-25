@@ -796,7 +796,7 @@ collected in [Known limitations](known-limitations.md).
 - `Painter` / `Path` / `Point` / `Rect` / `PointerEvent` / `PointerButton`: drawing commands for drawing surfaces, their coordinates, and pointer and wheel notifications
 - `PopupItem`: pop-up menu items
 - `ToolbarItem` / `ToolbarIcon`: toolbar items and icons
-- `MenuSpec` / `MenuItem` / `MenuShortcut`: menu bar headings, items and shortcuts
+- `MenuSpec` / `MenuItem` / `Shortcut`: menu bar headings, items and shortcuts (a `Shortcut` also goes to any widget and window with `on_shortcut`)
 - `SidebarSection` / `SidebarItem`: sidebar groups (headings) and items (text and icons)
 - `DialogButtons` / `DialogResponse`: dialog and sheet buttons and responses
 - `ToastSpec` / `ToastPriority` / `ToastPosition`: toast text, action buttons, time until it disappears, how it takes its turn in the queue, and where it appears

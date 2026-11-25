@@ -16,7 +16,7 @@
 /// A pressed key.
 ///
 /// Character keys are [`Key::Character`], with letters **normalized to lowercase**
-/// (the same as [`MenuShortcut`](crate::MenuShortcut)). Check
+/// (the same as [`Shortcut`](crate::Shortcut)). Check
 /// [`Modifiers::shift`] for whether ⇧ was held. Which character a symbol key gives
 /// with ⇧ depends on the platform (keyboard layout).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

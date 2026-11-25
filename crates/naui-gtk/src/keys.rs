@@ -1,9 +1,24 @@
-//! `on_key_down` (text-input widgets and `Window`).
+//! `on_key_down` and `on_shortcut` (widgets and `Window`).
 //!
 //! Each window gets one capture-phase `GtkEventControllerKey`, which receives keys
 //! before they reach the field (and the IME). It walks up the parents from the
-//! focused widget and notifies the first registered widget found, then the window.
-//! With `Handled`, propagation stops, so the key does not reach the field either.
+//! focused widget, collects the widgets that have an `on_key_down` or shortcuts,
+//! and delivers the key in naui's order ([`naui_core::deliver_key`]): the innermost
+//! `on_key_down`, the widgets' shortcuts from the inside out, the window's
+//! `on_key_down`, then the window's shortcuts. With `Handled`, propagation stops, so
+//! the key does not reach the field either.
+//!
+//! The menu bar's accelerators are the `GtkApplication`'s, which GTK handles in a
+//! capture-phase `GtkShortcutController` the window adds when it is created. A
+//! widget's controllers run newest first, so naui's controller, added after it,
+//! comes before the menu bar. Shortcuts are not given to GTK as
+//! `GtkShortcutController`s for the same reason: one on a widget would run after the
+//! window's capture phase, so the menu bar would come first.
+//!
+//! `Dialog` and `Sheet` open in an `AdwDialog` inside the window. Keys pressed in
+//! one reach the widgets in it but not the window, as on the other platforms, where
+//! those are windows of their own. Libadwaita does not pass those keys through the
+//! window's capture phase, so each `AdwDialog` gets a receiver of its own.
 //!
 //! Modifier keys pressed on their own are not delivered (the same as macOS).
 //!
@@ -12,7 +27,7 @@
 //! `GtkTextView` is watched and remembered.
 //!
 //! The registry holds widgets by weak reference. When a widget is freed, its
-//! handler is removed from the table too.
+//! handlers are removed from the table too.
 
 use std::cell::RefCell;
 use std::collections::HashSet;
@@ -22,13 +37,17 @@ use gtk::gdk;
 use gtk::glib;
 use gtk::glib::translate::IntoGlib;
 use gtk::prelude::*;
-use naui_core::{EventResponse, Key, KeyEvent, KeyHandler, Modifiers};
+use naui_core::{
+    EventResponse, Key, KeyEvent, KeyHandler, KeyTarget, Modifiers, Shortcut, ShortcutHandlers,
+};
 
-type Entries = RefCell<Vec<(glib::WeakRef<gtk::Widget>, Rc<KeyHandler>)>>;
+type Entries<H> = RefCell<Vec<(glib::WeakRef<gtk::Widget>, Rc<H>)>>;
 
 thread_local! {
-    static WIDGETS: Entries = const { RefCell::new(Vec::new()) };
-    static WINDOWS: Entries = const { RefCell::new(Vec::new()) };
+    static WIDGETS: Entries<KeyHandler> = const { RefCell::new(Vec::new()) };
+    static WINDOWS: Entries<KeyHandler> = const { RefCell::new(Vec::new()) };
+    static WIDGET_SHORTCUTS: Entries<ShortcutHandlers> = const { RefCell::new(Vec::new()) };
+    static WINDOW_SHORTCUTS: Entries<ShortcutHandlers> = const { RefCell::new(Vec::new()) };
     /// The text inputs whose `preedit-changed` is already subscribed.
     static WATCHED: RefCell<Vec<glib::WeakRef<gtk::Widget>>> = const { RefCell::new(Vec::new()) };
     /// The text inputs currently composing.
@@ -51,10 +70,44 @@ pub(crate) fn set_window_handler(
     WINDOWS.with(|entries| handler_for(&mut entries.borrow_mut(), window).set(f));
 }
 
-fn handler_for(
-    entries: &mut Vec<(glib::WeakRef<gtk::Widget>, Rc<KeyHandler>)>,
+/// Gives the widget a shortcut, replacing the closure it had.
+pub(crate) fn set_widget_shortcut(
     widget: &gtk::Widget,
-) -> Rc<KeyHandler> {
+    shortcut: Shortcut,
+    f: impl FnMut() + 'static,
+) {
+    WIDGET_SHORTCUTS
+        .with(|entries| handler_for(&mut entries.borrow_mut(), widget).set(shortcut, f));
+}
+
+/// Removes a shortcut from the widget.
+pub(crate) fn remove_widget_shortcut(widget: &gtk::Widget, shortcut: Shortcut) {
+    if let Some(handlers) = lookup(&WIDGET_SHORTCUTS, widget) {
+        handlers.remove(shortcut);
+    }
+}
+
+/// Gives the window a shortcut, replacing the closure it had.
+pub(crate) fn set_window_shortcut(
+    window: &gtk::Widget,
+    shortcut: Shortcut,
+    f: impl FnMut() + 'static,
+) {
+    WINDOW_SHORTCUTS
+        .with(|entries| handler_for(&mut entries.borrow_mut(), window).set(shortcut, f));
+}
+
+/// Removes a shortcut from the window.
+pub(crate) fn remove_window_shortcut(window: &gtk::Widget, shortcut: Shortcut) {
+    if let Some(handlers) = lookup(&WINDOW_SHORTCUTS, window) {
+        handlers.remove(shortcut);
+    }
+}
+
+fn handler_for<H: Default>(
+    entries: &mut Vec<(glib::WeakRef<gtk::Widget>, Rc<H>)>,
+    widget: &gtk::Widget,
+) -> Rc<H> {
     entries.retain(|(weak, _)| weak.upgrade().is_some());
     if let Some((_, handler)) = entries
         .iter()
@@ -62,15 +115,15 @@ fn handler_for(
     {
         return handler.clone();
     }
-    let handler = Rc::new(KeyHandler::default());
+    let handler = Rc::new(H::default());
     entries.push((widget.downgrade(), handler.clone()));
     handler
 }
 
-fn lookup(
-    entries: &'static std::thread::LocalKey<Entries>,
+fn lookup<H>(
+    entries: &'static std::thread::LocalKey<Entries<H>>,
     widget: &gtk::Widget,
-) -> Option<Rc<KeyHandler>> {
+) -> Option<Rc<H>> {
     entries.with(|entries| {
         entries
             .borrow()
@@ -80,15 +133,55 @@ fn lookup(
     })
 }
 
+/// What `widget` has for keys: its `on_key_down` and its shortcuts (if any are
+/// given).
+fn target_of(
+    key_downs: &'static std::thread::LocalKey<Entries<KeyHandler>>,
+    shortcuts: &'static std::thread::LocalKey<Entries<ShortcutHandlers>>,
+    widget: &gtk::Widget,
+) -> KeyTarget {
+    KeyTarget {
+        key_down: lookup(key_downs, widget),
+        shortcuts: lookup(shortcuts, widget).filter(|s| !s.is_empty()),
+    }
+}
+
 /// Attaches the key receiver to a window. Called exactly once when the window is
 /// created.
+///
+/// Keys whose focus is inside an `AdwDialog` are left to the dialog's own receiver
+/// ([`install_dialog`]).
 pub(crate) fn install(window: &impl IsA<gtk::Window>) {
+    let window_widget: glib::WeakRef<gtk::Widget> =
+        window.as_ref().upcast_ref::<gtk::Widget>().downgrade();
+    let controller = receiver(move || {
+        let window = window_widget.upgrade()?;
+        (!focus_in_dialog(&window)).then_some(window)
+    });
+    window.as_ref().add_controller(controller);
+}
+
+/// Attaches the key receiver to an `AdwDialog` (`Dialog` and `Sheet`). Called once
+/// when the dialog is built.
+///
+/// Libadwaita (1.9 at least) does not pass keys typed in a dialog shown inside a
+/// window through the window's capture phase, so the window's receiver never sees
+/// them. The dialog's receiver delivers them to the widgets in it, not to the
+/// window ([`dispatch`] stops at the dialog).
+pub(crate) fn install_dialog(dialog: &impl IsA<adw::Dialog>) {
+    let dialog_widget: glib::WeakRef<gtk::Widget> =
+        dialog.as_ref().upcast_ref::<gtk::Widget>().downgrade();
+    let controller = receiver(move || Some(dialog_widget.upgrade()?.root()?.upcast()));
+    dialog.as_ref().add_controller(controller);
+}
+
+/// A capture-phase key controller delivering keys through [`dispatch`] to the
+/// window `window_of` returns (`None` leaves the key alone).
+fn receiver(window_of: impl Fn() -> Option<gtk::Widget> + 'static) -> gtk::EventControllerKey {
     let controller = gtk::EventControllerKey::new();
     controller.set_propagation_phase(gtk::PropagationPhase::Capture);
     // 押しっぱなしの繰り返しを見分けるため、押されているキーを覚える。
     let pressed: Rc<RefCell<HashSet<u32>>> = Rc::default();
-    let window_widget: glib::WeakRef<gtk::Widget> =
-        window.as_ref().upcast_ref::<gtk::Widget>().downgrade();
     controller.connect_key_pressed({
         let pressed = pressed.clone();
         move |_, keyval, keycode, state| {
@@ -96,7 +189,7 @@ pub(crate) fn install(window: &impl IsA<gtk::Window>) {
             if is_modifier(keyval) {
                 return glib::Propagation::Proceed;
             }
-            let Some(window) = window_widget.upgrade() else {
+            let Some(window) = window_of() else {
                 return glib::Propagation::Proceed;
             };
             let event = KeyEvent::new(key_of(keyval), modifiers_of(state)).repeat(repeat);
@@ -109,11 +202,20 @@ pub(crate) fn install(window: &impl IsA<gtk::Window>) {
     controller.connect_key_released(move |_, _, keycode, _| {
         pressed.borrow_mut().remove(&keycode);
     });
-    window.as_ref().add_controller(controller);
+    controller
 }
 
-/// Passes it to the focused widget, then the window.
-fn dispatch(window: &gtk::Widget, event: &KeyEvent) -> EventResponse {
+/// Whether the window's focus is inside an `AdwDialog`.
+fn focus_in_dialog(window: &gtk::Widget) -> bool {
+    window
+        .downcast_ref::<gtk::Window>()
+        .and_then(gtk::prelude::GtkWindowExt::focus)
+        .is_some_and(|focus| focus.ancestor(adw::Dialog::static_type()).is_some())
+}
+
+/// Delivers `event` to the widgets around the window's focus and to the window, in
+/// naui's order. Used for real keys and by `Window::send_key`.
+pub(crate) fn dispatch(window: &gtk::Widget, event: &KeyEvent) -> EventResponse {
     let focus = window
         .downcast_ref::<gtk::Window>()
         .and_then(gtk::prelude::GtkWindowExt::focus);
@@ -123,20 +225,31 @@ fn dispatch(window: &gtk::Widget, event: &KeyEvent) -> EventResponse {
             return EventResponse::Continue;
         }
     }
+    let mut widgets = Vec::new();
+    let mut in_dialog = false;
     let mut current = focus;
     while let Some(widget) = current {
         if &widget == window {
             break;
         }
-        if let Some(handler) = lookup(&WIDGETS, &widget) {
-            if handler.emit(event) == EventResponse::Handled {
-                return EventResponse::Handled;
-            }
+        let target = target_of(&WIDGETS, &WIDGET_SHORTCUTS, &widget);
+        if !target.is_empty() {
+            widgets.push(target);
+        }
+        // `Dialog` と `Sheet` は窓の中の `AdwDialog` に出る。ほかの環境では別の窓
+        // なので、その中のキーは窓へ渡さない。
+        if widget.is::<adw::Dialog>() {
+            in_dialog = true;
             break;
         }
         current = widget.parent();
     }
-    lookup(&WINDOWS, window).map_or(EventResponse::Continue, |handler| handler.emit(event))
+    let window = if in_dialog {
+        KeyTarget::default()
+    } else {
+        target_of(&WINDOWS, &WINDOW_SHORTCUTS, window)
+    };
+    naui_core::deliver_key(event, &widgets, &window)
 }
 
 /// Remembers when composition starts and ends in a text input (`GtkText` /

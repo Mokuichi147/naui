@@ -119,6 +119,8 @@ struct WindowInner {
     menu_key_installed: Cell<bool>,
     /// The `on_key_down` handler. Called from the root's `PreviewKeyDown`.
     key_down: Rc<naui_core::KeyHandler>,
+    /// The shortcuts given with `on_shortcut`. Matched in the root's `PreviewKeyDown`.
+    shortcuts: Rc<naui_core::ShortcutHandlers>,
     /// The `on_file_drop` handler. Called from the root's `Drop` when no widget under
     /// the pointer takes the files.
     on_file_drop: Rc<crate::file_drop::FileDropHandler>,
@@ -232,6 +234,7 @@ impl Window {
             wheel_subclass_installed: Cell::new(false),
             menu_key_installed: Cell::new(false),
             key_down: Rc::default(),
+            shortcuts: Rc::default(),
             on_file_drop: Rc::default(),
             tasks,
             closing_token: Cell::new(None),
@@ -1136,6 +1139,55 @@ impl Window {
         self.0.key_down.set(f);
     }
 
+    /// Runs `f` when `shortcut` is pressed while this window has keyboard focus.
+    /// Giving the same shortcut again replaces the closure.
+    ///
+    /// The widgets around the focus (their `on_key_down` and shortcuts) and this
+    /// window's `on_key_down` come first, and the menu bar comes after. A shortcut
+    /// that fires takes the key, so neither the focused control nor the menu bar gets
+    /// it. Invalid shortcuts never fire.
+    pub fn on_shortcut(&self, shortcut: naui_core::Shortcut, f: impl FnMut() + 'static) {
+        self.0.shortcuts.set(shortcut, f);
+    }
+
+    /// Removes a shortcut given with [`on_shortcut`](Self::on_shortcut). Nothing
+    /// happens if it was not given.
+    pub fn remove_shortcut(&self, shortcut: naui_core::Shortcut) {
+        self.0.shortcuts.remove(shortcut);
+    }
+
+    /// Delivers `event` as a key pressed in this window, starting from the control
+    /// that has keyboard focus: the `on_key_down`s and shortcuts in naui's order,
+    /// then the menu bar's shortcuts. `Handled` if one of them took it. For tests and
+    /// automation.
+    ///
+    /// The key does not reach the focused control (no text is typed), and keys are
+    /// not delivered while an IME is composing.
+    pub fn send_key(&self, event: &naui_core::KeyEvent) -> naui_core::EventResponse {
+        let root = self.0.theme_root.borrow().clone();
+        let delivered = match root {
+            Some(root) => crate::keys::send(&root, event, &self.key_target()),
+            None => naui_core::deliver_key(event, &[], &self.key_target()),
+        };
+        if delivered == naui_core::EventResponse::Handled {
+            return naui_core::EventResponse::Handled;
+        }
+        let menu_bar = self.0.menu_bar.borrow().clone();
+        if menu_bar.is_some_and(|menu_bar| menu_bar.press_shortcut(event)) {
+            naui_core::EventResponse::Handled
+        } else {
+            naui_core::EventResponse::Continue
+        }
+    }
+
+    /// What this window has for keys: its `on_key_down` and its shortcuts.
+    fn key_target(&self) -> naui_core::KeyTarget {
+        naui_core::KeyTarget {
+            key_down: Some(self.0.key_down.clone()),
+            shortcuts: Some(self.0.shortcuts.clone()),
+        }
+    }
+
     /// The widget placed at the root. Each call replaces it.
     ///
     /// With a sidebar attached, it is placed in the pane on its right
@@ -1218,7 +1270,7 @@ impl Window {
                 }
             }
             if let Some(root) = self.0.theme_root.borrow().as_ref() {
-                let _ = crate::keys::install(root, self.0.key_down.clone());
+                let _ = crate::keys::install(root, self.key_target());
                 let _ = crate::focus::install(root);
                 if let Some(hwnd) = self.hwnd() {
                     let _ = crate::file_drop::install(

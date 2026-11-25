@@ -35,7 +35,7 @@ struct WindowInner {
     /// The toolbar row. Lays out the sidebar's collapse button and the toolbar side by
     /// side.
     toolbar_row: HtmlElement,
-    key_down: crate::keys::KeyDown,
+    keys: Rc<crate::keys::WindowKeys>,
     on_resize: Rc<crate::widgets::ValueHandler<(f64, f64)>>,
     /// The subscription to size changes. Dropping it also unsubscribes.
     resize_observer: RefCell<Option<web_sys::ResizeObserver>>,
@@ -147,7 +147,7 @@ impl Window {
             menu_bar: RefCell::new(None),
             sidebar: RefCell::new(None),
             toolbar_row,
-            key_down: crate::keys::KeyDown::default(),
+            keys: Rc::default(),
             on_resize: Rc::default(),
             resize_observer: RefCell::new(None),
             resize_callback: RefCell::new(None),
@@ -167,6 +167,8 @@ impl Window {
         this.set_title(title);
         this.observe_bars();
         this.apply_size();
+        // 窓の外 (ページそのもの) からのキーも受け取れるよう、作った時点で登録する。
+        this.0.keys.register(&this.0.element);
         Ok(this)
     }
 
@@ -488,18 +490,55 @@ impl Window {
 
     /// Notified of keys pressed inside this window.
     ///
-    /// Keys for which the focused widget's `on_key_down` returned `Continue` arrive
-    /// here. Returning `Handled` prevents the key's default action. Keys pressed while
-    /// an IME is composing are not delivered.
+    /// Keys for which the focused widget's `on_key_down` and the shortcuts of the
+    /// widgets around the focus did not take arrive here. Returning `Handled` keeps
+    /// the key from reaching the widget (its default action is prevented). Keys
+    /// pressed while an IME is composing are not delivered.
     pub fn on_key_down(
         &self,
         f: impl FnMut(&naui_core::KeyEvent) -> naui_core::EventResponse + 'static,
     ) {
-        let document: &web_sys::EventTarget = self.0.document.as_ref();
-        let _ = self
-            .0
-            .key_down
-            .set_on_window(document, self.0.element.as_ref(), f);
+        self.0.keys.set_key_down(f);
+    }
+
+    /// Runs `f` when `shortcut` is pressed while this window has keyboard focus.
+    /// Giving the same shortcut again replaces the closure.
+    ///
+    /// The widgets around the focus (their `on_key_down` and shortcuts) and this
+    /// window's `on_key_down` come first, and the menu bar comes after. A shortcut
+    /// that fires takes the key (its default action is prevented, so ⌘S or F5 do not
+    /// reach the browser), and neither the focused control nor the menu bar gets
+    /// it. Keys from places belonging to no window (when the page itself has focus)
+    /// go to every shown window. Invalid shortcuts never fire.
+    pub fn on_shortcut(&self, shortcut: naui_core::Shortcut, f: impl FnMut() + 'static) {
+        self.0.keys.set_shortcut(shortcut, f);
+    }
+
+    /// Removes a shortcut given with [`on_shortcut`](Self::on_shortcut). Nothing
+    /// happens if it was not given.
+    pub fn remove_shortcut(&self, shortcut: naui_core::Shortcut) {
+        self.0.keys.remove_shortcut(shortcut);
+    }
+
+    /// Delivers `event` as a key pressed in this window, starting from the element
+    /// that has keyboard focus (or the window itself when the focus is outside it):
+    /// the `on_key_down`s and shortcuts in naui's order, then the menu bar's
+    /// shortcuts. `Handled` if one of them took it. For tests and automation.
+    ///
+    /// No `keydown` event is dispatched, so the key reaches neither the focused
+    /// control nor the page's own listeners.
+    pub fn send_key(&self, event: &naui_core::KeyEvent) -> naui_core::EventResponse {
+        if crate::keys::send(&self.0.element, &self.0.keys, event)
+            == naui_core::EventResponse::Handled
+        {
+            return naui_core::EventResponse::Handled;
+        }
+        let menu_bar = self.0.menu_bar.borrow().clone();
+        if menu_bar.is_some_and(|menu_bar| menu_bar.press_shortcut(event)) {
+            naui_core::EventResponse::Handled
+        } else {
+            naui_core::EventResponse::Continue
+        }
     }
 
     /// The minimum size the user can shrink it to (content width, height). The units
