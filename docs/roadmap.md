@@ -178,9 +178,12 @@ shortcuts that are not in a menu, and the always-visible calendar.
       widget's `on_key_down`, the widgets' shortcuts from the inside out, the
       window's `on_key_down` and shortcuts, then the menu bar; `Window::send_key`
       delivers a key through that order in tests.
-- [ ] **Make dragging `Table` column widths work on Windows and Linux too.** Linux
+- [x] **Make dragging `Table` column widths work on Windows and Linux too.** Linux
       has the native feature in `GtkColumnView`, while Windows uses a custom table,
       so it is heavy.
+      Done as a heading-edge drag on macOS, Windows and Linux that follows
+      `naui_core::clamp_column_width` everywhere (macOS, which could not actually
+      be dragged before, is fixed too).
 - [x] **Placing widgets in `Tree` items.** Items hold only strings today, while
       `List` and `Table` can hold widgets.
       Done as `TreeRow` and `Tree::set_rows`, beside `TreeItem` as `ListRow` is

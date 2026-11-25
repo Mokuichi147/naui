@@ -820,6 +820,12 @@ const CASES: &[Case] = &[
         "ツリーの行は親の無い子だけを置き、作り直しやモード切り替えで奪わない",
         crate::moved_child::tree_rows_take_only_free_children,
     ),
+    // 並びに依存するケースがあるので、新しいケースは末尾に足す
+    // (シャードは連続した範囲で切っている)。
+    (
+        "表の見出しの端を本物のマウスでドラッグすると列の幅が変わり、残りの列が余りを分ける",
+        table_column_widths_follow_header_drags,
+    ),
 ];
 
 fn sheet_configuration_reaches_the_content_dialog(ui: &Ui) -> Result<()> {
@@ -14681,5 +14687,264 @@ fn check_url_reads_without_opening(ui: &Ui) -> Result<()> {
     // 開くなら既定のブラウザが立ち上がる。読むだけなので何も出ない。
     assert!(ui.check_url("https://example.com/naui").is_ok());
     assert!(ui.check_url("mailto:someone@example.com").is_ok());
+    Ok(())
+}
+
+/// Dragging the trailing edge of a heading with the real mouse resizes that column, the
+/// `Star` columns share what is left, and the columns never get wider in total than the
+/// table (`naui_core::clamp_column_width`, as on macOS and Linux). Pressing the edge does
+/// not sort, even over a sortable heading.
+///
+/// As with the other real-input cases, it passes without checking where the window
+/// cannot be brought to the front.
+fn table_column_widths_follow_header_drags(ui: &Ui) -> Result<()> {
+    use windows::Foundation::Point as XamlPoint;
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::Graphics::Gdi::ClientToScreen;
+    use windows::Win32::UI::HiDpi::GetDpiForWindow;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{MOUSEEVENTF_LEFTDOWN, MOUSEEVENTF_LEFTUP};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetCursorPos, GetWindowThreadProcessId, SetCursorPos, WindowFromPoint,
+    };
+
+    let window = ui.window("列の幅のドラッグ", 520.0, 300.0)?;
+    let table = ui.table()?;
+    let columns = [
+        naui_core::TableColumn::new("都市").sortable(true),
+        naui_core::TableColumn::new("人口")
+            .width(120.0)
+            .align(Align::End),
+        naui_core::TableColumn::new("面積"),
+    ];
+    table.set_columns(&columns);
+    table.set_rows(&naui_core::TableRow::list([
+        ["東京", "13,960,000", "2,194"],
+        ["大阪", "8,838,000", "1,905"],
+    ]));
+    table.set_sizing(Sizing::fill());
+    let sorts: Rc<RefCell<Vec<usize>>> = Rc::default();
+    table.on_sort({
+        let sorts = sorts.clone();
+        move |column, _| sorts.borrow_mut().push(column)
+    });
+    window.set_child(&table);
+
+    let header = table
+        .native_element()
+        .cast::<Grid>()
+        .and_then(|root| root.Children())
+        .and_then(|children| children.GetAt(0))
+        .and_then(|child| child.cast::<Grid>())
+        .expect("見出しの Grid");
+    let widths_of = |grid: &Grid| -> Vec<f64> {
+        let definitions = grid.ColumnDefinitions().expect("列の定義");
+        (0..definitions.Size().unwrap_or(0))
+            .map(|i| {
+                definitions
+                    .GetAt(i)
+                    .and_then(|definition| definition.ActualWidth())
+                    .unwrap_or(0.0)
+            })
+            .collect()
+    };
+    let widths = || {
+        pump_until(Duration::from_millis(100), || false);
+        widths_of(&header)
+    };
+    let row_widths = || {
+        let item = table
+            .native_list_view()
+            .Items()
+            .and_then(|items| items.GetAt(0))
+            .and_then(|item| item.cast::<ListViewItem>())
+            .expect("1 行目");
+        let grid = item
+            .Content()
+            .and_then(|content| content.cast::<Grid>())
+            .expect("行の Grid");
+        widths_of(&grid)
+    };
+    let room = || {
+        let padding = header.Padding().map(|p| p.Left + p.Right).unwrap_or(0.0);
+        header.ActualWidth().unwrap_or(0.0) - padding
+    };
+    let fills = |label: &str, widths: &[f64]| {
+        let total: f64 = widths.iter().sum::<f64>() + 12.0 * (widths.len() - 1) as f64;
+        assert!(
+            (total - room()).abs() < 2.0,
+            "{label}: 幅いっぱいを使い、はみ出さない ({widths:?} / {})",
+            room()
+        );
+    };
+
+    let mut pointer = POINT::default();
+    // SAFETY: `pointer` はこの関数の中で生きている。
+    let _ = unsafe { GetCursorPos(&mut pointer) };
+    let scenario = || -> Option<()> {
+        window.show();
+        pump_until(Duration::from_secs(5), || {
+            header.ActualWidth().unwrap_or(0.0) > 0.0 && table.row_height() > 0.0
+        });
+        if header.ActualWidth().unwrap_or(0.0) <= 0.0 || table.row_height() <= 0.0 {
+            println!("     (見出しに実寸が付かない環境なので、確かめずに通す)");
+            return None;
+        }
+        let hwnd = bring_to_front(&window)?;
+        pump_until(Duration::from_millis(500), || false);
+        // 本物のマウスが届く環境かを、行のクリックで先に確かめる。届かなければ
+        // 確かめずに通し、届いたのに幅が変わらなければ落とす。
+        first_click_on_list_row(hwnd, &table, 0)?;
+
+        // 列 `index` の末尾の端 (見出しと見出しの間) の画面上の位置。
+        let edge = |index: usize| -> Option<POINT> {
+            let widths = widths_of(&header);
+            let left = header.Padding().map(|p| p.Left).unwrap_or(0.0);
+            let x = left + widths[..=index].iter().sum::<f64>() + 12.0 * index as f64 + 4.0;
+            let y = header.ActualHeight().unwrap_or(0.0) / 2.0;
+            let at = header
+                .TransformToVisual(None)
+                .and_then(|to| {
+                    to.TransformPoint(XamlPoint {
+                        X: x as f32,
+                        Y: y as f32,
+                    })
+                })
+                .expect("見出しの位置");
+            // SAFETY: HWND は window が閉じるまで有効で、UI スレッドから読んでいる。
+            let scale = unsafe { GetDpiForWindow(hwnd) } as f32 / 96.0;
+            let mut point = POINT {
+                x: (at.X * scale) as i32,
+                y: (at.Y * scale) as i32,
+            };
+            // SAFETY: `point` はこの関数の中で生きている。
+            let _ = unsafe { ClientToScreen(hwnd, &mut point) };
+            let mut owner = 0;
+            // SAFETY: `owner` はこの関数の中で生きている。
+            unsafe { GetWindowThreadProcessId(WindowFromPoint(point), Some(&mut owner)) };
+            if !foreground_is_ours() || owner != std::process::id() {
+                println!("     (押す位置がテストのウィンドウの上に無いので、押さずに通す)");
+                return None;
+            }
+            Some(point)
+        };
+        // 本物のマウスで、列 `index` の端を `dx` (画素) 動かす。
+        let drag = |index: usize, dx: i32| -> Option<()> {
+            let from = edge(index)?;
+            // SAFETY: 引数は値だけ。
+            let _ = unsafe { SetCursorPos(from.x, from.y) };
+            pump_until(Duration::from_millis(100), || false);
+            send_input(mouse_move_to(from));
+            send_input(mouse_input(MOUSEEVENTF_LEFTDOWN, 0));
+            const STEPS: i32 = 6;
+            for step in 1..=STEPS {
+                send_input(mouse_move_to(POINT {
+                    x: from.x + dx * step / STEPS,
+                    y: from.y,
+                }));
+            }
+            send_input(mouse_input(MOUSEEVENTF_LEFTUP, 0));
+            pump_until(Duration::from_millis(200), || false);
+            Some(())
+        };
+        // SAFETY: HWND は window が閉じるまで有効。
+        let scale = f64::from(unsafe { GetDpiForWindow(hwnd) }) / 96.0;
+        let px = |logical: f64| (logical * scale).round() as i32;
+
+        let before = widths();
+        assert_eq!(before[1], 120.0, "指定した幅: {before:?}");
+        fills("はじめ", &before);
+
+        // 幅の無い列を広げると、その列だけが広がり、もう 1 つの幅の無い列が詰める。
+        drag(0, px(60.0))?;
+        let after = widths();
+        assert!(
+            (after[0] - (before[0] + 60.0)).abs() < 3.0,
+            "掴んだ列が広がる: {before:?} → {after:?}"
+        );
+        assert_eq!(after[1], 120.0, "幅のある列は動かない: {after:?}");
+        fills("広げたあと", &after);
+        // 幅の無い列は行の枠の分だけ見出しとずれうるので、`Pixel` の 2 列で比べる。
+        assert_eq!(row_widths()[..2], after[..2], "行も見出しと同じ幅になる");
+        assert!(
+            sorts.borrow().is_empty(),
+            "端を押しても並べ替えない: {:?}",
+            sorts.borrow()
+        );
+
+        // 幅のある列も掴める。掴んだ列はそのまま、幅の無い列が詰める。
+        drag(1, px(30.0)).expect("2 回目のドラッグ");
+        let next = widths();
+        assert!(
+            (next[1] - 150.0).abs() < 3.0,
+            "幅のある列も広がる: {next:?}"
+        );
+        assert_eq!(
+            next[0], after[0],
+            "掴んだあとの列は余りを受け取らない: {next:?}"
+        );
+        fills("幅のある列を広げたあと", &next);
+
+        // 表より広くはならない。最後の幅の無い列は最小幅まで詰める。
+        drag(0, px(1000.0).min(px(room()))).expect("3 回目のドラッグ");
+        let wide = widths();
+        assert!(
+            (wide[2] - naui_core::MIN_COLUMN_WIDTH).abs() < 1.0,
+            "残りの列は最小幅まで: {wide:?}"
+        );
+        fills("広げすぎたあと", &wide);
+
+        // 狭める側も最小幅で止まる。
+        drag(0, -px(wide[0])).expect("4 回目のドラッグ");
+        let narrow = widths();
+        assert!(
+            (narrow[0] - naui_core::MIN_COLUMN_WIDTH).abs() < 1.0,
+            "最小幅より狭くならない: {narrow:?}"
+        );
+        fills("狭めたあと", &narrow);
+        assert!(sorts.borrow().is_empty(), "並べ替えは起きない");
+
+        // 幅の無い列が 1 つも残らなくても、表からはみ出さない。最後の幅の無い列は
+        // すでに残りを全部持っているので、広げようとしても上限のいまの幅で止まり、
+        // その幅の `Pixel` の列になる。
+        drag(2, px(room())).expect("5 回目のドラッグ");
+        let all = widths();
+        assert!(
+            (all[2] - narrow[2]).abs() < 1.0,
+            "最後の列は表の幅で止まる: {narrow:?} → {all:?}"
+        );
+        let last = header
+            .ColumnDefinitions()
+            .and_then(|definitions| definitions.GetAt(2))
+            .and_then(|definition| definition.Width())
+            .expect("最後の列の定義");
+        assert_eq!(
+            last.GridUnitType,
+            GridUnitType::Pixel,
+            "掴んだ最後の列は幅の決まった列になる: {last:?}"
+        );
+        fills("全部の列を掴んだあと", &all);
+        assert_eq!(row_widths(), all, "全部の列を掴むと、行も見出しと同じ幅");
+        // 全部の列が決まった幅なので、ほかの列を広げようとしても表からはみ出さない。
+        drag(0, px(100.0)).expect("6 回目のドラッグ");
+        let still = widths();
+        assert_eq!(still, all, "広げる余地が無ければ動かない");
+        fills("余地の無い列を広げようとしたあと", &still);
+
+        // 列を渡し直すと、ドラッグした幅は捨てて渡した指定に戻る。
+        table.set_columns(&columns);
+        let reset = widths();
+        assert_eq!(reset[1], 120.0, "渡した幅に戻る: {reset:?}");
+        assert!((reset[0] - reset[2]).abs() < 1.0, "等分に戻る: {reset:?}");
+        Some(())
+    };
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        let _ = scenario();
+    }));
+    // SAFETY: 引数は値だけ。
+    let _ = unsafe { SetCursorPos(pointer.x, pointer.y) };
+    window.close();
+    if let Err(panic) = outcome {
+        std::panic::resume_unwind(panic);
+    }
     Ok(())
 }

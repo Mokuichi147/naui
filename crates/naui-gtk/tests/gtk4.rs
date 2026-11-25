@@ -798,6 +798,10 @@ fn main() {
             table_columns_follow_the_spec,
         ),
         (
+            "テーブルの見出しの端をドラッグすると列の幅が変わり、残りの列が余りを分ける",
+            table_column_widths_follow_header_drags,
+        ),
+        (
             "GtkListBox 側のテーブルの選択がクロージャへ届く",
             table_native_selection_notifies,
         ),
@@ -9040,6 +9044,210 @@ fn table_columns_follow_the_spec(ui: &Ui) -> Result<()> {
         measure_width(&head[0]).0,
         "見出しと行の列幅がそろうこと"
     );
+    Ok(())
+}
+
+/// Dragging the trailing edge of a heading resizes that column, the columns without a
+/// width share what is left, and the columns never get wider in total than the table
+/// (`naui_core::clamp_column_width`, as on macOS).
+///
+/// The drag goes through the heading row's `GtkGestureDrag`, with its signals emitted
+/// directly as in the `Canvas` test.
+fn table_column_widths_follow_header_drags(ui: &Ui) -> Result<()> {
+    let table = ui.table()?;
+    let columns = [
+        TableColumn::new("都市").sortable(true),
+        TableColumn::new("人口").width(120.0).align(Align::End),
+        TableColumn::new("面積"),
+    ];
+    table.set_columns(&columns);
+    table.set_rows(&TableRow::list([["東京", "13,960,000", "2,194"]]));
+    table.set_sizing(Sizing::fill());
+    let window = ui.window("列の幅のドラッグ", 500.0, 300.0)?;
+    window.set_child(&table);
+    window.show();
+    let (header, list) = table_parts(&table);
+    tick(&header);
+    tick(&header);
+
+    let controllers = header.observe_controllers();
+    let drag = (0..controllers.n_items())
+        .filter_map(|index| controllers.item(index))
+        .find_map(|c| c.downcast::<gtk::GestureDrag>().ok())
+        .expect("見出しに GtkGestureDrag が付いていること");
+    assert_eq!(
+        drag.propagation_phase(),
+        gtk::PropagationPhase::Capture,
+        "並べ替えのボタンより先に端の押下を受けること"
+    );
+
+    let slots = || children(&header);
+    // 並べ替えられる見出しはボタンなので、`width()` (中身の幅) ではなく
+    // 枠を含めた幅で比べる。
+    let outer = |widget: &gtk::Widget, parent: &gtk::Widget| {
+        widget.compute_bounds(parent).expect("位置").width().round() as i32
+    };
+    let widths = || {
+        tick(&header);
+        slots()
+            .iter()
+            .map(|slot| outer(slot, header.upcast_ref()))
+            .collect::<Vec<_>>()
+    };
+    let cell_widths = || {
+        let row = list.row_at_index(0).expect("1 行目").child().expect("中身");
+        children(&row)
+            .iter()
+            .map(|cell| outer(cell, &row))
+            .collect::<Vec<_>>()
+    };
+    // 列 `index` の末尾の端 (見出しと見出しの間) を掴んで `dx` 動かす。
+    let drag_edge = |index: usize, dx: f64| {
+        let bounds = slots()[index]
+            .compute_bounds(&header)
+            .expect("見出しの位置");
+        let x = f64::from(bounds.x() + bounds.width()) + 2.0;
+        drag.emit_by_name::<()>("drag-begin", &[&x, &10.0f64]);
+        drag.emit_by_name::<()>("drag-update", &[&(dx / 2.0), &0.0f64]);
+        drag.emit_by_name::<()>("drag-update", &[&dx, &0.0f64]);
+        drag.emit_by_name::<()>("drag-end", &[&dx, &0.0f64]);
+    };
+    let fills = |label: &str, widths: &[i32]| {
+        let spacing = 12 * (widths.len() as i32 - 1);
+        let total: i32 = widths.iter().sum::<i32>() + spacing;
+        assert!(
+            (total - header.width()).abs() <= 1,
+            "{label}: 幅いっぱいを使い、はみ出さない ({widths:?} / {})",
+            header.width()
+        );
+    };
+
+    let before = widths();
+    assert_eq!(before[1], 120, "指定した幅: {before:?}");
+    fills("はじめ", &before);
+
+    // 見出しの真ん中を押しても幅は変わらない (並べ替えのボタンへ通す)。
+    let bounds = slots()[0].compute_bounds(&header).expect("見出しの位置");
+    let middle = f64::from(bounds.x() + bounds.width() / 2.0);
+    drag.emit_by_name::<()>("drag-begin", &[&middle, &10.0f64]);
+    drag.emit_by_name::<()>("drag-update", &[&40.0f64, &0.0f64]);
+    drag.emit_by_name::<()>("drag-end", &[&40.0f64, &0.0f64]);
+    assert_eq!(widths(), before, "端でなければ幅は変わらない");
+
+    // 幅の無い列を広げると、その列だけが広がり、もう 1 つの幅の無い列が詰める。
+    drag_edge(0, 60.0);
+    let after = widths();
+    assert!(
+        (after[0] - (before[0] + 60)).abs() <= 1,
+        "掴んだ列が広がる: {before:?} → {after:?}"
+    );
+    assert_eq!(after[1], 120, "幅のある列は動かない: {after:?}");
+    fills("広げたあと", &after);
+    // 最後の列は行の枠の分だけ見出しとずれることがある (変更前から) ので、
+    // 幅の決まった 2 列で比べる。
+    assert_eq!(
+        cell_widths()[..2],
+        after[..2],
+        "行のセルも見出しと同じ幅になる"
+    );
+
+    // 幅のある列も掴める。掴んだ列はそのまま、幅の無い列が詰める。
+    drag_edge(1, 30.0);
+    let next = widths();
+    assert_eq!(next[1], 150, "幅のある列も広がる: {next:?}");
+    assert_eq!(
+        next[0], after[0],
+        "掴んだあとの列は余りを受け取らない: {next:?}"
+    );
+    fills("幅のある列を広げたあと", &next);
+
+    // 表より広くはならない。最後の幅の無い列は最小幅まで詰める。
+    drag_edge(0, 1000.0);
+    // 行は見出しより狭いことがあり、狭いほうに収める (見出しの最後の列はその分広い)。
+    let wide = widths();
+    assert_eq!(
+        f64::from(cell_widths()[2]),
+        naui_core::MIN_COLUMN_WIDTH,
+        "残りの列は行で最小幅まで: {wide:?} / {:?}",
+        cell_widths()
+    );
+    fills("広げすぎたあと", &wide);
+
+    // 狭める側も最小幅で止まる。文字が長くても指定より広がらない。
+    // 並べ替えのボタンは枠の分だけ最小の幅が大きいので、そこで止まる。
+    drag_edge(0, -1000.0);
+    let narrow = widths();
+    let floor = measure_width(&slots()[0])
+        .0
+        .max(naui_core::MIN_COLUMN_WIDTH as i32);
+    assert!(
+        narrow[0] <= floor && narrow[0] < 60,
+        "最小幅まで狭まる: {narrow:?} (最小 {floor})"
+    );
+    fills("狭めたあと", &narrow);
+    // そのあと別の列を広げすぎても、表からはみ出さない。
+    drag_edge(1, 1000.0);
+    let crowded = widths();
+    assert_eq!(
+        f64::from(cell_widths()[2]),
+        naui_core::MIN_COLUMN_WIDTH,
+        "{crowded:?} / {:?}",
+        cell_widths()
+    );
+    fills("狭めた列の隣を広げすぎたあと", &crowded);
+    let narrow = crowded;
+
+    // 行を作り直しても、ドラッグした幅は残る。
+    table.set_rows(&TableRow::list([["大阪", "8,838,000", "1,905"]]));
+    tick(&header);
+    assert_eq!(widths(), narrow, "行を渡し直しても列の幅は残る");
+    assert_eq!(cell_widths()[..2], narrow[..2]);
+
+    // 幅の無い列が 1 つも残らなくても、行は表からはみ出さない (行は枠の分だけ
+    // 見出しより狭いことがあるので、行の中身の幅で比べる)。
+    drag_edge(2, 1000.0);
+    let all = widths();
+    let row = list.row_at_index(0).expect("1 行目").child().expect("中身");
+    let cells = cell_widths();
+    let used: i32 = cells.iter().sum::<i32>() + 12 * (cells.len() as i32 - 1);
+    assert!(
+        used <= row.width(),
+        "全部の列を掴んでも行に収まる: {cells:?} / {}",
+        row.width()
+    );
+    assert_eq!(cells, all, "全部の列を掴むと、行も見出しも同じ幅: {all:?}");
+    // `measure` は左右の余白 (`margin`) を含み、`width()` は含まない。
+    let margins = row.margin_start() + row.margin_end();
+    assert!(
+        measure_width(&row).0 <= row.width() + margins,
+        "行の最小の幅が行より広くならない (表が窓を押し広げない): {} / {} + {margins}",
+        measure_width(&row).0,
+        row.width()
+    );
+
+    // 列を渡し直すと、ドラッグした幅は捨てて渡した指定に戻る。
+    table.set_columns(&columns);
+    assert_eq!(widths(), before, "渡した指定の幅に戻る");
+
+    // 右から左の並びでは、末尾の端は左にあり、左へ動かすと広がる。
+    // 子は親の向きを継がない (GTK4 は既定の向きを返す) ので、アプリ全体の向きを替える。
+    let previous = gtk::Widget::default_direction();
+    naui_gtk::apply_layout_direction(Some(LayoutDirection::Rtl));
+    tick(&header);
+    let mirrored = widths();
+    let bounds = slots()[0].compute_bounds(&header).expect("見出しの位置");
+    let x = f64::from(bounds.x()) - 2.0;
+    drag.emit_by_name::<()>("drag-begin", &[&x, &10.0f64]);
+    drag.emit_by_name::<()>("drag-update", &[&-30.0f64, &0.0f64]);
+    drag.emit_by_name::<()>("drag-end", &[&-30.0f64, &0.0f64]);
+    let rtl = widths();
+    // 落ちても後のケースへ向きを持ち越さないよう、確かめる前に戻す。
+    gtk::Widget::set_default_direction(previous);
+    assert!(
+        (rtl[0] - (mirrored[0] + 30)).abs() <= 1,
+        "右から左でも掴んだ列が広がる: {mirrored:?} → {rtl:?}"
+    );
+    window.close();
     Ok(())
 }
 
