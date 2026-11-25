@@ -36,6 +36,7 @@ mod main_thread;
 mod media;
 mod menu_bar;
 mod menu_dom;
+mod native_host;
 mod navigation;
 mod number_input;
 mod popover;
@@ -92,6 +93,7 @@ pub use layout::{Grid, Scroll, Spacer};
 pub use list::{List, ListRow};
 pub use media::{Audio, Image, Video};
 pub use menu_bar::MenuBar;
+pub use native_host::NativeHost;
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use number_input::NumberInput;
 pub use popover::Popover;
@@ -323,6 +325,12 @@ impl Ui {
     /// A surface the app draws on itself. Set its size with `set_sizing`.
     pub fn canvas(&self) -> Result<Canvas> {
         Canvas::new(&self.0.document)
+    }
+
+    /// An empty place for a DOM element made outside naui. Put the element in with
+    /// [`NativeHost::set_hosted_element`].
+    pub fn native_host(&self) -> Result<NativeHost> {
+        NativeHost::new(&self.0.document)
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {

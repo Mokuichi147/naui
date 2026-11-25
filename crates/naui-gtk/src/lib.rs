@@ -34,6 +34,7 @@
 //! | `Calendar` | `GtkCalendar` |
 //! | `ColorPicker` | `GtkColorDialogButton` + `GtkColorDialog` |
 //! | `Canvas` | `GtkDrawingArea` (drawn with cairo + Pango) |
+//! | `NativeHost` | `NauiNativeHost` (a widget subclass holding the hosted `GtkWidget`) |
 //! | `TextInput` | `GtkEntry` |
 //! | `TextArea` | A `GtkTextView` in a `GtkScrolledWindow` |
 //! | `Slider` | `GtkScale` |
@@ -167,6 +168,7 @@ mod list;
 mod main_thread;
 mod media;
 mod menu_bar;
+mod native_host;
 mod navigation;
 mod number_input;
 mod popover;
@@ -214,6 +216,7 @@ pub use layout::{Grid, Scroll, Spacer};
 pub use list::{List, ListRow};
 pub use media::{Audio, Image, Video};
 pub use menu_bar::MenuBar;
+pub use native_host::{NativeHost, NativeHostWidget};
 pub use navigation::{Breadcrumbs, Dock, Link, Menu, Navbar, Pagination, Tabs};
 pub use number_input::NumberInput;
 pub use popover::Popover;
@@ -491,6 +494,12 @@ impl Ui {
     /// A surface the app draws on itself. Set its size with `set_sizing`.
     pub fn canvas(&self) -> Result<Canvas> {
         Ok(Canvas::new())
+    }
+
+    /// An empty place for a `GtkWidget` made outside naui. Put the widget in with
+    /// [`NativeHost::set_hosted_widget`].
+    pub fn native_host(&self) -> Result<NativeHost> {
+        Ok(NativeHost::new())
     }
 
     pub fn text_input(&self, text: &str) -> Result<TextInput> {

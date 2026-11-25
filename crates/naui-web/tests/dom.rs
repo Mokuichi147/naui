@@ -1226,6 +1226,185 @@ fn two_bands() -> Vec<u8> {
         .collect()
 }
 
+// ------------------------------------------------------------- NativeHost
+
+/// A `<canvas>` made outside naui, as a drawing crate makes one.
+fn foreign_canvas() -> Element {
+    web_sys::window()
+        .and_then(|w| w.document())
+        .expect("document")
+        .create_element("canvas")
+        .expect("canvas")
+}
+
+#[wasm_bindgen_test]
+async fn native_host_places_a_foreign_element() {
+    let canvas = foreign_canvas();
+    let sizes = Rc::new(RefCell::new(Vec::new()));
+    let attached = Rc::new(RefCell::new(Vec::new()));
+    let mut kept = None;
+    with_ui(|ui| {
+        let host = ui.native_host()?;
+        host.set_sizing(Sizing::fixed(120.0, 80.0));
+        assert!(host.backend_set(&canvas));
+        host.on_resize({
+            let sizes = sizes.clone();
+            move |size| sizes.borrow_mut().push(size)
+        });
+        host.on_attach({
+            let attached = attached.clone();
+            move |value| attached.borrow_mut().push(value)
+        });
+        assert!(!host.is_attached());
+        kept = Some(host);
+        Ok(())
+    });
+    let host = kept.expect("受け皿");
+    let mounted = Mounted::new(&host);
+    assert!(host.is_attached());
+    next_frames().await;
+
+    assert_eq!(*attached.borrow(), vec![true], "ページへ載ったら伝える");
+    assert_eq!(host.size(), (120.0, 80.0), "指定した大きさになること");
+    let rect = canvas.get_bounding_client_rect();
+    assert_eq!(
+        (rect.width(), rect.height()),
+        (120.0, 80.0),
+        "置いた要素が受け皿いっぱいに広がること"
+    );
+    let ratio = web_sys::window().expect("window").device_pixel_ratio();
+    assert_eq!(host.scale_factor(), ratio);
+    assert_eq!(
+        sizes.borrow().last().copied(),
+        Some(naui_core::HostSize::new(120.0, 80.0, ratio)),
+        "大きさと倍率を伝える: {:?}",
+        sizes.borrow()
+    );
+    assert_eq!(
+        sizes.borrow().first().copied(),
+        Some(naui_core::HostSize::new(120.0, 80.0, ratio)),
+        "レイアウト前の 0 x 0 は伝えない"
+    );
+
+    host.set_sizing(Sizing::fixed(150.0, 90.0));
+    next_frames().await;
+    assert_eq!(
+        sizes.borrow().last().copied(),
+        Some(naui_core::HostSize::new(150.0, 90.0, ratio)),
+        "大きさの変化を伝える"
+    );
+
+    drop(mounted);
+    next_frames().await;
+    assert_eq!(
+        *attached.borrow(),
+        vec![true, false],
+        "ページから外れたら伝える"
+    );
+    assert!(!host.is_attached());
+}
+
+#[wasm_bindgen_test]
+async fn native_host_follows_a_natural_size() {
+    let canvas = foreign_canvas();
+    canvas.set_attribute("width", "200").expect("width");
+    canvas.set_attribute("height", "100").expect("height");
+    let button = web_sys::window()
+        .and_then(|w| w.document())
+        .expect("document")
+        .create_element("button")
+        .expect("button");
+    button.set_text_content(Some("Native button"));
+    let mut kept = None;
+    with_ui(|ui| {
+        let stack = ui.stack(Orientation::Vertical)?;
+        let sized = ui.native_host()?;
+        sized.backend_set(&canvas);
+        let control = ui.native_host()?;
+        control.backend_set(&button);
+        // `Fill` の受け皿は、中身 (既定 300 x 150 の <canvas>) で親を押し広げない。
+        let filled = ui.native_host()?;
+        filled.set_sizing(Sizing::fill());
+        filled.backend_set(&foreign_canvas());
+        let frame = ui.stack(Orientation::Vertical)?;
+        frame.set_sizing(Sizing::fixed(160.0, 90.0));
+        frame.append(&filled);
+        stack.append(&sized);
+        stack.append(&control);
+        stack.append(&frame);
+        kept = Some((stack, sized, control, filled));
+        Ok(())
+    });
+    let (stack, sized, control, filled) = kept.expect("受け皿");
+    let _mounted = Mounted::new(&stack);
+    next_frames().await;
+    assert_eq!(
+        sized.size(),
+        (200.0, 100.0),
+        "<canvas> の画素の大きさになること"
+    );
+    let natural = button.get_bounding_client_rect();
+    assert_eq!(
+        control.size(),
+        (natural.width(), natural.height()),
+        "ボタンの自然な大きさになること"
+    );
+    assert!(natural.width() > 0.0);
+    assert_eq!(filled.size(), (160.0, 90.0), "Fill は親の大きさに従うこと");
+}
+
+#[wasm_bindgen_test]
+fn native_host_lets_go_of_elements() {
+    with_ui(|ui| {
+        let host = ui.native_host()?;
+        let frame = host.native_element();
+        let first = foreign_canvas();
+        assert!(host.backend_set(&first));
+        let style = |element: &Element| {
+            element
+                .unchecked_ref::<HtmlElement>()
+                .style()
+                .get_property_value("place-self")
+                .expect("style")
+        };
+        assert_eq!(style(&first), "stretch");
+
+        // ほかの要素に入っている要素は、appendChild と同じく移ってくる。
+        let elsewhere = foreign_canvas();
+        let second = foreign_canvas();
+        elsewhere.append_child(&second).expect("追加");
+        assert!(host.backend_set(&second));
+        assert_eq!(second.parent_element(), Some(frame.clone()));
+        assert_eq!(elsewhere.child_element_count(), 0);
+        assert!(first.parent_element().is_none(), "差し替えた前の要素は外す");
+        assert_eq!(style(&first), "", "外した要素から naui が書いたものを消す");
+
+        // 同じものを渡し直しても何も変わらない。
+        assert!(host.backend_set(&second));
+        assert_eq!(frame.child_element_count(), 1);
+
+        assert!(host.set_hosted_element(None));
+        assert!(second.parent_element().is_none(), "空にすると外す");
+        assert!(host.hosted_element().is_none());
+
+        host.backend_set(&second);
+        drop(host);
+        assert!(second.parent_element().is_none(), "受け皿を落とすと外す");
+        Ok(())
+    });
+}
+
+/// Puts an element into a host. Shorthand for the tests above.
+trait HostElement {
+    fn backend_set(&self, element: &Element) -> bool;
+}
+
+impl HostElement for naui_web::NativeHost {
+    fn backend_set(&self, element: &Element) -> bool {
+        self.set_hosted_element(Some(element))
+    }
+}
+
 /// Clipping, rotation, gradients, images and text measurement, replayed with the 2D
 /// context's `clip`, `transform`, gradients and `drawImage`.
 ///

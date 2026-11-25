@@ -2,10 +2,10 @@ use crate::sys;
 use crate::{
     AdaptivePanes, Audio, Breadcrumbs, Button, Calendar, Canvas, Checkbox, Clipboard, ColorPicker,
     ComboBox, DatePicker, Dialog, Dock, EditableComboBox, Expander, FilePicker, FileSaver, Flow,
-    Grid, Group, Image, Label, Link, List, Menu, MenuBar, Navbar, NumberInput, Pagination,
-    PasswordInput, Popover, PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput, Separator,
-    Sheet, Sidebar, Slider, Spacer, Spinner, SplitView, Stack, Table, Tabs, TextArea, TextInput,
-    TimePicker, Toast, Toggle, Toolbar, Tree, Video, Window,
+    Grid, Group, Image, Label, Link, List, Menu, MenuBar, NativeHost, Navbar, NumberInput,
+    Pagination, PasswordInput, Popover, PopupMenu, ProgressBar, RadioGroup, Scroll, SearchInput,
+    Separator, Sheet, Sidebar, Slider, Spacer, Spinner, SplitView, Stack, Table, Tabs, TextArea,
+    TextInput, TimePicker, Toast, Toggle, Toolbar, Tree, Video, Window,
 };
 use naui_core::{DatePickerMode, LayoutDirection, Orientation, Result, Settings, Tasks, Theme};
 
@@ -167,6 +167,14 @@ impl Ui {
     #[inline]
     pub fn canvas(&self) -> Result<Canvas> {
         self.0.canvas().map(Canvas)
+    }
+
+    /// An empty place for a native view made outside naui (by a drawing crate, for
+    /// example). The view goes in through [`NativeHost::backend`]; see
+    /// [`NativeHost`].
+    #[inline]
+    pub fn native_host(&self) -> Result<NativeHost> {
+        self.0.native_host().map(NativeHost)
     }
 
     #[inline]

@@ -88,6 +88,7 @@ Legend:
 | naui | Windows (WinUI 3) | macOS (AppKit) | Linux (GTK4) | Web (DOM) |
 | --- | --- | --- | --- | --- |
 | `Canvas` | 🔴 `Grid` + `CompositionDrawingSurface` (Direct2D) | ✅ `NSView` + `drawRect:` | ✅ `GtkDrawingArea` | ✅ `<canvas>` |
+| `NativeHost` | 🟡 A one-cell `Grid` holding the hosted `UIElement` | 🟡 naui's `NSView` holding the hosted `NSView` | 🟡 naui's widget (`NauiNativeHost`) holding the hosted `GtkWidget` | 🟡 A one-cell grid `<div>` holding the hosted element |
 
 ### Navigation
 
@@ -357,6 +358,14 @@ collected in [Known limitations](known-limitations.md).
   mask, and every push is popped before `EndDraw`. Images are decoded by WIC into
   premultiplied pixels and made into a Direct2D bitmap per device. When the GPU is
   reset, the devices are made again and every surface is redrawn.
+- **`NativeHost`**: the hosted element is the only child of a `Grid`, which
+  measures as its child does and stretches it. Any `UIElement` can go in, a
+  `SwapChainPanel` included: naui's projection does not name that type, and needs
+  not to, since an element made by another projection (or by `XamlReader`) is the
+  same COM object and is passed as a `UIElement`. Connecting a swap chain to it is
+  the drawing crate's part. The size comes from `SizeChanged`, the scale from
+  `XamlRoot.RasterizationScale` (watching `XamlRoot.Changed`, as `Canvas` does),
+  and joining and leaving a window from `Loaded` / `Unloaded`.
 - **`Window` position and state**: `position` is `AppWindow.Position` in physical
   pixels divided by this window's `RasterizationScale`. While maximized or
   minimized, `rcNormalPosition` (the frame when restored) of
@@ -883,3 +892,22 @@ let element = button.backend().native_element();
 ```
 
 This code depends on the target platform, so split it with `cfg` as needed.
+
+The other way round, a native object made outside naui is placed among naui's
+widgets with [`NativeHost`](https://docs.rs/naui/latest/naui/struct.NativeHost.html):
+make one with `ui.native_host()` and put the object in through its backend
+(`set_hosted_view` with an `NSView` on macOS, `set_hosted_widget` with a
+`GtkWidget` on Linux, `set_hosted_element` with a `UIElement` on Windows and an
+`Element` on the Web). naui places and sizes it and reports its size, the display
+scale and when it joins or leaves a window; drawing into it is left to the crate
+that made it.
+
+```rust,ignore
+let host = ui.native_host()?;
+#[cfg(target_os = "macos")]
+host.backend().set_hosted_view(Some(&my_view));
+host.on_resize(|size| {
+    let (width, height) = size.physical_size();
+    // resize what draws into the view
+});
+```

@@ -130,7 +130,7 @@ Heavier items, `NativeHost`, which the drawing crates, a WebView and the
 extension widgets build on, passing types made outside naui to containers,
 shortcuts that are not in a menu, and the always-visible calendar.
 
-- [ ] *(drawing)* **`NativeHost`.** A widget that places a native view created by
+- [x] *(drawing)* **`NativeHost`.** A widget that places a native view created by
       another crate: an `NSView` on macOS, a `GtkWidget` on Linux, a XAML element
       on Windows, a DOM element on the Web. The view is platform-specific, so how
       the crate receives the native object (and whether `raw-window-handle` fits,
@@ -140,6 +140,15 @@ shortcuts that are not in a menu, and the always-visible calendar.
       wgpu's GL backend, or rendering offscreen and handing frames over as
       textures (`GdkDmabufTexture` from GTK 4.14). Windows needs `SwapChainPanel`
       in the projection, and the Web a `<canvas>` for WebGPU or WebGL.
+      Done as `NativeHost` (`ui.native_host()`): the view goes in through the
+      backend with the platform's own type (`NSView`, any `GtkWidget`, a
+      `UIElement`, an `Element`), fills naui's own view around it, and takes the
+      content's size where it has one. `on_resize` reports the size with the
+      display scale (`HostSize`) and `on_attach` joining and leaving a window.
+      `raw-window-handle` is not used, the GPU surface on Linux is any widget GTK
+      draws (`GtkGLArea` or a `GtkPicture` of frames, left to `naui-wgpu`), and
+      a `SwapChainPanel` is passed as a `UIElement`, so the projection is
+      unchanged.
 - [x] **Passing a type made outside naui to containers.** `Stack::append` and
       the like take `&dyn Widget`, which is sealed, so a crate's own type (a
       composition of naui widgets, or one wrapping a `NativeHost`) has to hand
