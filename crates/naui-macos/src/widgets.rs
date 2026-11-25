@@ -1481,6 +1481,10 @@ struct StackInner {
     /// Its own size specification. `Fill` on the main axis lets it grow even when
     /// nested; which axis that is depends on the orientation.
     sizing: Cell<naui_core::Sizing>,
+    /// "Want to be 0 wide" and "want to be 0 tall", the parent's cross axis turned on
+    /// while nested in a `Stack` of the same direction
+    /// ([`crate::layout::NESTED_CROSS_HUG_PRIORITY`]).
+    cross_hug: [Retained<NSLayoutConstraint>; 2],
     /// The cross-axis alignment, applied again when the orientation changes.
     align: Cell<Align>,
     /// Holds the children's handles, keeping them alive along with their trampolines.
@@ -1571,15 +1575,15 @@ impl Stack {
     }
 
     /// Decides again from the current state whether the tail spacer may absorb leftover
-    /// space.
+    /// space, and whether to fit the content on the parent's cross axis.
     fn update_tail_priority(&self) {
         let vertical = self.is_vertical();
         let nested = self.0.parent_vertical.get() == Some(vertical);
         let sizing = self.0.sizing.get();
-        let fill_main = if vertical {
-            sizing.height.is_fill()
+        let (fill_main, fill_cross) = if vertical {
+            (sizing.height.is_fill(), sizing.width.is_fill())
         } else {
-            sizing.width.is_fill()
+            (sizing.width.is_fill(), sizing.height.is_fill())
         };
         let hold = nested && !fill_main;
         self.0.tail_zero.borrow().setPriority(if hold {
@@ -1587,6 +1591,18 @@ impl Stack {
         } else {
             crate::layout::TAIL_PRIORITY
         });
+        // 親の交差軸 (縦並びなら横) では、外側の NSStackView が子を端へ引く力と、
+        // この Stack が中身へ縮む力がどちらも `Edge.Min` の 250 で同点になる。
+        // 解が一つに決まらず、Fill を外しても前の幅が残ることがあったので、
+        // 弱い「交差軸では小さくありたい」で同点だけを崩す。
+        let [width, height] = &self.0.cross_hug;
+        let (cross, other) = if vertical {
+            (width, height)
+        } else {
+            (height, width)
+        };
+        other.setActive(false);
+        cross.setActive(nested && !fill_cross);
     }
 
     pub(crate) fn new(mtm: MainThreadMarker, orientation: Orientation) -> Self {
@@ -1648,6 +1664,7 @@ impl Stack {
         let tail_zero =
             crate::layout::tail_zero_constraint(&tail_spacer, orientation.is_vertical());
         tail_zero.setActive(true);
+        let cross_hug = crate::layout::nested_cross_hug_constraints(&native);
         let this = Self(Rc::new(StackInner {
             native,
             tail_spacer,
@@ -1655,6 +1672,7 @@ impl Stack {
             tail_zero: RefCell::new(tail_zero),
             parent_vertical: Cell::new(None),
             sizing: Cell::new(naui_core::Sizing::AUTO),
+            cross_hug,
             align: Cell::new(Align::default()),
             children: RefCell::new(Vec::new()),
             padding_guide,
