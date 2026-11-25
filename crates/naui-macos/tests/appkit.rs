@@ -448,6 +448,10 @@ fn main() {
             stack_fill_cross_after_append,
         ),
         (
+            "入れ子の Stack は交差軸の Fill を外すと縦横どちらでも中身の大きさへ戻る",
+            nested_stack_shrinks_after_cross_fill,
+        ),
+        (
             "Stack の交差軸の揃えが左右・上下で違う余白の内側に収まる",
             stack_cross_align_respects_uneven_padding,
         ),
@@ -4175,6 +4179,63 @@ fn stack_fill_cross_after_append(ui: &Ui) -> Result<()> {
         (restored - before).abs() < 1e-6,
         "指定を戻せば中身の幅へ戻ること: {before} / {restored}"
     );
+    Ok(())
+}
+
+/// A nested stack goes back to its content's size once `Fill` on the parent's cross
+/// axis is taken off, every time.
+///
+/// On that axis the parent pulls the nested stack to its edges, and the nested stack
+/// fits its one child, both at `NSStackView`'s hugging priority (250). Without
+/// something to break the tie, AppKit could keep the stretched size: one run in a
+/// hundred side by side in a vertical stack, most runs in a horizontal one. Each
+/// round builds the stacks anew, so the solver starts over.
+fn nested_stack_shrinks_after_cross_fill(ui: &Ui) -> Result<()> {
+    for vertical in [true, false] {
+        let orientation = if vertical {
+            Orientation::Vertical
+        } else {
+            Orientation::Horizontal
+        };
+        for round in 0..20 {
+            let outer = ui.stack(orientation)?;
+            let inner = ui.stack(orientation)?;
+            inner.append(&ui.label("中身")?);
+            outer.append(&inner);
+            let root = outer.native_view();
+            root.setFrameSize(NSSize::new(300.0, 200.0));
+            root.layoutSubtreeIfNeeded();
+            let cross = |view: &NSView| {
+                let size = view.frame().size;
+                if vertical {
+                    size.width
+                } else {
+                    size.height
+                }
+            };
+            let before = cross(&inner.native_view());
+
+            inner.set_sizing(if vertical {
+                Sizing::fill_width()
+            } else {
+                Sizing::fill_height()
+            });
+            root.layoutSubtreeIfNeeded();
+            let filled = cross(&inner.native_view());
+            assert!(
+                filled > before,
+                "{orientation:?} {round}: Fill で親いっぱいに伸びること: {before} / {filled}"
+            );
+
+            inner.set_sizing(Sizing::AUTO);
+            root.layoutSubtreeIfNeeded();
+            let restored = cross(&inner.native_view());
+            assert!(
+                (restored - before).abs() < 1e-6,
+                "{orientation:?} {round}: 指定を戻せば中身の大きさへ戻ること: {before} / {restored}"
+            );
+        }
+    }
     Ok(())
 }
 
