@@ -1037,6 +1037,10 @@ fn main() {
             popover_needs_a_shown_widget,
         ),
         (
+            "焦点の無い窓でポップオーバーを開いても critical が出ず、焦点は中身へ移る",
+            popover_opens_in_a_window_without_focus,
+        ),
+        (
             "ポップアップが GMenu へ写る",
             popup_items_reach_the_menu_model,
         ),
@@ -10537,6 +10541,63 @@ fn popover_follows_its_content_on_a_scroll(ui: &Ui) -> Result<()> {
         native.height()
     );
     popover.close();
+    window.close();
+    Ok(())
+}
+
+/// Opening a popover in a window where nothing is focused logs nothing, and the
+/// focus still moves into its content when something there takes it.
+///
+/// On showing, GTK asks the popover for the focus, and when nothing inside takes it,
+/// `gtk_popover_focus` passed the window's focus (none) to `gtk_widget_is_ancestor`,
+/// logging a critical.
+fn popover_opens_in_a_window_without_focus(ui: &Ui) -> Result<()> {
+    let window = ui.window("ポップオーバー", 360.0, 240.0)?;
+    let anchor = ui.label("ここから")?;
+    window.set_child(&anchor);
+    window.show();
+    tick(&anchor.native_widget());
+    let native_window = window.native_window();
+    assert!(
+        GtkWindowExt::focus(&native_window).is_none(),
+        "前提: 窓の中に焦点を持つものが無いこと"
+    );
+
+    let popover = ui.popover()?;
+    let native = popover.native_popover();
+    // 開いて critical が出ないことを見て、閉じる前の (ポップオーバーの焦点の子,
+    // 窓の焦点) を返す。
+    let open = |what: &str| {
+        let (_, log) = watch_log(|| popover.open(&anchor));
+        assert!(popover.is_open(), "{what}: 開くこと");
+        let criticals: Vec<_> = log
+            .iter()
+            .filter(|entry| entry.level == glib::LogLevel::Critical)
+            .map(|entry| format!("{}: {}", entry.domain, entry.message))
+            .collect();
+        assert!(
+            criticals.is_empty(),
+            "{what}: GTK が critical を出した {criticals:?}"
+        );
+        let focus = (native.focus_child(), GtkWindowExt::focus(&native_window));
+        popover.close();
+        pump();
+        focus
+    };
+
+    popover.set_child(&ui.label("中身")?);
+    let (focus_child, focus) = open("焦点を受けるものが無い中身");
+    assert_eq!(focus_child, None, "焦点の子を仮に置いたままにしないこと");
+    assert_eq!(focus, None);
+
+    let button = ui.button("押す")?;
+    popover.set_child(&button);
+    let (_, focus) = open("ボタンを入れた中身");
+    assert_eq!(
+        focus,
+        Some(button.native_widget()),
+        "中身の焦点を受けるものへ焦点が移ること"
+    );
     window.close();
     Ok(())
 }
