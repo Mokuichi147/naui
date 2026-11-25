@@ -319,6 +319,28 @@ pub(crate) fn tail_zero_constraint(tail: &NSView, vertical: bool) -> Retained<NS
     constraint
 }
 
+/// How strongly a `Stack` nested in a `Stack` of the same direction wants to be small
+/// on its parent's cross axis.
+///
+/// On the cross axis, `NSStackView` both pulls its children to its edges and fits
+/// its own content with the same `NSStackView.Edge.Min` constraints, at its hugging
+/// priority (250). A nested stack with one sized child is then pulled out by the
+/// parent and pulled in by its content equally hard, so any width in between is an
+/// equally good solution, and AppKit may keep the one it had before (a `Fill` that
+/// was taken off stays wide). This only breaks that tie: it loses to everything at
+/// 250, so a stack whose content can grow (a one-line field) still grows.
+pub(crate) const NESTED_CROSS_HUG_PRIORITY: NSLayoutPriority = 1.0;
+
+/// Creates "want to be 0 wide" and "want to be 0 tall" for a nested `Stack`
+/// ([`NESTED_CROSS_HUG_PRIORITY`]), not activated yet.
+pub(crate) fn nested_cross_hug_constraints(view: &NSView) -> [Retained<NSLayoutConstraint>; 2] {
+    [view.widthAnchor(), view.heightAnchor()].map(|anchor| {
+        let constraint = anchor.constraintEqualToConstant(0.0);
+        constraint.setPriority(NESTED_CROSS_HUG_PRIORITY);
+        constraint
+    })
+}
+
 /// The identifier of the wish per cell. It is replaced only when placed into the
 /// same cell again.
 fn grow_identifier(cell: &GridCell, horizontal: bool) -> String {
