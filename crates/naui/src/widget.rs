@@ -1,7 +1,7 @@
 //! The traits shared by widgets, and macros for creating the wrapper types.
 
 use crate::sys;
-use naui_core::{FileEntry, Sizing};
+use naui_core::{FileEntry, Shortcut, Sizing};
 
 pub(crate) mod sealed {
     pub trait Sealed {}
@@ -9,6 +9,9 @@ pub(crate) mod sealed {
 
 /// A closure given to `on_file_drop`, as a trait object.
 pub(crate) type FileDropFn = Box<dyn FnMut(&[FileEntry])>;
+
+/// A closure given to `on_shortcut`, as a trait object.
+pub(crate) type ShortcutFn = Box<dyn FnMut()>;
 
 /// The common interface implemented by naui's widgets.
 ///
@@ -139,6 +142,30 @@ pub trait AsWidget {
     fn drop_files(&self, files: &[FileEntry]) {
         self.as_widget().drop_files(files)
     }
+
+    /// Runs `f` when `shortcut` is pressed while keyboard focus is inside the
+    /// widget. See [`Button::on_shortcut`](crate::Button::on_shortcut).
+    ///
+    /// Not callable on a `&dyn Widget` or `&dyn AsWidget`; call it on the widget
+    /// or on your own type.
+    fn on_shortcut(&self, shortcut: Shortcut, f: impl FnMut() + 'static)
+    where
+        Self: Sized,
+    {
+        self.on_shortcut_boxed(shortcut, Box::new(f))
+    }
+
+    /// [`on_shortcut`](Self::on_shortcut) through a trait object.
+    #[doc(hidden)]
+    fn on_shortcut_boxed(&self, shortcut: Shortcut, f: ShortcutFn) {
+        self.as_widget().on_shortcut_boxed(shortcut, f)
+    }
+
+    /// Removes a shortcut given with [`on_shortcut`](Self::on_shortcut). See
+    /// [`Button::remove_shortcut`](crate::Button::remove_shortcut).
+    fn remove_shortcut(&self, shortcut: Shortcut) {
+        self.as_widget().remove_shortcut(shortcut)
+    }
 }
 
 /// The shared part of types that are not widgets (`Window`, `ListRow` and others).
@@ -158,7 +185,7 @@ macro_rules! impl_backend {
     };
 }
 
-/// The shared part of widgets: the [`Widget`] implementation and the ten methods
+/// The shared part of widgets: the [`Widget`] implementation and the eleven methods
 /// every widget has.
 macro_rules! impl_widget {
     ($t:ident) => {
@@ -215,6 +242,22 @@ macro_rules! impl_widget {
             #[inline]
             fn drop_files(&self, files: &[naui_core::FileEntry]) {
                 $t::drop_files(self, files)
+            }
+            #[inline]
+            fn on_shortcut(&self, shortcut: naui_core::Shortcut, f: impl FnMut() + 'static) {
+                $t::on_shortcut(self, shortcut, f)
+            }
+            #[inline]
+            fn on_shortcut_boxed(
+                &self,
+                shortcut: naui_core::Shortcut,
+                f: crate::widget::ShortcutFn,
+            ) {
+                $t::on_shortcut(self, shortcut, f)
+            }
+            #[inline]
+            fn remove_shortcut(&self, shortcut: naui_core::Shortcut) {
+                $t::remove_shortcut(self, shortcut)
             }
         }
 

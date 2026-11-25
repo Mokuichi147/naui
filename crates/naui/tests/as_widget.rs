@@ -16,8 +16,9 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use naui::{
-    testing, AsWidget, Canvas, DialogButtons, DialogResponse, FileEntry, GridCell, Length, ListRow,
-    Orientation, Result, Sizing, TableCells, TableColumn, Ui, Widget, Window,
+    testing, AsWidget, Canvas, DialogButtons, DialogResponse, EventResponse, FileEntry, GridCell,
+    Key, KeyEvent, Length, ListRow, Modifiers, Orientation, Result, Shortcut, Sizing, TableCells,
+    TableColumn, Ui, Widget, Window,
 };
 
 naui::test_cases!(
@@ -364,7 +365,8 @@ async fn own_types_go_into_sheets_dialogs_and_popovers(ui: Ui) -> Result<()> {
 }
 
 /// A type of your own implementing only `as_widget` gets the operations every
-/// widget has, and they reach the widget inside; so do `&dyn Widget` values.
+/// widget has (shortcuts included), and they reach the widget inside; so do
+/// `&dyn Widget` values.
 async fn common_methods_reach_the_inner_widget(ui: Ui) -> Result<()> {
     let window = shown_window(&ui, "as_widget methods", 480.0, 360.0)?;
     let column = ui.stack(Orientation::Vertical)?;
@@ -407,6 +409,21 @@ async fn common_methods_reach_the_inner_widget(ui: Ui) -> Result<()> {
     };
     column.append(&field);
     testing::wait_until(&ui, || field.request_focus()).await?;
+
+    // on_shortcut / remove_shortcut: 自前の型に付けたショートカットは、中の
+    // ウィジェットにフォーカスがある間に効く。
+    let fired = Rc::new(RefCell::new(0));
+    let escape = Shortcut::from_key(Key::Escape);
+    let press_escape = KeyEvent::new(Key::Escape, Modifiers::default());
+    field.on_shortcut(escape, {
+        let fired = fired.clone();
+        move || *fired.borrow_mut() += 1
+    });
+    assert_eq!(window.send_key(&press_escape), EventResponse::Handled);
+    assert_eq!(*fired.borrow(), 1);
+    field.remove_shortcut(escape);
+    assert_eq!(window.send_key(&press_escape), EventResponse::Continue);
+    assert_eq!(*fired.borrow(), 1);
 
     // set_tooltip / set_accessible_label は読み返す API が無いので、呼べることだけ。
     probe.set_tooltip(Some("tooltip"));
