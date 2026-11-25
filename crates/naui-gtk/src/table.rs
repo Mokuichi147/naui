@@ -12,8 +12,14 @@
 //! | Body | `GtkScrolledWindow` + `GtkListBox`. Rows are horizontal `GtkBox` + `GtkLabel` |
 //! | Column widths | A `GtkSizeGroup` per column holding the heading and every row's cell, to align them |
 //!
-//! Column widths cannot be changed by dragging (unlike `NSTableView`, `GtkListBox`
-//! has no mechanism for it).
+//! | Column resizing | A `GtkGestureDrag` on the headings that grabs the trailing edge of a heading |
+//!
+//! `GtkListBox` has nothing for resizing columns (that is `GtkColumnView`'s, which
+//! this table is not built on), so dragging the edge between two headings is caught
+//! on the heading row. The dragged column gets that width as if it had been passed
+//! with [`TableColumn::width`], and the columns without a width share the rest, within
+//! `naui_core::clamp_column_width` as on the other platforms. The pointer turns into
+//! the `col-resize` cursor over an edge.
 
 use std::cell::{Cell, RefCell};
 use std::collections::HashSet;
@@ -23,8 +29,9 @@ use gtk::glib;
 use gtk::pango;
 use gtk::prelude::*;
 use naui_core::{
-    keeps_row_window, merge_hidden_selection, row_window, Align, Result, RowWindow,
-    SelectionGesture, SelectionMode, SortOrder, TableColumn, TableRow, ROW_WINDOW_OVERSCAN,
+    clamp_column_width, keeps_row_window, merge_hidden_selection, row_window, Align, Result,
+    RowWindow, SelectionGesture, SelectionMode, SortOrder, TableColumn, TableRow,
+    ROW_WINDOW_OVERSCAN,
 };
 
 use crate::bin::{Placement, SizeBin};
@@ -39,6 +46,9 @@ const CELL_SPACING: i32 = 12;
 const SIDE_MARGIN: i32 = 10;
 /// The top and bottom margins of headings and rows.
 const VERTICAL_MARGIN: i32 = 6;
+/// How far inside a heading its trailing edge can still be grabbed (pixels). The gap
+/// to the next heading ([`CELL_SPACING`]) can be grabbed as a whole.
+const EDGE_GRAB_INSIDE: f64 = 5.0;
 
 /// Maps to GTK's text alignment. `Fill` means nothing for text, so it is treated
 /// the same as left.
@@ -59,16 +69,26 @@ fn sort_arrow(order: Option<SortOrder>) -> &'static str {
     }
 }
 
+/// Whether a cell's natural width is kept from deciding its column's width.
+///
+/// - In a windowed table (`uniform`), for the columns without a width: rows are built
+///   again as they scroll, and columns sized by their cells would move.
+/// - For a column the user dragged: otherwise `GtkBox` hands a cell its natural width
+///   when there is room, and the column could not be made narrower than its text.
+///   (A column passed with a width keeps growing to its content as before.)
+fn limits_natural(column: &TableColumn, uniform: bool, dragged: bool) -> bool {
+    dragged || (uniform && column.width.is_none())
+}
+
 /// Creates the label for one cell. The column's width setting is applied here too.
-fn cell_label(text: &str, column: &TableColumn, uniform: bool) -> gtk::Label {
+fn cell_label(text: &str, column: &TableColumn, limit_natural: bool) -> gtk::Label {
     let label = gtk::Label::new(Some(text));
     label.set_xalign(xalign(column.align));
     // 列より長い文字は折り返さず、末尾を省略する。
     label.set_ellipsize(pango::EllipsizeMode::End);
-    // 行を絞っている表では、セルの文字の長さで列幅を決めない。決めてしまうと、
-    // スクロールで組み立て直すたびに列の幅が動いてしまう。列の幅は見出しと
-    // 余りの分け合いだけで決まればよいので、自然な幅を 1 文字ぶんに抑える。
-    if uniform && column.width.is_none() {
+    // 列の幅をセルの文字の長さで決めないときは、自然な幅を 1 文字ぶんに抑える
+    // (`limits_natural`)。
+    if limit_natural {
         label.set_max_width_chars(1);
     }
     apply_column_width(&label, column);
@@ -87,6 +107,44 @@ fn apply_column_width(widget: &impl IsA<gtk::Widget>, column: &TableColumn) {
         // 指定が無い列だけで、余った幅を分け合う。
         None => widget.set_hexpand(true),
     }
+}
+
+/// Gives one cell (or heading) the column's width, while the user drags the column's
+/// edge. Does the same as building the cell for a column with that width
+/// ([`cell_label`], [`build_row`]), on the cell already built.
+fn fix_cell_width(cell: &gtk::Widget, width: f64) {
+    if let Some(bin) = cell.downcast_ref::<SizeBin>() {
+        bin.set_placement(Placement::TableCell {
+            width: Some(width),
+            limit_natural: true,
+        });
+        return;
+    }
+    // 並べ替えられる列の見出しはボタン。幅はボタンが持ち、中の文字は自然な
+    // 幅を抑えるだけ (`rebuild` と同じ分担)。
+    if let Some(button) = cell.downcast_ref::<gtk::Button>() {
+        button.set_size_request(width as i32, -1);
+        button.set_hexpand(false);
+        if let Some(label) = button.child().and_downcast::<gtk::Label>() {
+            label.set_max_width_chars(1);
+            label.set_hexpand(false);
+        }
+        return;
+    }
+    if let Some(label) = cell.downcast_ref::<gtk::Label>() {
+        label.set_max_width_chars(1);
+        label.set_size_request(width as i32, -1);
+        label.set_hexpand(false);
+    }
+}
+
+/// The `index`-th child of a container (the cell of column `index` in a row).
+fn nth_child(container: &gtk::Widget, index: usize) -> Option<gtk::Widget> {
+    let mut child = container.first_child();
+    for _ in 0..index {
+        child = child?.next_sibling();
+    }
+    child
 }
 
 /// The content of one cell.
@@ -369,6 +427,13 @@ struct TableInner {
     header_slots: RefCell<Vec<gtk::Widget>>,
     /// The current sort (column and direction).
     sort: Cell<Option<(usize, SortOrder)>>,
+    /// The column whose heading edge is being dragged, with its width when the drag
+    /// started.
+    column_drag: Cell<Option<(usize, f64)>>,
+    /// Which columns the user has dragged since the columns were last passed. Their
+    /// cells keep their natural width from deciding the column width
+    /// ([`limits_natural`]).
+    dragged: RefCell<Vec<bool>>,
     on_select: SelectionNotifier,
     on_sort: SortNotifier,
     handler: RefCell<Option<glib::SignalHandlerId>>,
@@ -444,6 +509,8 @@ impl Table {
             header_labels: RefCell::new(Vec::new()),
             header_slots: RefCell::new(Vec::new()),
             sort: Cell::new(None),
+            column_drag: Cell::new(None),
+            dragged: RefCell::new(Vec::new()),
             on_select: SelectionNotifier::default(),
             on_sort: SortNotifier::default(),
             handler: RefCell::new(None),
@@ -502,6 +569,7 @@ impl Table {
             });
             table.0.list.add_controller(controller);
         }
+        table.track_column_edges();
         // スクロールに合わせて、組み立てる範囲を動かす。
         {
             let adjustment = table.0.scroller.vadjustment();
@@ -522,9 +590,169 @@ impl Table {
         table
     }
 
+    /// Lets the user drag the edges between headings, and shows the `col-resize`
+    /// cursor over them.
+    ///
+    /// The drag is caught in the capture phase, so pressing an edge does not also
+    /// press a sortable heading's button; presses elsewhere are let through.
+    fn track_column_edges(&self) {
+        let drag = gtk::GestureDrag::new();
+        drag.set_propagation_phase(gtk::PropagationPhase::Capture);
+        let weak = Rc::downgrade(&self.0);
+        drag.connect_drag_begin(move |gesture, x, _| {
+            let Some(inner) = weak.upgrade() else {
+                return;
+            };
+            let edge = Table(inner.clone()).column_edge_at(x);
+            inner.column_drag.set(edge);
+            gesture.set_state(match edge {
+                Some(_) => gtk::EventSequenceState::Claimed,
+                None => gtk::EventSequenceState::Denied,
+            });
+        });
+        let weak = Rc::downgrade(&self.0);
+        drag.connect_drag_update(move |_, dx, _| {
+            let Some(inner) = weak.upgrade() else {
+                return;
+            };
+            if let Some((index, start)) = inner.column_drag.get() {
+                let table = Table(inner);
+                // 右から左の並びでは、末尾の端は左にある。
+                let dx = match table.is_rtl() {
+                    true => -dx,
+                    false => dx,
+                };
+                table.resize_column(index, start + dx);
+            }
+        });
+        let weak = Rc::downgrade(&self.0);
+        drag.connect_drag_end(move |_, _, _| {
+            if let Some(inner) = weak.upgrade() {
+                inner.column_drag.set(None);
+            }
+        });
+        let weak = Rc::downgrade(&self.0);
+        drag.connect_cancel(move |_, _| {
+            if let Some(inner) = weak.upgrade() {
+                inner.column_drag.set(None);
+            }
+        });
+        self.0.header.add_controller(drag);
+
+        let motion = gtk::EventControllerMotion::new();
+        let weak = Rc::downgrade(&self.0);
+        motion.connect_motion(move |_, x, _| {
+            if let Some(inner) = weak.upgrade() {
+                let over = Table(inner.clone()).column_edge_at(x).is_some();
+                inner
+                    .header
+                    .set_cursor_from_name(over.then_some("col-resize"));
+            }
+        });
+        let weak = Rc::downgrade(&self.0);
+        motion.connect_leave(move |_| {
+            if let Some(inner) = weak.upgrade() {
+                // 掴んでいる間は、見出しの外へ出ても形を保つ。
+                if inner.column_drag.get().is_none() {
+                    inner.header.set_cursor_from_name(None);
+                }
+            }
+        });
+        self.0.header.add_controller(motion);
+    }
+
+    fn is_rtl(&self) -> bool {
+        self.0.header.direction() == gtk::TextDirection::Rtl
+    }
+
+    /// The column whose trailing edge is at `x` (in the heading row's coordinates),
+    /// with its current width.
+    ///
+    /// An edge can be grabbed a few pixels inside the heading and across the gap to
+    /// the next one.
+    fn column_edge_at(&self, x: f64) -> Option<(usize, f64)> {
+        let rtl = self.is_rtl();
+        let slots = self.0.header_slots.borrow();
+        slots.iter().enumerate().find_map(|(index, slot)| {
+            let bounds = slot.compute_bounds(&self.0.header)?;
+            let (left, width) = (f64::from(bounds.x()), f64::from(bounds.width()));
+            // 末尾の端から外へ向かって測る。
+            let beyond = match rtl {
+                true => left - x,
+                false => x - (left + width),
+            };
+            (-EDGE_GRAB_INSIDE..=f64::from(CELL_SPACING))
+                .contains(&beyond)
+                .then_some((index, width))
+        })
+    }
+
+    /// Gives column `index` the width `width`, as the user's drag of its heading edge
+    /// does, and returns the width it got.
+    ///
+    /// The width is kept until [`Table::set_columns`], as if it had been passed with
+    /// [`TableColumn::width`]; the cells already built get it on the spot, without
+    /// rebuilding the rows.
+    pub(crate) fn resize_column(&self, index: usize, width: f64) -> f64 {
+        let count = self.0.columns.borrow().len();
+        if index >= count {
+            return width;
+        }
+        let spacing = f64::from(CELL_SPACING) * count.saturating_sub(1) as f64;
+        // 行は枠 (`row` の余白) の分だけ見出しより狭いことがある。幅の無い列が
+        // 残らないときにはみ出さないよう、狭いほうに収める。
+        let row_width = self
+            .0
+            .list
+            .first_child()
+            .and_downcast::<gtk::ListBoxRow>()
+            .and_then(|row| row.child())
+            .map(|content| content.width())
+            .filter(|&width| width > 0);
+        let width_of_room = match row_width {
+            Some(row) => row.min(self.0.header.width()),
+            None => self.0.header.width(),
+        };
+        let available = f64::from(width_of_room) - spacing;
+        let mut width =
+            clamp_column_width(&self.0.columns.borrow(), index, width, available).round();
+        let slot = self.0.header_slots.borrow().get(index).cloned();
+        if let Some(slot) = &slot {
+            fix_cell_width(slot, width);
+        }
+        {
+            let mut dragged = self.0.dragged.borrow_mut();
+            if dragged.len() <= index {
+                dragged.resize(index + 1, false);
+            }
+            dragged[index] = true;
+        }
+        let mut row = self.0.list.first_child();
+        while let Some(current) = row {
+            let content = current
+                .downcast_ref::<gtk::ListBoxRow>()
+                .and_then(|row| row.child());
+            if let Some(cell) = content.and_then(|content| nth_child(&content, index)) {
+                fix_cell_width(&cell, width);
+            }
+            row = current.next_sibling();
+        }
+        // 並べ替えのボタンは枠の分だけ最小の幅が大きく、そこより狭くはならない。
+        // 覚える幅を実際にそろえておかないと、ほかの列の上限が狭まらず、
+        // 列が表からはみ出してしまう (列の組はセルの最小も含めて測る)。
+        if let Some(slot) = &slot {
+            width = width.max(f64::from(slot.measure(gtk::Orientation::Horizontal, -1).0));
+        }
+        self.0.columns.borrow_mut()[index].width = Some(width);
+        width
+    }
+
     /// Rebuilds the columns. Rows and selection stay; only the cells are rearranged.
     ///
     /// The sort setting also stays if that column can still be sorted.
+    ///
+    /// Widths the user dragged a heading edge to are dropped, and each column starts
+    /// again from [`TableColumn::width`].
     pub fn set_columns(&self, columns: &[TableColumn]) {
         // 行を作り直すと選択も落ちるので、覚えて書き戻す。
         let picked = self.selection();
@@ -539,6 +767,7 @@ impl Table {
             stored.clear();
             stored.extend_from_slice(columns);
         }
+        self.0.dragged.borrow_mut().clear();
         self.rebuild();
         without_signal(&self.0.list, &self.0.handler, || self.show(&picked));
     }
@@ -900,6 +1129,7 @@ impl Table {
         let window = self.0.window.get();
         let columns = self.0.columns.borrow().clone();
         let uniform = !window.is_complete();
+        let dragged = self.0.dragged.borrow().clone();
         let fixed_height = self.0.fixed_row_height.get();
         let focused = self.focused_row();
         // 列ごとの `GtkSizeGroup` は組み立てのたびに作り直す。消えた行の
@@ -934,7 +1164,7 @@ impl Table {
                 if self.0.claimed.borrow_mut().insert(index) {
                     self.claim(&cells);
                 }
-                let row = build_row(&cells, &columns, &groups, uniform, self.0.owner);
+                let row = build_row(&cells, &columns, &groups, (uniform, &dragged), self.0.owner);
                 if let Some(height) = fixed_height {
                     row.set_size_request(-1, height);
                 }
@@ -1207,11 +1437,14 @@ fn release_cells(row: &gtk::Widget) {
 ///
 /// A widget goes in only if `owner` may place it (see [`crate::handover`]). Otherwise
 /// its cell is left empty, and nothing is written on the widget.
+///
+/// `(uniform, dragged)` decide which cells keep their natural width from deciding the
+/// column width ([`limits_natural`]).
 fn build_row(
     cells: &TableCells,
     columns: &[TableColumn],
     groups: &[gtk::SizeGroup],
-    uniform: bool,
+    (uniform, dragged): (bool, &[bool]),
     owner: Owner,
 ) -> gtk::ListBoxRow {
     let content = gtk::Box::new(gtk::Orientation::Horizontal, CELL_SPACING);
@@ -1221,6 +1454,11 @@ fn build_row(
     content.set_margin_end(SIDE_MARGIN);
 
     for (index, column) in columns.iter().enumerate() {
+        let limit_natural = limits_natural(
+            column,
+            uniform,
+            dragged.get(index).copied().unwrap_or(false),
+        );
         match cells.content(index) {
             Some(CellContent::Widget(widget)) if owner.may_place(&widget.size_bin()) => {
                 let bin = widget.size_bin();
@@ -1228,24 +1466,22 @@ fn build_row(
                 // 大きさを指定し直しても残る。
                 bin.set_placement(Placement::TableCell {
                     width: column.width,
-                    // 行を絞っているときは、ウィジェットの幅で列幅を決めない。
-                    // 行ごとに中身の幅が違うと、スクロールで列が動いてしまう
-                    // (文字のセルを 1 文字ぶんに抑えているのと同じ扱い)。
-                    limit_natural: uniform && column.width.is_none(),
+                    // 文字のセルを 1 文字ぶんに抑えるのと同じ扱い (`limits_natural`)。
+                    limit_natural,
                 });
                 bin.join_size_group(&groups[index]);
                 content.append(&bin);
             }
             // 列より短い行は、足りない分が空のセルになる。
             Some(CellContent::Text(text)) => {
-                let label = cell_label(text, column, uniform);
+                let label = cell_label(text, column, limit_natural);
                 // 見出しと同じ列を 1 つの `GtkSizeGroup` に入れると、幅がそろう。
                 groups[index].add_widget(&label);
                 content.append(&label);
             }
             // 置けない中身のセルも、空のセルにする。
             Some(CellContent::Widget(_)) | None => {
-                let label = cell_label("", column, uniform);
+                let label = cell_label("", column, limit_natural);
                 groups[index].add_widget(&label);
                 content.append(&label);
             }

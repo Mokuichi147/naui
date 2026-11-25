@@ -290,6 +290,10 @@ fn main() {
             table_columns_keep_filling_the_width,
         ),
         (
+            "見出しの端をドラッグすると列の幅が変わり、残りの列が余りを分ける",
+            table_column_widths_follow_header_drags,
+        ),
+        (
             "リストが見えている行だけを組み立てる",
             list_builds_only_the_rows_it_shows,
         ),
@@ -10902,6 +10906,160 @@ fn table_widths(table: &naui_macos::Table) -> (f64, f64) {
     (total + spacing, native.frame().size.width)
 }
 
+thread_local! {
+    /// What the swapped-in `-[NSTableHeaderView resizedColumn]` answers
+    /// ([`user_resizes_column`]).
+    static RESIZED_COLUMN: Cell<isize> = const { Cell::new(-1) };
+}
+
+extern "C-unwind" fn fake_resized_column(_this: &AnyObject, _cmd: objc2::runtime::Sel) -> isize {
+    RESIZED_COLUMN.with(Cell::get)
+}
+
+/// Resizes column `index` the way AppKit does while the user drags its heading edge:
+/// the header reports the column in `resizedColumn` and the column gets `setWidth:`
+/// (which `minWidth` / `maxWidth` bound).
+///
+/// A synthesized drag cannot be used: `NSTableHeaderView` reads the queued events but
+/// never starts resizing from a synthesized press (with or without a timestamp or a
+/// `deltaX`), so the test plays AppKit's part. That AppKit lets the edge be grabbed at
+/// all (the columns' `resizingMask`) is checked by hand with a real mouse.
+fn user_resizes_column(table: &naui_macos::Table, index: usize, width: f64) {
+    let class = <objc2_app_kit::NSTableHeaderView as objc2::ClassType>::class();
+    let method = class
+        .instance_method(sel!(resizedColumn))
+        .expect("resizedColumn");
+    RESIZED_COLUMN.with(|cell| cell.set(index as isize));
+    // SAFETY: 引数と戻り値の型は `resizedColumn` (NSInteger を返す) と同じ。
+    let original = unsafe {
+        method.set_implementation(std::mem::transmute::<
+            extern "C-unwind" fn(&AnyObject, objc2::runtime::Sel) -> isize,
+            objc2::runtime::Imp,
+        >(fake_resized_column))
+    };
+    let column = table.native_table().tableColumns().objectAtIndex(index);
+    column.setWidth(width);
+    // SAFETY: 取り出した元の実装を戻すだけ。
+    unsafe { method.set_implementation(original) };
+    RESIZED_COLUMN.with(|cell| cell.set(-1));
+}
+
+/// Dragging the trailing edge of a heading resizes that column, the columns without a
+/// width share what is left, and the columns never get wider in total than the table.
+///
+/// This is the behavior the other backends follow too (`naui_core::clamp_column_width`).
+fn table_column_widths_follow_header_drags(ui: &Ui) -> Result<()> {
+    let window = ui.window("列の幅のドラッグ", 600.0, 300.0)?;
+    let table = ui.table()?;
+    table.set_columns(&[
+        TableColumn::new("都市"),
+        TableColumn::new("人口").width(120.0).align(Align::End),
+        TableColumn::new("面積"),
+    ]);
+    table.set_rows(&TableRow::list([["東京", "13,960,000", "2,194"]]));
+    table.set_sizing(Sizing::fixed(500.0, 200.0));
+    let root = ui.stack(Orientation::Vertical)?;
+    root.append(&table);
+    window.set_child(&root);
+    window.show();
+    pump(0.1);
+
+    let native = table.native_table();
+    let widths = || {
+        native.layoutSubtreeIfNeeded();
+        let columns = native.tableColumns();
+        (0..columns.len())
+            .map(|i| columns.objectAtIndex(i).width())
+            .collect::<Vec<_>>()
+    };
+    let fills = |label: &str| {
+        let (total, width) = table_widths(&table);
+        assert!(
+            (total - width).abs() < 2.0,
+            "{label}: 幅いっぱいを使う (列の合計 {total} / 表の幅 {width})"
+        );
+    };
+    let before = widths();
+    fills("はじめ");
+    assert!(
+        (before[0] - before[2]).abs() < 1.0,
+        "幅の無い列は等分: {before:?}"
+    );
+
+    // 幅の無い列を広げると、その列だけが広がり、もう 1 つの幅の無い列が詰める。
+    user_resizes_column(&table, 0, before[0] + 60.0);
+    let after = widths();
+    assert!(
+        (after[0] - (before[0] + 60.0)).abs() < 3.0,
+        "掴んだ列が広がる: {before:?} → {after:?}"
+    );
+    assert_eq!(after[1], 120.0, "幅のある列は動かない: {after:?}");
+    fills("広げたあと");
+
+    // 幅のある列も掴める。掴んだ列はそのまま、幅の無い列が詰める。
+    user_resizes_column(&table, 1, 150.0);
+    let next = widths();
+    assert!(
+        (next[1] - 150.0).abs() < 3.0,
+        "幅のある列も広がる: {next:?}"
+    );
+    assert!(
+        (next[0] - after[0]).abs() < 1.0,
+        "掴んだあとの列は余りを受け取らない: {after:?} → {next:?}"
+    );
+    fills("幅のある列を広げたあと");
+
+    // 表より広くはならない。最後の幅の無い列は最小幅まで詰める。
+    user_resizes_column(&table, 0, 900.0);
+    let wide = widths();
+    assert!(
+        (wide[2] - naui_core::MIN_COLUMN_WIDTH).abs() < 1.0,
+        "残りの列は最小幅まで: {wide:?}"
+    );
+    fills("広げすぎたあと");
+
+    // 狭める側も最小幅で止まる。
+    user_resizes_column(&table, 0, 5.0);
+    let narrow = widths();
+    assert!(
+        (narrow[0] - naui_core::MIN_COLUMN_WIDTH).abs() < 1.0,
+        "最小幅より狭くならない: {narrow:?}"
+    );
+    fills("狭めたあと");
+
+    // 表が広がっても、掴んだ列はそのままで、余りは幅の無い列へ行く。
+    table.set_sizing(Sizing::fixed(560.0, 200.0));
+    pump(0.05);
+    let grown = widths();
+    assert!(
+        (grown[0] - narrow[0]).abs() < 1.0,
+        "掴んだ列は動かない: {grown:?}"
+    );
+    fills("表が広がったあと");
+
+    // 幅の無い列が 1 つも残らなくても、表からはみ出さない。
+    user_resizes_column(&table, 2, 900.0);
+    let all = widths();
+    assert!(all[2] < 900.0, "最後の列も表に収まる: {all:?}");
+    assert!(
+        (all[0] - grown[0]).abs() < 1.0 && (all[1] - grown[1]).abs() < 1.0,
+        "ほかの列はそのまま: {grown:?} → {all:?}"
+    );
+    fills("全部の列を掴んだあと");
+
+    // 列を渡し直すと、ドラッグした幅は捨てて渡した指定に戻る。
+    table.set_columns(&[
+        TableColumn::new("都市"),
+        TableColumn::new("人口").width(120.0).align(Align::End),
+        TableColumn::new("面積"),
+    ]);
+    let reset = widths();
+    assert_eq!(reset[1], 120.0, "渡した幅に戻る: {reset:?}");
+    assert!((reset[0] - reset[2]).abs() < 1.0, "等分に戻る: {reset:?}");
+    window.close();
+    Ok(())
+}
+
 /// Even after removing columns and adding them back, the columns without a width
 /// keep taking the leftover.
 ///
@@ -11161,8 +11319,9 @@ fn table_columns_and_rows_are_native(ui: &Ui) -> Result<()> {
     Ok(())
 }
 
-/// Columns with a width are fixed, and only those without share the leftover. Text
-/// alignment applies to both cells and headings.
+/// Columns with a width keep it, and only those without share the leftover (every
+/// column can still be dragged by its heading edge). Text alignment applies to both
+/// cells and headings.
 fn table_columns_follow_the_spec(ui: &Ui) -> Result<()> {
     let table = ui.table()?;
     table.set_columns(&[
@@ -11175,14 +11334,20 @@ fn table_columns_follow_the_spec(ui: &Ui) -> Result<()> {
     let columns = native.tableColumns();
     let flexible = columns.objectAtIndex(0);
     let fixed = columns.objectAtIndex(1);
-    assert!(
-        flexible.width() >= 40.0 && flexible.maxWidth() > 120.0,
-        "指定の無い列は伸び縮みできること: {}",
-        flexible.width()
+    use objc2_app_kit::NSTableColumnResizingOptions as Resizing;
+    assert!(flexible.width() >= 40.0, "{}", flexible.width());
+    assert_eq!(
+        flexible.resizingMask(),
+        Resizing::AutoresizingMask | Resizing::UserResizingMask,
+        "指定の無い列は余りに合わせて伸び縮みし、見出しの端でも動かせること"
     );
     assert_eq!(fixed.width(), 120.0);
-    assert_eq!(fixed.minWidth(), 120.0, "指定した列は固定されること");
-    assert_eq!(fixed.maxWidth(), 120.0);
+    assert_eq!(
+        fixed.resizingMask(),
+        Resizing::UserResizingMask,
+        "指定した列は余りを受け取らず、見出しの端でだけ動かせること"
+    );
+    assert_eq!(fixed.minWidth(), naui_core::MIN_COLUMN_WIDTH);
     assert_eq!(
         fixed.headerCell().alignment(),
         objc2_app_kit::NSTextAlignment::Right,

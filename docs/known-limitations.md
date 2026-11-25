@@ -11,7 +11,7 @@ that shape are covered in
 | --- | --- | --- | --- | --- |
 | Weights of `Grid`'s `Track::Fill` | Works | Works (with one exception, see [macOS](#macos)) | Works | Works |
 | Stacking in the same `Grid` cell | Possible | Only the last placed one remains | Possible | Possible |
-| Dragging `Table` column widths | Not possible | Possible | Not possible | Not possible |
+| Dragging `Table` column widths | Possible (the cursor does not change) | Possible | Possible | Not possible |
 | `EditableComboBox` narrowing options by typed text | No | No (only prefix completion) | No | The browser narrows |
 | Where `Toolbar` goes | Right of the title | Title bar (the title text is hidden) | Left side of the header bar | Start of the window |
 | Where `MenuBar` goes | Below the title bar | The app's menu | Below the header bar | Start of the window |
@@ -188,6 +188,14 @@ that shape are covered in
   about 2.4 seconds in a `Table` and 0.7 seconds in a plain `ListView`.
 - Sorting by pressing a `Table` header only goes as far as notifying "which column,
   in which direction"; **sorting the rows is the app's job**.
+- Dragging the trailing edge of a `Table` heading changes that column's width on
+  macOS, Windows and Linux (not on the Web). The dragged column keeps that width as if
+  it had been passed with `TableColumn::width`, and the columns without a width share
+  the rest. No column goes below 40 px (`MIN_COLUMN_WIDTH`), and the columns never get
+  wider in total than the table, so widening one stops when the columns without a width
+  reach 40 px (`clamp_column_width`). **The app is not told about a drag and cannot
+  read the widths back**, and `set_columns` drops the dragged widths. Every column can
+  be dragged; there is no switch to keep one from being resized.
 - A `Table` with more than 200 rows builds only the range shown on screen (with
   either `set_rows` or `set_row_builder`). This leads to the following rules.
   - **All rows are assumed to have the same height.** If needed, set it with
@@ -484,7 +492,8 @@ that shape are covered in
 
 - `ButtonRole::Destructive` **looks like an ordinary button**. WinUI has a style
   only for the primary button (`AccentButtonStyle`), not for destructive actions.
-- Over a `SplitView` divider, no divider-specific cursor (⇔) is shown.
+- Over a `SplitView` divider, no divider-specific cursor (⇔) is shown. Neither is
+  one over the edge of a `Table` heading, where the column width can be dragged.
 - `NumberInput` is limited to **10 significant digits**. `NumberBox` rounds the
   value to 10 significant digits before building its display, so passing
   `set_decimals` a number of digits that would require more than 10 significant
@@ -702,6 +711,9 @@ that shape are covered in
   in the dialog does.
 - With `List` set to `SelectionMode::Multiple`, selection with Ctrl / Shift is left
   to GTK4, so **row clicks (`ListRow::on_activate`) arrive on a double press**.
+- A `Table` column with a sortable heading cannot be dragged narrower than the heading
+  button's own minimum (its padding and the ellipsis, about 50 px with Adwaita), rather
+  than 40 px.
 - `Fit::None` corresponds to GTK4's `SCALE_DOWN`, so it behaves as "do not enlarge"
   rather than "original size".
 - `Toast` durations are in **seconds**. Values under one second become one second
@@ -751,6 +763,8 @@ that shape are covered in
   it in its own CSS, such as `button[data-naui-role="primary"]`.
 - `Window` is not an OS window; it is represented by an element directly under
   `<body>` and `document.title`.
+- `Table` column widths **cannot be dragged**. `<table>` has no mechanism for it, and
+  naui does not draw grab areas of its own.
 - `FilePicker::open` and `FileSaver::open` must be called inside a user-action
   event.
 - In browsers without `showSaveFilePicker` (Firefox / Safari), `FileSaver` becomes an
