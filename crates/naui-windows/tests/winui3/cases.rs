@@ -19,10 +19,10 @@ use naui_windows::{run_for_test, MenuEntry, Ui, Widget};
 use crate::automation;
 use naui_winui3::Microsoft::UI::Windowing::TitleBarTheme;
 use naui_winui3::Microsoft::UI::Xaml::Controls::{
-    Border, Button as XamlButton, Canvas as XamlCanvas, CheckBox as XamlCheckBox,
-    ComboBox as XamlComboBox, Grid, Image as XamlImage, InfoBar, ListView, ListViewItem,
-    MenuFlyoutItem, ProgressRing, ScrollViewer, Slider as XamlSlider, StackPanel, TextBlock,
-    TextBox, ToggleSwitch,
+    Border, Button as XamlButton, CalendarView, CalendarViewSelectionMode, Canvas as XamlCanvas,
+    CheckBox as XamlCheckBox, ComboBox as XamlComboBox, Grid, Image as XamlImage, InfoBar,
+    ListView, ListViewItem, MenuFlyoutItem, ProgressRing, ScrollViewer, Slider as XamlSlider,
+    StackPanel, TextBlock, TextBox, ToggleSwitch,
 };
 use naui_winui3::Microsoft::UI::Xaml::Documents::{Hyperlink, Inline, Run};
 use naui_winui3::Microsoft::UI::Xaml::Media::Imaging::{BitmapImage, SvgImageSource};
@@ -78,6 +78,14 @@ const CASES: &[Case] = &[
     (
         "コンボボックスの選択がネイティブと往復する",
         combo_box_selection_round_trips,
+    ),
+    (
+        "カレンダーが単一選択の CalendarView になり、値が往復して時刻を保つ",
+        calendar_value_round_trips,
+    ),
+    (
+        "カレンダーの範囲が MinDate / MaxDate へ届き、外の日は端で止まる",
+        calendar_stays_inside_the_range,
     ),
     (
         "ラジオグループの選択が 1 つだけ点いて通知する",
@@ -2409,6 +2417,191 @@ fn combo_box_selection_round_trips(ui: &Ui) -> Result<()> {
     combo.set_selected(2);
     assert_eq!(combo.selected(), Some(2));
     assert_eq!(seen.borrow().len(), 1, "set_selected では通知しないこと");
+    Ok(())
+}
+
+/// The days in a `CalendarView`'s `SelectedDates`, as (year, month, day) in the
+/// Gregorian calendar.
+fn calendar_selected_days(view: &CalendarView) -> Vec<(i32, i32, i32)> {
+    let dates = view.SelectedDates().expect("SelectedDates");
+    let calendar = windows::Globalization::Calendar::new().expect("Calendar");
+    calendar
+        .ChangeCalendarSystem(&windows::Globalization::CalendarIdentifiers::Gregorian().unwrap())
+        .unwrap();
+    (0..dates.Size().unwrap_or(0))
+        .filter_map(|i| dates.GetAt(i).ok())
+        .map(|date| {
+            calendar.SetDateTime(date).unwrap();
+            (
+                calendar.Year().unwrap(),
+                calendar.Month().unwrap(),
+                calendar.Day().unwrap(),
+            )
+        })
+        .collect()
+}
+
+fn calendar_value_round_trips(ui: &Ui) -> Result<()> {
+    use naui_core::DateTime;
+    let calendar = ui.calendar()?;
+    let view = calendar.native_calendar_view();
+    assert_eq!(
+        view.SelectionMode().unwrap(),
+        CalendarViewSelectionMode::Single,
+        "1 日だけ選ばせること"
+    );
+    assert_eq!(
+        view.CalendarIdentifier().unwrap().to_string(),
+        "GregorianCalendar",
+        "暦は西暦に固定すること"
+    );
+    // 週の始まりはユーザーのロケール (地域の設定) の LOCALE_IFIRSTDAYOFWEEK
+    // (月曜日 = 0 … 日曜日 = 6) に従うこと。
+    let mut first = [0u16; 2];
+    let written = unsafe {
+        windows::Win32::Globalization::GetLocaleInfoEx(
+            windows_core::PCWSTR::null(),
+            windows::Win32::Globalization::LOCALE_IFIRSTDAYOFWEEK
+                | windows::Win32::Globalization::LOCALE_RETURN_NUMBER,
+            Some(&mut first),
+        )
+    };
+    assert_ne!(written, 0, "週の始まりを読めること");
+    assert_eq!(
+        view.FirstDayOfWeek().unwrap(),
+        windows::Globalization::DayOfWeek((i32::from(first[0]) + 1) % 7),
+        "週の始まりがユーザーの設定に従うこと"
+    );
+    assert!(calendar.value().is_valid(), "初期値は現在日時");
+    assert_eq!(
+        calendar_selected_days(&view).len(),
+        1,
+        "はじめから 1 日選ばれていること"
+    );
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    calendar.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+    calendar.set_value(DateTime::new(2026, 11, 31, 9, 30));
+    assert_eq!(
+        calendar.value(),
+        DateTime::new(2026, 11, 30, 9, 30),
+        "丸めること"
+    );
+    assert_eq!(calendar_selected_days(&view), vec![(2026, 11, 30)]);
+    assert!(seen.borrow().is_empty(), "set_value は通知しないこと");
+
+    calendar.pick(DateTime::new(2027, 1, 5, 18, 0));
+    assert_eq!(
+        calendar.value(),
+        DateTime::new(2027, 1, 5, 9, 30),
+        "時刻を保つこと"
+    );
+    assert_eq!(calendar_selected_days(&view), vec![(2027, 1, 5)]);
+    calendar.pick(DateTime::date(2027, 1, 5));
+    assert_eq!(
+        seen.borrow().as_slice(),
+        [DateTime::new(2027, 1, 5, 9, 30)].as_slice(),
+        "選ばれている日なら通知しないこと"
+    );
+
+    calendar.set_enabled(false);
+    calendar.pick(DateTime::date(2027, 1, 9));
+    assert_eq!(calendar.value(), DateTime::new(2027, 1, 5, 9, 30));
+    assert_eq!(seen.borrow().len(), 1, "無効なら何もしないこと");
+    calendar.set_enabled(true);
+
+    // ネイティブ側の選択の変化。コードからの変更で SelectedDatesChanged が
+    // その場で出るときだけ確かめる (出ない環境では利用者の操作でしか届かない)。
+    let fired = Arc::new(AtomicUsize::new(0));
+    let token = view
+        .SelectedDatesChanged(&windows::Foundation::TypedEventHandler::new({
+            let fired = fired.clone();
+            move |_, _| {
+                fired.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            }
+        }))
+        .unwrap();
+    view.SelectedDates().unwrap().Clear().unwrap();
+    let _ = view.RemoveSelectedDatesChanged(token);
+    if fired.load(Ordering::SeqCst) > 0 {
+        // 選んでいた日を外すと、通知せずに選び直す。
+        assert_eq!(
+            calendar_selected_days(&view),
+            vec![(2027, 1, 5)],
+            "選び直すこと"
+        );
+        assert_eq!(seen.borrow().len(), 1);
+    } else {
+        eprintln!("SKIP: コードからの SelectedDates の変更では SelectedDatesChanged が出なかった");
+        calendar.set_value(calendar.value());
+    }
+    Ok(())
+}
+
+fn calendar_stays_inside_the_range(ui: &Ui) -> Result<()> {
+    use naui_core::DateTime;
+    let calendar = ui.calendar()?;
+    let view = calendar.native_calendar_view();
+    let widest = (view.MinDate().unwrap(), view.MaxDate().unwrap());
+    calendar.set_value(DateTime::new(2026, 6, 15, 9, 30));
+    calendar.set_range(
+        Some(DateTime::new(2026, 6, 10, 12, 0)),
+        Some(DateTime::new(2026, 6, 20, 12, 0)),
+    );
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 15, 9, 30));
+    let ranged = (view.MinDate().unwrap(), view.MaxDate().unwrap());
+    assert!(
+        ranged.0.UniversalTime > widest.0.UniversalTime
+            && ranged.1.UniversalTime < widest.1.UniversalTime,
+        "MinDate / MaxDate が狭まること: 範囲なし {} .. {}、範囲あり {} .. {}",
+        widest.0.UniversalTime,
+        widest.1.UniversalTime,
+        ranged.0.UniversalTime,
+        ranged.1.UniversalTime
+    );
+    assert!(
+        ranged.1.UniversalTime - ranged.0.UniversalTime > 10 * 24 * 3_600 * 10_000_000,
+        "端の日を丸ごと含むこと"
+    );
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    calendar.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+    calendar.pick(DateTime::date(2026, 6, 20));
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 20, 9, 30));
+    calendar.pick(DateTime::date(2026, 1, 1));
+    assert_eq!(
+        calendar.value(),
+        DateTime::new(2026, 6, 10, 9, 30),
+        "下限で止まること"
+    );
+    assert_eq!(calendar_selected_days(&view), vec![(2026, 6, 10)]);
+    assert_eq!(seen.borrow().len(), 2);
+
+    calendar.set_value(DateTime::date(2030, 1, 1));
+    assert_eq!(
+        calendar.value(),
+        DateTime::date(2026, 6, 20),
+        "通知せずに端へ寄ること"
+    );
+    assert_eq!(seen.borrow().len(), 2);
+
+    // 範囲を外すと、既定の前後 100 年より広く戻ること。
+    calendar.set_range(None, None);
+    assert_eq!(
+        (view.MinDate().unwrap(), view.MaxDate().unwrap()),
+        widest,
+        "範囲なしの広さへ戻ること"
+    );
+    calendar.pick(DateTime::date(1900, 1, 1));
+    assert_eq!(calendar.value(), DateTime::date(1900, 1, 1));
+    assert_eq!(calendar_selected_days(&view), vec![(1900, 1, 1)]);
     Ok(())
 }
 

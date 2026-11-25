@@ -35,20 +35,20 @@ use objc2::{
 use objc2_app_kit::{
     NSApplication, NSApplicationActivationPolicy, NSAttributedStringNSStringDrawing, NSBox,
     NSBoxType, NSButton, NSColor, NSColorSpace, NSComboBox, NSControlStateValueOff,
-    NSControlStateValueOn, NSDatePicker, NSDatePickerElementFlags, NSEvent, NSEventMask,
-    NSEventModifierFlags, NSEventType, NSFont, NSFontAttributeName, NSForegroundColorAttributeName,
-    NSImage, NSImageScaling, NSImageView, NSLayoutAttribute, NSLayoutConstraint,
-    NSLayoutConstraintOrientation, NSLayoutRelation, NSLinkAttributeName, NSOutlineViewDelegate,
-    NSResponder, NSScrollView, NSScrollerStyle, NSSearchField, NSSecureTextField,
-    NSSegmentedControl, NSStandardKeyBindingResponding, NSStepper, NSSwitch, NSTableViewDelegate,
-    NSTextField, NSTextInputClient, NSTextView, NSTintProminence, NSTitlePosition,
-    NSUserInterfaceItemIdentification, NSView, NSWindow, NSWindowStyleMask,
+    NSControlStateValueOn, NSDatePicker, NSDatePickerElementFlags, NSDatePickerStyle, NSEvent,
+    NSEventMask, NSEventModifierFlags, NSEventType, NSFont, NSFontAttributeName,
+    NSForegroundColorAttributeName, NSImage, NSImageScaling, NSImageView, NSLayoutAttribute,
+    NSLayoutConstraint, NSLayoutConstraintOrientation, NSLayoutRelation, NSLinkAttributeName,
+    NSOutlineViewDelegate, NSResponder, NSScrollView, NSScrollerStyle, NSSearchField,
+    NSSecureTextField, NSSegmentedControl, NSStandardKeyBindingResponding, NSStepper, NSSwitch,
+    NSTableViewDelegate, NSTextField, NSTextInputClient, NSTextView, NSTintProminence,
+    NSTitlePosition, NSUserInterfaceItemIdentification, NSView, NSWindow, NSWindowStyleMask,
     NSWindowTitleVisibility,
 };
 use objc2_foundation::{
-    NSArgumentDomain, NSArray, NSCalendar, NSCalendarIdentifierGregorian, NSDate, NSDateComponents,
-    NSDefaultRunLoopMode, NSMutableDictionary, NSNotFound, NSNotification, NSPoint, NSRange,
-    NSRect, NSRunLoop, NSSize, NSString, NSUserDefaults,
+    NSArgumentDomain, NSArray, NSCalendar, NSCalendarIdentifierGregorian, NSCalendarUnit, NSDate,
+    NSDateComponents, NSDefaultRunLoopMode, NSMutableDictionary, NSNotFound, NSNotification,
+    NSPoint, NSRange, NSRect, NSRunLoop, NSSize, NSString, NSUserDefaults,
 };
 
 /// One test case.
@@ -1146,6 +1146,26 @@ fn main() {
         (
             "日付ピッカーの通知中に値と通知先を差し替えられる",
             date_picker_callback_is_reentrant,
+        ),
+        (
+            "カレンダーが暦だけの NSDatePicker になる",
+            calendar_shows_only_the_month_grid,
+        ),
+        (
+            "カレンダーの値がネイティブと往復し、時刻を保つ",
+            calendar_value_round_trips,
+        ),
+        (
+            "カレンダーの pick がクリックと同じ経路で通知する",
+            calendar_pick_acts_like_a_click,
+        ),
+        (
+            "カレンダーが範囲の外の日を選ばせない",
+            calendar_stays_inside_the_range,
+        ),
+        (
+            "カレンダーの選択を矢印キーで動かしても値が追いつき通知する",
+            calendar_follows_the_arrow_keys,
         ),
         (
             "時刻ピッカーが時分だけを出し、値がネイティブと往復する",
@@ -15544,6 +15564,265 @@ fn date_picker_callback_is_reentrant(ui: &Ui) -> Result<()> {
         ],
         "差し替えた通知先が呼ばれる"
     );
+    Ok(())
+}
+
+/// The calendar is an `NSDatePicker` in the calendar style showing only the date.
+fn calendar_shows_only_the_month_grid(ui: &Ui) -> Result<()> {
+    let calendar = ui.calendar()?;
+    let native = calendar.native_picker();
+    assert_eq!(
+        native.datePickerStyle(),
+        NSDatePickerStyle::ClockAndCalendar
+    );
+    assert_eq!(
+        native.datePickerElements(),
+        NSDatePickerElementFlags::YearMonthDay,
+        "時計は出さない"
+    );
+    // 暦は西暦に固定しつつ、週の始まりはユーザーの設定に従う。
+    let shown = native.calendar().expect("暦を渡している");
+    assert_eq!(
+        shown.calendarIdentifier().to_string(),
+        unsafe { NSCalendarIdentifierGregorian }.to_string()
+    );
+    assert_eq!(
+        shown.firstWeekday(),
+        NSCalendar::currentCalendar().firstWeekday()
+    );
+    // 作った直後は現在日時。
+    assert!(
+        (2000..=9999).contains(&calendar.value().year),
+        "初期値が西暦で入る: {}",
+        calendar.value()
+    );
+    assert!(calendar.value().is_valid());
+    Ok(())
+}
+
+/// Writing the value is silent, and a day clicked on the native side keeps the
+/// time the value had.
+fn calendar_value_round_trips(ui: &Ui) -> Result<()> {
+    let calendar = ui.calendar()?;
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    calendar.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+
+    calendar.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    assert_eq!(calendar.value(), DateTime::new(2026, 8, 22, 9, 30));
+    assert!(seen.borrow().is_empty(), "set_value は通知しない");
+
+    // 暦として成り立たない値は丸める。
+    calendar.set_value(DateTime::new(2026, 11, 31, 9, 30));
+    assert_eq!(calendar.value(), DateTime::new(2026, 11, 30, 9, 30));
+
+    // ネイティブ側で日を押すと、時刻はそのままで日付だけ変わる。
+    edit_natively(&calendar.native_picker(), DateTime::date(2027, 1, 5));
+    assert_eq!(calendar.value(), DateTime::new(2027, 1, 5, 9, 30));
+    assert_eq!(*seen.borrow(), vec![DateTime::new(2027, 1, 5, 9, 30)]);
+
+    // 同じ日なら知らせない。
+    edit_natively(&calendar.native_picker(), DateTime::new(2027, 1, 5, 18, 0));
+    assert_eq!(seen.borrow().len(), 1);
+    assert_eq!(calendar.value(), DateTime::new(2027, 1, 5, 9, 30));
+
+    calendar.set_enabled(false);
+    assert!(!calendar.native_picker().isEnabled());
+    Ok(())
+}
+
+/// `pick` selects the day through the picker's action, and does nothing while
+/// disabled.
+fn calendar_pick_acts_like_a_click(ui: &Ui) -> Result<()> {
+    let calendar = ui.calendar()?;
+    calendar.set_value(DateTime::new(2026, 8, 22, 9, 30));
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    calendar.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+
+    calendar.pick(DateTime::new(2026, 9, 3, 18, 0));
+    assert_eq!(calendar.value(), DateTime::new(2026, 9, 3, 9, 30));
+    assert_eq!(*seen.borrow(), vec![DateTime::new(2026, 9, 3, 9, 30)]);
+    let gregorian = NSCalendar::initWithCalendarIdentifier(NSCalendar::alloc(), unsafe {
+        NSCalendarIdentifierGregorian
+    })
+    .expect("グレゴリオ暦");
+    let shown = gregorian.components_fromDate(
+        NSCalendarUnit::Year | NSCalendarUnit::Month | NSCalendarUnit::Day,
+        &calendar.native_picker().dateValue(),
+    );
+    assert_eq!(
+        (shown.year(), shown.month(), shown.day()),
+        (2026, 9, 3),
+        "表示も選んだ日になる"
+    );
+
+    calendar.pick(DateTime::date(2026, 9, 3));
+    assert_eq!(seen.borrow().len(), 1, "選ばれている日なら通知しない");
+
+    calendar.set_enabled(false);
+    calendar.pick(DateTime::date(2026, 10, 1));
+    assert_eq!(calendar.value(), DateTime::new(2026, 9, 3, 9, 30));
+    assert_eq!(seen.borrow().len(), 1, "無効なら何もしない");
+
+    // 通知の中から値を書き換え、通知先を差し替えられる。
+    calendar.set_enabled(true);
+    calendar.on_change({
+        let seen = seen.clone();
+        let calendar = calendar.clone();
+        move |value| {
+            seen.borrow_mut().push(value);
+            calendar.set_value(DateTime::date(2030, 1, 1));
+            calendar.on_change(|_| {});
+        }
+    });
+    calendar.pick(DateTime::date(2026, 10, 1));
+    assert_eq!(seen.borrow().len(), 2);
+    assert_eq!(calendar.value(), DateTime::date(2030, 1, 1));
+    Ok(())
+}
+
+/// The range reaches `minDate` / `maxDate`, and a pick beyond it stops at the end.
+fn calendar_stays_inside_the_range(ui: &Ui) -> Result<()> {
+    let calendar = ui.calendar()?;
+    calendar.set_value(DateTime::new(2026, 6, 15, 9, 30));
+    calendar.set_range(
+        Some(DateTime::new(2026, 6, 10, 12, 0)),
+        Some(DateTime::new(2026, 6, 20, 12, 0)),
+    );
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 15, 9, 30));
+    assert!(calendar.native_picker().minDate().is_some());
+    assert!(calendar.native_picker().maxDate().is_some());
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    calendar.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+
+    // 範囲の端の日は、値の時刻にかかわらず選べる (時刻は比べない)。
+    calendar.pick(DateTime::date(2026, 6, 20));
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 20, 9, 30));
+    calendar.pick(DateTime::date(2026, 6, 10));
+    assert_eq!(calendar.value(), DateTime::new(2026, 6, 10, 9, 30));
+
+    calendar.pick(DateTime::date(2030, 5, 5));
+    assert_eq!(
+        calendar.value(),
+        DateTime::new(2026, 6, 20, 9, 30),
+        "上限で止まり、時刻は動かない"
+    );
+    assert_eq!(seen.borrow().len(), 3);
+
+    // 範囲の外を渡すと、通知せずに端へ寄る。
+    calendar.set_value(DateTime::date(1990, 1, 1));
+    assert_eq!(calendar.value(), DateTime::date(2026, 6, 10));
+    assert_eq!(seen.borrow().len(), 3);
+
+    // 範囲を外すと自由に選べる。
+    calendar.set_range(None, None);
+    assert!(calendar.native_picker().minDate().is_none());
+    assert!(calendar.native_picker().maxDate().is_none());
+    calendar.pick(DateTime::date(1990, 1, 1));
+    assert_eq!(calendar.value(), DateTime::date(1990, 1, 1));
+    Ok(())
+}
+
+/// Moving the selection with the arrow keys reaches the value and `on_change`.
+///
+/// `NSDatePicker` does not send its action for the keyboard, so the calendar hears
+/// the change through the cell's delegate and reads the value once it is in.
+fn calendar_follows_the_arrow_keys(ui: &Ui) -> Result<()> {
+    let window = ui.window("カレンダーのキー", 320.0, 240.0)?;
+    let calendar = ui.calendar()?;
+    window.set_child(&calendar);
+    window.show();
+    calendar.set_value(DateTime::new(2026, 11, 18, 9, 30));
+    let native = calendar.native_picker();
+    let ns_window = window.native_window();
+    assert!(ns_window.makeFirstResponder(Some(&native)));
+
+    let seen = Rc::new(RefCell::new(Vec::new()));
+    calendar.on_change({
+        let seen = seen.clone();
+        move |value| seen.borrow_mut().push(value)
+    });
+    let arrow = |key_code: u16, character: char| {
+        let text = NSString::from_str(&character.to_string());
+        let event = NSEvent::keyEventWithType_location_modifierFlags_timestamp_windowNumber_context_characters_charactersIgnoringModifiers_isARepeat_keyCode(
+            NSEventType::KeyDown,
+            NSPoint::new(0.0, 0.0),
+            NSEventModifierFlags::NumericPad | NSEventModifierFlags::Function,
+            0.0,
+            ns_window.windowNumber(),
+            None,
+            &text,
+            &text,
+            false,
+            key_code,
+        )
+        .expect("キーイベント");
+        // 窓が画面に出ていない環境でも届くよう、暦へ直接渡す。
+        native.keyDown(&event);
+    };
+
+    // → で翌日、↓ で翌週。時刻はそのまま。
+    arrow(124, '\u{F703}');
+    pump_until(2.0, || seen.borrow().len() == 1);
+    assert_eq!(calendar.value(), DateTime::new(2026, 11, 19, 9, 30));
+    assert_eq!(*seen.borrow(), vec![DateTime::new(2026, 11, 19, 9, 30)]);
+    arrow(125, '\u{F701}');
+    pump_until(2.0, || seen.borrow().len() == 2);
+    assert_eq!(calendar.value(), DateTime::new(2026, 11, 26, 9, 30));
+    assert_eq!(seen.borrow().len(), 2, "キー 1 回につき 1 度だけ通知する");
+
+    // 書き込みとクリック (アクション) は、後から読み直しても重ねて通知しない。
+    calendar.set_value(DateTime::new(2026, 11, 2, 9, 30));
+    edit_natively(&native, DateTime::date(2026, 11, 5));
+    pump(0.1);
+    assert_eq!(seen.borrow().len(), 3);
+    assert_eq!(calendar.value(), DateTime::new(2026, 11, 5, 9, 30));
+
+    // 範囲で値が寄っても、読み直しで通知しない。
+    calendar.set_range(Some(DateTime::date(2026, 11, 10)), None);
+    pump(0.1);
+    assert_eq!(calendar.value(), DateTime::new(2026, 11, 10, 9, 30));
+    assert_eq!(seen.borrow().len(), 3, "set_range は通知しない");
+
+    // 通知の中で書いた値が、キーの値に上書きされない。
+    calendar.on_change({
+        let seen = seen.clone();
+        let calendar = calendar.clone();
+        move |value| {
+            seen.borrow_mut().push(value);
+            calendar.set_value(DateTime::new(2026, 12, 24, 9, 30));
+        }
+    });
+    arrow(123, '\u{F702}');
+    arrow(124, '\u{F703}');
+    pump_until(2.0, || seen.borrow().len() == 4);
+    pump(0.1);
+    assert_eq!(calendar.value(), DateTime::new(2026, 12, 24, 9, 30));
+    let gregorian = NSCalendar::initWithCalendarIdentifier(NSCalendar::alloc(), unsafe {
+        NSCalendarIdentifierGregorian
+    })
+    .expect("グレゴリオ暦");
+    let shown = gregorian.components_fromDate(
+        NSCalendarUnit::Year | NSCalendarUnit::Month | NSCalendarUnit::Day,
+        &native.dateValue(),
+    );
+    assert_eq!((shown.year(), shown.month(), shown.day()), (2026, 12, 24));
+
+    // 無効の間はキーが効かない。
+    calendar.set_enabled(false);
+    arrow(124, '\u{F703}');
+    pump(0.1);
+    assert_eq!(calendar.value(), DateTime::new(2026, 12, 24, 9, 30));
+    window.native_window().close();
     Ok(())
 }
 

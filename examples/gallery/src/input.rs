@@ -1,5 +1,5 @@
 use naui::{
-    Button, Color, ColorPicker, DatePicker, DatePickerMode, DateTime, EditableComboBox,
+    Button, Calendar, Color, ColorPicker, DatePicker, DatePickerMode, DateTime, EditableComboBox,
     EventResponse, Key, KeyEvent, Label, Length, NumberInput, PasswordInput, Result, SearchInput,
     Sizing, Stack, TextArea, TextInput, Time, TimePicker, Ui, Widget,
 };
@@ -365,6 +365,43 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
         &bounded(ui, &opens.to_string(), &meeting, &closes.to_string())?,
     )?;
 
+    // 常に表示するカレンダー。値は DateTime で、日付だけを選ばせる。
+    // 今日から翌月末までに絞ると、その外の日は選べない。
+    parts::section(ui, &pane, "Calendar")?;
+    let calendar = ui.calendar()?;
+    disabler.add(&calendar, Calendar::set_enabled);
+    let today = calendar.value();
+    let (next_year, next_month) = if today.month == 12 {
+        (today.year + 1, 1)
+    } else {
+        (today.year, today.month + 1)
+    };
+    calendar.set_range(
+        Some(DateTime::date(today.year, today.month, today.day)),
+        // 31 日は丸められて、その月の末日になる。
+        Some(DateTime::date(next_year, next_month, 31)),
+    );
+    calendar.on_change({
+        let notice = notice.clone();
+        move |value| {
+            notice.show(&format!(
+                "Calendar: {:04}-{:02}-{:02}",
+                value.year, value.month, value.day
+            ));
+        }
+    });
+    // `pick` は利用者が日を押したのと同じ経路なので、on_change も呼ばれる。
+    let calendar_today = ui.button("Today")?;
+    disabler.add(&calendar_today, Button::set_enabled);
+    calendar_today.on_click({
+        let calendar = calendar.clone();
+        move || calendar.pick(today)
+    });
+    let calendar_row = parts::row(ui)?;
+    calendar_row.append(&calendar);
+    calendar_row.append(&calendar_today);
+    pane.append(&calendar_row);
+
     // 色を選ばせる。値は sRGB の 8 bit で返る。
     parts::section(ui, &pane, "ColorPicker")?;
     let color = ui.color_picker()?;
@@ -401,6 +438,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
     let initial_alarm = alarm.value();
     let initial_meeting = meeting.value();
     let initial_color = color.value();
+    let initial_calendar = calendar.value();
     clear.on_click({
         let notice = notice.clone();
         move || {
@@ -418,6 +456,7 @@ pub(crate) fn build(ui: &Ui, notice: &Notice) -> Result<naui::Stack> {
             alarm.set_value(initial_alarm);
             meeting.set_value(initial_meeting);
             color.set_value(initial_color);
+            calendar.set_value(initial_calendar);
             // set_text / set_value は on_change を呼ばないので、欄の右の
             // 表示はこちらで作り直す。
             describe_area();

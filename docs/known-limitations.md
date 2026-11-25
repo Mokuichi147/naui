@@ -34,6 +34,8 @@ that shape are covered in
 | Where a `Toast` appears (`ToastPosition`) | Any of the six | Any of the six | Always the bottom center | Any of the six |
 | Where a `Toast`'s second and later action buttons go | A row below the text | Next to the first, after the text | Next to the first, after the text | Next to the first, after the text |
 | A `Flow` child wider than the flow | Keeps its width and is cut off, unless it has `Fill` on the width | Keeps its width and is cut off, unless it has `Fill` on the width | Narrowed to the flow, down to its minimum | Narrowed to the flow, down to its `min-content` width |
+| `Calendar`'s days outside `set_range` | Not shown | Dimmed; clicking one selects the nearest end (notified) | Look selectable; naui moves the selection back to the end (notified) | Disabled buttons |
+| `Calendar`'s month arrows | Only show another month | Only show another month (`●` shows today's month without selecting today) | Also select a day in that month (notified) | Only show another month |
 | `Spinner`'s look and default size | A ring, 32 × 32 | Spokes, 32 × 32 | A ring, 16 × 16 (grows with the space up to 64 × 64) | A bar (indeterminate `<progress>`) |
 
 ## Common
@@ -508,6 +510,12 @@ that shape are covered in
   `DatePicker` and `TimePicker`, the WinUI controls only support a range of years
   (`TimePicker` supports no range at all), so naui clamps out-of-range values the
   user picks to the ends.
+- `Calendar` widens `CalendarView`'s `MinDate` / `MaxDate` beyond WinUI's default
+  of 100 years around today to the whole Gregorian calendar (years 1 to 9999) when
+  there is no range. `CalendarView`'s `FirstDayOfWeek` is Sunday whatever the
+  locale, so naui copies the first day of the week of the user's locale (including
+  the choice in the Region settings) when the calendar is created; changing the
+  setting while the app runs is not reflected.
 - Branches set to `TreeItem::enabled(false)` in a `Tree` can still be expanded and
   collapsed.
 - A `Tree` with `SelectionMode::Multiple` is not a `TreeView` but a `ListView` laid
@@ -609,6 +617,11 @@ that shape are covered in
   [Widget implementations](widgets.md#windows-construction)).
 - `Toggle` switches **only when the switch is pressed**; pressing the label text
   does not switch it.
+- `Calendar`'s days outside `set_range` are dimmed but **can still be clicked**:
+  `NSDatePicker` then selects the nearest end of the range (`minDate` /
+  `maxDate`), which `on_change` reports like any other click. The arrows in the
+  header keep going past the range into months where every day is dimmed (Windows
+  disables them at the ends).
 - `EditableComboBox` completes the rest when you type characters matching the start
   of an option, but **does not narrow the option list itself**.
 - `Table` row height is a fixed value derived from the system font. Rows do not
@@ -687,6 +700,11 @@ that shape are covered in
   `GtkCalendar` does not distinguish "a day was pressed" from "the month was
   changed"). The date shown on the button follows the locale's format.
 - `ColorPicker` does not handle opacity.
+- `Calendar` is a `GtkCalendar`, which **has no range**: days outside `set_range`
+  are not dimmed, and clicking one moves the selection back to the nearest end.
+  The arrows in its header **select a day in the next month or year** (the same
+  day of the month, clamped), which `on_change` reports like a click; on Windows
+  and the Web they only show another month.
 - In a `Sheet`, **Enter in a text field does not press the primary button**: a
   `GtkText` activates the dialog's default widget only with `activates-default`,
   which naui's text fields leave off. Clicking it or Enter with the focus elsewhere
@@ -763,6 +781,15 @@ that shape are covered in
   operation differ per browser. `TimePicker` handles values up to minutes even when
   the browser returns seconds. `ColorPicker` notifies only on confirmation
   (`change`).
+- Browsers have no always-visible calendar, so **`Calendar` is composed of
+  `<button>`s in a `<table>`** (🟡). naui adds no look of its own: the selected day
+  is marked only by `<mark>` (the browser's highlight, usually yellow) and today by
+  `<b>`, so it does not look like the native calendars. Days outside the range are
+  disabled buttons. The first day of the week comes from `Intl.Locale`'s
+  `getWeekInfo()` (or `weekInfo`), and is **Sunday in browsers without it**. The
+  month and weekday names follow the browser's language unless the app named one,
+  and the month buttons' accessible names are naui's own strings (English and
+  Japanese).
 - In `EditableComboBox`, the browser narrows options by typed text. It cannot be
   turned off, and how it narrows (prefix or substring match), whether an arrow is
   shown, and how the list opens differ per browser.

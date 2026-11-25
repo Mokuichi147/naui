@@ -46,6 +46,10 @@ Microsoft.UI.Xaml.Controls.AutoSuggestionBoxTextChangeReason
 Microsoft.UI.Xaml.Controls.Border
 Microsoft.UI.Xaml.Controls.Button
 Microsoft.UI.Xaml.Controls.CalendarDatePicker
+Microsoft.UI.Xaml.Controls.CalendarView
+Microsoft.UI.Xaml.Controls.CalendarViewDisplayMode
+Microsoft.UI.Xaml.Controls.CalendarViewSelectedDatesChangedEventArgs
+Microsoft.UI.Xaml.Controls.CalendarViewSelectionMode
 Microsoft.UI.Xaml.Controls.Canvas
 Microsoft.UI.Xaml.Controls.CheckBox
 Microsoft.UI.Xaml.Controls.ColorChangedEventArgs
