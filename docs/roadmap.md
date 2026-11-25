@@ -156,7 +156,7 @@ shortcuts that are not in a menu, and the always-visible calendar.
       common operations) reach the widget it returns. `ChartView` implements it
       in place of `root()` (its `Canvas` is `canvas()`), and `naui-app`'s
       `Mounted` implements it beside `root()`.
-- [ ] **Keyboard shortcuts outside the menu bar.** A shortcut is given today
+- [x] **Keyboard shortcuts outside the menu bar.** A shortcut is given today
       only to a `MenuBar` item (`MenuShortcut`); anything else is matched by
       hand in `on_key_down`, whose order relative to menu shortcuts differs by
       platform. All four have a counterpart: WinUI's `KeyboardAccelerator` on
@@ -170,6 +170,14 @@ shortcuts that are not in a menu, and the always-visible calendar.
       whether it reuses `MenuShortcut`. Naming commands, binding them from a
       keymap the user can edit, and choosing by context are an app's own layer
       on top (they fit `naui-app` or a separate crate), not the core.
+      Done as `on_shortcut` / `remove_shortcut` on every widget (while focus is
+      inside it) and on `Window`, taking `MenuShortcut` renamed to `Shortcut`
+      (the old name stays as a deprecated alias, and windows and widgets also take
+      named keys such as Escape and Delete), matched by naui in each platform's
+      existing key receiver so that the order is the same everywhere: the focused
+      widget's `on_key_down`, the widgets' shortcuts from the inside out, the
+      window's `on_key_down` and shortcuts, then the menu bar; `Window::send_key`
+      delivers a key through that order in tests.
 - [x] **Make dragging `Table` column widths work on Windows and Linux too.** Linux
       has the native feature in `GtkColumnView`, while Windows uses a custom table,
       so it is heavy.

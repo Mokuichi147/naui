@@ -44,6 +44,7 @@ mod popup;
 mod rich_text;
 mod row_window;
 mod scroll;
+mod shortcut;
 mod sidebar;
 mod split;
 mod table;
@@ -91,7 +92,7 @@ pub use layout::{
 pub use list::{ListItem, RowMove, SelectionMode};
 pub use main_thread::{MainThread, Tasks, Work};
 pub use media::{Fit, PlaybackState};
-pub use menu::{MenuHandler, MenuItem, MenuShortcut, MenuSpec};
+pub use menu::{MenuHandler, MenuItem, MenuSpec};
 pub use number::NumberSpec;
 pub use panes::{Pane, PanesArrangement, DEFAULT_LIST_PANE_WIDTH, DEFAULT_PANES_BREAKPOINT};
 pub use popover::PopoverPosition;
@@ -102,6 +103,11 @@ pub use row_window::{
     RowSource, RowWindow, SelectionGesture, ROW_WINDOW_OVERSCAN, ROW_WINDOW_THRESHOLD,
 };
 pub use scroll::ScrollNotifier;
+#[allow(deprecated)]
+pub use shortcut::MenuShortcut;
+#[doc(hidden)]
+pub use shortcut::{deliver_key, KeyTarget};
+pub use shortcut::{Shortcut, ShortcutHandlers};
 pub use sidebar::{
     sidebar_item, sidebar_len, sidebar_rows, SidebarAutoChange, SidebarAutoCollapse, SidebarItem,
     SidebarRow, SidebarSection, DEFAULT_SIDEBAR_WIDTH, SIDEBAR_COLLAPSE_CONTENT_WIDTH,

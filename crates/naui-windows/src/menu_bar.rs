@@ -150,7 +150,7 @@ fn build_entry(
     // 右端の表示だけ。押されたキーは `handle_key` が拾う。
     let shortcut = entry
         .shortcut
-        .filter(|s| s.is_valid())
+        .filter(|s| s.is_valid_for_menu())
         .map(|s| HSTRING::from(s.label()));
     // 閉じるのは `MenuFlyout` が自分で行う。
     let handler = on_click(path.clone());
@@ -432,6 +432,21 @@ impl MenuBar {
         let hit = MenuSpec::find_shortcut(&self.0.menus.borrow(), |s| {
             s.virtual_key() == key && s.primary == primary && s.shift == shift && s.alt == alt
         });
+        let Some(path) = hit else {
+            return false;
+        };
+        self.close();
+        self.0.choose(&path);
+        true
+    }
+
+    /// If `event` is the shortcut of an item that can be chosen now, runs it and
+    /// returns `true`. Used by `Window::send_key`.
+    pub(crate) fn press_shortcut(&self, event: &naui_core::KeyEvent) -> bool {
+        if !self.0.enabled.get() {
+            return false;
+        }
+        let hit = MenuSpec::find_shortcut(&self.0.menus.borrow(), |s| s.matches_event(event));
         let Some(path) = hit else {
             return false;
         };

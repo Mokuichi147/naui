@@ -2,7 +2,8 @@ use crate::sys;
 use crate::AsWidget;
 use crate::{MenuBar, Sidebar, Toolbar};
 use naui_core::{
-    CloseResponse, EventResponse, FileEntry, KeyEvent, Result, Theme, WindowPlacement, WindowState,
+    CloseResponse, EventResponse, FileEntry, KeyEvent, Result, Shortcut, Theme, WindowPlacement,
+    WindowState,
 };
 
 /// A weak reference for referring to a window from event handlers without holding
@@ -235,6 +236,43 @@ impl Window {
     #[inline]
     pub fn on_key_down(&self, f: impl FnMut(&KeyEvent) -> EventResponse + 'static) {
         self.0.on_key_down(f)
+    }
+
+    /// Runs `f` when `shortcut` is pressed while this window has keyboard focus.
+    /// Giving the same shortcut again replaces the closure;
+    /// [`remove_shortcut`](Self::remove_shortcut) takes it away.
+    ///
+    /// The widgets around the focus (their `on_key_down` and
+    /// [shortcuts](crate::Button::on_shortcut)) and this window's
+    /// [`on_key_down`](Self::on_key_down) come first, and the [`MenuBar`]'s
+    /// shortcuts come after. A shortcut that fires takes the key, so neither the
+    /// focused control nor the menu bar gets it. Invalid shortcuts
+    /// ([`Shortcut::is_valid`]) never fire. See
+    /// [Keyboard shortcuts](crate::guide#keyboard-shortcuts).
+    #[inline]
+    pub fn on_shortcut(&self, shortcut: Shortcut, f: impl FnMut() + 'static) {
+        self.0.on_shortcut(shortcut, f)
+    }
+
+    /// Removes a shortcut given with [`on_shortcut`](Self::on_shortcut). Nothing
+    /// happens if it was not given.
+    #[inline]
+    pub fn remove_shortcut(&self, shortcut: Shortcut) {
+        self.0.remove_shortcut(shortcut)
+    }
+
+    /// Delivers `event` as a key pressed in this window, starting from the widget
+    /// that has keyboard focus (move it there with `request_focus`): the
+    /// `on_key_down`s and shortcuts in naui's order, then the [`MenuBar`]'s
+    /// shortcuts. Returns `Handled` if one of them took the key.
+    ///
+    /// The key does not reach the focused control itself, so no text is typed and a
+    /// control's own keys (a list's arrow keys, a field's Enter) do nothing.
+    ///
+    /// For tests and automation. See [Testing apps](crate::guide#testing-apps).
+    #[inline]
+    pub fn send_key(&self, event: &KeyEvent) -> EventResponse {
+        self.0.send_key(event)
     }
 
     #[inline]

@@ -25,8 +25,8 @@ use gtk::pango;
 use naui_core::{
     Align, Bitmap, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
     EventResponse, FileFilter, FilePickerMode, Fit, Gradient, GridCell, LayoutDirection, Length,
-    ListItem, MenuItem, MenuShortcut, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState,
-    Point, PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode,
+    ListItem, MenuItem, MenuSpec, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
+    PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode, Shortcut,
     SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle,
     Theme, Time, ToastPosition, ToastPriority, ToolbarIcon, ToolbarItem, Track, TreeItem,
     WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH, ROW_WINDOW_OVERSCAN,
@@ -432,6 +432,14 @@ fn main() {
         (
             "ウィジェットが Continue を返したキーだけがウィンドウへ届く",
             window_key_down_gets_what_the_widget_left,
+        ),
+        (
+            "ショートカットはフォーカスの内側から外へ、窓、メニューバーの順に届く",
+            shortcuts_go_from_the_focus_to_the_menu_bar,
+        ),
+        (
+            "シートとダイアログの中のキーはその中のウィジェットに届き、窓には届かない",
+            keys_in_sheets_and_dialogs_do_not_reach_the_window,
         ),
         ("タイマーがメインループで呼ばれ、止められる", timers_fire_on_the_main_loop),
         (
@@ -12678,10 +12686,10 @@ fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
         MenuSpec::new(
             "ファイル",
             [
-                MenuItem::new("新規").shortcut(MenuShortcut::new('n')),
+                MenuItem::new("新規").shortcut(Shortcut::new('n')),
                 MenuItem::separator(),
                 MenuItem::new("保存")
-                    .shortcut(MenuShortcut::new('s').shift(true))
+                    .shortcut(Shortcut::new('s').shift(true))
                     .enabled(false),
             ],
         ),
@@ -12900,13 +12908,13 @@ fn menu_bar_function_keys_become_accelerators(ui: &Ui) -> Result<()> {
     menu_bar.set_menus(&[MenuSpec::new(
         "表示",
         [
-            MenuItem::new("再読み込み").shortcut(MenuShortcut::function(5)),
+            MenuItem::new("再読み込み").shortcut(Shortcut::function(5)),
             MenuItem::submenu(
                 "開発",
                 [MenuItem::new("調べる")
-                    .shortcut(MenuShortcut::function(12).primary(true).shift(true))],
+                    .shortcut(Shortcut::function(12).primary(true).shift(true))],
             ),
-            MenuItem::new("記号").shortcut(MenuShortcut::new('/')),
+            MenuItem::new("記号").shortcut(Shortcut::new('/')),
         ],
     )]);
     window.set_menu_bar(&menu_bar);
@@ -12943,7 +12951,7 @@ fn menu_bar_attaches_to_the_window(ui: &Ui) -> Result<()> {
     let menu_bar = ui.menu_bar()?;
     menu_bar.set_menus(&[MenuSpec::new(
         "ファイル",
-        [MenuItem::new("開く").shortcut(MenuShortcut::new('o'))],
+        [MenuItem::new("開く").shortcut(Shortcut::new('o'))],
     )]);
     let name = menu_bar.native_action_name(&[0, 0]).expect("操作の名前");
     assert!(
@@ -12997,7 +13005,7 @@ fn menu_bar_attaches_to_the_window(ui: &Ui) -> Result<()> {
     // 外している間に組み替えても、登録はしない。
     menu_bar.set_menus(&[MenuSpec::new(
         "ファイル",
-        [MenuItem::new("保存").shortcut(MenuShortcut::new('s'))],
+        [MenuItem::new("保存").shortcut(Shortcut::new('s'))],
     )]);
     assert!(app.accels_for_action(&name).is_empty());
 
@@ -13060,7 +13068,7 @@ fn menu_bar_callback_is_reentrant_and_replaceable(ui: &Ui) -> Result<()> {
 fn menu_bar_shortcuts_are_kept_per_menu_bar(ui: &Ui) -> Result<()> {
     let spec = [MenuSpec::new(
         "ファイル",
-        [MenuItem::new("開く").shortcut(MenuShortcut::new('o'))],
+        [MenuItem::new("開く").shortcut(Shortcut::new('o'))],
     )];
 
     let first_window = ui.window("1 つ目", 400.0, 300.0)?;
@@ -13898,8 +13906,17 @@ fn press_key(
     keyval: gtk::gdk::Key,
     state: gtk::gdk::ModifierType,
 ) -> bool {
-    let native = window.native_window();
-    let controllers = native.observe_controllers();
+    press_key_on(window.native_window().upcast_ref(), keyval, state)
+}
+
+/// Sends a key to naui's capture-phase receiver on `widget` (a window or an
+/// `AdwDialog`).
+fn press_key_on(
+    widget: &gtk::Widget,
+    keyval: gtk::gdk::Key,
+    state: gtk::gdk::ModifierType,
+) -> bool {
+    let controllers = widget.observe_controllers();
     let controller = (0..controllers.n_items())
         .filter_map(|index| controllers.item(index))
         .filter_map(|item| item.downcast::<gtk::EventControllerKey>().ok())
@@ -14020,6 +14037,165 @@ fn window_key_down_gets_what_the_widget_left(ui: &Ui) -> Result<()> {
         *seen.borrow(),
         vec![naui_core::Key::Character('x'), naui_core::Key::Escape]
     );
+    window.close();
+    Ok(())
+}
+
+fn shortcuts_go_from_the_focus_to_the_menu_bar(ui: &Ui) -> Result<()> {
+    use gtk::gdk::{Key as K, ModifierType as M};
+    let window = ui.window("ショートカット", 320.0, 200.0)?;
+    let group = ui.stack(Orientation::Vertical)?;
+    let input = ui.text_input("")?;
+    group.append(&input);
+    window.set_child(&group);
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new(
+        "編集",
+        [MenuItem::new("印").shortcut(naui_core::Shortcut::new('k'))],
+    )]);
+    let log = Rc::new(RefCell::new(Vec::<&str>::new()));
+    menu_bar.on_activate({
+        let log = log.clone();
+        move |_| log.borrow_mut().push("menu")
+    });
+    window.set_menu_bar(&menu_bar);
+    window.show();
+    tick(&input.native_widget());
+    assert!(input.request_focus());
+
+    // naui の受け口は、窓が作られたときに GTK が付けたアプリのアクセラレータ
+    // (メニューバーのショートカット) より後に付く。コントローラーは新しいものから
+    // 順に動く (`gtk_widget_add_controller` は先頭へ足す) ので、naui が先に受け取る。
+    let controllers = window.native_window().observe_controllers();
+    let position = |found: &dyn Fn(&gtk::EventController) -> bool| {
+        (0..controllers.n_items())
+            .filter_map(|index| {
+                controllers
+                    .item(index)
+                    .and_downcast::<gtk::EventController>()
+            })
+            .position(|controller| found(&controller))
+    };
+    let naui = position(&|c| {
+        c.is::<gtk::EventControllerKey>() && c.propagation_phase() == gtk::PropagationPhase::Capture
+    })
+    .expect("naui のキーの受け口");
+    let accels = position(&|c| c.name().as_deref() == Some("gtk-application-shortcuts"))
+        .expect("アプリのアクセラレータ");
+    assert!(naui < accels, "naui の受け口が先に並ぶ ({naui} < {accels})");
+
+    let note = |name: &'static str| {
+        let log = log.clone();
+        move || log.borrow_mut().push(name)
+    };
+    let take = || std::mem::take(&mut *log.borrow_mut());
+    // 主修飾キーは Linux では Ctrl。GTK を macOS で動かすときは ⌘ (Meta) になる。
+    let (primary, other) = if cfg!(target_os = "macos") {
+        (M::META_MASK, M::CONTROL_MASK)
+    } else {
+        (M::CONTROL_MASK, M::SUPER_MASK)
+    };
+    let ctrl_k = naui_core::Shortcut::new('k');
+    input.on_shortcut(ctrl_k, note("input"));
+    group.on_shortcut(ctrl_k, note("group"));
+    window.on_shortcut(ctrl_k, note("window"));
+    assert!(press_key(&window, K::k, primary), "ショートカットは止める");
+    assert_eq!(take(), ["input"]);
+    input.remove_shortcut(ctrl_k);
+    press_key(&window, K::k, primary);
+    assert_eq!(take(), ["group"]);
+    group.remove_shortcut(ctrl_k);
+    press_key(&window, K::K, primary);
+    assert_eq!(take(), ["window"], "大文字の keyval も同じキー");
+    window.remove_shortcut(ctrl_k);
+    assert!(
+        !press_key(&window, K::k, primary),
+        "naui が受け取らなければメニューバーへ通す"
+    );
+    // send_key はメニューバーまで届ける。
+    let event = naui_core::KeyEvent::new(
+        naui_core::Key::Character('k'),
+        naui_core::Modifiers {
+            control: !cfg!(target_os = "macos"),
+            meta: cfg!(target_os = "macos"),
+            ..naui_core::Modifiers::default()
+        },
+    );
+    assert_eq!(window.send_key(&event), naui_core::EventResponse::Handled);
+    assert_eq!(take(), ["menu"]);
+    // 主修飾キーではないほう (Linux では Super) が加わると別の組み合わせ。
+    window.on_shortcut(ctrl_k, note("window"));
+    assert!(!press_key(&window, K::k, primary | other));
+    assert!(take().is_empty());
+    window.close();
+    Ok(())
+}
+
+fn keys_in_sheets_and_dialogs_do_not_reach_the_window(ui: &Ui) -> Result<()> {
+    use gtk::gdk::{Key as K, ModifierType as M};
+    let window = ui.window("naui", 480.0, 360.0)?;
+    window.show();
+    let log = Rc::new(RefCell::new(Vec::<&str>::new()));
+    let note = |name: &'static str| {
+        let log = log.clone();
+        move || log.borrow_mut().push(name)
+    };
+    let f2 = naui_core::Shortcut::function(2);
+    window.on_shortcut(f2, note("window"));
+    window.on_shortcut(naui_core::Shortcut::function(3), note("window F3"));
+
+    let sheet = ui.sheet("確認")?;
+    let field = ui.text_input("")?;
+    field.on_shortcut(f2, note("field"));
+    sheet.set_child(&field);
+    sheet.set_buttons(DialogButtons::new().primary("閉じる"));
+    sheet.open();
+    let native = sheet.native_dialog().expect("AdwDialog");
+    wait_until_shown(&native);
+    assert!(field.request_focus());
+    // libadwaita は窓の中のダイアログで打たれたキーを窓の capture に通さないので、
+    // ダイアログの受け口が届ける。窓の受け口はダイアログの中のキーを扱わない
+    // (両方を通す版でも二重に届かない)。
+    press_key(&window, K::F2, M::empty());
+    assert!(
+        log.borrow().is_empty(),
+        "窓の受け口はシートの中のキーを扱わない"
+    );
+    press_key_on(native.upcast_ref(), K::F2, M::empty());
+    press_key_on(native.upcast_ref(), K::F3, M::empty());
+    assert_eq!(
+        *log.borrow(),
+        ["field"],
+        "シートの中のショートカットは届き、窓のショートカットは届かない"
+    );
+
+    native.close();
+    pump();
+    log.borrow_mut().clear();
+    press_key(&window, K::F3, M::empty());
+    assert_eq!(*log.borrow(), ["window F3"], "閉じれば窓に届く");
+
+    // `Dialog` (AdwAlertDialog) も同じ。
+    let dialog = ui.dialog("確認")?;
+    let input = ui.text_input("")?;
+    input.on_shortcut(f2, note("dialog field"));
+    dialog.set_child(&input);
+    dialog.open();
+    let native = dialog.native_dialog().expect("AdwAlertDialog");
+    wait_until_shown(native.upcast_ref());
+    // 閉じたシートが消えきるまで、ダイアログの中身はフォーカスを受けない。
+    spin_until(std::time::Duration::from_secs(2), || input.request_focus());
+    assert!(input.request_focus());
+    log.borrow_mut().clear();
+    press_key(&window, K::F2, M::empty());
+    press_key_on(native.upcast_ref(), K::F2, M::empty());
+    press_key_on(native.upcast_ref(), K::F3, M::empty());
+    assert_eq!(
+        *log.borrow(),
+        ["dialog field"],
+        "ダイアログの中のショートカットは届き、窓のショートカットは届かない"
+    );
+    dialog.close();
     window.close();
     Ok(())
 }

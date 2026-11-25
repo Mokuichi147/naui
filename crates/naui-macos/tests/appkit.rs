@@ -18,8 +18,8 @@ use std::time::{Duration, Instant};
 use naui_core::{
     Align, Bitmap, ButtonRole, Color, DatePickerMode, DateTime, DialogButtons, DialogResponse,
     EventResponse, FileFilter, FilePickerMode, Fit, Gradient, GridCell, Length, ListItem, MenuItem,
-    MenuShortcut, MenuSpec, Modifiers, NavItem, Orientation, Padding, Pane, PlaybackState, Point,
-    PointerButton, PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode,
+    MenuSpec, Modifiers, NavItem, Orientation, Padding, Pane, PlaybackState, Point, PointerButton,
+    PointerPhase, PopupItem, Rect, Result, RichText, ScrollPolicy, SelectionMode, Shortcut,
     SidebarItem, SidebarSection, Sizing, SortOrder, TableColumn, TableRow, TextColor, TextStyle,
     Theme, Time, ToastPosition, ToastPriority, ToolbarIcon, ToolbarItem, Track, TreeItem,
     WindowPlacement, WindowState, DEFAULT_SIDEBAR_WIDTH,
@@ -966,6 +966,11 @@ fn main() {
         (
             "標準メニューの項目名が OS の言語に従う",
             menu_bar_follows_the_os_language,
+        ),
+        // メニューバーを付けるので、既定のメニューの名前を見るテストより後に置く。
+        (
+            "ショートカットはフォーカスの内側から外へ、窓、メニューバーの順に届く",
+            shortcuts_go_from_the_focus_to_the_menu_bar,
         ),
         (
             "画像がローカルのファイルから読み込まれる",
@@ -7391,6 +7396,73 @@ fn window_key_down_gets_what_the_widget_left(ui: &Ui) -> Result<()> {
         *seen.borrow(),
         vec![naui_core::Key::Character('x'), naui_core::Key::Escape]
     );
+    window.close();
+    Ok(())
+}
+
+fn shortcuts_go_from_the_focus_to_the_menu_bar(ui: &Ui) -> Result<()> {
+    let mtm = MainThreadMarker::new().expect("メインスレッド");
+    let app = NSApplication::sharedApplication(mtm);
+    let window = ui.window("ショートカット", 320.0, 200.0)?;
+    let group = ui.stack(Orientation::Vertical)?;
+    let input = ui.text_input("")?;
+    group.append(&input);
+    window.set_child(&group);
+    let menu_bar = ui.menu_bar()?;
+    menu_bar.set_menus(&[MenuSpec::new(
+        "編集",
+        [MenuItem::new("印").shortcut(naui_core::Shortcut::new('k'))],
+    )]);
+    let log = Rc::new(RefCell::new(Vec::<&str>::new()));
+    menu_bar.on_activate({
+        let log = log.clone();
+        move |_| log.borrow_mut().push("menu")
+    });
+    window.set_menu_bar(&menu_bar);
+    window.show();
+    assert!(input.request_focus());
+
+    let note = |name: &'static str| {
+        let log = log.clone();
+        move || log.borrow_mut().push(name)
+    };
+    let take = || std::mem::take(&mut *log.borrow_mut());
+    let native = window.native_window();
+    let command_k = |app: &NSApplication| {
+        press_key(app, &native, "k", 40, NSEventModifierFlags::Command);
+    };
+    let cmd_k = naui_core::Shortcut::new('k');
+    input.on_shortcut(cmd_k, note("input"));
+    group.on_shortcut(cmd_k, note("group"));
+    window.on_shortcut(cmd_k, note("window"));
+    command_k(&app);
+    assert_eq!(take(), ["input"]);
+    input.remove_shortcut(cmd_k);
+    command_k(&app);
+    assert_eq!(take(), ["group"]);
+    group.remove_shortcut(cmd_k);
+    command_k(&app);
+    assert_eq!(
+        take(),
+        ["window"],
+        "ウィンドウのショートカットはメニューより先"
+    );
+    window.remove_shortcut(cmd_k);
+    command_k(&app);
+    assert_eq!(
+        take(),
+        ["menu"],
+        "naui が受け取らなければ AppKit のメニューへ届く"
+    );
+
+    // 名前のあるキーは修飾キー無しで受け取れる。Ctrl が加わると別の組み合わせ。
+    let escape = naui_core::Shortcut::from_key(naui_core::Key::Escape);
+    window.on_shortcut(escape, note("escape"));
+    press_key(&app, &native, "\u{1b}", 53, NSEventModifierFlags::empty());
+    press_key(&app, &native, "\u{1b}", 53, NSEventModifierFlags::Control);
+    assert_eq!(take(), ["escape"]);
+    // アプリのメニューを既定へ戻す (後のテストが標準のメニューを見る)。
+    window.clear_menu_bar();
     window.close();
     Ok(())
 }
@@ -17506,10 +17578,10 @@ fn menu_bar_menus_map_to_native(ui: &Ui) -> Result<()> {
         MenuSpec::new(
             "ファイル",
             [
-                MenuItem::new("新規").shortcut(MenuShortcut::new('n')),
+                MenuItem::new("新規").shortcut(Shortcut::new('n')),
                 MenuItem::separator(),
                 MenuItem::new("保存")
-                    .shortcut(MenuShortcut::new('s').shift(true))
+                    .shortcut(Shortcut::new('s').shift(true))
                     .enabled(false),
             ],
         ),
@@ -17726,7 +17798,7 @@ fn menu_bar_submenus_and_checks_map_to_native(ui: &Ui) -> Result<()> {
             MenuItem::submenu(
                 "拡大",
                 [
-                    MenuItem::new("拡大").shortcut(MenuShortcut::new('i')),
+                    MenuItem::new("拡大").shortcut(Shortcut::new('i')),
                     MenuItem::submenu("深い", ["さらに"]),
                 ],
             ),
@@ -17820,9 +17892,9 @@ fn menu_bar_function_keys_are_key_equivalents(ui: &Ui) -> Result<()> {
     menu_bar.set_menus(&[MenuSpec::new(
         "表示",
         [
-            MenuItem::new("再読み込み").shortcut(MenuShortcut::function(5)),
-            MenuItem::new("開発").shortcut(MenuShortcut::function(12).primary(true).shift(true)),
-            MenuItem::new("記号").shortcut(MenuShortcut::new('/')),
+            MenuItem::new("再読み込み").shortcut(Shortcut::function(5)),
+            MenuItem::new("開発").shortcut(Shortcut::function(12).primary(true).shift(true)),
+            MenuItem::new("記号").shortcut(Shortcut::new('/')),
         ],
     )]);
 
