@@ -51,6 +51,39 @@ const PREFERRED_SIZE_PRIORITY: NSLayoutPriority = 1.0;
 /// "don't overflow" side stays required and is added separately).
 pub(crate) const CROSS_FILL_PRIORITY: NSLayoutPriority = 999.0;
 
+/// The priority with which a `Stack` set to [`naui_core::Align::Fill`] stretches a
+/// child that has no `Fill` of its own to at least the area inside the padding.
+///
+/// It stays below a window keeping its size (`NSLayoutPriorityWindowSizeStayPut` =
+/// 500), so a child that cannot grow never shrinks the window, and above a nested
+/// `Stack` fitting its content (`NSStackView.Edge.Min`, 250), so that one stretches
+/// too. A child's own hugging would beat it, so it is lowered for that axis
+/// ([`ALIGN_FILL_HUGGING`]).
+pub(crate) const ALIGN_FILL_PRIORITY: NSLayoutPriority = 490.0;
+
+/// The hugging a child gets on the cross axis while an [`naui_core::Align::Fill`]
+/// `Stack` stretches it, in place of [`HUG_CONTENT`].
+///
+/// Below [`ALIGN_FILL_PRIORITY`], so the child stretches, and below a window keeping
+/// its size, so the child does not pull the window in (with 750, a horizontal stack
+/// shrank its window to the height of its labels). Above a parent pulling the stack
+/// to its edges (250), so an `Align::Fill` stack that is itself content-sized still
+/// fits its children, as on GTK.
+const ALIGN_FILL_HUGGING: NSLayoutPriority = 300.0;
+
+/// Lets a child be stretched on that axis by an `Align::Fill` stack
+/// ([`ALIGN_FILL_HUGGING`]).
+pub(crate) fn allow_align_fill(view: &NSView, horizontal: bool) {
+    view.setContentHuggingPriority_forOrientation(ALIGN_FILL_HUGGING, orientation(horizontal));
+}
+
+/// Undoes [`allow_align_fill`] on that axis; any other hugging is left alone.
+pub(crate) fn release_align_fill(view: &NSView, horizontal: bool) {
+    if view.contentHuggingPriorityForOrientation(orientation(horizontal)) == ALIGN_FILL_HUGGING {
+        set_hugging(view, horizontal, false);
+    }
+}
+
 /// The priority placing a child at the start, center or end of a `Stack`'s cross
 /// axis, inside the padding.
 ///
@@ -210,6 +243,18 @@ pub(crate) fn wants_fill(view: &NSView, horizontal: bool) -> bool {
 /// The maximum `set_sizing` gave this view in that direction
 /// ([`Sizing::max_width`] / [`Sizing::max_height`]).
 pub(crate) fn max_size(view: &NSView, horizontal: bool) -> Option<f64> {
+    sizing_constant(view, horizontal, NSLayoutRelation::LessThanOrEqual)
+}
+
+/// Whether `set_sizing` keeps this view from growing in that direction: a fixed size
+/// ([`naui_core::Length::Fixed`]) or a maximum.
+pub(crate) fn is_capped(view: &NSView, horizontal: bool) -> bool {
+    max_size(view, horizontal).is_some()
+        || sizing_constant(view, horizontal, NSLayoutRelation::Equal).is_some()
+}
+
+/// The constant of the constraint `set_sizing` placed on that axis with that relation.
+fn sizing_constant(view: &NSView, horizontal: bool, relation: NSLayoutRelation) -> Option<f64> {
     let attribute = if horizontal {
         NSLayoutAttribute::Width
     } else {
@@ -219,7 +264,7 @@ pub(crate) fn max_size(view: &NSView, horizontal: bool) -> Option<f64> {
     (0..constraints.len())
         .map(|index| constraints.objectAtIndex(index))
         .find(|constraint| {
-            constraint.relation() == NSLayoutRelation::LessThanOrEqual
+            constraint.relation() == relation
                 && constraint.firstAttribute() == attribute
                 && constraint
                     .identifier()
